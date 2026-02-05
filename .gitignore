@@ -1,24 +1,59 @@
-# Logs
-logs
-*.log
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Node
+node_modules/
+frontend/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Build output
+frontend/dist/
+dist-ssr/
 *.local
 
-# Editor directories and files
+# Docker
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+
+# IDE
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
+*.swp
+*.swo
+*.sw?
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Geo data downloads
+geo/data/
+
+# ML model weights
+ml/model/weights/
+*.pt
+*.bin
+*.onnx
+
+# Database
+pgdata/

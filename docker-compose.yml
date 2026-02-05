@@ -1,0 +1,79 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: vmth_cancer_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vmth_cancer
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/migrations/001_extensions.sql:/docker-entrypoint-initdb.d/001_extensions.sql
+      - ./database/migrations/002_lookup_tables.sql:/docker-entrypoint-initdb.d/002_lookup_tables.sql
+      - ./database/migrations/003_counties.sql:/docker-entrypoint-initdb.d/003_counties.sql
+      - ./database/migrations/004_core_tables.sql:/docker-entrypoint-initdb.d/004_core_tables.sql
+      - ./database/migrations/005_pathology_reports.sql:/docker-entrypoint-initdb.d/005_pathology_reports.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vmth_cancer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vmth_cancer_backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/vmth_cancer
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/vmth_cancer
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./ml:/ml
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vmth_cancer_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+    command: sh -c "npm install --legacy-peer-deps && npx vite --host 0.0.0.0"
+
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vmth_cancer_seed
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/vmth_cancer
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/vmth_cancer
+    volumes:
+      - ./database:/database
+      - ./backend:/app
+      - ./geo:/geo
+      - ./ml:/ml
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python /database/seed/seed_mock_data.py
+    profiles:
+      - seed
+
+volumes:
+  pgdata:
+  frontend_node_modules:

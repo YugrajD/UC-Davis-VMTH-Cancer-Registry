@@ -1,0 +1,4 @@
+geopandas==0.14.3
+shapely==2.0.2
+requests==2.31.0
+fiona==1.9.5

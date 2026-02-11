@@ -1,3 +1,5 @@
+"""Small common helpers for cleaning text, selecting device, and making directories."""
+
 import math
 import os
 
@@ -22,4 +24,3 @@ def device_from_arg(device: str) -> torch.device:
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
-

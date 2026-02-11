@@ -1,3 +1,5 @@
+"""Output writers for scan rows, categories, neighbors, embeddings, and summary."""
+
 import json
 import os
 
@@ -35,9 +37,14 @@ def write_rows_csv(
     char_lens: np.ndarray,
     token_counts: np.ndarray,
     final_labels: list[str],
+    final_indices: list[int],
     final_scores: list[float],
     methods: list[str],
     pca_2d: np.ndarray,
+    matched_terms: list[str],
+    matched_groups: list[str],
+    matched_codes: list[str],
+    auxiliary_labels: list[str],
 ) -> pd.DataFrame:
     rows_df = pd.DataFrame(
         {
@@ -47,6 +54,11 @@ def write_rows_csv(
             "char_len": char_lens,
             "token_count": token_counts,
             "predicted_category": final_labels,
+            "predicted_term": matched_terms,
+            "predicted_group": matched_groups,
+            "predicted_code": matched_codes,
+            "auxiliary_label": auxiliary_labels,
+            "predicted_label_index": final_indices,
             "category_confidence": final_scores,
             "category_method": methods,
             "pca1": pca_2d[:, 0],
@@ -66,6 +78,7 @@ def write_categories_csv(
     id_col: str,
     text_col: str,
     final_labels: list[str],
+    final_indices: list[int],
     final_scores: list[float],
     methods: list[str],
     keyword_labels: list[str],
@@ -74,6 +87,11 @@ def write_categories_csv(
     embedding_scores: np.ndarray,
     label_scores: np.ndarray,
     labels: list[str],
+    matched_terms: list[str],
+    matched_groups: list[str],
+    matched_codes: list[str],
+    auxiliary_labels: list[str],
+    include_score_columns: bool = True,
 ) -> pd.DataFrame:
     category_df = pd.DataFrame(
         {
@@ -81,6 +99,11 @@ def write_categories_csv(
             id_col: ids,
             text_col: texts,
             "predicted_category": final_labels,
+            "predicted_term": matched_terms,
+            "predicted_group": matched_groups,
+            "predicted_code": matched_codes,
+            "auxiliary_label": auxiliary_labels,
+            "predicted_label_index": final_indices,
             "category_confidence": final_scores,
             "category_method": methods,
             "keyword_category": keyword_labels,
@@ -89,9 +112,10 @@ def write_categories_csv(
             "embedding_similarity": embedding_scores,
         }
     )
-    for label_idx, label_name in enumerate(labels):
-        score_column = f"score_{label_name.lower().replace(' ', '_')}"
-        category_df[score_column] = label_scores[:, label_idx].astype(np.float32, copy=False)
+    if include_score_columns:
+        for label_idx, label_name in enumerate(labels):
+            score_column = f"score_{label_name.lower().replace(' ', '_')}"
+            category_df[score_column] = label_scores[:, label_idx].astype(np.float32, copy=False)
     category_df.to_csv(path, index=False)
     return category_df
 
@@ -137,4 +161,3 @@ def write_embeddings_npz(path: str, embeddings: np.ndarray, ids: list[str], text
 def write_summary_json(path: str, summary: dict) -> None:
     with open(path, "w", encoding="utf-8") as file:
         json.dump(summary, file, indent=2)
-

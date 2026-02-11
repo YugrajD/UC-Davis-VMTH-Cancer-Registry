@@ -1,3 +1,5 @@
+"""Model loading, text embedding, and cosine-neighbor utilities."""
+
 import numpy as np
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer
@@ -88,4 +90,3 @@ def topk_cosine_neighbors(
         neighbor_sim[start:end] = top_sims.astype(np.float32, copy=False)
 
     return neighbor_idx, neighbor_sim
-

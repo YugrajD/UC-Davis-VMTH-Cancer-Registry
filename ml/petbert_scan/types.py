@@ -1,3 +1,5 @@
+"""Shared dataclasses and type aliases used by the scan pipeline."""
+
 from dataclasses import dataclass
 from typing import Literal
 
@@ -18,9 +20,12 @@ class ScanConfig:
     max_length: int
     neighbors_k: int
     task: TaskMode
-    keyword_min_conf: float
     embedding_min_sim: float
     device: str
+    labels_csv_path: str
+    carcinoma_csv_path: str
+    sarcoma_csv_path: str
+    use_auxiliary_labels: bool
 
 
 @dataclass(frozen=True)
@@ -30,4 +35,3 @@ class ScanOutputs:
     neighbors_csv: str | None
     npz: str
     summary_json: str
-

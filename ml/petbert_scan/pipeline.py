@@ -1,8 +1,11 @@
+"""Top-level orchestration for reading input, running categorization, and writing outputs."""
+
 import pandas as pd
 import numpy as np
 from sklearn.decomposition import PCA
 
-from .categorization import build_label_texts, resolve_labels, run_hybrid_categorization
+from .auxiliary_policy import AuxiliaryLabelPolicy
+from .categorization import run_hybrid_categorization
 from .embedding import embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from .io import (
     build_outputs,
@@ -12,6 +15,8 @@ from .io import (
     write_rows_csv,
     write_summary_json,
 )
+from labels.catalog import label_catalog_for_config
+from labels.projection import resolve_taxonomy_matches
 from .types import ScanConfig, ScanOutputs
 from .utils import clean_text, device_from_arg
 
@@ -39,12 +44,11 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         max_length=config.max_length,
     )
 
-    labels = resolve_labels()
-    label_texts = build_label_texts(labels)
+    label_catalog = label_catalog_for_config(config)
     label_embeddings, _ = embed_texts(
         tokenizer,
         model,
-        label_texts,
+        label_catalog.label_texts,
         device=torch_device,
         batch_size=config.batch_size,
         max_length=config.max_length,
@@ -54,9 +58,19 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         texts=texts,
         text_embeddings=embeddings,
         label_embeddings=label_embeddings,
-        labels=labels,
-        keyword_min_conf=config.keyword_min_conf,
+        labels=label_catalog.labels,
         embedding_min_sim=config.embedding_min_sim,
+    )
+
+    auxiliary_decision = AuxiliaryLabelPolicy(config, label_catalog.labels).apply(
+        ids=ids,
+        categorization=categorization,
+    )
+
+    matched_terms, matched_groups, matched_codes = resolve_taxonomy_matches(
+        categorization.final_indices,
+        label_catalog.labels,
+        label_catalog.taxonomy_labels,
     )
 
     pca = PCA(n_components=2, random_state=0)
@@ -72,9 +86,14 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         char_lens=char_lens,
         token_counts=token_counts,
         final_labels=categorization.final_labels,
+        final_indices=categorization.final_indices,
         final_scores=categorization.final_scores,
         methods=categorization.methods,
         pca_2d=pca_2d,
+        matched_terms=matched_terms,
+        matched_groups=matched_groups,
+        matched_codes=matched_codes,
+        auxiliary_labels=auxiliary_decision.labels,
     )
 
     category_df = write_categories_csv(
@@ -85,6 +104,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         id_col=config.id_col,
         text_col=config.text_col,
         final_labels=categorization.final_labels,
+        final_indices=categorization.final_indices,
         final_scores=categorization.final_scores,
         methods=categorization.methods,
         keyword_labels=categorization.keyword_labels,
@@ -93,6 +113,11 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         embedding_scores=categorization.embedding_scores,
         label_scores=categorization.label_scores,
         labels=categorization.labels,
+        matched_terms=matched_terms,
+        matched_groups=matched_groups,
+        matched_codes=matched_codes,
+        auxiliary_labels=auxiliary_decision.labels,
+        include_score_columns=label_catalog.include_score_columns,
     )
 
     if outputs.neighbors_csv is not None:
@@ -123,10 +148,16 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "batch_size": int(config.batch_size),
         "embedding_dim": int(embeddings.shape[1]) if embeddings.size else 0,
         "labels": categorization.labels,
-        "keyword_min_conf": float(config.keyword_min_conf),
+        "labels_csv_path": config.labels_csv_path,
         "embedding_min_sim": float(config.embedding_min_sim),
-        "predicted_category_counts": category_df["predicted_category"].value_counts().to_dict(),
+        "use_auxiliary_labels": bool(config.use_auxiliary_labels),
+        "carcinoma_csv_path": config.carcinoma_csv_path if config.use_auxiliary_labels else "",
+        "sarcoma_csv_path": config.sarcoma_csv_path if config.use_auxiliary_labels else "",
+        "predicted_term_counts": category_df["predicted_term"].value_counts().to_dict(),
+        "predicted_group_counts": category_df["predicted_group"].value_counts().to_dict(),
+        "predicted_code_counts": category_df["predicted_code"].value_counts().to_dict(),
         "prediction_method_counts": category_df["category_method"].value_counts().to_dict(),
+        "auxiliary_label_counts": category_df["auxiliary_label"].value_counts().to_dict(),
         "pca_explained_variance_ratio": pca.explained_variance_ratio_.tolist()
         if embeddings.size
         else [0.0, 0.0],
@@ -142,4 +173,3 @@ def _validate_columns(dataframe: pd.DataFrame, id_col: str, text_col: str) -> No
         raise ValueError(
             f"Missing text column {text_col!r}. Available: {dataframe.columns.tolist()}"
         )
-

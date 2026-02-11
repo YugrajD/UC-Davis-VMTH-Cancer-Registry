@@ -1,3 +1,5 @@
+"""Command-line interface for running the PetBERT scan pipeline."""
+
 import argparse
 
 from .pipeline import run_scan
@@ -29,12 +31,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run categorization only, neighbors only, or both.",
     )
     parser.add_argument(
-        "--keyword-min-conf",
-        type=float,
-        default=0.4,
-        help="Minimum keyword-model confidence to accept keyword category.",
-    )
-    parser.add_argument(
         "--embedding-min-sim",
         type=float,
         default=0.6,
@@ -45,6 +41,26 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         choices=["auto", "cpu", "cuda", "mps"],
         help="Compute device",
+    )
+    parser.add_argument(
+        "--labels-csv",
+        default="ml/labels/labels.csv",
+        help="Path to labels taxonomy CSV.",
+    )
+    parser.add_argument(
+        "--carcinoma-csv",
+        default="ml/data/dataCarcinoma.csv",
+        help="Auxiliary label CSV containing carcinoma-positive anon_ids.",
+    )
+    parser.add_argument(
+        "--sarcoma-csv",
+        default="ml/data/dataSarcoma.csv",
+        help="Auxiliary label CSV containing sarcoma-positive anon_ids.",
+    )
+    parser.add_argument(
+        "--use-auxiliary-labels",
+        action="store_true",
+        help="Use carcinoma/sarcoma CSVs as extra supervision by anon_id.",
     )
     return parser
 
@@ -62,9 +78,12 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         max_length=args.max_length,
         neighbors_k=args.neighbors_k,
         task=args.task,
-        keyword_min_conf=args.keyword_min_conf,
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
+        labels_csv_path=args.labels_csv,
+        carcinoma_csv_path=args.carcinoma_csv,
+        sarcoma_csv_path=args.sarcoma_csv,
+        use_auxiliary_labels=args.use_auxiliary_labels,
     )
 
 
@@ -81,4 +100,3 @@ def main() -> int:
     print(outputs.npz)
     print(outputs.summary_json)
     return 0
-

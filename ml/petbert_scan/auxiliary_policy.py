@@ -34,6 +34,10 @@ class AuxiliaryLabelPolicy:
         sarcoma_candidate_idx = candidate_indices_for_aux_label(self.labels, aux_label="sarcoma")
 
         for row_idx, anon_id in enumerate(ids):
+            if categorization.methods[row_idx] == "empty":
+                # Keep truly blank diagnosis rows blank, even if anon_id is in aux sets.
+                continue
+
             is_carcinoma = anon_id in carcinoma_ids
             is_sarcoma = anon_id in sarcoma_ids
             if is_carcinoma and is_sarcoma:

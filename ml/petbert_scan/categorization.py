@@ -53,7 +53,7 @@ def run_hybrid_categorization(
 
     for idx, text in enumerate(texts):
         if not text:
-            final_labels.append("Uncategorized")
+            final_labels.append("")
             final_indices.append(-1)
             final_scores.append(0.0)
             methods.append("empty")

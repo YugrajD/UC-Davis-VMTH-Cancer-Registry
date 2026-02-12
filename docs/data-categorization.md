@@ -97,10 +97,10 @@ This is the main output mapping used downstream.
 
 Default outputs are written to the configured `--out-dir`:
 
-- `petbert_scan_rows.csv`
-- `petbert_scan_categories.csv`
-- `petbert_scan_embeddings.npz`
-- `petbert_scan_summary.json`
+- `petbert_scan_rows.csv`: Full row-level output with input columns, final predictions, confidence/method, and PCA coordinates.
+- `petbert_scan_categories.csv`: Classification-focused row-level output with taxonomy mapping (`predicted_term`, `predicted_group`, `predicted_code`).
+- `petbert_scan_embeddings.npz`: Compressed NumPy artifact containing embedding vectors plus aligned `ids` and `texts`.
+- `petbert_scan_summary.json`: Run metadata and aggregate counts (predicted term/group/code distributions and method counts).
 
 Key output columns include:
 

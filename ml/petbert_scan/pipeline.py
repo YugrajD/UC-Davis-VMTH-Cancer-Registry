@@ -1,4 +1,16 @@
-"""Top-level orchestration for reading input, running categorization, and writing outputs."""
+"""Top-level orchestration for reading input, running categorization, and writing outputs.
+
+This is the main entry point for the data categorization pipeline. The high-level flow is:
+
+  1. Load and clean clinical diagnosis text from a CSV.
+  2. Embed every diagnosis string with PetBERT (produces a 768-dim vector per row).
+  3. Load the Vet-ICD-O taxonomy and embed each label the same way.
+  4. Compare diagnosis embeddings to label embeddings via cosine similarity.
+  5. Pick the closest taxonomy label for each row (with a confidence threshold).
+  6. Optionally override predictions using auxiliary carcinoma/sarcoma patient lists.
+  7. Map the chosen label index back to its ICD-O code, group, and term.
+  8. Write all results to CSV / NPZ / JSON output files.
+"""
 
 import pandas as pd
 import numpy as np
@@ -22,19 +34,37 @@ from .utils import clean_text, device_from_arg
 
 
 def run_scan(config: ScanConfig) -> ScanOutputs:
+    """Execute the full categorization pipeline end-to-end.
+
+    Reads clinical diagnosis rows, embeds them with PetBERT, matches each to
+    the closest Vet-ICD-O taxonomy label by cosine similarity, and writes the
+    results to disk.
+    """
+
+    # --- Step 0: Prepare output file paths -----------------------------------
     outputs = build_outputs(config.out_dir, config.task)
 
-    dataframe = pd.read_csv(config.csv_path)
+    # --- Step 1: Load input data ---------------------------------------------
+    # Read the CSV containing patient IDs and clinical diagnosis free-text.
+    dataframe = pd.read_csv(config.csv_path, encoding='latin-1')
     if config.max_rows is not None:
         dataframe = dataframe.head(config.max_rows).copy()
     _validate_columns(dataframe, config.id_col, config.text_col)
 
+    # Clean every cell (strip whitespace, coerce NaN to empty string).
     ids = dataframe[config.id_col].map(clean_text).tolist()
     texts = dataframe[config.text_col].map(clean_text).tolist()
     char_lens = np.array([len(text) for text in texts], dtype=np.int32)
 
+    # --- Step 2: Embed diagnosis texts with PetBERT --------------------------
+    # Load the pre-trained PetBERT tokenizer + model from HuggingFace (or local cache).
     tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
     torch_device = device_from_arg(config.device)
+
+    # Produce a (num_rows, 768) embedding matrix -- one 768-dim vector per row.
+    # Each text is tokenized (padded/truncated to max_length=256), run through
+    # PetBERT's transformer layers, and the [CLS] token's hidden state is taken
+    # as the fixed-size representation of the entire input text.
     embeddings, token_counts = embed_texts(
         tokenizer,
         model,
@@ -44,6 +74,14 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         max_length=config.max_length,
     )
 
+    # --- Step 3: Build & embed taxonomy labels --------------------------------
+    # Load the Vet-ICD-O-canine-1 taxonomy (~857 unique labels), each with a
+    # term, group, and ICD-O code.  Convert each label to a descriptive sentence
+    # like:
+    #   "Veterinary diagnosis term: Hemangiosarcoma, NOS. Group: Blood vessel
+    #    tumors. Code: 9120/3."
+    # Then embed those sentences through the *same* PetBERT model so that the
+    # diagnosis embeddings and label embeddings live in the same vector space.
     label_catalog = label_catalog_for_config(config)
     label_embeddings, _ = embed_texts(
         tokenizer,
@@ -54,6 +92,11 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         max_length=config.max_length,
     )
 
+    # --- Step 4: Compare & categorize ----------------------------------------
+    # For each diagnosis embedding, compute cosine similarity against every
+    # label embedding, then pick the label with the highest similarity score.
+    # If that best score is below the confidence threshold (default 0.6), the
+    # row is marked "Uncategorized" / method="low_confidence" instead.
     categorization = run_hybrid_categorization(
         texts=texts,
         text_embeddings=embeddings,
@@ -62,20 +105,31 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         embedding_min_sim=config.embedding_min_sim,
     )
 
+    # --- Step 5: Optional auxiliary label override ----------------------------
+    # If --use-auxiliary-labels is set, patients known to have carcinoma or
+    # sarcoma (via external CSV lists of patient IDs) get their prediction
+    # constrained to only labels whose term contains "carcinoma" or "sarcoma".
+    # The highest-scoring label within that constrained subset is chosen.
     auxiliary_decision = AuxiliaryLabelPolicy(config, label_catalog.labels).apply(
         ids=ids,
         categorization=categorization,
     )
 
+    # --- Step 6: Map label index -> ICD code, group, term --------------------
+    # Each row's final_index points into the taxonomy list.  This step
+    # resolves the index to the human-readable term, group name, and
+    # Vet-ICD-O-canine-1 code (e.g. "9120/3").
     matched_terms, matched_groups, matched_codes = resolve_taxonomy_matches(
         categorization.final_indices,
         label_catalog.labels,
         label_catalog.taxonomy_labels,
     )
 
+    # --- Step 7: PCA for 2-D visualization -----------------------------------
     pca = PCA(n_components=2, random_state=0)
     pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
 
+    # --- Step 8: Write output files ------------------------------------------
     write_rows_csv(
         path=outputs.rows_csv,
         row_count=len(texts),

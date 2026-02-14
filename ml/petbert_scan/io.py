@@ -45,12 +45,29 @@ def write_rows_csv(
     matched_groups: list[str],
     matched_codes: list[str],
     auxiliary_labels: list[str],
+    original_row_indices: list[int],
+    diagnosis_indices: list[int],
+    original_texts: list[str],
 ) -> pd.DataFrame:
+    """Write row-level output with one row per sub-diagnosis.
+
+    When a clinical entry contains multiple numbered diagnoses (e.g.
+    ``"1) Osteosarcoma 2) Cystitis"``), each sub-diagnosis produces its own
+    output row.  The ``row_index`` column links back to the original CSV row,
+    and ``diagnosis_index`` identifies the sub-diagnosis within that entry
+    (1-based, matching the ``1)``, ``2)`` numbering).
+
+    The ``text_col`` column contains the individual sub-diagnosis text that
+    was actually embedded and matched, while ``original_text`` preserves the
+    full unsplit clinical entry for reference.
+    """
     rows_df = pd.DataFrame(
         {
-            "row_index": np.arange(row_count, dtype=np.int32),
+            "row_index": original_row_indices,
+            "diagnosis_index": diagnosis_indices,
             id_col: ids,
             text_col: texts,
+            "original_text": original_texts,
             "char_len": char_lens,
             "token_count": token_counts,
             "predicted_category": final_labels,
@@ -92,12 +109,40 @@ def write_categories_csv(
     matched_codes: list[str],
     auxiliary_labels: list[str],
     include_score_columns: bool = True,
+    original_row_indices: list[int] | None = None,
+    diagnosis_indices: list[int] | None = None,
+    original_texts: list[str] | None = None,
 ) -> pd.DataFrame:
-    category_df = pd.DataFrame(
+    """Write classification-focused output with one row per sub-diagnosis.
+
+    Includes the same multi-diagnosis provenance columns as
+    :func:`write_rows_csv` (``row_index``, ``diagnosis_index``,
+    ``original_text``) so that sub-diagnoses can be traced back to
+    their original clinical entry.
+    """
+    data: dict = {
+        "row_index": (
+            original_row_indices
+            if original_row_indices is not None
+            else list(np.arange(row_count, dtype=np.int32))
+        ),
+    }
+
+    if diagnosis_indices is not None:
+        data["diagnosis_index"] = diagnosis_indices
+
+    data.update(
         {
-            "row_index": np.arange(row_count, dtype=np.int32),
             id_col: ids,
             text_col: texts,
+        }
+    )
+
+    if original_texts is not None:
+        data["original_text"] = original_texts
+
+    data.update(
+        {
             "predicted_category": final_labels,
             "predicted_term": matched_terms,
             "predicted_group": matched_groups,
@@ -112,6 +157,9 @@ def write_categories_csv(
             "embedding_similarity": embedding_scores,
         }
     )
+
+    category_df = pd.DataFrame(data)
+
     if include_score_columns:
         for label_idx, label_name in enumerate(labels):
             score_column = f"score_{label_name.lower().replace(' ', '_')}"

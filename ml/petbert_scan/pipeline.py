@@ -2,14 +2,16 @@
 
 This is the main entry point for the data categorization pipeline. The high-level flow is:
 
-  1. Load and clean clinical diagnosis text from a CSV.
-  2. Embed every diagnosis string with PetBERT (produces a 768-dim vector per row).
-  3. Load the Vet-ICD-O taxonomy and embed each label the same way.
-  4. Compare diagnosis embeddings to label embeddings via cosine similarity.
-  5. Pick the closest taxonomy label for each row (with a confidence threshold).
-  6. Optionally override predictions using auxiliary carcinoma/sarcoma patient lists.
-  7. Map the chosen label index back to its ICD-O code, group, and term.
-  8. Write all results to CSV / NPZ / JSON output files.
+  1.   Load and clean clinical diagnosis text from a CSV.
+  1.5  Split multi-diagnosis entries into individual sub-diagnoses so that
+       each sub-diagnosis is embedded and categorized independently.
+  2.   Embed every sub-diagnosis string with PetBERT (768-dim vector each).
+  3.   Load the Vet-ICD-O taxonomy and embed each label the same way.
+  4.   Compare diagnosis embeddings to label embeddings via cosine similarity.
+  5.   Pick the closest taxonomy label for each sub-diagnosis (with a confidence threshold).
+  6.   Optionally override predictions using auxiliary carcinoma/sarcoma patient lists.
+  7.   Map the chosen label index back to its ICD-O code, group, and term.
+  8.   Write all results to CSV / NPZ / JSON output files.
 """
 
 import pandas as pd
@@ -30,15 +32,55 @@ from .io import (
 from labels.catalog import label_catalog_for_config
 from labels.projection import resolve_taxonomy_matches
 from .types import ScanConfig, ScanOutputs
-from .utils import clean_text, device_from_arg
+from .utils import clean_text, device_from_arg, split_numbered_diagnoses
+
+
+def _expand_multi_diagnoses(
+    ids: list[str], texts: list[str]
+) -> tuple[list[str], list[str], list[int], list[int], list[str]]:
+    """Split multi-diagnosis entries and expand all parallel lists.
+
+    Clinical entries formatted as ``"1) Osteosarcoma 2) Cystitis"`` are split
+    into individual sub-diagnosis strings.  Every other per-row list (IDs,
+    texts) is expanded so that downstream pipeline steps receive a flat list
+    of sub-diagnoses and can process them without knowing about the split.
+
+    Returns:
+        expanded_ids:          Patient ID repeated for each sub-diagnosis.
+        expanded_texts:        Individual sub-diagnosis strings.
+        original_row_indices:  Index of the original CSV row each sub-diagnosis
+                               came from (0-based).
+        diagnosis_indices:     Position of this sub-diagnosis within its
+                               original entry (1-based, matching the ``1)``,
+                               ``2)`` numbering in the source text).
+        original_texts:        The full unsplit text for each sub-diagnosis
+                               (duplicated so it aligns with the expanded
+                               lists).
+    """
+    expanded_ids: list[str] = []
+    expanded_texts: list[str] = []
+    original_row_indices: list[int] = []
+    diagnosis_indices: list[int] = []
+    original_texts: list[str] = []
+
+    for row_idx, (patient_id, text) in enumerate(zip(ids, texts)):
+        sub_diagnoses = split_numbered_diagnoses(text)
+        for diag_idx, sub_text in enumerate(sub_diagnoses, start=1):
+            expanded_ids.append(patient_id)
+            expanded_texts.append(sub_text)
+            original_row_indices.append(row_idx)
+            diagnosis_indices.append(diag_idx)
+            original_texts.append(text)
+
+    return expanded_ids, expanded_texts, original_row_indices, diagnosis_indices, original_texts
 
 
 def run_scan(config: ScanConfig) -> ScanOutputs:
     """Execute the full categorization pipeline end-to-end.
 
-    Reads clinical diagnosis rows, embeds them with PetBERT, matches each to
-    the closest Vet-ICD-O taxonomy label by cosine similarity, and writes the
-    results to disk.
+    Reads clinical diagnosis rows, splits multi-diagnosis entries, embeds
+    each sub-diagnosis with PetBERT, matches it to the closest Vet-ICD-O
+    taxonomy label by cosine similarity, and writes the results to disk.
     """
 
     # --- Step 0: Prepare output file paths -----------------------------------
@@ -54,21 +96,35 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     # Clean every cell (strip whitespace, coerce NaN to empty string).
     ids = dataframe[config.id_col].map(clean_text).tolist()
     texts = dataframe[config.text_col].map(clean_text).tolist()
-    char_lens = np.array([len(text) for text in texts], dtype=np.int32)
+
+    # --- Step 1.5: Split multi-diagnosis entries ------------------------------
+    # Clinical entries often contain multiple diagnoses numbered as
+    # "1) Osteosarcoma 2) Chronic cystitis".  Split these into individual
+    # sub-diagnoses so each one is embedded and categorized independently.
+    # This expands N input rows into M sub-diagnosis rows (M >= N).
+    (
+        expanded_ids,
+        expanded_texts,
+        original_row_indices,
+        diagnosis_indices,
+        original_texts,
+    ) = _expand_multi_diagnoses(ids, texts)
+
+    char_lens = np.array([len(t) for t in expanded_texts], dtype=np.int32)
 
     # --- Step 2: Embed diagnosis texts with PetBERT --------------------------
     # Load the pre-trained PetBERT tokenizer + model from HuggingFace (or local cache).
     tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
     torch_device = device_from_arg(config.device)
 
-    # Produce a (num_rows, 768) embedding matrix -- one 768-dim vector per row.
+    # Produce a (M, 768) embedding matrix -- one 768-dim vector per sub-diagnosis.
     # Each text is tokenized (padded/truncated to max_length=256), run through
     # PetBERT's transformer layers, and the [CLS] token's hidden state is taken
     # as the fixed-size representation of the entire input text.
     embeddings, token_counts = embed_texts(
         tokenizer,
         model,
-        texts,
+        expanded_texts,
         device=torch_device,
         batch_size=config.batch_size,
         max_length=config.max_length,
@@ -93,12 +149,12 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     )
 
     # --- Step 4: Compare & categorize ----------------------------------------
-    # For each diagnosis embedding, compute cosine similarity against every
+    # For each sub-diagnosis embedding, compute cosine similarity against every
     # label embedding, then pick the label with the highest similarity score.
     # If that best score is below the confidence threshold (default 0.6), the
     # row is marked "Uncategorized" / method="low_confidence" instead.
     categorization = run_hybrid_categorization(
-        texts=texts,
+        texts=expanded_texts,
         text_embeddings=embeddings,
         label_embeddings=label_embeddings,
         labels=label_catalog.labels,
@@ -110,8 +166,10 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     # sarcoma (via external CSV lists of patient IDs) get their prediction
     # constrained to only labels whose term contains "carcinoma" or "sarcoma".
     # The highest-scoring label within that constrained subset is chosen.
+    # The expanded IDs ensure the override is applied to every sub-diagnosis
+    # belonging to that patient.
     auxiliary_decision = AuxiliaryLabelPolicy(config, label_catalog.labels).apply(
-        ids=ids,
+        ids=expanded_ids,
         categorization=categorization,
     )
 
@@ -130,11 +188,13 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
 
     # --- Step 8: Write output files ------------------------------------------
+    row_count = len(expanded_texts)
+
     write_rows_csv(
         path=outputs.rows_csv,
-        row_count=len(texts),
-        ids=ids,
-        texts=texts,
+        row_count=row_count,
+        ids=expanded_ids,
+        texts=expanded_texts,
         id_col=config.id_col,
         text_col=config.text_col,
         char_lens=char_lens,
@@ -148,13 +208,16 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         matched_groups=matched_groups,
         matched_codes=matched_codes,
         auxiliary_labels=auxiliary_decision.labels,
+        original_row_indices=original_row_indices,
+        diagnosis_indices=diagnosis_indices,
+        original_texts=original_texts,
     )
 
     category_df = write_categories_csv(
         path=outputs.categories_csv,
-        row_count=len(texts),
-        ids=ids,
-        texts=texts,
+        row_count=row_count,
+        ids=expanded_ids,
+        texts=expanded_texts,
         id_col=config.id_col,
         text_col=config.text_col,
         final_labels=categorization.final_labels,
@@ -172,6 +235,9 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         matched_codes=matched_codes,
         auxiliary_labels=auxiliary_decision.labels,
         include_score_columns=label_catalog.include_score_columns,
+        original_row_indices=original_row_indices,
+        diagnosis_indices=diagnosis_indices,
+        original_texts=original_texts,
     )
 
     if outputs.neighbors_csv is not None:
@@ -180,21 +246,22 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         )
         write_neighbors_csv(
             path=outputs.neighbors_csv,
-            ids=ids,
-            texts=texts,
+            ids=expanded_ids,
+            texts=expanded_texts,
             id_col=config.id_col,
             text_col=config.text_col,
             neighbor_idx=neighbor_idx,
             neighbor_sim=neighbor_sim,
         )
 
-    write_embeddings_npz(outputs.npz, embeddings, ids, texts)
+    write_embeddings_npz(outputs.npz, embeddings, expanded_ids, expanded_texts)
 
     summary = {
         "csv_path": config.csv_path,
         "model_name": config.model_name,
         "device": str(torch_device),
-        "rows": int(len(texts)),
+        "input_rows": int(len(texts)),
+        "expanded_rows": int(row_count),
         "task": config.task,
         "text_col": config.text_col,
         "id_col": config.id_col,

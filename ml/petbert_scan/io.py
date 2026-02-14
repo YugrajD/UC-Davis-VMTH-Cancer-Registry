@@ -99,6 +99,8 @@ def write_predictions_csv(
 def write_provenance_csv(
     *,
     path: str,
+    ids: list[str],
+    id_col: str,
     texts: list[str],
     char_lens: np.ndarray,
     token_counts: np.ndarray,
@@ -115,6 +117,7 @@ def write_provenance_csv(
     """Write the per-sub-diagnosis traceability and debug file."""
     prov_df = pd.DataFrame({
         "row_index": original_row_indices,
+        id_col: ids,
         "diagnosis_index": diagnosis_indices,
         "diagnosis_text": texts,
         "char_len": char_lens,

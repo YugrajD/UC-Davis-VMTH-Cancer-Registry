@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use only local cached model files (no network calls).",
     )
-    parser.add_argument("--out-dir", default="ml/output", help="Output directory")
+    parser.add_argument("--out-dir", default="ml/output/data", help="Output directory")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap on rows")
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size")
     parser.add_argument("--max-length", type=int, default=256, help="Tokenizer max_length")

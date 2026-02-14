@@ -363,6 +363,7 @@ be joined with the other per-sub-diagnosis files.
 | Column | Description |
 |--------|-------------|
 | `row_index` | Index of the original CSV row (0-based) |
+| `anon_id` | Patient identifier (matches the predictions CSV) |
 | `diagnosis_index` | Sub-diagnosis position within the original entry (1-based) |
 | `diagnosis_text` | The individual sub-diagnosis text that was embedded |
 | `char_len` | Character length of the sub-diagnosis text |
@@ -476,8 +477,19 @@ ml/.venv11/bin/python ml/scripts/petbert_scan.py \
 
 The `petbert_test.py` script (`ml/scripts/petbert_test.py`) evaluates how well
 the pipeline's predictions match a target keyword.  It reads the provenance
-output and reports what fraction of original clinical entries had at least one
-sub-diagnosis whose `predicted_category` contains the keyword.
+output and reports what fraction of entries had at least one sub-diagnosis whose
+`predicted_category` contains the keyword.
+
+### Grouping modes (`--group-by`)
+
+| Mode | Groups by | A match means... |
+|------|-----------|------------------|
+| `visit` (default) | `row_index` | Any sub-diagnosis of a single visit contains the keyword |
+| `patient` | `anon_id` | Any prediction across **all** visits for the same patient contains the keyword |
+
+The `patient` mode is useful when a single patient may have multiple visits in
+the input CSV.  If *any* of that patient's predictions contain the keyword, the
+patient counts as a match.
 
 ### How it works
 
@@ -485,36 +497,49 @@ sub-diagnosis whose `predicted_category` contains the keyword.
 2. Drop rows where `diagnosis_text` is empty.
 3. For each row, check whether `predicted_category` contains the keyword
    (case-insensitive).
-4. Group by `row_index` so that multi-diagnosis entries count as **one** match
-   if *any* sub-diagnosis hits.
-5. Report the number of valid entries, matches, and success rate.
+4. Group by `row_index` (visit mode) or `anon_id` (patient mode) so that
+   multi-diagnosis entries count as **one** match if *any* sub-diagnosis hits.
+5. Report the number of valid visits/patients, matches, and success rate.
 
 ### CLI options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--csv` | `ml/output/dataSarcoma/petbert_scan_provenance.csv` | Path to the provenance CSV to evaluate |
+| `--csv` | `ml/output/data/petbert_scan_provenance.csv` | Path to the provenance CSV to evaluate |
 | `--keyword` | `sarcoma` | Target keyword to search for in `predicted_category` |
+| `--group-by` | `visit` | Grouping mode: `visit` (by row_index) or `patient` (by anon_id) |
+| `--id-col` | `anon_id` | Column name for patient ID (only used in patient mode) |
 
 ### Examples
 
-**Evaluate sarcoma predictions** (default keyword):
+**Evaluate sarcoma predictions** (default -- group by visit):
 ```bash
-ml/.venv11/bin/python ml/scripts/petbert_test.py \
-  --csv ml/output/dataSarcoma/petbert_scan_provenance.csv
+ml/.venv11/bin/python ml/scripts/petbert_test.py
+```
+
+**Evaluate grouped by patient:**
+```bash
+ml/.venv11/bin/python ml/scripts/petbert_test.py --group-by patient
 ```
 
 **Evaluate with a different keyword:**
 ```bash
 ml/.venv11/bin/python ml/scripts/petbert_test.py \
-  --csv ml/output/data/petbert_scan_provenance.csv \
   --keyword lymphoma
 ```
 
 ### Sample output
 
+Visit mode:
 ```
-Valid entries: 92838
-Matches:       78412
-Success rate:  84.46%
+Valid visits: 92838
+Matches:      78412
+Success rate: 84.46%
+```
+
+Patient mode:
+```
+Total patients: 45219
+Matches:        39102
+Success rate:   86.47%
 ```

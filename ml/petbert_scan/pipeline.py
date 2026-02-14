@@ -209,6 +209,8 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
 
     provenance_df = write_provenance_csv(
         path=outputs.provenance_csv,
+        ids=expanded_ids,
+        id_col=config.id_col,
         texts=expanded_texts,
         char_lens=char_lens,
         token_counts=token_counts,

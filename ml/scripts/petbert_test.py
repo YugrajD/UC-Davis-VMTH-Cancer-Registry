@@ -1,4 +1,9 @@
 import argparse
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+print("[Warning]: `pyarrow` will become a required dependency of pandas 3.0.")
+
 import pandas as pd
 from pathlib import Path
 from typing import Union

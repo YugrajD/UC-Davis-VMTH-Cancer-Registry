@@ -8,10 +8,11 @@ This module handles the core ML operations:
   - Finding top-k nearest neighbors within an embedding matrix.
 """
 
-import warnings
+import math
 
 import numpy as np
 import torch
+from tqdm import tqdm
 from transformers import AutoModelForMaskedLM, AutoTokenizer
 
 
@@ -24,11 +25,8 @@ def load_tokenizer_and_model(
     on veterinary clinical text.  We use it as a feature extractor -- we never
     use the masked-LM head, only the base transformer's hidden states.
     """
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=".*resume_download.*", category=FutureWarning)
-        print("[Warning]: `resume_download` is deprecated and will be removed in version 1.0.0.")
-        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=local_only)
-        model = AutoModelForMaskedLM.from_pretrained(model_name, local_files_only=local_only)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=local_only)
+    model = AutoModelForMaskedLM.from_pretrained(model_name, local_files_only=local_only)
     return tokenizer, model
 
 
@@ -41,6 +39,7 @@ def embed_texts(
     device: torch.device,
     batch_size: int,
     max_length: int,
+    desc: str = "Embedding",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Convert a list of text strings into embedding vectors using PetBERT.
 
@@ -61,9 +60,10 @@ def embed_texts(
     model.eval()
     model.to(device)
 
+    num_batches = math.ceil(len(texts) / batch_size)
     all_embeddings: list[np.ndarray] = []
     all_token_counts: list[np.ndarray] = []
-    for start in range(0, len(texts), batch_size):
+    for start in tqdm(range(0, len(texts), batch_size), total=num_batches, desc=desc, unit="batch"):
         batch_texts = texts[start : start + batch_size]
 
         # Tokenize: converts raw text to input_ids + attention_mask tensors.

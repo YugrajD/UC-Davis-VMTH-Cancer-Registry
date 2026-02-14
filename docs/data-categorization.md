@@ -472,9 +472,49 @@ ml/.venv11/bin/python ml/scripts/petbert_scan.py \
   --local-only
 ```
 
-**Evaluate predictions** -- check how many entries match a keyword:
+## Testing Predictions
+
+The `petbert_test.py` script (`ml/scripts/petbert_test.py`) evaluates how well
+the pipeline's predictions match a target keyword.  It reads the provenance
+output and reports what fraction of original clinical entries had at least one
+sub-diagnosis whose `predicted_category` contains the keyword.
+
+### How it works
+
+1. Load the provenance CSV.
+2. Drop rows where `diagnosis_text` is empty.
+3. For each row, check whether `predicted_category` contains the keyword
+   (case-insensitive).
+4. Group by `row_index` so that multi-diagnosis entries count as **one** match
+   if *any* sub-diagnosis hits.
+5. Report the number of valid entries, matches, and success rate.
+
+### CLI options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--csv` | `ml/output/dataSarcoma/petbert_scan_provenance.csv` | Path to the provenance CSV to evaluate |
+| `--keyword` | `sarcoma` | Target keyword to search for in `predicted_category` |
+
+### Examples
+
+**Evaluate sarcoma predictions** (default keyword):
 ```bash
 ml/.venv11/bin/python ml/scripts/petbert_test.py \
-  --csv ml/output/dataSarcoma/petbert_scan_provenance.csv \
-  --keyword sarcoma
+  --csv ml/output/dataSarcoma/petbert_scan_provenance.csv
+```
+
+**Evaluate with a different keyword:**
+```bash
+ml/.venv11/bin/python ml/scripts/petbert_test.py \
+  --csv ml/output/data/petbert_scan_provenance.csv \
+  --keyword lymphoma
+```
+
+### Sample output
+
+```
+Valid entries: 92838
+Matches:       78412
+Success rate:  84.46%
 ```

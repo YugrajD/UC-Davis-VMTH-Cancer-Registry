@@ -130,6 +130,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         device=torch_device,
         batch_size=config.batch_size,
         max_length=config.max_length,
+        desc="Embedding diagnoses",
     )
 
     # --- Step 3: Build & embed taxonomy labels --------------------------------
@@ -148,6 +149,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         device=torch_device,
         batch_size=config.batch_size,
         max_length=config.max_length,
+        desc="Embedding labels",
     )
 
     # --- Step 4: Compare & categorize ----------------------------------------

@@ -23,11 +23,13 @@ from .categorization import run_hybrid_categorization
 from .embedding import embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from .io import (
     build_outputs,
-    write_categories_csv,
     write_embeddings_npz,
     write_neighbors_csv,
-    write_rows_csv,
+    write_predictions_csv,
+    write_provenance_csv,
+    write_similarity_csv,
     write_summary_json,
+    write_visualization_csv,
 )
 from labels.catalog import label_catalog_for_config
 from labels.projection import resolve_taxonomy_matches
@@ -190,54 +192,51 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     # --- Step 8: Write output files ------------------------------------------
     row_count = len(expanded_texts)
 
-    write_rows_csv(
-        path=outputs.rows_csv,
-        row_count=row_count,
+    write_predictions_csv(
+        path=outputs.predictions_csv,
         ids=expanded_ids,
-        texts=expanded_texts,
         id_col=config.id_col,
-        text_col=config.text_col,
+        matched_terms=matched_terms,
+        matched_groups=matched_groups,
+        matched_codes=matched_codes,
+        final_scores=categorization.final_scores,
+        methods=categorization.methods,
+        original_row_indices=original_row_indices,
+        original_texts=original_texts,
+    )
+
+    provenance_df = write_provenance_csv(
+        path=outputs.provenance_csv,
+        texts=expanded_texts,
         char_lens=char_lens,
         token_counts=token_counts,
         final_labels=categorization.final_labels,
         final_indices=categorization.final_indices,
-        final_scores=categorization.final_scores,
-        methods=categorization.methods,
-        pca_2d=pca_2d,
-        matched_terms=matched_terms,
-        matched_groups=matched_groups,
-        matched_codes=matched_codes,
         auxiliary_labels=auxiliary_decision.labels,
-        original_row_indices=original_row_indices,
-        diagnosis_indices=diagnosis_indices,
-        original_texts=original_texts,
-    )
-
-    category_df = write_categories_csv(
-        path=outputs.categories_csv,
-        row_count=row_count,
-        ids=expanded_ids,
-        texts=expanded_texts,
-        id_col=config.id_col,
-        text_col=config.text_col,
-        final_labels=categorization.final_labels,
-        final_indices=categorization.final_indices,
-        final_scores=categorization.final_scores,
-        methods=categorization.methods,
         keyword_labels=categorization.keyword_labels,
         keyword_scores=categorization.keyword_scores,
         embedding_labels=categorization.embedding_labels,
         embedding_scores=categorization.embedding_scores,
-        label_scores=categorization.label_scores,
-        labels=categorization.labels,
-        matched_terms=matched_terms,
-        matched_groups=matched_groups,
-        matched_codes=matched_codes,
-        auxiliary_labels=auxiliary_decision.labels,
-        include_score_columns=label_catalog.include_score_columns,
         original_row_indices=original_row_indices,
         diagnosis_indices=diagnosis_indices,
-        original_texts=original_texts,
+    )
+
+    write_similarity_csv(
+        path=outputs.similarity_csv,
+        original_row_indices=original_row_indices,
+        diagnosis_indices=diagnosis_indices,
+        label_scores=categorization.label_scores,
+        labels=categorization.labels,
+    )
+
+    write_visualization_csv(
+        path=outputs.visualization_csv,
+        ids=expanded_ids,
+        id_col=config.id_col,
+        matched_groups=matched_groups,
+        pca_2d=pca_2d,
+        original_row_indices=original_row_indices,
+        diagnosis_indices=diagnosis_indices,
     )
 
     if outputs.neighbors_csv is not None:
@@ -274,11 +273,11 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "use_auxiliary_labels": bool(config.use_auxiliary_labels),
         "carcinoma_csv_path": config.carcinoma_csv_path if config.use_auxiliary_labels else "",
         "sarcoma_csv_path": config.sarcoma_csv_path if config.use_auxiliary_labels else "",
-        "predicted_term_counts": category_df["predicted_term"].value_counts().to_dict(),
-        "predicted_group_counts": category_df["predicted_group"].value_counts().to_dict(),
-        "predicted_code_counts": category_df["predicted_code"].value_counts().to_dict(),
-        "prediction_method_counts": category_df["category_method"].value_counts().to_dict(),
-        "auxiliary_label_counts": category_df["auxiliary_label"].value_counts().to_dict(),
+        "predicted_term_counts": pd.Series(matched_terms).value_counts().to_dict(),
+        "predicted_group_counts": pd.Series(matched_groups).value_counts().to_dict(),
+        "predicted_code_counts": pd.Series(matched_codes).value_counts().to_dict(),
+        "prediction_method_counts": pd.Series(categorization.methods).value_counts().to_dict(),
+        "auxiliary_label_counts": provenance_df["auxiliary_label"].value_counts().to_dict(),
         "pca_explained_variance_ratio": pca.explained_variance_ratio_.tolist()
         if embeddings.size
         else [0.0, 0.0],

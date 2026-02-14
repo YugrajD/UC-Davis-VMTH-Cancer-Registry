@@ -1,4 +1,4 @@
-"""Output writers for scan rows, categories, neighbors, embeddings, and summary."""
+"""Output writers for predictions, provenance, similarity scores, visualization, neighbors, embeddings, and summary."""
 
 import json
 import os
@@ -18,154 +18,160 @@ def build_outputs(out_dir: str, task: TaskMode) -> ScanOutputs:
         else None
     )
     return ScanOutputs(
-        rows_csv=os.path.join(out_dir, "petbert_scan_rows.csv"),
-        categories_csv=os.path.join(out_dir, "petbert_scan_categories.csv"),
+        predictions_csv=os.path.join(out_dir, "petbert_scan_predictions.csv"),
+        provenance_csv=os.path.join(out_dir, "petbert_scan_provenance.csv"),
+        similarity_csv=os.path.join(out_dir, "petbert_scan_similarity_scores.csv"),
+        visualization_csv=os.path.join(out_dir, "petbert_scan_visualization.csv"),
         neighbors_csv=neighbors_csv,
         npz=os.path.join(out_dir, "petbert_scan_embeddings.npz"),
         summary_json=os.path.join(out_dir, "petbert_scan_summary.json"),
     )
 
 
-def write_rows_csv(
+def _concat_group(values: list[str], *, count: int) -> str:
+    """Concatenate sub-diagnosis values for a single patient row.
+
+    When *count* is 1 the value is returned as-is (no prefix).
+    When *count* > 1 each value is prefixed with ``"k) "`` and all are
+    joined with a space.
+    """
+    if count == 1:
+        return values[0]
+    return " ".join(f"{i}) {v}" for i, v in enumerate(values, start=1))
+
+
+def write_predictions_csv(
     *,
     path: str,
-    row_count: int,
     ids: list[str],
-    texts: list[str],
     id_col: str,
-    text_col: str,
+    matched_terms: list[str],
+    matched_groups: list[str],
+    matched_codes: list[str],
+    final_scores: list[float],
+    methods: list[str],
+    original_row_indices: list[int],
+    original_texts: list[str],
+) -> pd.DataFrame:
+    """Write the presentation-ready predictions file.
+
+    Collapses sub-diagnoses back to one row per original patient.
+    Multi-diagnosis entries are concatenated with ``1)``, ``2)`` prefixes;
+    single-diagnosis entries are shown plain.  ``predicted_code`` is blanked
+    for uncategorized predictions (method ``low_confidence`` or ``empty``).
+    """
+    # Build a per-sub-diagnosis frame first
+    codes_cleaned = [
+        code if method not in ("low_confidence", "empty") else ""
+        for code, method in zip(matched_codes, methods)
+    ]
+    scores_str = [f"{s:.2f}" for s in final_scores]
+
+    sub_df = pd.DataFrame({
+        "row_index": original_row_indices,
+        id_col: ids,
+        "original_text": original_texts,
+        "predicted_term": matched_terms,
+        "predicted_group": matched_groups,
+        "predicted_code": codes_cleaned,
+        "confidence": scores_str,
+        "method": methods,
+    })
+
+    # Group by original row and concatenate
+    concat_cols = ["predicted_term", "predicted_group", "predicted_code", "confidence", "method"]
+    rows = []
+    for row_idx, group in sub_df.groupby("row_index", sort=True):
+        count = len(group)
+        row = {
+            id_col: group[id_col].iloc[0],
+            "original_text": group["original_text"].iloc[0],
+        }
+        for col in concat_cols:
+            row[col] = _concat_group(group[col].tolist(), count=count)
+        rows.append(row)
+
+    pred_df = pd.DataFrame(rows)
+    pred_df.to_csv(path, index=False)
+    return pred_df
+
+
+def write_provenance_csv(
+    *,
+    path: str,
+    texts: list[str],
     char_lens: np.ndarray,
     token_counts: np.ndarray,
     final_labels: list[str],
     final_indices: list[int],
-    final_scores: list[float],
-    methods: list[str],
-    pca_2d: np.ndarray,
-    matched_terms: list[str],
-    matched_groups: list[str],
-    matched_codes: list[str],
     auxiliary_labels: list[str],
-    original_row_indices: list[int],
-    diagnosis_indices: list[int],
-    original_texts: list[str],
-) -> pd.DataFrame:
-    """Write row-level output with one row per sub-diagnosis.
-
-    When a clinical entry contains multiple numbered diagnoses (e.g.
-    ``"1) Osteosarcoma 2) Cystitis"``), each sub-diagnosis produces its own
-    output row.  The ``row_index`` column links back to the original CSV row,
-    and ``diagnosis_index`` identifies the sub-diagnosis within that entry
-    (1-based, matching the ``1)``, ``2)`` numbering).
-
-    The ``text_col`` column contains the individual sub-diagnosis text that
-    was actually embedded and matched, while ``original_text`` preserves the
-    full unsplit clinical entry for reference.
-    """
-    rows_df = pd.DataFrame(
-        {
-            "row_index": original_row_indices,
-            "diagnosis_index": diagnosis_indices,
-            id_col: ids,
-            text_col: texts,
-            "original_text": original_texts,
-            "char_len": char_lens,
-            "token_count": token_counts,
-            "predicted_category": final_labels,
-            "predicted_term": matched_terms,
-            "predicted_group": matched_groups,
-            "predicted_code": matched_codes,
-            "auxiliary_label": auxiliary_labels,
-            "predicted_label_index": final_indices,
-            "category_confidence": final_scores,
-            "category_method": methods,
-            "pca1": pca_2d[:, 0],
-            "pca2": pca_2d[:, 1],
-        }
-    )
-    rows_df.to_csv(path, index=False)
-    return rows_df
-
-
-def write_categories_csv(
-    *,
-    path: str,
-    row_count: int,
-    ids: list[str],
-    texts: list[str],
-    id_col: str,
-    text_col: str,
-    final_labels: list[str],
-    final_indices: list[int],
-    final_scores: list[float],
-    methods: list[str],
     keyword_labels: list[str],
     keyword_scores: list[float],
     embedding_labels: np.ndarray,
     embedding_scores: np.ndarray,
+    original_row_indices: list[int],
+    diagnosis_indices: list[int],
+) -> pd.DataFrame:
+    """Write the per-sub-diagnosis traceability and debug file."""
+    prov_df = pd.DataFrame({
+        "row_index": original_row_indices,
+        "diagnosis_index": diagnosis_indices,
+        "diagnosis_text": texts,
+        "char_len": char_lens,
+        "token_count": token_counts,
+        "predicted_category": final_labels,
+        "auxiliary_label": auxiliary_labels,
+        "predicted_label_index": final_indices,
+        "keyword_category": keyword_labels,
+        "keyword_confidence": keyword_scores,
+        "embedding_category": embedding_labels,
+        "embedding_similarity": embedding_scores,
+    })
+    prov_df.to_csv(path, index=False)
+    return prov_df
+
+
+def write_similarity_csv(
+    *,
+    path: str,
+    original_row_indices: list[int],
+    diagnosis_indices: list[int],
     label_scores: np.ndarray,
     labels: list[str],
-    matched_terms: list[str],
-    matched_groups: list[str],
-    matched_codes: list[str],
-    auxiliary_labels: list[str],
-    include_score_columns: bool = True,
-    original_row_indices: list[int] | None = None,
-    diagnosis_indices: list[int] | None = None,
-    original_texts: list[str] | None = None,
-) -> pd.DataFrame:
-    """Write classification-focused output with one row per sub-diagnosis.
-
-    Includes the same multi-diagnosis provenance columns as
-    :func:`write_rows_csv` (``row_index``, ``diagnosis_index``,
-    ``original_text``) so that sub-diagnoses can be traced back to
-    their original clinical entry.
-    """
-    data: dict = {
-        "row_index": (
-            original_row_indices
-            if original_row_indices is not None
-            else list(np.arange(row_count, dtype=np.int32))
-        ),
+) -> None:
+    """Write the per-label cosine similarity score matrix."""
+    key_df = pd.DataFrame({
+        "row_index": original_row_indices,
+        "diagnosis_index": diagnosis_indices,
+    })
+    score_columns = {
+        f"score_{name.lower().replace(' ', '_')}": label_scores[:, idx].astype(np.float32, copy=False)
+        for idx, name in enumerate(labels)
     }
+    sim_df = pd.concat([key_df, pd.DataFrame(score_columns)], axis=1)
+    sim_df.to_csv(path, index=False)
 
-    if diagnosis_indices is not None:
-        data["diagnosis_index"] = diagnosis_indices
 
-    data.update(
-        {
-            id_col: ids,
-            text_col: texts,
-        }
-    )
-
-    if original_texts is not None:
-        data["original_text"] = original_texts
-
-    data.update(
-        {
-            "predicted_category": final_labels,
-            "predicted_term": matched_terms,
-            "predicted_group": matched_groups,
-            "predicted_code": matched_codes,
-            "auxiliary_label": auxiliary_labels,
-            "predicted_label_index": final_indices,
-            "category_confidence": final_scores,
-            "category_method": methods,
-            "keyword_category": keyword_labels,
-            "keyword_confidence": keyword_scores,
-            "embedding_category": embedding_labels,
-            "embedding_similarity": embedding_scores,
-        }
-    )
-
-    category_df = pd.DataFrame(data)
-
-    if include_score_columns:
-        for label_idx, label_name in enumerate(labels):
-            score_column = f"score_{label_name.lower().replace(' ', '_')}"
-            category_df[score_column] = label_scores[:, label_idx].astype(np.float32, copy=False)
-    category_df.to_csv(path, index=False)
-    return category_df
+def write_visualization_csv(
+    *,
+    path: str,
+    ids: list[str],
+    id_col: str,
+    matched_groups: list[str],
+    pca_2d: np.ndarray,
+    original_row_indices: list[int],
+    diagnosis_indices: list[int],
+) -> None:
+    """Write the PCA visualization coordinates."""
+    viz_df = pd.DataFrame({
+        "row_index": original_row_indices,
+        "diagnosis_index": diagnosis_indices,
+        id_col: ids,
+        "predicted_group": matched_groups,
+        "pca1": pca_2d[:, 0],
+        "pca2": pca_2d[:, 1],
+    })
+    viz_df.to_csv(path, index=False)
 
 
 def write_neighbors_csv(

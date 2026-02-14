@@ -5,7 +5,7 @@ from typing import Union
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # ml/
-DEFAULT_CSV = BASE_DIR / "output" / "dataSarcoma" / "petbert_scan_categories.csv"
+DEFAULT_CSV = BASE_DIR / "output" / "dataSarcoma" / "petbert_scan_provenance.csv"
 
 
 def read_csv(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -29,7 +29,7 @@ def evaluate_predictions(df: pd.DataFrame, target: str = "sarcoma") -> dict:
     # entry when the column is absent (legacy output format).
     group_col = "row_index" if "row_index" in df.columns else None
 
-    valid = df["Clinical Diagnoses"].notna() & (df["Clinical Diagnoses"].str.strip() != "")
+    valid = df["diagnosis_text"].notna() & (df["diagnosis_text"].str.strip() != "")
     valid_df = df[valid].copy()
 
     valid_df["_hit"] = valid_df["predicted_category"].str.contains(target, case=False, na=False)

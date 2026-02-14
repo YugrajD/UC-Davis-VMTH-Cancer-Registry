@@ -30,8 +30,10 @@ class ScanConfig:
 
 @dataclass(frozen=True)
 class ScanOutputs:
-    rows_csv: str
-    categories_csv: str
+    predictions_csv: str
+    provenance_csv: str
+    similarity_csv: str
+    visualization_csv: str
     neighbors_csv: str | None
     npz: str
     summary_json: str

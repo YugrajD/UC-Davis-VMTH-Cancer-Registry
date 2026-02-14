@@ -327,30 +327,70 @@ Clinical Diagnoses: "Multicentric lymphoma stage IVa"
 
 ## Output Files
 
-Default outputs are written to the configured `--out-dir`:
+Default outputs are written to the configured `--out-dir`.  Each file serves a
+specific purpose so the data is easy to read and work with:
 
-| File | Description |
-|------|-------------|
-| `petbert_scan_rows.csv` | Full row-level output: one row per sub-diagnosis with predictions, confidence, method, PCA coordinates, and provenance columns |
-| `petbert_scan_categories.csv` | Classification-focused output with taxonomy mapping and per-label similarity scores |
-| `petbert_scan_embeddings.npz` | Compressed NumPy archive with the raw 768-dim embedding vectors, ids, and texts |
-| `petbert_scan_summary.json` | Run metadata and aggregate counts (term/group/code distributions, method counts, input vs expanded row counts) |
+| File | Rows | Purpose |
+|------|------|---------|
+| `petbert_scan_predictions.csv` | One per original patient | Presentation-ready results with concatenated multi-diagnosis predictions |
+| `petbert_scan_provenance.csv` | One per sub-diagnosis | Traceability and debug info: text stats, auxiliary labels, raw ML scores |
+| `petbert_scan_similarity_scores.csv` | One per sub-diagnosis | Full cosine similarity matrix (one column per taxonomy label) |
+| `petbert_scan_visualization.csv` | One per sub-diagnosis | PCA coordinates for 2-D plotting |
+| `petbert_scan_embeddings.npz` | N/A | Compressed NumPy archive with the raw 768-dim embedding vectors, ids, and texts |
+| `petbert_scan_summary.json` | N/A | Run metadata and aggregate counts (term/group/code distributions, method counts) |
 
-**Key output columns:**
+### `predictions.csv` columns
+
+For multi-diagnosis patients, values are concatenated with `1)`, `2)` prefixes.
+Single-diagnosis patients show plain values with no prefix.  `predicted_code`
+is blank for uncategorized predictions.
+
+| Column | Description |
+|--------|-------------|
+| `anon_id` | Patient identifier |
+| `original_text` | The full unsplit clinical text |
+| `predicted_term` | Taxonomy term(s) |
+| `predicted_group` | Tumor group(s) |
+| `predicted_code` | Vet-ICD-O-canine-1 code(s), blank when uncategorized |
+| `confidence` | Cosine similarity score(s) |
+| `method` | Classification method(s): `embedding`, `low_confidence`, or `empty` |
+
+### `provenance.csv` columns
+
+One row per sub-diagnosis.  Keyed by `row_index` + `diagnosis_index` so it can
+be joined with the other per-sub-diagnosis files.
 
 | Column | Description |
 |--------|-------------|
 | `row_index` | Index of the original CSV row (0-based) |
 | `diagnosis_index` | Sub-diagnosis position within the original entry (1-based) |
-| `original_text` | The full unsplit clinical text |
-| `Clinical Diagnoses` | The individual sub-diagnosis text used for embedding |
-| `predicted_term` | Taxonomy term name (e.g. "Hemangiosarcoma, NOS") |
-| `predicted_group` | Tumor category (e.g. "Blood vessel tumors") |
-| `predicted_code` | Vet-ICD-O-canine-1 code (e.g. "9120/3") |
-| `category_confidence` | Cosine similarity score (0.0 - 1.0) |
-| `category_method` | How the prediction was made (see table in Step 5 above) |
+| `diagnosis_text` | The individual sub-diagnosis text that was embedded |
+| `char_len` | Character length of the sub-diagnosis text |
+| `token_count` | Number of BERT tokens after tokenization |
+| `predicted_category` | Final label string (or "Uncategorized" / "") |
 | `auxiliary_label` | "carcinoma", "sarcoma", "conflict", or "" |
 | `predicted_label_index` | Integer index into the taxonomy list |
+| `keyword_category` | Reserved for future keyword classifier (empty) |
+| `keyword_confidence` | Reserved for future keyword scores (0.0) |
+| `embedding_category` | Raw top-1 label before confidence thresholding |
+| `embedding_similarity` | Raw top-1 cosine similarity score |
+
+### `similarity_scores.csv` columns
+
+One row per sub-diagnosis, keyed by `row_index` + `diagnosis_index`.  Contains
+one `score_*` column per taxonomy label (~857 columns) with the cosine
+similarity between the sub-diagnosis embedding and that label's embedding.
+
+### `visualization.csv` columns
+
+| Column | Description |
+|--------|-------------|
+| `row_index` | Index of the original CSV row (0-based) |
+| `diagnosis_index` | Sub-diagnosis position (1-based) |
+| `anon_id` | Patient identifier |
+| `predicted_group` | Tumor group (useful for coloring points) |
+| `pca1` | First PCA component |
+| `pca2` | Second PCA component |
 
 ## CLI Options
 
@@ -386,40 +426,55 @@ From `ml/requirements.txt`:
 
 ## Example Commands
 
-To run the model on the the data set w/ auxiliary labels:
+**Basic run** -- uses all defaults (`ml/data/data.csv`, PetBERT, threshold 0.6):
 ```bash
-ml/.venv11/bin/python ml/scripts/petbert_scan.py \
+ml/.venv11/bin/python ml/scripts/petbert_scan.py --local-only
 ```
 
-
+**Custom output directory:**
 ```bash
 ml/.venv11/bin/python ml/scripts/petbert_scan.py \
-  --csv ml/data/data.csv \
-  --id-col anon_id \
-  --text-col "Clinical Diagnoses" \
-  --labels-csv ml/labels/labels.csv \
-  --use-auxiliary-labels \
-  --carcinoma-csv ml/data/dataCarcinoma.csv \
-  --sarcoma-csv ml/data/dataSarcoma.csv \
-  --task categorize \
   --out-dir ml/output/data \
   --local-only
 ```
 
-Running the model with 
+**With auxiliary label overrides** -- constrains known carcinoma/sarcoma patients
+to matching taxonomy labels:
 ```bash
 ml/.venv11/bin/python ml/scripts/petbert_scan.py \
-  --csv ml/data/dataSarcomaComplete.csv \
-  --id-col anon_id \
-  --text-col "Clinical Diagnoses" \
-  --labels-csv ml/labels/labels.csv \
-  --task categorize \
-  --out-dir ml/output/dataSarcoma\
+  --use-auxiliary-labels \
+  --out-dir ml/output/data \
   --local-only
 ```
 
+**Different dataset** -- run on the full sarcoma dataset with a stricter
+confidence threshold:
+```bash
+ml/.venv11/bin/python ml/scripts/petbert_scan.py \
+  --csv ml/data/dataSarcomaComplete.csv \
+  --embedding-min-sim 0.7 \
+  --out-dir ml/output/dataSarcoma \
+  --local-only
+```
+
+**Quick test run** -- process only the first 50 rows:
+```bash
+ml/.venv11/bin/python ml/scripts/petbert_scan.py \
+  --max-rows 50 \
+  --local-only
+```
+
+**Include nearest-neighbor output** alongside categorization:
+```bash
+ml/.venv11/bin/python ml/scripts/petbert_scan.py \
+  --task both \
+  --neighbors-k 5 \
+  --local-only
+```
+
+**Evaluate predictions** -- check how many entries match a keyword:
 ```bash
 ml/.venv11/bin/python ml/scripts/petbert_test.py \
-  --csv ml/output/dataSarcoma/petbert_scan_categories.csv \
+  --csv ml/output/dataSarcoma/petbert_scan_provenance.csv \
   --keyword sarcoma
 ```

@@ -8,6 +8,8 @@ This module handles the core ML operations:
   - Finding top-k nearest neighbors within an embedding matrix.
 """
 
+import warnings
+
 import numpy as np
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer
@@ -22,8 +24,11 @@ def load_tokenizer_and_model(
     on veterinary clinical text.  We use it as a feature extractor -- we never
     use the masked-LM head, only the base transformer's hidden states.
     """
-    tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=local_only)
-    model = AutoModelForMaskedLM.from_pretrained(model_name, local_files_only=local_only)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*resume_download.*", category=FutureWarning)
+        print("[Warning]: `resume_download` is deprecated and will be removed in version 1.0.0.")
+        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=local_only)
+        model = AutoModelForMaskedLM.from_pretrained(model_name, local_files_only=local_only)
     return tokenizer, model
 
 

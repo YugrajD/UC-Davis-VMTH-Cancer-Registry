@@ -93,8 +93,10 @@ def main() -> int:
     outputs = run_scan(build_config(args))
 
     print("Wrote:")
-    print(outputs.rows_csv)
-    print(outputs.categories_csv)
+    print(outputs.predictions_csv)
+    print(outputs.provenance_csv)
+    print(outputs.similarity_csv)
+    print(outputs.visualization_csv)
     if outputs.neighbors_csv is not None:
         print(outputs.neighbors_csv)
     print(outputs.npz)

@@ -386,6 +386,12 @@ From `ml/requirements.txt`:
 
 ## Example Commands
 
+To run the model on the the data set w/ auxiliary labels:
+```bash
+ml/.venv11/bin/python ml/scripts/petbert_scan.py \
+```
+
+
 ```bash
 ml/.venv11/bin/python ml/scripts/petbert_scan.py \
   --csv ml/data/data.csv \
@@ -400,6 +406,7 @@ ml/.venv11/bin/python ml/scripts/petbert_scan.py \
   --local-only
 ```
 
+Running the model with 
 ```bash
 ml/.venv11/bin/python ml/scripts/petbert_scan.py \
   --csv ml/data/dataSarcomaComplete.csv \

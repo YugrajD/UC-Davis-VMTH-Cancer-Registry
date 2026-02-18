@@ -91,6 +91,8 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     # --- Step 1: Load input data ---------------------------------------------
     # Read the CSV containing patient IDs and clinical diagnosis free-text.
     dataframe = pd.read_csv(config.csv_path, encoding='latin-1')
+    # Strip UTF-8 BOM from column names (e.g. ï»¿ prefix from Excel-exported CSVs)
+    dataframe.columns = [col.lstrip('\ufeff').lstrip('ï»¿') for col in dataframe.columns]
     if config.max_rows is not None:
         dataframe = dataframe.head(config.max_rows).copy()
     _validate_columns(dataframe, config.id_col, config.text_col)

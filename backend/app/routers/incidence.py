@@ -11,6 +11,14 @@ from app.schemas.schemas import IncidenceRecord, IncidenceResponse
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
 
+# Map frontend sex filter values to DB values
+SEX_MAP = {
+    "male_intact": "Male",
+    "male_neutered": "Neutered Male",
+    "female_intact": "Female",
+    "female_spayed": "Spayed Female",
+}
+
 
 def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[List[str]],
                    county: Optional[List[str]], year_start: Optional[int],
@@ -27,8 +35,9 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
         stmt = stmt.where(func.extract("year", CancerCase.diagnosis_date) >= year_start)
     if year_end:
         stmt = stmt.where(func.extract("year", CancerCase.diagnosis_date) <= year_end)
-    if sex and sex != "All":
-        stmt = stmt.where(Patient.sex.ilike(f"%{sex}%"))
+    if sex and sex not in ("All", "all"):
+        mapped_sex = SEX_MAP.get(sex, sex)
+        stmt = stmt.where(Patient.sex == mapped_sex)
     return stmt
 
 

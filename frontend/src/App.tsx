@@ -39,24 +39,49 @@ function App() {
         </p>
       </div>
 
+        {/* Error banner */}
+        {error && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
+            <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+            </svg>
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
         {/* Main content grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left column - Tables */}
           <div className="lg:col-span-2 space-y-6">
-            <SummaryTable data={regionSummary} />
-            <CountyTable 
-              data={countyData} 
-              countRange={countRange}
-              onCountyHover={setHoveredCounty}
-              selectedCounty={selectedCounty}
-            />
+            {loading ? (
+              <div className="bg-white rounded-lg border border-gray-200 p-12 flex flex-col items-center justify-center">
+                <div className="w-8 h-8 border-4 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+                <p className="mt-4 text-sm text-[var(--color-text-secondary)]">Loading data...</p>
+              </div>
+            ) : countyData.length === 0 && !error ? (
+              <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  No data found for the selected filters. Try adjusting your filter criteria.
+                </p>
+              </div>
+            ) : (
+              <>
+                <SummaryTable data={regionSummary} />
+                <CountyTable
+                  data={countyData}
+                  countRange={countRange}
+                  onCountyHover={setHoveredCounty}
+                  selectedCounty={selectedCounty}
+                />
+              </>
+            )}
           </div>
 
           {/* Right column - Filters and Map */}
           <div className="space-y-6">
             <Filters filters={filters} onFilterChange={setFilters} />
-            <ChoroplethMap 
-              data={countyData} 
+            <ChoroplethMap
+              data={countyData}
               countRange={countRange}
               hoveredCounty={hoveredCounty}
               onCountyHover={setHoveredCounty}

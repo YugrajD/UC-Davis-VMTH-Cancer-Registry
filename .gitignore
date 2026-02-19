@@ -70,3 +70,6 @@ database/data/*.tsv
 database/data/*.xlsx
 database/data/*.json
 !database/data/.gitkeep
+
+# PetBERT scan output (predictions, embeddings, etc.)
+database/output/

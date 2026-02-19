@@ -15,6 +15,14 @@ from app.schemas.schemas import (
 
 router = APIRouter(prefix="/api/v1/geo", tags=["geo"])
 
+# Map frontend sex filter values to DB values
+SEX_MAP = {
+    "male_intact": "Male",
+    "male_neutered": "Neutered Male",
+    "female_intact": "Female",
+    "female_spayed": "Spayed Female",
+}
+
 
 @router.get("/counties", response_model=GeoJSONResponse)
 async def get_counties_geojson(
@@ -31,18 +39,16 @@ async def get_counties_geojson(
     if species:
         conditions.append("s.name = ANY(:species)")
         params["species"] = species
-    if cancer_type:
-        conditions.append("ct.name = ANY(:cancer_type)")
-        params["cancer_type"] = cancer_type
     if year_start:
         conditions.append("EXTRACT(YEAR FROM cc.diagnosis_date) >= :year_start")
         params["year_start"] = year_start
     if year_end:
         conditions.append("EXTRACT(YEAR FROM cc.diagnosis_date) <= :year_end")
         params["year_end"] = year_end
-    if sex and sex != "All":
-        conditions.append("p.sex ILIKE :sex")
-        params["sex"] = f"%{sex}%"
+    if sex and sex != "All" and sex != "all":
+        mapped_sex = SEX_MAP.get(sex, sex)
+        conditions.append("p.sex = :sex")
+        params["sex"] = mapped_sex
 
     conditions.append("p.data_source = 'petbert'")
     # If filtering by cancer_type, restrict to cases that have that diagnosis
@@ -51,6 +57,7 @@ async def get_counties_geojson(
             "cc.id IN (SELECT cd.case_id FROM case_diagnoses cd "
             "JOIN cancer_types ct ON ct.id = cd.cancer_type_id WHERE ct.name = ANY(:cancer_type))"
         )
+        params["cancer_type"] = cancer_type
     where_clause = " AND ".join(conditions)
 
     query = text(f"""

@@ -11,6 +11,14 @@ from app.schemas.schemas import TrendsResponse, TrendSeries, TrendPoint
 
 router = APIRouter(prefix="/api/v1/trends", tags=["trends"])
 
+# Map frontend sex filter values to DB values
+SEX_MAP = {
+    "male_intact": "Male",
+    "male_neutered": "Neutered Male",
+    "female_intact": "Female",
+    "female_spayed": "Spayed Female",
+}
+
 
 @router.get("/yearly", response_model=TrendsResponse)
 async def get_yearly_trends(
@@ -41,8 +49,9 @@ async def get_yearly_trends(
         stmt = stmt.where(Species.name.in_(species))
     if county:
         stmt = stmt.where(County.name.in_(county))
-    if sex and sex != "All":
-        stmt = stmt.where(Patient.sex.ilike(f"%{sex}%"))
+    if sex and sex not in ("All", "all"):
+        mapped_sex = SEX_MAP.get(sex, sex)
+        stmt = stmt.where(Patient.sex == mapped_sex)
 
     stmt = stmt.group_by(func.extract("year", CancerCase.diagnosis_date)).order_by(
         func.extract("year", CancerCase.diagnosis_date)
@@ -86,8 +95,9 @@ async def get_trends_by_cancer_type(
         stmt = stmt.where(Species.name.in_(species))
     if county:
         stmt = stmt.where(County.name.in_(county))
-    if sex and sex != "All":
-        stmt = stmt.where(Patient.sex.ilike(f"%{sex}%"))
+    if sex and sex not in ("All", "all"):
+        mapped_sex = SEX_MAP.get(sex, sex)
+        stmt = stmt.where(Patient.sex == mapped_sex)
 
     stmt = stmt.group_by(
         CancerType.name, func.extract("year", CancerCase.diagnosis_date)

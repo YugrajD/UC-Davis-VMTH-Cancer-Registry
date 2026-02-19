@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import type { TabType, FilterState } from './types';
 
@@ -14,7 +14,7 @@ function App() {
     breed: 'All Breeds',
   });
 
-  const { countyData, regionSummary, rateRange, loading, error } = useFilteredData(filters);
+  const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
 
   const handleCountyClick = (county: string) => {
     setSelectedCounty(selectedCounty === county ? null : county);
@@ -25,12 +25,16 @@ function App() {
       <Navigation activeTab={activeTab} onTabChange={setActiveTab} />
       
       <main className="max-w-[1400px] mx-auto px-6 py-6">
+        {activeTab === 'data-upload' ? (
+          <DataUpload />
+        ) : (
+        <>
         {/* Intro text */}
         <div className="mb-6 bg-white rounded-lg border border-gray-200 p-4">
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
-            This dashboard provides a customized interface for querying and visualizing population-based 
-            cancer incidence and mortality data for dogs across California. The data covers the 
-            UC Davis VMTH catchment area, which includes Northern California and the Central Valley 
+            This dashboard provides a customized interface for querying and visualizing
+            cancer incidence data for dogs across California. The data covers the
+            UC Davis VMTH catchment area, which includes Northern California and the Central Valley
             regions. Use the filters on the right to explore data by cancer type, breed, and sex.
         </p>
       </div>
@@ -42,7 +46,7 @@ function App() {
             <SummaryTable data={regionSummary} />
             <CountyTable 
               data={countyData} 
-              rateRange={rateRange}
+              countRange={countRange}
               onCountyHover={setHoveredCounty}
               selectedCounty={selectedCounty}
             />
@@ -53,7 +57,7 @@ function App() {
             <Filters filters={filters} onFilterChange={setFilters} />
             <ChoroplethMap 
               data={countyData} 
-              rateRange={rateRange}
+              countRange={countRange}
               hoveredCounty={hoveredCounty}
               onCountyHover={setHoveredCounty}
               onCountyClick={handleCountyClick}
@@ -68,7 +72,7 @@ function App() {
               Breed Disparities Analysis
             </h2>
             <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-              This section will display breed-specific cancer incidence rates and comparisons. 
+              This section will display breed-specific cancer case counts. 
               Select a specific breed from the filter to see detailed statistics.
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -76,9 +80,9 @@ function App() {
                 <div key={breed} className="bg-gray-50 rounded-lg p-4 text-center">
                   <p className="text-sm font-medium text-[var(--color-text-primary)]">{breed}</p>
                   <p className="text-2xl font-bold text-[var(--color-teal-dark)] mt-2">
-                    {(Math.random() * 50 + 30).toFixed(1)}
+                    {Math.floor(Math.random() * 80 + 20)}
                   </p>
-                  <p className="text-xs text-[var(--color-text-secondary)]">cases per 10,000</p>
+                  <p className="text-xs text-[var(--color-text-secondary)]">cases</p>
                 </div>
               ))}
             </div>
@@ -91,12 +95,13 @@ function App() {
               Cancer Types Distribution
             </h2>
             <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-              Overview of cancer types by incidence rate across California.
+              Overview of cancer types by case count across California.
             </p>
             <div className="space-y-3">
               {['Mast Cell Tumor', 'Lymphoma', 'Mammary Carcinoma', 'Hemangiosarcoma', 'Osteosarcoma', 'Soft Tissue Sarcoma'].map((type, i) => {
-                const rate = 50 - i * 6 + Math.random() * 5;
-                const width = (rate / 55) * 100;
+                const count = Math.floor(80 - i * 8 + Math.random() * 10);
+                const maxCount = 90;
+                const width = (count / maxCount) * 100;
                 return (
                   <div key={type} className="flex items-center gap-4">
                     <span className="w-40 text-sm text-[var(--color-text-primary)]">{type}</span>
@@ -105,7 +110,7 @@ function App() {
                         className="h-full bg-gradient-to-r from-[var(--color-teal)] to-[var(--color-teal-dark)] rounded-full flex items-center justify-end pr-2"
                         style={{ width: `${width}%` }}
                       >
-                        <span className="text-xs font-semibold text-white">{rate.toFixed(1)}</span>
+                        <span className="text-xs font-semibold text-white">{count}</span>
                       </div>
                     </div>
                   </div>
@@ -121,35 +126,22 @@ function App() {
               Regional Comparison
             </h2>
             <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-              Compare cancer incidence rates across California regions.
+              Case counts by region across California.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {[
-                { name: 'Bay Area', rate: 42.3, trend: 'up' },
-                { name: 'Northern CA', rate: 38.7, trend: 'down' },
-                { name: 'Central Valley', rate: 35.2, trend: 'stable' },
-                { name: 'Central Coast', rate: 40.1, trend: 'up' },
-                { name: 'Southern CA', rate: 44.8, trend: 'up' },
-              ].map(region => (
+              {regionSummary.children?.map(region => (
                 <div key={region.name} className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="font-medium text-[var(--color-text-primary)]">{region.name}</p>
-                    <span className={`text-xs px-2 py-0.5 rounded ${
-                      region.trend === 'up' ? 'bg-red-100 text-red-600' :
-                      region.trend === 'down' ? 'bg-green-100 text-green-600' :
-                      'bg-gray-200 text-gray-600'
-                    }`}>
-                      {region.trend === 'up' ? '↑' : region.trend === 'down' ? '↓' : '→'}
-                    </span>
-                  </div>
+                  <p className="font-medium text-[var(--color-text-primary)]">{region.name}</p>
                   <p className="text-3xl font-bold text-[var(--color-teal-dark)] mt-2">
-                    {region.rate}
+                    {region.count.toLocaleString()}
                   </p>
-                  <p className="text-xs text-[var(--color-text-secondary)]">per 10,000 dogs</p>
+                  <p className="text-xs text-[var(--color-text-secondary)]">cases</p>
                 </div>
-              ))}
+              )) ?? null}
             </div>
           </div>
+        )}
+        </>
         )}
       </main>
 

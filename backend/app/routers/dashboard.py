@@ -7,46 +7,57 @@ from sqlalchemy import text, select, func
 from app.database import get_db
 from app.schemas.schemas import DashboardSummary, SpeciesBreakdown, TopCancer, FilterOptions
 from app.models.models import (
-    Species, Breed, CancerType, County, Patient, CancerCase
+    Species, Breed, CancerType, County, Patient, CancerCase, CaseDiagnosis
 )
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 
+# Only count ingested (PetBERT) data; exclude mock/seed data
+_PETBERT_FILTER = Patient.data_source == "petbert"
+
+
 @router.get("/summary", response_model=DashboardSummary)
 async def get_summary(db: AsyncSession = Depends(get_db)):
-    # Total cases
-    result = await db.execute(select(func.count(CancerCase.id)))
+    # Total cases (ingested only)
+    result = await db.execute(
+        select(func.count(CancerCase.id))
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .where(_PETBERT_FILTER)
+    )
     total_cases = result.scalar() or 0
 
-    # Total patients
-    result = await db.execute(select(func.count(Patient.id)))
+    # Total patients (ingested only)
+    result = await db.execute(select(func.count(Patient.id)).where(_PETBERT_FILTER))
     total_patients = result.scalar() or 0
 
-    # Total counties with cases
+    # Total counties with cases (ingested only)
     result = await db.execute(
         select(func.count(func.distinct(CancerCase.county_id)))
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .where(_PETBERT_FILTER)
     )
     total_counties = result.scalar() or 0
 
-    # Year range
+    # Year range (ingested only; diagnosis_date may be null)
     result = await db.execute(
         select(
             func.min(func.extract("year", CancerCase.diagnosis_date)),
             func.max(func.extract("year", CancerCase.diagnosis_date))
         )
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .where(_PETBERT_FILTER)
     )
     row = result.one()
     year_range = [int(row[0] or 2015), int(row[1] or 2024)]
 
-    # Species breakdown
+    # Species breakdown (ingested only)
     result = await db.execute(
-        select(
-            Species.name,
-            func.count(CancerCase.id).label("cnt")
-        )
+        select(Species.name, func.count(CancerCase.id).label("cnt"))
+        .select_from(CancerCase)
         .join(Patient, Patient.id == CancerCase.patient_id)
         .join(Species, Species.id == Patient.species_id)
+        .where(_PETBERT_FILTER)
         .group_by(Species.name)
         .order_by(func.count(CancerCase.id).desc())
     )
@@ -60,26 +71,27 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
         for name, cnt in species_rows
     ]
 
-    # Top cancers
+    # Top cancers (ingested only; count diagnoses from case_diagnoses)
     result = await db.execute(
-        select(
-            CancerType.name,
-            func.count(CancerCase.id).label("cnt")
-        )
-        .join(CancerCase, CancerCase.cancer_type_id == CancerType.id)
+        select(CancerType.name, func.count(CaseDiagnosis.id).label("cnt"))
+        .select_from(CaseDiagnosis)
+        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(_PETBERT_FILTER)
         .group_by(CancerType.name)
-        .order_by(func.count(CancerCase.id).desc())
+        .order_by(func.count(CaseDiagnosis.id).desc())
         .limit(8)
     )
     top_cancers = [TopCancer(cancer_type=name, count=cnt) for name, cnt in result.all()]
 
-    # Top county
+    # Top county (ingested only)
     result = await db.execute(
-        select(
-            County.name,
-            func.count(CancerCase.id).label("cnt")
-        )
-        .join(CancerCase, CancerCase.county_id == County.id)
+        select(County.name, func.count(CancerCase.id).label("cnt"))
+        .select_from(CancerCase)
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(County, County.id == CancerCase.county_id)
+        .where(_PETBERT_FILTER)
         .group_by(County.name)
         .order_by(func.count(CancerCase.id).desc())
         .limit(1)

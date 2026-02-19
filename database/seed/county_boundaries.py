@@ -1,17 +1,32 @@
 #!/usr/bin/env python3
 """
-Load simplified county boundary geometries into PostGIS.
-Uses pre-defined simplified polygon coordinates for the 16 catchment area counties.
+Load county boundary geometries into PostGIS for geospatial (choropleth) maps.
+
+- If geo/data/ca_counties.geojson exists: loads all CA counties from that file
+  (generate it with: cd geo && python process_counties.py --all-ca).
+- Otherwise: loads the 16 UCD catchment counties from embedded COUNTY_GEOMETRIES.
 """
 
 import os
 import json
+import sys
+from pathlib import Path
+
 import psycopg2
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL_SYNC",
-    "postgresql://postgres:postgres@localhost:5432/vmth_cancer"
+    "postgresql://postgres:postgres@localhost:5432/vmth_cancer",
 )
+
+# Path to optional GeoJSON (all 58 CA counties). Set GEO_DATA_DIR in Docker to /geo/data.
+GEO_DATA_DIR = Path(os.getenv("GEO_DATA_DIR", ""))
+if not GEO_DATA_DIR:
+    script_dir = Path(__file__).resolve().parent
+    # Repo root: from database/seed go up to database, then to repo
+    repo_root = script_dir.parent.parent
+    GEO_DATA_DIR = repo_root / "geo" / "data"
+CA_COUNTIES_GEOJSON = GEO_DATA_DIR / "ca_counties.geojson"
 
 # Simplified bounding polygons for the 16 Northern CA counties in the UCD catchment area.
 # These are approximate but sufficient for a choropleth visualization.
@@ -104,19 +119,60 @@ COUNTY_GEOMETRIES = {
 }
 
 
+def _geom_to_multipolygon_json(geom_dict):
+    """Ensure geometry is MultiPolygon for PostGIS column."""
+    if geom_dict.get("type") == "Polygon":
+        return {"type": "MultiPolygon", "coordinates": [geom_dict["coordinates"]]}
+    return geom_dict
+
+
 def load_boundaries():
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
-    for county_name, geojson in COUNTY_GEOMETRIES.items():
-        geom_json = json.dumps(geojson)
-        cur.execute(
-            """UPDATE counties
-               SET geom = ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)
-               WHERE name = %s""",
-            (geom_json, county_name)
-        )
-        print(f"  Loaded geometry for {county_name}")
+    loaded = 0
+
+    # Prefer full CA GeoJSON if present (all 58 counties)
+    if CA_COUNTIES_GEOJSON.exists():
+        with open(CA_COUNTIES_GEOJSON, encoding="utf-8") as f:
+            data = json.load(f)
+        features = data.get("features", data) if isinstance(data, dict) else data
+        for feat in features:
+            props = feat.get("properties", {})
+            fips = props.get("GEOID") or props.get("fips_code") or props.get("FIPS")
+            name = props.get("NAME") or props.get("name")
+            geom = feat.get("geometry")
+            if not fips or not geom:
+                continue
+            geom = _geom_to_multipolygon_json(geom)
+            geom_json = json.dumps(geom)
+            cur.execute(
+                """UPDATE counties
+                   SET geom = ST_SetSRID(ST_Multi(ST_GeomFromGeoJSON(%s)), 4326)
+                   WHERE fips_code = %s""",
+                (geom_json, fips),
+            )
+            if cur.rowcount:
+                loaded += 1
+                print(f"  Loaded geometry for {name or fips}")
+        print(f"Loaded {loaded} county boundaries from {CA_COUNTIES_GEOJSON}.")
+    else:
+        for county_name, geojson in COUNTY_GEOMETRIES.items():
+            geom_json = json.dumps(geojson)
+            cur.execute(
+                """UPDATE counties
+                   SET geom = ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)
+                   WHERE name = %s""",
+                (geom_json, county_name),
+            )
+            if cur.rowcount:
+                loaded += 1
+            print(f"  Loaded geometry for {county_name}")
+        print(f"Loaded {loaded} catchment county boundaries (embedded).")
+        if loaded < 58:
+            print("  Tip: generate geo/data/ca_counties.geojson for all 58 CA counties:")
+            print("    cd geo && pip install geopandas && python download_boundaries.py")
+            print("    python process_counties.py --all-ca")
 
     conn.commit()
     cur.close()

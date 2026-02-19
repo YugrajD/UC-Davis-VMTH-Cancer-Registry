@@ -15,6 +15,10 @@ services:
       - ./database/migrations/003_counties.sql:/docker-entrypoint-initdb.d/003_counties.sql
       - ./database/migrations/004_core_tables.sql:/docker-entrypoint-initdb.d/004_core_tables.sql
       - ./database/migrations/005_pathology_reports.sql:/docker-entrypoint-initdb.d/005_pathology_reports.sql
+      - ./database/migrations/006_materialized_views.sql:/docker-entrypoint-initdb.d/006_materialized_views.sql
+      - ./database/migrations/007_ingestion_schema.sql:/docker-entrypoint-initdb.d/007_ingestion_schema.sql
+      - ./database/migrations/008_all_ca_counties.sql:/docker-entrypoint-initdb.d/008_all_ca_counties.sql
+      - ./database/migrations/009_one_case_per_patient.sql:/docker-entrypoint-initdb.d/009_one_case_per_patient.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d vmth_cancer"]
       interval: 5s
@@ -73,6 +77,44 @@ services:
     command: python /database/seed/seed_mock_data.py
     profiles:
       - seed
+
+  ingest:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vmth_cancer_ingest
+    environment:
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/vmth_cancer
+      DATA_DIR: /database/data
+      GEO_DATA_DIR: /geo/data
+    volumes:
+      - ./database:/database
+      - ./backend:/app
+      - ./geo:/geo
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python /database/seed/ingest_petbert.py
+    profiles:
+      - ingest
+
+  geo-seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vmth_cancer_geo_seed
+    environment:
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/vmth_cancer
+      GEO_DATA_DIR: /geo/data
+    volumes:
+      - ./database:/database
+      - ./geo:/geo
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python /database/seed/county_boundaries.py
+    profiles:
+      - geo-seed
 
 volumes:
   pgdata:

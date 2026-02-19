@@ -60,14 +60,8 @@ function SummaryRow({ item, depth, isExpanded, onToggle, expandedItems, onItemTo
             <span className="text-sm">{item.name}</span>
           </div>
         </td>
-        <td className="py-2 px-3 text-right text-sm tabular-nums">
-          {item.count.toLocaleString()}
-        </td>
-        <td className="py-2 px-3 text-right text-sm tabular-nums">
-          {item.population.toLocaleString()}
-        </td>
         <td className="py-2 px-3 text-right text-sm tabular-nums font-medium">
-          {item.rate.toFixed(1)}
+          {item.count.toLocaleString()}
         </td>
       </tr>
       
@@ -108,7 +102,7 @@ export function SummaryTable({ data }: SummaryTableProps) {
           Regional Summary
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-          Age-adjusted rates per 10,000 dog population
+          Case counts by region and county
         </p>
       </div>
       
@@ -121,12 +115,6 @@ export function SummaryTable({ data }: SummaryTableProps) {
               </th>
               <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
                 Count
-              </th>
-              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
-                Population
-              </th>
-              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
-                Rate
               </th>
             </tr>
           </thead>

@@ -4,3 +4,4 @@ export { SummaryTable } from './SummaryTable/SummaryTable';
 export { CountyTable } from './CountyTable/CountyTable';
 export { ChoroplethMap } from './ChoroplethMap/ChoroplethMap';
 export { Footer } from './Footer/Footer';
+export { DataUpload } from './DataUpload/DataUpload';

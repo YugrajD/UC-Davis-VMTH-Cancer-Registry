@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import dashboard, incidence, geo, trends, search
+from app.routers import dashboard, incidence, geo, trends, search, ingest
 
 app = FastAPI(
     title=settings.APP_TITLE,
@@ -25,6 +25,7 @@ app.include_router(incidence.router)
 app.include_router(geo.router)
 app.include_router(trends.router)
 app.include_router(search.router)
+app.include_router(ingest.router)
 
 
 @app.get("/")

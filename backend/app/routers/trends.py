@@ -6,7 +6,7 @@ from sqlalchemy import select, func
 from typing import Optional, List
 
 from app.database import get_db
-from app.models.models import CancerCase, CancerType, Patient, Species, County
+from app.models.models import CancerCase, CancerType, Patient, Species, County, CaseDiagnosis
 from app.schemas.schemas import TrendsResponse, TrendSeries, TrendPoint
 
 router = APIRouter(prefix="/api/v1/trends", tags=["trends"])
@@ -27,16 +27,18 @@ async def get_yearly_trends(
             func.count(CancerCase.id).filter(CancerCase.outcome == "deceased").label("deceased"),
             func.count(CancerCase.id).filter(CancerCase.outcome == "alive").label("alive"),
         )
+        .select_from(CancerCase)
         .join(Patient, CancerCase.patient_id == Patient.id)
         .join(Species, Patient.species_id == Species.id)
-        .join(CancerType, CancerCase.cancer_type_id == CancerType.id)
         .join(County, CancerCase.county_id == County.id)
+        .where(Patient.data_source == "petbert")
     )
-
+    if cancer_type:
+        stmt = stmt.join(CaseDiagnosis, CaseDiagnosis.case_id == CancerCase.id).join(
+            CancerType, CancerType.id == CaseDiagnosis.cancer_type_id
+        ).where(CancerType.name.in_(cancer_type))
     if species:
         stmt = stmt.where(Species.name.in_(species))
-    if cancer_type:
-        stmt = stmt.where(CancerType.name.in_(cancer_type))
     if county:
         stmt = stmt.where(County.name.in_(county))
     if sex and sex != "All":
@@ -68,16 +70,18 @@ async def get_trends_by_cancer_type(
         select(
             CancerType.name.label("cancer_type"),
             func.extract("year", CancerCase.diagnosis_date).label("year"),
-            func.count(CancerCase.id).label("count"),
-            func.count(CancerCase.id).filter(CancerCase.outcome == "deceased").label("deceased"),
-            func.count(CancerCase.id).filter(CancerCase.outcome == "alive").label("alive"),
+            func.count(CaseDiagnosis.id).label("count"),
+            func.count(CaseDiagnosis.id).filter(CancerCase.outcome == "deceased").label("deceased"),
+            func.count(CaseDiagnosis.id).filter(CancerCase.outcome == "alive").label("alive"),
         )
-        .join(CancerType, CancerCase.cancer_type_id == CancerType.id)
-        .join(Patient, CancerCase.patient_id == Patient.id)
+        .select_from(CaseDiagnosis)
+        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .join(Species, Patient.species_id == Species.id)
         .join(County, CancerCase.county_id == County.id)
+        .where(Patient.data_source == "petbert")
     )
-
     if species:
         stmt = stmt.where(Species.name.in_(species))
     if county:

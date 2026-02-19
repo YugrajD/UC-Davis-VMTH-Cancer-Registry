@@ -82,9 +82,7 @@ class IncidenceResponse(BaseModel):
 class GeoJSONFeatureProperties(BaseModel):
     name: str
     fips_code: str
-    population: Optional[int] = None
     total_cases: int
-    cases_per_capita: Optional[float] = None
     top_cancer: Optional[str] = None
 
 
@@ -160,3 +158,23 @@ class FilterOptions(BaseModel):
     counties: List[CountyOut]
     breeds: List[BreedOut]
     year_range: List[int]
+
+
+# --- Ingestion ---
+
+class IngestionRowResult(BaseModel):
+    row_number: int
+    anon_id: str
+    status: str  # "inserted", "skipped", "error"
+    message: Optional[str] = None
+    cancer_type: Optional[str] = None
+    confidence: Optional[float] = None
+
+
+class IngestionResponse(BaseModel):
+    total_rows: int
+    inserted: int
+    skipped: int
+    errors: int
+    warnings: List[str] = []
+    row_results: List[IngestionRowResult] = []

@@ -1,39 +1,28 @@
 #!/usr/bin/env python3
 """
-GeoPandas processing pipeline: filter US county shapefile to the 16 Northern CA
-counties in the UC Davis VMTH catchment area and export as GeoJSON.
+GeoPandas processing pipeline: filter US county shapefile to California counties
+and export as GeoJSON for PostGIS.
+
+  python process_counties.py          # 16 UCD catchment counties → catchment_counties.geojson
+  python process_counties.py --all-ca  # All 58 CA counties → ca_counties.geojson (for geo maps)
 """
 
+import argparse
 import os
-import json
 import geopandas as gpd
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 SHAPEFILE = os.path.join(DATA_DIR, "tl_2023_us_county.shp")
-OUTPUT_GEOJSON = os.path.join(DATA_DIR, "catchment_counties.geojson")
 
 # 16 Northern CA counties in the UCD catchment area (FIPS codes)
 CATCHMENT_FIPS = [
-    "06067",  # Sacramento
-    "06113",  # Yolo
-    "06095",  # Solano
-    "06061",  # Placer
-    "06017",  # El Dorado
-    "06077",  # San Joaquin
-    "06013",  # Contra Costa
-    "06001",  # Alameda
-    "06099",  # Stanislaus
-    "06101",  # Sutter
-    "06115",  # Yuba
-    "06057",  # Nevada
-    "06005",  # Amador
-    "06007",  # Butte
-    "06011",  # Colusa
-    "06021",  # Glenn
+    "06067", "06113", "06095", "06061", "06017", "06077",
+    "06013", "06001", "06099", "06101", "06115", "06057",
+    "06005", "06007", "06011", "06021",
 ]
 
 
-def process_counties():
+def process_counties(all_ca: bool = False):
     if not os.path.exists(SHAPEFILE):
         print(f"Shapefile not found: {SHAPEFILE}")
         print("Run download_boundaries.py first.")
@@ -42,32 +31,32 @@ def process_counties():
     print(f"Reading shapefile: {SHAPEFILE}")
     gdf = gpd.read_file(SHAPEFILE)
 
-    # Filter to catchment area counties
-    # GEOID column contains the full FIPS code
-    catchment = gdf[gdf["GEOID"].isin(CATCHMENT_FIPS)].copy()
-    print(f"Filtered to {len(catchment)} catchment area counties")
+    if all_ca:
+        # All California counties (state FIPS 06)
+        subset = gdf[gdf["GEOID"].str.startswith("06")].copy()
+        output_path = os.path.join(DATA_DIR, "ca_counties.geojson")
+        print(f"Filtered to {len(subset)} California counties")
+    else:
+        subset = gdf[gdf["GEOID"].isin(CATCHMENT_FIPS)].copy()
+        output_path = os.path.join(DATA_DIR, "catchment_counties.geojson")
+        print(f"Filtered to {len(subset)} catchment area counties")
 
-    # Simplify geometry for web display (tolerance in degrees)
-    catchment["geometry"] = catchment["geometry"].simplify(tolerance=0.005)
+    subset["geometry"] = subset["geometry"].simplify(tolerance=0.005)
+    if subset.crs and subset.crs.to_epsg() != 4326:
+        subset = subset.to_crs(epsg=4326)
 
-    # Reproject to WGS84 (EPSG:4326) if needed
-    if catchment.crs and catchment.crs.to_epsg() != 4326:
-        catchment = catchment.to_crs(epsg=4326)
+    # Keep GEOID and NAME for PostGIS loader (county_boundaries.py matches on fips_code)
+    subset = subset[["GEOID", "NAME", "geometry"]]
+    subset.to_file(output_path, driver="GeoJSON")
+    print(f"Exported to {output_path}")
 
-    # Select and rename columns
-    catchment = catchment[["GEOID", "NAME", "geometry"]].rename(
-        columns={"GEOID": "fips_code", "NAME": "name"}
-    )
-
-    # Export as GeoJSON
-    catchment.to_file(OUTPUT_GEOJSON, driver="GeoJSON")
-    print(f"Exported to {OUTPUT_GEOJSON}")
-
-    # Print summary
-    for _, row in catchment.iterrows():
-        centroid = row.geometry.centroid
-        print(f"  {row['name']} ({row['fips_code']}): centroid ({centroid.y:.3f}, {centroid.x:.3f})")
+    for _, row in subset.iterrows():
+        c = row.geometry.centroid
+        print(f"  {row['NAME']} ({row['GEOID']}): centroid ({c.y:.3f}, {c.x:.3f})")
 
 
 if __name__ == "__main__":
-    process_counties()
+    p = argparse.ArgumentParser(description="Export county boundaries to GeoJSON")
+    p.add_argument("--all-ca", action="store_true", help="Export all 58 CA counties to ca_counties.geojson")
+    args = p.parse_args()
+    process_counties(all_ca=args.all_ca)

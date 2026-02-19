@@ -4,23 +4,23 @@ import { scaleLinear } from 'd3-scale';
 
 interface CountyTableProps {
   data: CountyData[];
-  rateRange: { min: number; max: number };
+  countRange: { min: number; max: number };
   onCountyHover?: (county: string | null) => void;
   selectedCounty?: string | null;
 }
 
-type SortField = 'county' | 'count' | 'population' | 'rate';
+type SortField = 'county' | 'count';
 type SortDirection = 'asc' | 'desc';
 
-export function CountyTable({ data, rateRange, onCountyHover, selectedCounty }: CountyTableProps) {
-  const [sortField, setSortField] = useState<SortField>('rate');
+export function CountyTable({ data, countRange, onCountyHover, selectedCounty }: CountyTableProps) {
+  const [sortField, setSortField] = useState<SortField>('count');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
-      .domain([rateRange.min, rateRange.max])
+      .domain([countRange.min, countRange.max])
       .range(['#E6F3F5', '#1A6B77']);
-  }, [rateRange]);
+  }, [countRange]);
 
   const sortedData = useMemo(() => {
     return [...data].sort((a, b) => {
@@ -31,12 +31,6 @@ export function CountyTable({ data, rateRange, onCountyHover, selectedCounty }: 
           break;
         case 'count':
           comparison = a.count - b.count;
-          break;
-        case 'population':
-          comparison = a.population - b.population;
-          break;
-        case 'rate':
-          comparison = a.rate - b.rate;
           break;
       }
       return sortDirection === 'asc' ? comparison : -comparison;
@@ -70,16 +64,14 @@ export function CountyTable({ data, rateRange, onCountyHover, selectedCounty }: 
     </svg>
   );
 
-  const getCellColor = (rate: number) => {
-    const bg = colorScale(rate);
-    // Calculate luminance to determine text color
+  const getCellColor = (count: number) => {
+    const bg = colorScale(count);
     const hex = bg.replace('#', '');
     const r = parseInt(hex.substr(0, 2), 16);
     const g = parseInt(hex.substr(2, 2), 16);
     const b = parseInt(hex.substr(4, 2), 16);
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     const textColor = luminance > 0.5 ? '#333333' : '#FFFFFF';
-    
     return { backgroundColor: bg, color: textColor };
   };
 
@@ -110,25 +102,12 @@ export function CountyTable({ data, rateRange, onCountyHover, selectedCounty }: 
               >
                 Count <SortIcon field="count" />
               </th>
-              <th 
-                className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors"
-                onClick={() => handleSort('population')}
-              >
-                Pop <SortIcon field="population" />
-              </th>
-              <th 
-                className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors"
-                onClick={() => handleSort('rate')}
-              >
-                Rate <SortIcon field="rate" />
-              </th>
             </tr>
           </thead>
           <tbody>
             {sortedData.map((county) => {
-              const rateStyle = getCellColor(county.rate);
+              const countStyle = getCellColor(county.count);
               const isSelected = selectedCounty === county.county;
-              
               return (
                 <tr 
                   key={county.county}
@@ -144,14 +123,8 @@ export function CountyTable({ data, rateRange, onCountyHover, selectedCounty }: 
                       ({county.region})
                     </span>
                   </td>
-                  <td className="py-2 px-3 text-sm text-right tabular-nums" style={getCellColor(county.count / data.reduce((max, c) => Math.max(max, c.count), 0) * rateRange.max)}>
+                  <td className="py-2 px-3 text-sm text-right tabular-nums font-semibold" style={countStyle}>
                     {county.count.toLocaleString()}
-                  </td>
-                  <td className="py-2 px-3 text-sm text-right tabular-nums text-[var(--color-text-secondary)]">
-                    {county.population.toLocaleString()}
-                  </td>
-                  <td className="py-2 px-3 text-sm text-right tabular-nums font-semibold" style={rateStyle}>
-                    {county.rate.toFixed(1)}
                   </td>
                 </tr>
               );
@@ -166,12 +139,12 @@ export function CountyTable({ data, rateRange, onCountyHover, selectedCounty }: 
           Showing {data.length} counties
         </span>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-[var(--color-text-secondary)]">Rate:</span>
+          <span className="text-xs text-[var(--color-text-secondary)]">Cases:</span>
           <div className="flex items-center">
             <div className="w-20 h-3 rounded" style={{ background: 'linear-gradient(to right, #E6F3F5, #1A6B77)' }} />
           </div>
           <span className="text-xs text-[var(--color-text-secondary)]">
-            {rateRange.min.toFixed(1)} - {rateRange.max.toFixed(1)}
+            {countRange.min} - {countRange.max}
           </span>
         </div>
       </div>

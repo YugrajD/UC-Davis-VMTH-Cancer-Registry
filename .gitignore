@@ -63,6 +63,8 @@ ml/data/
 
 # Database
 pgdata/
+*.sql
+!database/migrations/*.sql
 
 # Ingestion data (real patient data — never commit)
 database/data/*.csv

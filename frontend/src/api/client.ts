@@ -29,9 +29,7 @@ export interface IncidenceResponse {
 export interface GeoJSONFeatureProperties {
   name: string;
   fips_code: string;
-  population?: number;
   total_cases: number;
-  cases_per_capita?: number;
   top_cancer?: string;
 }
 
@@ -47,7 +45,7 @@ export interface GeoJSONResponse {
 export interface FilterOptions {
   species: { id: number; name: string }[];
   cancer_types: { id: number; name: string; description?: string }[];
-  counties: { id: number; name: string; fips_code: string; population?: number }[];
+  counties: { id: number; name: string; fips_code: string }[];
   breeds: { id: number; species_id: number; name: string }[];
   year_range: number[];
 }
@@ -128,4 +126,45 @@ export async function fetchCountiesGeoJSON(filters: FilterParams = {}): Promise<
   const params = filtersToParams(filters);
   const url = params.toString() ? `/api/v1/geo/counties?${params}` : '/api/v1/geo/counties';
   return fetchJson(url);
+}
+
+// --- Ingestion ---
+
+export interface IngestionRowResult {
+  row_number: number;
+  anon_id: string;
+  status: 'inserted' | 'skipped' | 'error';
+  message?: string;
+  cancer_type?: string;
+  confidence?: number;
+}
+
+export interface IngestionResponse {
+  total_rows: number;
+  inserted: number;
+  skipped: number;
+  errors: number;
+  warnings: string[];
+  row_results: IngestionRowResult[];
+}
+
+export async function uploadCSV(
+  datasetA?: File,
+  datasetB?: File,
+): Promise<IngestionResponse> {
+  const formData = new FormData();
+  if (datasetA) formData.append('dataset_a', datasetA);
+  if (datasetB) formData.append('dataset_b', datasetB);
+
+  const response = await fetch('/api/v1/ingest/upload', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Upload failed: ${response.status}`);
+  }
+
+  return response.json();
 }

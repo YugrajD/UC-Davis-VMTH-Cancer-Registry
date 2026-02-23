@@ -1,8 +1,9 @@
 """SQLAlchemy + GeoAlchemy2 models for the VMTH Cancer Registry."""
 
 from sqlalchemy import (
-    Column, Integer, String, Numeric, Date, Text, ForeignKey, CheckConstraint
+    Boolean, Column, Integer, String, Numeric, Date, Text, ForeignKey, CheckConstraint, DateTime
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 
@@ -38,6 +39,7 @@ class CancerType(Base):
     description = Column(Text)
 
     cases = relationship("CancerCase", back_populates="cancer_type")
+    case_diagnoses = relationship("CaseDiagnosis", back_populates="cancer_type")
 
 
 class County(Base):
@@ -49,6 +51,7 @@ class County(Base):
     geom = Column(Geometry("MULTIPOLYGON", srid=4326))
     population = Column(Integer)
     area_sq_miles = Column(Numeric(10, 2))
+    is_catchment = Column(Boolean, nullable=False, server_default="false")
 
     patients = relationship("Patient", back_populates="county")
     cases = relationship("CancerCase", back_populates="county")
@@ -58,13 +61,16 @@ class Patient(Base):
     __tablename__ = "patients"
 
     id = Column(Integer, primary_key=True)
-    species_id = Column(Integer, ForeignKey("species.id"), nullable=False)
-    breed_id = Column(Integer, ForeignKey("breeds.id"), nullable=False)
-    sex = Column(String(10), nullable=False)
-    age_years = Column(Numeric(5, 1), nullable=False)
+    species_id = Column(Integer, ForeignKey("species.id"), nullable=True)
+    breed_id = Column(Integer, ForeignKey("breeds.id"), nullable=True)
+    sex = Column(String(20), nullable=True)
+    age_years = Column(Numeric(5, 1), nullable=True)
     weight_kg = Column(Numeric(6, 2))
-    county_id = Column(Integer, ForeignKey("counties.id"), nullable=False)
-    registered_date = Column(Date, nullable=False)
+    county_id = Column(Integer, ForeignKey("counties.id"), nullable=True)
+    registered_date = Column(Date, nullable=True)
+    anon_id = Column(String(100), nullable=True, unique=True, index=True)
+    zip_code = Column(String(10), nullable=True)
+    data_source = Column(String(20), nullable=True, default="mock")
 
     species = relationship("Species", back_populates="patients")
     breed = relationship("Breed", back_populates="patients")
@@ -77,16 +83,43 @@ class CancerCase(Base):
 
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
-    cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=False)
-    diagnosis_date = Column(Date, nullable=False)
+    cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=True)  # optional; types in case_diagnoses
+    diagnosis_date = Column(Date, nullable=True)
     stage = Column(String(5))
     outcome = Column(String(20))
-    county_id = Column(Integer, ForeignKey("counties.id"), nullable=False)
+    county_id = Column(Integer, ForeignKey("counties.id"), nullable=True)
+    source_row_index = Column(Integer, nullable=True)
+    diagnosis_index = Column(Integer, nullable=True)
+    icd_o_code = Column(String(20), nullable=True)
+    predicted_term = Column(Text, nullable=True)
+    original_text = Column(Text, nullable=True)
+    confidence = Column(Numeric(4, 2), nullable=True)
+    prediction_method = Column(String(20), nullable=True)
 
     patient = relationship("Patient", back_populates="cases")
     cancer_type = relationship("CancerType", back_populates="cases")
     county = relationship("County", back_populates="cases")
     reports = relationship("PathologyReport", back_populates="case")
+    diagnoses = relationship("CaseDiagnosis", back_populates="case", cascade="all, delete-orphan")
+
+
+class CaseDiagnosis(Base):
+    """One row per cancer prediction (e.g. PetBERT) under a single registry case."""
+    __tablename__ = "case_diagnoses"
+
+    id = Column(Integer, primary_key=True)
+    case_id = Column(Integer, ForeignKey("cancer_cases.id", ondelete="CASCADE"), nullable=False)
+    cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=False)
+    icd_o_code = Column(String(20), nullable=True)
+    predicted_term = Column(Text, nullable=True)
+    original_text = Column(Text, nullable=True)
+    confidence = Column(Numeric(4, 2), nullable=True)
+    prediction_method = Column(String(20), nullable=True)
+    source_row_index = Column(Integer, nullable=True)
+    diagnosis_index = Column(Integer, nullable=True)
+
+    case = relationship("CancerCase", back_populates="diagnoses")
+    cancer_type = relationship("CancerType", back_populates="case_diagnoses")
 
 
 class PathologyReport(Base):
@@ -100,3 +133,19 @@ class PathologyReport(Base):
     report_date = Column(Date, nullable=False)
 
     case = relationship("CancerCase", back_populates="reports")
+
+
+class IngestionLog(Base):
+    __tablename__ = "ingestion_logs"
+
+    id = Column(Integer, primary_key=True)
+    dataset_a_filename = Column(String(255))
+    dataset_b_filename = Column(String(255))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    rows_processed = Column(Integer, default=0)
+    rows_inserted = Column(Integer, default=0)
+    rows_skipped = Column(Integer, default=0)
+    rows_errored = Column(Integer, default=0)
+    errors = Column(JSONB, default=list)
+    warnings = Column(JSONB, default=list)

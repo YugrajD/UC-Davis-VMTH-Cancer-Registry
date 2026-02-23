@@ -7,7 +7,7 @@ export function Footer({ onShare }: FooterProps) {
     if (navigator.share) {
       navigator.share({
         title: 'California Canine Cancer Registry Dashboard',
-        text: 'Explore population-based cancer incidence data for dogs in California',
+        text: 'Explore cancer incidence data for dogs in California',
         url: window.location.href,
       });
     } else if (onShare) {
@@ -28,14 +28,10 @@ export function Footer({ onShare }: FooterProps) {
           </h4>
           <div className="text-xs text-[var(--color-text-secondary)] space-y-2">
             <p>
-              This dashboard presents population-based cancer incidence and mortality data for dogs 
-              across California counties. Data is collected from participating veterinary hospitals, 
-              animal cancer registries, and partner institutions.
-            </p>
-            <p>
-              <strong>Rate Calculation:</strong> Age-adjusted rates are calculated per 10,000 dog 
-              population using the direct method with the 2020 California dog population as the 
-              standard. Rates based on fewer than 16 cases are suppressed due to statistical instability.
+              This dashboard presents cancer incidence data for dogs across California counties. 
+              Data is collected from participating veterinary hospitals, animal cancer registries, 
+              and partner institutions. Case counts are shown by county and region; population-based 
+              rates are not calculated as dog population by county is not available.
             </p>
             <p>
               <strong>Data Suppression:</strong> County-level data may be suppressed when case counts 

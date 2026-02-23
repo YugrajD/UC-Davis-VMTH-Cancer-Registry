@@ -5,7 +5,7 @@ import type { CountyData } from '../../types';
 
 interface ChoroplethMapProps {
   data: CountyData[];
-  rateRange: { min: number; max: number };
+  countRange: { min: number; max: number };
   hoveredCounty?: string | null;
   onCountyHover?: (county: string | null) => void;
   onCountyClick?: (county: string) => void;
@@ -16,7 +16,7 @@ const GEO_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hoo
 
 export function ChoroplethMap({ 
   data, 
-  rateRange, 
+  countRange, 
   hoveredCounty, 
   onCountyHover,
   onCountyClick 
@@ -38,12 +38,12 @@ export function ChoroplethMap({
     return map;
   }, [data]);
 
-  // Color scale for the choropleth
+  // Color scale for the choropleth (by case count)
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
-      .domain([rateRange.min, (rateRange.min + rateRange.max) / 2, rateRange.max])
+      .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
       .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
-  }, [rateRange]);
+  }, [countRange]);
 
   const handleMouseEnter = (
     countyName: string,
@@ -77,7 +77,7 @@ export function ChoroplethMap({
           California County Map
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-          Age-adjusted incidence rate per 10,000
+          Case count by county
         </p>
       </div>
       
@@ -101,11 +101,9 @@ export function ChoroplethMap({
                 // The GeoJSON uses "name" property for county names
                 const countyName = (geo.properties.name || '') as string;
                 const countyInfo = countyDataMap.get(countyName.toLowerCase());
-                const rate = countyInfo?.rate ?? 0;
+                const count = countyInfo?.count ?? 0;
                 const isHovered = hoveredCounty?.toLowerCase() === countyName.toLowerCase();
-                
-                // Determine fill color based on rate
-                const fillColor = rate > 0 ? colorScale(rate) : '#E5E7EB';
+                const fillColor = count > 0 ? colorScale(count) : '#E5E7EB';
                 
                 return (
                   <Geography
@@ -143,7 +141,7 @@ export function ChoroplethMap({
         {/* Legend */}
         <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
           <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">
-            Rate per 10,000
+            Cases
           </p>
           <div className="flex items-center gap-2">
             <div 
@@ -155,10 +153,10 @@ export function ChoroplethMap({
           </div>
           <div className="flex justify-between mt-1">
             <span className="text-[10px] text-[var(--color-text-secondary)]">
-              {rateRange.min.toFixed(1)}
+              {countRange.min}
             </span>
             <span className="text-[10px] text-[var(--color-text-secondary)]">
-              {rateRange.max.toFixed(1)}
+              {countRange.max}
             </span>
           </div>
           <div className="mt-2 pt-2 border-t border-gray-100">
@@ -192,17 +190,7 @@ export function ChoroplethMap({
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-[var(--color-text-secondary)]">Cases:</span>
-                  <span className="font-medium">{tooltipContent.data.count.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-[var(--color-text-secondary)]">Population:</span>
-                  <span className="font-medium">{tooltipContent.data.population.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-[var(--color-text-secondary)]">Rate:</span>
-                  <span className="font-semibold text-[var(--color-teal-dark)]">
-                    {tooltipContent.data.rate.toFixed(1)}
-                  </span>
+                  <span className="font-semibold text-[var(--color-teal-dark)]">{tooltipContent.data.count.toLocaleString()}</span>
                 </div>
               </div>
             ) : (

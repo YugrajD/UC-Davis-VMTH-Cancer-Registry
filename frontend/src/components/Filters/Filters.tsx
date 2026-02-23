@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react';
 import type { FilterState, Sex, RateType } from '../../types';
-import { CANCER_TYPES, BREEDS, SEX_OPTIONS, RATE_OPTIONS } from '../../types';
+import { SEX_OPTIONS, RATE_OPTIONS } from '../../types';
+import { fetchFilterOptions } from '../../api/client';
 
 interface FiltersProps {
   filters: FilterState;
@@ -7,6 +9,18 @@ interface FiltersProps {
 }
 
 export function Filters({ filters, onFilterChange }: FiltersProps) {
+  const [cancerTypes, setCancerTypes] = useState<string[]>(['All Types']);
+  const [breeds, setBreeds] = useState<string[]>(['All Breeds']);
+
+  useEffect(() => {
+    fetchFilterOptions().then(opts => {
+      setCancerTypes(['All Types', ...opts.cancer_types.map(ct => ct.name)]);
+      setBreeds(['All Breeds', ...opts.breeds.map(b => b.name)]);
+    }).catch(err => {
+      console.error('Failed to load filter options:', err);
+    });
+  }, []);
+
   const handleChange = (key: keyof FilterState, value: string) => {
     onFilterChange({
       ...filters,
@@ -19,7 +33,7 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
       <h3 className="text-sm font-semibold text-[var(--color-text-primary)] mb-4 uppercase tracking-wider">
         Filters
       </h3>
-      
+
       <div className="space-y-4">
         {/* Rate Type */}
         <div>
@@ -29,7 +43,7 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
           <select
             value={filters.rateType}
             onChange={(e) => handleChange('rateType', e.target.value as RateType)}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white 
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white
                        focus:ring-2 focus:ring-[var(--color-teal)] focus:border-[var(--color-teal)]
                        transition-colors duration-150"
           >
@@ -49,7 +63,7 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
           <select
             value={filters.sex}
             onChange={(e) => handleChange('sex', e.target.value as Sex)}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white 
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white
                        focus:ring-2 focus:ring-[var(--color-teal)] focus:border-[var(--color-teal)]
                        transition-colors duration-150"
           >
@@ -69,11 +83,11 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
           <select
             value={filters.cancerType}
             onChange={(e) => handleChange('cancerType', e.target.value)}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white 
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white
                        focus:ring-2 focus:ring-[var(--color-teal)] focus:border-[var(--color-teal)]
                        transition-colors duration-150"
           >
-            {CANCER_TYPES.map(type => (
+            {cancerTypes.map(type => (
               <option key={type} value={type}>
                 {type}
               </option>
@@ -89,11 +103,11 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
           <select
             value={filters.breed}
             onChange={(e) => handleChange('breed', e.target.value)}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white 
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white
                        focus:ring-2 focus:ring-[var(--color-teal)] focus:border-[var(--color-teal)]
                        transition-colors duration-150"
           >
-            {BREEDS.map(breed => (
+            {breeds.map(breed => (
               <option key={breed} value={breed}>
                 {breed}
               </option>

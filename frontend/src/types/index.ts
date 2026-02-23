@@ -3,7 +3,7 @@ export type Sex = 'all' | 'male_intact' | 'male_neutered' | 'female_intact' | 'f
 
 export type RateType = 'incidence' | 'mortality';
 
-export type TabType = 'overview' | 'breed-disparities' | 'cancer-types' | 'regional-comparison';
+export type TabType = 'overview' | 'breed-disparities' | 'cancer-types' | 'regional-comparison' | 'data-upload';
 
 export interface CancerRecord {
   county: string;
@@ -12,8 +12,6 @@ export interface CancerRecord {
   breed: string;
   sex: Sex;
   count: number;
-  population: number;
-  rate: number; // per 10,000
   year: number;
 }
 
@@ -21,8 +19,6 @@ export interface CountyData {
   county: string;
   region: string;
   count: number;
-  population: number;
-  rate: number;
   fips: string;
 }
 
@@ -30,8 +26,6 @@ export interface RegionSummary {
   name: string;
   type: 'state' | 'catchment' | 'region' | 'county';
   count: number;
-  population: number;
-  rate: number;
   children?: RegionSummary[];
 }
 
@@ -53,6 +47,7 @@ export const TABS: Tab[] = [
   { id: 'breed-disparities', label: 'Breed Disparities' },
   { id: 'cancer-types', label: 'Cancer Types' },
   { id: 'regional-comparison', label: 'Regional Comparison' },
+  { id: 'data-upload', label: 'Data Upload' },
 ] as const;
 
 export const CANCER_TYPES: string[] = [

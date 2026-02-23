@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 .venv/
+.venv*/
 venv/
 *.egg
 
@@ -55,6 +56,22 @@ ml/model/weights/
 *.pt
 *.bin
 *.onnx
+ml/output/
+
+# ML datasets (local)
+ml/data/
 
 # Database
 pgdata/
+*.sql
+!database/migrations/*.sql
+
+# Ingestion data (real patient data — never commit)
+database/data/*.csv
+database/data/*.tsv
+database/data/*.xlsx
+database/data/*.json
+!database/data/.gitkeep
+
+# PetBERT scan output (predictions, embeddings, etc.)
+database/output/

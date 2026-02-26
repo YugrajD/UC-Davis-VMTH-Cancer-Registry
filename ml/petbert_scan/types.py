@@ -11,8 +11,8 @@ TaskMode = Literal["categorize", "neighbors", "both"]
 class ScanConfig:
     csv_path: str
     id_col: str
-    text_cols: tuple[str, ...]  # columns to embed independently then weighted-average
-    col_weights: dict[str, float]  # per-column weights; missing columns default to 1.0
+    text_cols: tuple[str, ...]  # columns to embed independently; best-match label wins
+    col_weights: dict[str, float]  # reserved; no longer used for scoring
     model_name: str
     local_only: bool
     out_dir: str

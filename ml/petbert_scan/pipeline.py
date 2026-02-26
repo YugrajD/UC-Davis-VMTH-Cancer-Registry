@@ -18,7 +18,7 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from .categorization import run_categorization
-from .embedding import embed_columns_weighted, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from .io import (
     build_outputs,
     write_embeddings_npz,
@@ -93,9 +93,9 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     """Execute the full categorization pipeline end-to-end.
 
     Reads clinical report rows from reportText.csv, splits multi-diagnosis
-    entries, embeds each report section with PetBERT using a weighted average
-    across columns, matches to the closest Vet-ICD-O taxonomy label by cosine
-    similarity, and writes the results to disk.
+    entries, embeds each report section independently with PetBERT, computes
+    cosine similarity against taxonomy labels for each column separately, and
+    assigns the label whose highest similarity across any column wins.
     """
 
     # --- Step 0: Prepare output file paths -----------------------------------
@@ -146,27 +146,26 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
     torch_device = device_from_arg(config.device)
 
-    # Embed each column independently and combine into a single weighted-average
-    # embedding per input row.  Each column gets its own full max_length token
-    # budget, so no section is crowded out by another.  Empty cells are excluded
-    # from each row's average automatically.
-    #
-    # row_embeddings shape: (N_rows, 768)
-    row_embeddings, row_token_counts = embed_columns_weighted(
+    # Embed each column independently — each gets the full max_length token budget.
+    # col_emb_dict: {col: (N_rows, 768)}, col_content: {col: (N_rows,) bool}
+    col_emb_dict, col_content_dict, row_token_counts = embed_columns_separate(
         tokenizer,
         model,
         col_texts,
-        config.col_weights,
         device=torch_device,
         batch_size=config.batch_size,
         max_length=config.max_length,
     )
 
-    # Expand row-level embeddings to the M expanded sub-diagnosis rows using
-    # the original_row_indices produced by _expand_multi_diagnoses.
+    # Expand per-column embeddings and content masks to the M sub-diagnosis rows.
     idx = np.array(original_row_indices, dtype=np.intp)
-    embeddings = row_embeddings[idx]        # (M, 768)
-    token_counts = row_token_counts[idx]    # (M,)
+    cols = list(col_texts.keys())
+    col_embedding_list = [col_emb_dict[col][idx] for col in cols]       # list of (M, 768)
+    col_has_content_list = [col_content_dict[col][idx] for col in cols]  # list of (M,) bool
+    token_counts = row_token_counts[idx]                                  # (M,)
+
+    # For PCA / NPZ visualization: use a simple mean across columns.
+    embeddings = np.mean(np.stack(col_embedding_list, axis=0), axis=0).astype(np.float32)  # (M, 768)
 
     # --- Step 3: Build & embed taxonomy labels --------------------------------
     label_catalog = label_catalog_for_config(config)
@@ -181,12 +180,15 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     )
 
     # --- Step 4: Compare & categorize ----------------------------------------
+    # Each column independently scores against every label; the label with the
+    # highest similarity from any column wins.
     categorization = run_categorization(
         texts=expanded_texts,
-        text_embeddings=embeddings,
+        text_embeddings=col_embedding_list,
         label_embeddings=label_embeddings,
         labels=label_catalog.labels,
         embedding_min_sim=config.embedding_min_sim,
+        col_has_content=col_has_content_list,
     )
 
     # --- Step 5: Map label index -> ICD code, group, term --------------------

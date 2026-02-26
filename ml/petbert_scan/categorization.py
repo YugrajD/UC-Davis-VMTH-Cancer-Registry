@@ -28,13 +28,32 @@ class CategorizationResult:
 def run_categorization(
     *,
     texts: list[str],
-    text_embeddings: np.ndarray,
+    text_embeddings: np.ndarray | list[np.ndarray],
     label_embeddings: np.ndarray,
     labels: list[str],
     embedding_min_sim: float,
+    col_has_content: list[np.ndarray] | None = None,
 ) -> CategorizationResult:
-    """Categorize each diagnosis by cosine similarity to taxonomy label embeddings."""
-    sims = cosine_similarity_matrix(text_embeddings, label_embeddings)
+    """Categorize each diagnosis by cosine similarity to taxonomy label embeddings.
+
+    When ``text_embeddings`` is a list of per-column embedding arrays, each
+    column independently computes its similarity scores and the label with the
+    highest score across *any* column wins.  Empty cells (tracked via
+    ``col_has_content``) are masked out so they cannot influence the result.
+    """
+    if isinstance(text_embeddings, list):
+        sim_matrices: list[np.ndarray] = []
+        for i, emb in enumerate(text_embeddings):
+            sim = cosine_similarity_matrix(emb, label_embeddings)  # (N, M)
+            if col_has_content is not None:
+                # Rows where this column is empty cannot win — mask with -inf.
+                empty_rows = ~col_has_content[i]  # (N,) True where cell is empty
+                sim[empty_rows, :] = -np.inf
+            sim_matrices.append(sim)
+        # Element-wise max across columns: highest similarity for each (row, label) pair.
+        sims = np.stack(sim_matrices, axis=0).max(axis=0)  # (N, M)
+    else:
+        sims = cosine_similarity_matrix(text_embeddings, label_embeddings)
     top_idx = np.argmax(sims, axis=1)
     top_scores = sims[np.arange(len(top_idx)), top_idx].astype(np.float32, copy=False)
     top_labels = np.array([labels[i] for i in top_idx], dtype=object)

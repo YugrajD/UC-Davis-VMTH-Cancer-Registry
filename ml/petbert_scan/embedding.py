@@ -96,6 +96,79 @@ def embed_texts(
     return np.vstack(all_embeddings), np.concatenate(all_token_counts)
 
 
+def embed_columns_weighted(
+    tokenizer: AutoTokenizer,
+    model: AutoModelForMaskedLM,
+    col_texts: dict[str, list[str]],
+    weights: dict[str, float],
+    *,
+    device: torch.device,
+    batch_size: int,
+    max_length: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Embed each column independently then return a per-row weighted average.
+
+    Each column is passed through PetBERT as its own batch so it gets the full
+    ``max_length`` token budget.  Empty cells are excluded from each row's
+    weighted average so they don't dilute the signal from populated columns.
+
+    Args:
+        col_texts: Mapping from column name to a list of N cleaned text strings.
+        weights: Per-column scalar weights.  Columns absent from this dict
+            default to 1.0.
+
+    Returns:
+        embeddings:   (N, 768) weighted-average embedding per row.
+        token_counts: (N,) total non-padding tokens summed across columns.
+    """
+    if not col_texts:
+        raise ValueError("col_texts must not be empty")
+
+    cols = list(col_texts.keys())
+    n = len(next(iter(col_texts.values())))
+
+    col_embeddings: list[np.ndarray] = []
+    col_token_counts: list[np.ndarray] = []
+    col_has_content: list[np.ndarray] = []
+
+    for col in cols:
+        texts = col_texts[col]
+        has_content = np.array([bool(t) for t in texts], dtype=np.float32)
+        col_has_content.append(has_content)
+
+        emb, tok = embed_texts(
+            tokenizer,
+            model,
+            texts,
+            device=device,
+            batch_size=batch_size,
+            max_length=max_length,
+            desc=f"Embedding [{col}]",
+        )
+        col_embeddings.append(emb)
+        col_token_counts.append(tok)
+
+    # raw weight per column — shape (num_cols,)
+    raw_weights = np.array([weights.get(col, 1.0) for col in cols], dtype=np.float32)
+
+    # effective weight: raw_weight * has_content so empty cells contribute 0
+    has_content_matrix = np.stack(col_has_content, axis=0)  # (num_cols, N)
+    eff_weights = has_content_matrix * raw_weights[:, np.newaxis]  # (num_cols, N)
+
+    # normalize per row so effective weights sum to 1
+    weight_sums = eff_weights.sum(axis=0, keepdims=True)  # (1, N)
+    weight_sums = np.where(weight_sums == 0, 1.0, weight_sums)
+    norm_weights = eff_weights / weight_sums  # (num_cols, N)
+
+    # weighted sum: (num_cols, N, 768) * (num_cols, N, 1) → sum over cols → (N, 768)
+    emb_stack = np.stack(col_embeddings, axis=0)
+    weighted_embeddings = (emb_stack * norm_weights[:, :, np.newaxis]).sum(axis=0)
+
+    total_token_counts = np.stack(col_token_counts, axis=0).sum(axis=0)
+
+    return weighted_embeddings.astype(np.float32, copy=False), total_token_counts.astype(np.int32, copy=False)
+
+
 def cosine_similarity_matrix(query: np.ndarray, ref: np.ndarray) -> np.ndarray:
     """Compute pairwise cosine similarity between two embedding matrices.
 

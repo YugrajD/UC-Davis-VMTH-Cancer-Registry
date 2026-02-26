@@ -6,6 +6,7 @@ from .pipeline import run_scan
 from .types import ScanConfig
 
 _DEFAULT_TEXT_COLS = "HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS"
+_DEFAULT_COL_WEIGHTS = "FINAL COMMENT:2.0,HISTOPATHOLOGICAL SUMMARY:1.5,ANCILLARY TESTS:0.5"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,9 +19,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--text-cols",
         default=_DEFAULT_TEXT_COLS,
         help=(
-            "Comma-separated column names to merge as input text. "
-            "Each non-empty column is prefixed with its name so the model sees section labels. "
+            "Comma-separated column names to embed independently and weighted-average. "
             f"Default: '{_DEFAULT_TEXT_COLS}'"
+        ),
+    )
+    parser.add_argument(
+        "--col-weights",
+        default=_DEFAULT_COL_WEIGHTS,
+        help=(
+            "Per-column embedding weights as 'COL:weight,...' pairs. "
+            "Columns absent from this list default to 1.0. "
+            f"Default: '{_DEFAULT_COL_WEIGHTS}'"
         ),
     )
     parser.add_argument("--model", default="SAVSNET/PetBERT", help="HF model name or local path")
@@ -75,12 +84,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_col_weights(raw: str) -> dict[str, float]:
+    """Parse 'COL:weight,...' into a dict. Silently skips malformed pairs."""
+    result: dict[str, float] = {}
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if ":" not in token:
+            continue
+        col, _, val = token.rpartition(":")
+        try:
+            result[col.strip()] = float(val.strip())
+        except ValueError:
+            pass
+    return result
+
+
 def build_config(args: argparse.Namespace) -> ScanConfig:
     text_cols = tuple(c.strip() for c in args.text_cols.split(",") if c.strip())
+    col_weights = _parse_col_weights(args.col_weights)
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
         text_cols=text_cols,
+        col_weights=col_weights,
         model_name=args.model,
         local_only=args.local_only,
         out_dir=args.out_dir,

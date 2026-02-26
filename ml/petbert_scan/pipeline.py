@@ -20,7 +20,7 @@ from sklearn.decomposition import PCA
 
 from .auxiliary_policy import AuxiliaryLabelPolicy
 from .categorization import run_hybrid_categorization
-from .embedding import embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from .embedding import embed_columns_weighted, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from .io import (
     build_outputs,
     write_embeddings_npz,
@@ -97,16 +97,19 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         dataframe = dataframe.head(config.max_rows).copy()
     _validate_columns(dataframe, config.id_col, config.text_cols)
 
-    # Clean the ID column, then merge the specified report sections into one
-    # labelled string per row (e.g. "[HISTOPATHOLOGICAL SUMMARY] T1: ... [FINAL COMMENT] ...").
+    # Clean the ID column and build per-column text lists for embedding.
     ids = dataframe[config.id_col].map(clean_text).tolist()
     cols = list(config.text_cols)
+    col_texts = {col: dataframe[col].map(clean_text).tolist() for col in cols}
+
+    # Also build a merged string per row for display / provenance purposes only
+    # (not used for embedding).
     texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
 
     # --- Step 1.5: Split multi-diagnosis entries ------------------------------
     # Clinical entries often contain multiple diagnoses numbered as
     # "1) Osteosarcoma 2) Chronic cystitis".  Split these into individual
-    # sub-diagnoses so each one is embedded and categorized independently.
+    # sub-diagnoses so each one is categorized independently.
     # This expands N input rows into M sub-diagnosis rows (M >= N).
     (
         expanded_ids,
@@ -130,19 +133,27 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
     torch_device = device_from_arg(config.device)
 
-    # Produce a (M, 768) embedding matrix -- one 768-dim vector per sub-diagnosis.
-    # Each text is tokenized (padded/truncated to max_length=256), run through
-    # PetBERT's transformer layers, and the [CLS] token's hidden state is taken
-    # as the fixed-size representation of the entire input text.
-    embeddings, token_counts = embed_texts(
+    # Embed each column independently and combine into a single weighted-average
+    # embedding per input row.  Each column gets its own full max_length token
+    # budget, so no section is crowded out by another.  Empty cells are excluded
+    # from each row's average automatically.
+    #
+    # row_embeddings shape: (N_rows, 768)
+    row_embeddings, row_token_counts = embed_columns_weighted(
         tokenizer,
         model,
-        expanded_texts,
+        col_texts,
+        config.col_weights,
         device=torch_device,
         batch_size=config.batch_size,
         max_length=config.max_length,
-        desc="Embedding diagnoses",
     )
+
+    # Expand row-level embeddings to the M expanded sub-diagnosis rows using
+    # the original_row_indices produced by _expand_multi_diagnoses.
+    idx = np.array(original_row_indices, dtype=np.intp)
+    embeddings = row_embeddings[idx]        # (M, 768)
+    token_counts = row_token_counts[idx]    # (M,)
 
     # --- Step 3: Build & embed taxonomy labels --------------------------------
     # Load the Vet-ICD-O-canine-1 taxonomy (~857 unique labels), each with a
@@ -278,6 +289,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "expanded_rows": int(row_count),
         "task": config.task,
         "text_cols": list(config.text_cols),
+        "col_weights": config.col_weights,
         "id_col": config.id_col,
         "max_length": int(config.max_length),
         "batch_size": int(config.batch_size),

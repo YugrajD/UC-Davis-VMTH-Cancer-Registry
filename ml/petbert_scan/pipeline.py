@@ -19,7 +19,7 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from .auxiliary_policy import AuxiliaryLabelPolicy
-from .categorization import run_hybrid_categorization
+from .categorization import run_categorization
 from .embedding import embed_columns_weighted, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from .io import (
     build_outputs,
@@ -179,7 +179,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     # label embedding, then pick the label with the highest similarity score.
     # If that best score is below the confidence threshold (default 0.6), the
     # row is marked "Uncategorized" / method="low_confidence" instead.
-    categorization = run_hybrid_categorization(
+    categorization = run_categorization(
         texts=expanded_texts,
         text_embeddings=embeddings,
         label_embeddings=label_embeddings,
@@ -239,8 +239,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         final_labels=categorization.final_labels,
         final_indices=categorization.final_indices,
         auxiliary_labels=auxiliary_decision.labels,
-        keyword_labels=categorization.keyword_labels,
-        keyword_scores=categorization.keyword_scores,
         embedding_labels=categorization.embedding_labels,
         embedding_scores=categorization.embedding_scores,
         original_row_indices=original_row_indices,

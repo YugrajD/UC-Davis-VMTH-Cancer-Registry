@@ -1,11 +1,14 @@
 """Embedding-based categorization core and result container.
 
 This module is responsible for the central decision logic:
-  1. Compute cosine similarity between each diagnosis embedding and every
-     taxonomy label embedding.
-  2. For each diagnosis, pick the highest-scoring label.
+  1. Compute cosine similarity between diagnosis embeddings and PetBERT
+     label embeddings.
+  2. Pick the top-1 label per diagnosis.
   3. Apply a confidence threshold -- if the best score is too low, mark the
-     row as "Uncategorized" rather than guessing.
+     row as "low_confidence" rather than guessing.
+
+Priority order per row:
+  embedding match (>= threshold) -> low_confidence -> empty
 """
 
 from dataclasses import dataclass
@@ -22,10 +25,9 @@ class CategorizationResult:
     Attributes:
         final_labels:     The chosen taxonomy term per row (or "Uncategorized" / "").
         final_indices:    Index into the taxonomy list for the chosen label (-1 if empty).
-        final_scores:     Cosine similarity score of the chosen label.
-        methods:          How each row was classified: "embedding", "low_confidence", or "empty".
-        keyword_labels:   Reserved for future keyword-based classification (always empty).
-        keyword_scores:   Reserved for future keyword scores (always 0.0).
+        final_scores:     Confidence score: cosine similarity for embedding matches.
+        methods:          How each row was classified: "embedding", "low_confidence",
+                          or "empty".
         embedding_labels: The raw top-1 label from cosine similarity (before thresholding).
         embedding_scores: The raw top-1 cosine score (before thresholding).
         label_scores:     Full (num_texts, num_labels) similarity matrix.
@@ -35,8 +37,6 @@ class CategorizationResult:
     final_indices: list[int]
     final_scores: list[float]
     methods: list[str]
-    keyword_labels: list[str]
-    keyword_scores: list[float]
     embedding_labels: np.ndarray
     embedding_scores: np.ndarray
     label_scores: np.ndarray
@@ -64,7 +64,7 @@ def categorize_embeddings(
     return pred_labels, pred_scores, pred_idx, sims
 
 
-def run_hybrid_categorization(
+def run_categorization(
     *,
     texts: list[str],
     text_embeddings: np.ndarray,
@@ -72,18 +72,14 @@ def run_hybrid_categorization(
     labels: list[str],
     embedding_min_sim: float,
 ) -> CategorizationResult:
-    """Categorize each diagnosis text against the taxonomy using cosine similarity.
+    """Categorize each diagnosis text using embedding cosine similarity.
 
-    For each row:
-      - If the text is empty -> method="empty", label="".
-      - If best cosine score >= embedding_min_sim (default 0.6) -> method="embedding",
-        use the best-matching taxonomy term.
-      - If best cosine score < threshold -> method="low_confidence",
-        label="Uncategorized" (but the closest label index is still recorded).
-
-    The function is named "hybrid" because it was designed to support both
-    keyword-based and embedding-based approaches. Currently only embedding-based
-    categorization is active.
+    Priority per row:
+      1. Embedding match: if best cosine similarity >= embedding_min_sim.
+         Score = cosine similarity, method = "embedding".
+      2. Low confidence: best cosine similarity < threshold.
+         Label = "Uncategorized", method = "low_confidence".
+      3. Empty text: method = "empty".
     """
     embedding_labels, embedding_scores, embedding_idx, label_scores = categorize_embeddings(
         text_embeddings, label_embeddings, labels
@@ -94,8 +90,6 @@ def run_hybrid_categorization(
     final_indices: list[int] = []
     final_scores: list[float] = []
     methods: list[str] = []
-    keyword_labels: list[str] = []
-    keyword_scores: list[float] = []
 
     for idx, text in enumerate(texts):
         # Empty diagnosis text -- nothing to classify.
@@ -104,16 +98,8 @@ def run_hybrid_categorization(
             final_indices.append(-1)
             final_scores.append(0.0)
             methods.append("empty")
-            keyword_labels.append("")
-            keyword_scores.append(0.0)
             continue
 
-        # Keyword path is unused; always empty.
-        keyword_labels.append("")
-        keyword_scores.append(0.0)
-
-        # Apply the confidence threshold to decide whether to accept the
-        # embedding-based prediction or mark it as low-confidence.
         if float(embedding_scores[idx]) >= embedding_min_sim:
             final_labels.append(str(embedding_labels[idx]))
             final_indices.append(int(embedding_idx[idx]))
@@ -130,8 +116,6 @@ def run_hybrid_categorization(
         final_indices=final_indices,
         final_scores=final_scores,
         methods=methods,
-        keyword_labels=keyword_labels,
-        keyword_scores=keyword_scores,
         embedding_labels=embedding_labels,
         embedding_scores=embedding_scores,
         label_scores=label_scores,

@@ -107,8 +107,6 @@ def write_provenance_csv(
     final_labels: list[str],
     final_indices: list[int],
     auxiliary_labels: list[str],
-    keyword_labels: list[str],
-    keyword_scores: list[float],
     embedding_labels: np.ndarray,
     embedding_scores: np.ndarray,
     original_row_indices: list[int],
@@ -125,8 +123,6 @@ def write_provenance_csv(
         "predicted_category": final_labels,
         "auxiliary_label": auxiliary_labels,
         "predicted_label_index": final_indices,
-        "keyword_category": keyword_labels,
-        "keyword_confidence": keyword_scores,
         "embedding_category": embedding_labels,
         "embedding_similarity": embedding_scores,
     })

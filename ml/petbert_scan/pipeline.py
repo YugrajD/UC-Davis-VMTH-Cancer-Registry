@@ -34,7 +34,7 @@ from .io import (
 from labels.catalog import label_catalog_for_config
 from labels.projection import resolve_taxonomy_matches
 from .types import ScanConfig, ScanOutputs
-from .utils import clean_text, device_from_arg, split_numbered_diagnoses
+from .utils import clean_text, device_from_arg, merge_report_columns, split_numbered_diagnoses
 
 
 def _expand_multi_diagnoses(
@@ -95,11 +95,13 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     dataframe.columns = [col.lstrip('\ufeff').lstrip('ï»¿') for col in dataframe.columns]
     if config.max_rows is not None:
         dataframe = dataframe.head(config.max_rows).copy()
-    _validate_columns(dataframe, config.id_col, config.text_col)
+    _validate_columns(dataframe, config.id_col, config.text_cols)
 
-    # Clean every cell (strip whitespace, coerce NaN to empty string).
+    # Clean the ID column, then merge the specified report sections into one
+    # labelled string per row (e.g. "[HISTOPATHOLOGICAL SUMMARY] T1: ... [FINAL COMMENT] ...").
     ids = dataframe[config.id_col].map(clean_text).tolist()
-    texts = dataframe[config.text_col].map(clean_text).tolist()
+    cols = list(config.text_cols)
+    texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
 
     # --- Step 1.5: Split multi-diagnosis entries ------------------------------
     # Clinical entries often contain multiple diagnoses numbered as
@@ -113,6 +115,13 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         diagnosis_indices,
         original_texts,
     ) = _expand_multi_diagnoses(ids, texts)
+
+    # For the predictions CSV, show only the FINAL COMMENT column value instead
+    # of the full merged text (which includes all report sections).
+    _fc_col = "FINAL COMMENT"
+    if _fc_col in dataframe.columns:
+        _fc_values = dataframe[_fc_col].map(clean_text).tolist()
+        original_texts = [_fc_values[i] for i in original_row_indices]
 
     char_lens = np.array([len(t) for t in expanded_texts], dtype=np.int32)
 
@@ -254,7 +263,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             ids=expanded_ids,
             texts=expanded_texts,
             id_col=config.id_col,
-            text_col=config.text_col,
+            text_col="merged_text",
             neighbor_idx=neighbor_idx,
             neighbor_sim=neighbor_sim,
         )
@@ -268,7 +277,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "input_rows": int(len(texts)),
         "expanded_rows": int(row_count),
         "task": config.task,
-        "text_col": config.text_col,
+        "text_cols": list(config.text_cols),
         "id_col": config.id_col,
         "max_length": int(config.max_length),
         "batch_size": int(config.batch_size),
@@ -292,10 +301,15 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     return outputs
 
 
-def _validate_columns(dataframe: pd.DataFrame, id_col: str, text_col: str) -> None:
+def _validate_columns(
+    dataframe: pd.DataFrame,
+    id_col: str,
+    text_cols: tuple[str, ...],
+) -> None:
     if id_col not in dataframe.columns:
         raise ValueError(f"Missing id column {id_col!r}. Available: {dataframe.columns.tolist()}")
-    if text_col not in dataframe.columns:
+    missing = [c for c in text_cols if c not in dataframe.columns]
+    if missing:
         raise ValueError(
-            f"Missing text column {text_col!r}. Available: {dataframe.columns.tolist()}"
+            f"Missing text columns {missing!r}. Available: {dataframe.columns.tolist()}"
         )

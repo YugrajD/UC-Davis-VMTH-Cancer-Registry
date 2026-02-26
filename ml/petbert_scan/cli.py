@@ -5,21 +5,31 @@ import argparse
 from .pipeline import run_scan
 from .types import ScanConfig
 
+_DEFAULT_TEXT_COLS = "HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Scan a CSV of clinical diagnosis strings with PetBERT and produce categorizations (and optional nearest neighbors)."
+        description="Scan a reportText CSV with PetBERT and produce categorizations (and optional nearest neighbors)."
     )
-    parser.add_argument("--csv", default="ml/data/data.csv", help="Path to input CSV")
-    parser.add_argument("--id-col", default="anon_id", help="ID column name")
-    parser.add_argument("--text-col", default="Clinical Diagnoses", help="Text column name")
+    parser.add_argument("--csv", default="ml/data/reportText.csv", help="Path to input CSV")
+    parser.add_argument("--id-col", default="case_id", help="ID column name")
+    parser.add_argument(
+        "--text-cols",
+        default=_DEFAULT_TEXT_COLS,
+        help=(
+            "Comma-separated column names to merge as input text. "
+            "Each non-empty column is prefixed with its name so the model sees section labels. "
+            f"Default: '{_DEFAULT_TEXT_COLS}'"
+        ),
+    )
     parser.add_argument("--model", default="SAVSNET/PetBERT", help="HF model name or local path")
     parser.add_argument(
         "--local-only",
         action="store_true",
         help="Use only local cached model files (no network calls).",
     )
-    parser.add_argument("--out-dir", default="ml/output/data", help="Output directory")
+    parser.add_argument("--out-dir", default="ml/output/reportText", help="Output directory")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap on rows")
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size")
     parser.add_argument("--max-length", type=int, default=256, help="Tokenizer max_length")
@@ -50,26 +60,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--carcinoma-csv",
         default="ml/data/dataCarcinoma.csv",
-        help="Auxiliary label CSV containing carcinoma-positive anon_ids.",
+        help="Auxiliary label CSV containing carcinoma-positive case_ids.",
     )
     parser.add_argument(
         "--sarcoma-csv",
         default="ml/data/dataSarcoma.csv",
-        help="Auxiliary label CSV containing sarcoma-positive anon_ids.",
+        help="Auxiliary label CSV containing sarcoma-positive case_ids.",
     )
     parser.add_argument(
         "--use-auxiliary-labels",
         action="store_true",
-        help="Use carcinoma/sarcoma CSVs as extra supervision by anon_id.",
+        help="Use carcinoma/sarcoma CSVs as extra supervision by case_id.",
     )
     return parser
 
 
 def build_config(args: argparse.Namespace) -> ScanConfig:
+    text_cols = tuple(c.strip() for c in args.text_cols.split(",") if c.strip())
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
-        text_col=args.text_col,
+        text_cols=text_cols,
         model_name=args.model,
         local_only=args.local_only,
         out_dir=args.out_dir,

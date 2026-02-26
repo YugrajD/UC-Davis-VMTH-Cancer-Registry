@@ -88,21 +88,24 @@ def clean_section_text(text):
 
 def parse_diagnoses(diagnosis_cells):
     """
-    Parse numbered diagnosis strings into (number, text) tuples.
+    Parse numbered diagnosis strings into a single formatted string.
     Each cell may contain one numbered diagnosis (e.g. "1. SKIN: LYMPHOMA").
-    Returns a list of (diagnosis_number_str, diagnosis_text) tuples.
+    Returns a string like "1) SKIN: LYMPHOMA 2) SKIN: ACANTHOSIS".
     """
-    diagnoses = []
+    parts = []
+    counter = 1
     for cell in diagnosis_cells:
         cell = cell.strip()
         if not cell:
             continue
         m = re.match(r'^(\d+)[.)]\s*(.*)', cell, re.DOTALL)
         if m:
-            diagnoses.append((m.group(1), m.group(2).strip()))
+            parts.append(f"{m.group(1)}) {m.group(2).strip()}")
+            counter = int(m.group(1)) + 1
         else:
-            diagnoses.append(('', cell))
-    return diagnoses
+            parts.append(f"{counter}) {cell}")
+            counter += 1
+    return '  '.join(parts)
 
 
 def parse_report_sections(text_cells):
@@ -229,10 +232,9 @@ def main():
     # --- diagnoses.csv ---
     with open(os.path.join(OUTPUT_DIR, 'diagnoses.csv'), 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow(['case_id', 'diagnosis_number', 'diagnosis'])
+        writer.writerow(['case_id', 'diagnoses'])
         for pc in parsed_cases:
-            for num, text in pc['diagnoses']:
-                writer.writerow([pc['case_id'], num, text])
+            writer.writerow([pc['case_id'], pc['diagnoses']])
 
     # --- reportText.csv ---
     with open(os.path.join(OUTPUT_DIR, 'reportText.csv'), 'w', newline='', encoding='utf-8') as f:
@@ -244,7 +246,7 @@ def main():
 
     print(f"Output written to {OUTPUT_DIR}/")
     print(f"  demographics.csv  — {len(parsed_cases)} rows")
-    print(f"  diagnoses.csv     — {sum(len(pc['diagnoses']) for pc in parsed_cases)} rows")
+    print(f"  diagnoses.csv     — {len(parsed_cases)} rows")
     print(f"  reportText.csv    — {len(parsed_cases)} rows, {len(all_headings)} heading columns")
 
 

@@ -11,7 +11,7 @@ TaskMode = Literal["categorize", "neighbors", "both"]
 class ScanConfig:
     csv_path: str
     id_col: str
-    text_col: str
+    text_cols: tuple[str, ...]  # columns to merge as input text (with [SECTION] labels)
     model_name: str
     local_only: bool
     out_dir: str

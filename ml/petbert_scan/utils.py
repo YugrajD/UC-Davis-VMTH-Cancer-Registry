@@ -54,6 +54,27 @@ def split_numbered_diagnoses(text: str) -> list[str]:
     return diagnoses if diagnoses else [text]
 
 
+def merge_report_columns(row: object, columns: list[str]) -> str:
+    """Merge multiple named report text columns into one labelled string.
+
+    Each non-empty column value is prefixed with ``[COLUMN NAME]`` so the
+    model can distinguish between sections.  Empty / NaN cells are skipped.
+
+    Args:
+        row: A single DataFrame row (pd.Series).
+        columns: Ordered list of column names to merge.
+
+    Returns:
+        A single string with all non-empty sections joined by a space.
+    """
+    parts = []
+    for col in columns:
+        val = clean_text(row.get(col, ""))  # type: ignore[union-attr]
+        if val:
+            parts.append(f"[{col}] {val}")
+    return " ".join(parts)
+
+
 def device_from_arg(device: str) -> torch.device:
     if device != "auto":
         return torch.device(device)

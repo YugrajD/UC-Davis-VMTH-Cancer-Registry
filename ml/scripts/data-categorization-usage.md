@@ -16,9 +16,6 @@ output.  For a technical explanation of how the pipeline works see
     `GROSS DESCRIPTION`, etc.
 - **Taxonomy label source:**
   - `ml/labels/labels.csv` (Vet-ICD-O-canine-1, ~857 unique terms)
-- **Auxiliary supervision datasets** (optional):
-  - `ml/data/dataCarcinoma.csv` -- case IDs known to have carcinoma
-  - `ml/data/dataSarcoma.csv` -- case IDs known to have sarcoma
 
 ---
 
@@ -28,7 +25,8 @@ output.  For a technical explanation of how the pipeline works see
 |--------|---------|-------------|
 | `--csv` | `ml/data/reportText.csv` | Input CSV path |
 | `--id-col` | `case_id` | Name of the case ID column |
-| `--text-cols` | `HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS` | Comma-separated column names to merge as input text. Each non-empty column is prefixed with its name so the model sees section labels. |
+| `--text-cols` | `HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS` | Comma-separated column names to embed independently and weighted-average. Each non-empty column is prefixed with its name so the model sees section labels. |
+| `--col-weights` | `FINAL COMMENT:2.0,HISTOPATHOLOGICAL SUMMARY:1.5,ANCILLARY TESTS:0.5` | Per-column embedding weights as `COL:weight,...` pairs. Columns absent from this list default to 1.0. |
 | `--model` | `SAVSNET/PetBERT` | HuggingFace model name or local path |
 | `--local-only` | off | Use only locally cached model files |
 | `--out-dir` | `ml/output/reportText` | Output directory |
@@ -40,9 +38,6 @@ output.  For a technical explanation of how the pipeline works see
 | `--labels-csv` | `ml/labels/labels.csv` | Path to the taxonomy CSV |
 | `--task` | `categorize` | `categorize`, `neighbors`, or `both` |
 | `--neighbors-k` | 3 | Number of nearest neighbors per row (when task includes neighbors) |
-| `--use-auxiliary-labels` | off | Enable carcinoma/sarcoma auxiliary override |
-| `--carcinoma-csv` | `ml/data/dataCarcinoma.csv` | CSV of carcinoma case IDs |
-| `--sarcoma-csv` | `ml/data/dataSarcoma.csv` | CSV of sarcoma case IDs |
 
 ---
 
@@ -82,14 +77,6 @@ ml/.venv11/bin/python ml/scripts/petbert_scan.py \
   --local-only
 ```
 
-**With auxiliary label overrides** -- constrains known carcinoma/sarcoma cases
-to matching taxonomy labels:
-```bash
-ml/.venv11/bin/python ml/scripts/petbert_scan.py \
-  --use-auxiliary-labels \
-  --local-only
-```
-
 ---
 
 ## Output Files
@@ -100,9 +87,9 @@ specific purpose so the data is easy to read and work with:
 | File | Rows | Purpose |
 |------|------|---------|
 | `petbert_scan_predictions.csv` | One per original case | Presentation-ready results |
-| `petbert_scan_provenance.csv` | One per case | Traceability and debug info: text stats, auxiliary labels, raw ML scores |
-| `petbert_scan_similarity_scores.csv` | One per case | Full cosine similarity matrix (one column per taxonomy label) |
-| `petbert_scan_visualization.csv` | One per case | PCA coordinates for 2-D plotting |
+| `petbert_scan_provenance.csv` | One per sub-diagnosis | Traceability and debug info: text stats and raw ML scores |
+| `petbert_scan_similarity_scores.csv` | One per sub-diagnosis | Full cosine similarity matrix (one column per taxonomy label) |
+| `petbert_scan_visualization.csv` | One per sub-diagnosis | PCA coordinates for 2-D plotting |
 | `petbert_scan_embeddings.npz` | N/A | Compressed NumPy archive with the raw 768-dim embedding vectors, ids, and texts |
 | `petbert_scan_summary.json` | N/A | Run metadata and aggregate counts (term/group/code distributions, method counts) |
 
@@ -111,7 +98,7 @@ specific purpose so the data is easy to read and work with:
 | Column | Description |
 |--------|-------------|
 | `case_id` | Case identifier |
-| `original_text` | The merged report text fed to the model |
+| `original_text` | The FINAL COMMENT text for this case |
 | `predicted_term` | Taxonomy term |
 | `predicted_group` | Tumor group |
 | `predicted_code` | Vet-ICD-O-canine-1 code, blank when uncategorized |
@@ -123,22 +110,19 @@ specific purpose so the data is easy to read and work with:
 | Column | Description |
 |--------|-------------|
 | `row_index` | Index of the original CSV row (0-based) |
-| `case_id` | Case identifier (matches the predictions CSV) |
-| `diagnosis_index` | Always 1 (one merged text per case) |
+| `case_id` | Case identifier |
+| `diagnosis_index` | Sub-diagnosis position within the case (always 1 for report format) |
 | `diagnosis_text` | The merged report text that was embedded |
 | `char_len` | Character length of the merged text |
 | `token_count` | Number of BERT tokens after tokenization |
 | `predicted_category` | Final label string (or "Uncategorized" / "") |
-| `auxiliary_label` | "carcinoma", "sarcoma", "conflict", or "" |
 | `predicted_label_index` | Integer index into the taxonomy list |
-| `keyword_category` | Reserved for future keyword classifier (empty) |
-| `keyword_confidence` | Reserved for future keyword scores (0.0) |
 | `embedding_category` | Raw top-1 label before confidence thresholding |
 | `embedding_similarity` | Raw top-1 cosine similarity score |
 
 ### `similarity_scores.csv` columns
 
-One row per case, keyed by `row_index` + `diagnosis_index`.  Contains
+One row per sub-diagnosis, keyed by `row_index` + `diagnosis_index`.  Contains
 one `score_*` column per taxonomy label (~857 columns) with the cosine
 similarity between the case embedding and that label's embedding.
 
@@ -147,7 +131,7 @@ similarity between the case embedding and that label's embedding.
 | Column | Description |
 |--------|-------------|
 | `row_index` | Index of the original CSV row (0-based) |
-| `diagnosis_index` | Always 1 |
+| `diagnosis_index` | Sub-diagnosis position within the case |
 | `case_id` | Case identifier |
 | `predicted_group` | Tumor group (useful for coloring points) |
 | `pca1` | First PCA component |

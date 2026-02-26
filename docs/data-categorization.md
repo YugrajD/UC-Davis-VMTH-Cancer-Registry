@@ -228,26 +228,9 @@ Not all matches are good.  A confidence threshold (default `0.6`) is applied:
 Even for `low_confidence` rows, the closest label index is still recorded so
 it can be reviewed manually.
 
-### Step 6: Auxiliary Label Override (Optional)
+### Step 6: Map Label Index to ICD Code
 
-If `--use-auxiliary-labels` is enabled, cases known to have carcinoma or
-sarcoma (from external CSV lists of case IDs) get their prediction
-**constrained**:
-
-1. Load case ID sets from `dataCarcinoma.csv` and `dataSarcoma.csv`.
-2. Find all taxonomy labels whose term contains "carcinoma" or "sarcoma".
-3. For a case in the carcinoma set: ignore all non-carcinoma labels and
-   pick the highest-scoring carcinoma label instead.
-4. Same logic for sarcoma cases.
-5. If a case appears in **both** lists: mark as "conflict" and keep the
-   unconstrained prediction.
-
-This is a form of semi-supervised correction -- it uses external knowledge to
-steer predictions toward the right tumor family.
-
-### Step 7: Map Label Index to ICD Code
-
-The categorization steps produce an integer index into the taxonomy list.
+The categorization step produces an integer index into the taxonomy list.
 `labels/projection.py` resolves each index to the final output fields:
 
 ```python
@@ -256,7 +239,7 @@ taxonomy_labels[idx].group  -->  predicted_group   (e.g. "Blood vessel tumors")
 taxonomy_labels[idx].code   -->  predicted_code    (e.g. "9120/3")
 ```
 
-### Step 8: Write Outputs
+### Step 7: Write Outputs
 
 Results are written to the `--out-dir` directory (see
 [data-categorization-usage.md](data-categorization-usage.md) for output file
@@ -316,7 +299,6 @@ ANCILLARY TESTS           → tokenize (≤256 tokens) → PetBERT → [0.05,  0
 | `ml/petbert_scan/pipeline.py` | Top-level orchestration (`run_scan`) |
 | `ml/petbert_scan/embedding.py` | PetBERT loading, per-column weighted embedding, cosine similarity |
 | `ml/petbert_scan/categorization.py` | Similarity matching and confidence thresholding |
-| `ml/petbert_scan/auxiliary_policy.py` | Carcinoma/sarcoma auxiliary override logic |
 | `ml/petbert_scan/types.py` | `ScanConfig` (incl. `col_weights`) and `ScanOutputs` dataclasses |
 | `ml/petbert_scan/utils.py` | Text cleaning, section merging (display only), diagnosis splitting, device selection |
 | `ml/petbert_scan/io.py` | CSV/NPZ/JSON output writers |
@@ -324,4 +306,3 @@ ANCILLARY TESTS           → tokenize (≤256 tokens) → PetBERT → [0.05,  0
 | `ml/labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser |
 | `ml/labels/catalog.py` | Label catalog builder (label text generation) |
 | `ml/labels/projection.py` | Maps label index → term/group/code |
-| `ml/labels/auxiliary.py` | Helpers for auxiliary label constraints |

@@ -24,9 +24,6 @@ class ScanConfig:
     embedding_min_sim: float
     device: str
     labels_csv_path: str
-    carcinoma_csv_path: str
-    sarcoma_csv_path: str
-    use_auxiliary_labels: bool
 
 
 @dataclass(frozen=True)

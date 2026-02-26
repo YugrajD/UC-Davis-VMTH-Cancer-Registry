@@ -66,21 +66,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="ml/labels/labels.csv",
         help="Path to labels taxonomy CSV.",
     )
-    parser.add_argument(
-        "--carcinoma-csv",
-        default="ml/data/dataCarcinoma.csv",
-        help="Auxiliary label CSV containing carcinoma-positive case_ids.",
-    )
-    parser.add_argument(
-        "--sarcoma-csv",
-        default="ml/data/dataSarcoma.csv",
-        help="Auxiliary label CSV containing sarcoma-positive case_ids.",
-    )
-    parser.add_argument(
-        "--use-auxiliary-labels",
-        action="store_true",
-        help="Use carcinoma/sarcoma CSVs as extra supervision by case_id.",
-    )
     return parser
 
 
@@ -120,9 +105,6 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
         labels_csv_path=args.labels_csv,
-        carcinoma_csv_path=args.carcinoma_csv,
-        sarcoma_csv_path=args.sarcoma_csv,
-        use_auxiliary_labels=args.use_auxiliary_labels,
     )
 
 

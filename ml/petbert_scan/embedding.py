@@ -125,7 +125,6 @@ def embed_columns_weighted(
         raise ValueError("col_texts must not be empty")
 
     cols = list(col_texts.keys())
-    n = len(next(iter(col_texts.values())))
 
     col_embeddings: list[np.ndarray] = []
     col_token_counts: list[np.ndarray] = []

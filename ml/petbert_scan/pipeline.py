@@ -2,23 +2,21 @@
 
 This is the main entry point for the data categorization pipeline. The high-level flow is:
 
-  1.   Load and clean clinical diagnosis text from a CSV.
+  1.   Load and clean clinical report text from reportText.csv.
   1.5  Split multi-diagnosis entries into individual sub-diagnoses so that
        each sub-diagnosis is embedded and categorized independently.
   2.   Embed every sub-diagnosis string with PetBERT (768-dim vector each).
   3.   Load the Vet-ICD-O taxonomy and embed each label the same way.
   4.   Compare diagnosis embeddings to label embeddings via cosine similarity.
   5.   Pick the closest taxonomy label for each sub-diagnosis (with a confidence threshold).
-  6.   Optionally override predictions using auxiliary carcinoma/sarcoma patient lists.
-  7.   Map the chosen label index back to its ICD-O code, group, and term.
-  8.   Write all results to CSV / NPZ / JSON output files.
+  6.   Map the chosen label index back to its ICD-O code, group, and term.
+  7.   Write all results to CSV / NPZ / JSON output files.
 """
 
 import pandas as pd
 import numpy as np
 from sklearn.decomposition import PCA
 
-from .auxiliary_policy import AuxiliaryLabelPolicy
 from .categorization import run_categorization
 from .embedding import embed_columns_weighted, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from .io import (
@@ -94,16 +92,17 @@ def _expand_multi_diagnoses(
 def run_scan(config: ScanConfig) -> ScanOutputs:
     """Execute the full categorization pipeline end-to-end.
 
-    Reads clinical diagnosis rows, splits multi-diagnosis entries, embeds
-    each sub-diagnosis with PetBERT, matches it to the closest Vet-ICD-O
-    taxonomy label by cosine similarity, and writes the results to disk.
+    Reads clinical report rows from reportText.csv, splits multi-diagnosis
+    entries, embeds each report section with PetBERT using a weighted average
+    across columns, matches to the closest Vet-ICD-O taxonomy label by cosine
+    similarity, and writes the results to disk.
     """
 
     # --- Step 0: Prepare output file paths -----------------------------------
     outputs = build_outputs(config.out_dir, config.task)
 
     # --- Step 1: Load input data ---------------------------------------------
-    # Read the CSV containing patient IDs and clinical diagnosis free-text.
+    # Read the CSV containing patient IDs and clinical report free-text.
     dataframe = pd.read_csv(config.csv_path, encoding='latin-1')
     # Strip UTF-8 BOM from column names (e.g. ï»¿ prefix from Excel-exported CSVs)
     dataframe.columns = [col.lstrip('\ufeff').lstrip('ï»¿') for col in dataframe.columns]
@@ -170,13 +169,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     token_counts = row_token_counts[idx]    # (M,)
 
     # --- Step 3: Build & embed taxonomy labels --------------------------------
-    # Load the Vet-ICD-O-canine-1 taxonomy (~857 unique labels), each with a
-    # term, group, and ICD-O code.  Convert each label to a descriptive sentence
-    # like:
-    #   "Veterinary diagnosis term: Hemangiosarcoma, NOS. Group: Blood vessel
-    #    tumors. Code: 9120/3."
-    # Then embed those sentences through the *same* PetBERT model so that the
-    # diagnosis embeddings and label embeddings live in the same vector space.
     label_catalog = label_catalog_for_config(config)
     label_embeddings, _ = embed_texts(
         tokenizer,
@@ -189,10 +181,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     )
 
     # --- Step 4: Compare & categorize ----------------------------------------
-    # For each sub-diagnosis embedding, compute cosine similarity against every
-    # label embedding, then pick the label with the highest similarity score.
-    # If that best score is below the confidence threshold (default 0.6), the
-    # row is marked "Uncategorized" / method="low_confidence" instead.
     categorization = run_categorization(
         texts=expanded_texts,
         text_embeddings=embeddings,
@@ -201,33 +189,18 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         embedding_min_sim=config.embedding_min_sim,
     )
 
-    # --- Step 5: Optional auxiliary label override ----------------------------
-    # If --use-auxiliary-labels is set, patients known to have carcinoma or
-    # sarcoma (via external CSV lists of patient IDs) get their prediction
-    # constrained to only labels whose term contains "carcinoma" or "sarcoma".
-    # The highest-scoring label within that constrained subset is chosen.
-    # The expanded IDs ensure the override is applied to every sub-diagnosis
-    # belonging to that patient.
-    auxiliary_decision = AuxiliaryLabelPolicy(config, label_catalog.labels).apply(
-        ids=expanded_ids,
-        categorization=categorization,
-    )
-
-    # --- Step 6: Map label index -> ICD code, group, term --------------------
-    # Each row's final_index points into the taxonomy list.  This step
-    # resolves the index to the human-readable term, group name, and
-    # Vet-ICD-O-canine-1 code (e.g. "9120/3").
+    # --- Step 5: Map label index -> ICD code, group, term --------------------
     matched_terms, matched_groups, matched_codes = resolve_taxonomy_matches(
         categorization.final_indices,
         label_catalog.labels,
         label_catalog.taxonomy_labels,
     )
 
-    # --- Step 7: PCA for 2-D visualization -----------------------------------
+    # --- Step 6: PCA for 2-D visualization -----------------------------------
     pca = PCA(n_components=2, random_state=0)
     pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
 
-    # --- Step 8: Write output files ------------------------------------------
+    # --- Step 7: Write output files ------------------------------------------
     write_predictions_csv(
         path=outputs.predictions_csv,
         ids=expanded_ids,
@@ -241,7 +214,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         original_texts=original_texts,
     )
 
-    provenance_df = write_provenance_csv(
+    write_provenance_csv(
         path=outputs.provenance_csv,
         ids=expanded_ids,
         id_col=config.id_col,
@@ -250,7 +223,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         token_counts=token_counts,
         final_labels=categorization.final_labels,
         final_indices=categorization.final_indices,
-        auxiliary_labels=auxiliary_decision.labels,
         embedding_labels=categorization.embedding_labels,
         embedding_scores=categorization.embedding_scores,
         original_row_indices=original_row_indices,
@@ -307,14 +279,10 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "labels": categorization.labels,
         "labels_csv_path": config.labels_csv_path,
         "embedding_min_sim": float(config.embedding_min_sim),
-        "use_auxiliary_labels": bool(config.use_auxiliary_labels),
-        "carcinoma_csv_path": config.carcinoma_csv_path if config.use_auxiliary_labels else "",
-        "sarcoma_csv_path": config.sarcoma_csv_path if config.use_auxiliary_labels else "",
         "predicted_term_counts": pd.Series(matched_terms).value_counts().to_dict(),
         "predicted_group_counts": pd.Series(matched_groups).value_counts().to_dict(),
         "predicted_code_counts": pd.Series(matched_codes).value_counts().to_dict(),
         "prediction_method_counts": pd.Series(categorization.methods).value_counts().to_dict(),
-        "auxiliary_label_counts": provenance_df["auxiliary_label"].value_counts().to_dict(),
         "pca_explained_variance_ratio": pca.explained_variance_ratio_.tolist()
         if embeddings.size
         else [0.0, 0.0],

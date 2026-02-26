@@ -106,13 +106,12 @@ def write_provenance_csv(
     token_counts: np.ndarray,
     final_labels: list[str],
     final_indices: list[int],
-    auxiliary_labels: list[str],
     embedding_labels: np.ndarray,
     embedding_scores: np.ndarray,
     original_row_indices: list[int],
     diagnosis_indices: list[int],
 ) -> pd.DataFrame:
-    """Write the per-sub-diagnosis traceability and debug file."""
+    """Write the per-diagnosis traceability and debug file."""
     prov_df = pd.DataFrame({
         "row_index": original_row_indices,
         id_col: ids,
@@ -121,7 +120,6 @@ def write_provenance_csv(
         "char_len": char_lens,
         "token_count": token_counts,
         "predicted_category": final_labels,
-        "auxiliary_label": auxiliary_labels,
         "predicted_label_index": final_indices,
         "embedding_category": embedding_labels,
         "embedding_similarity": embedding_scores,

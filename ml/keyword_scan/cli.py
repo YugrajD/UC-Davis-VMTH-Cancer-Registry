@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--out-dir",
-        default="ml/output/diagnoses_keyword",
+        default="ml/output/diagnoses",
         help="Output directory.",
     )
     parser.add_argument(

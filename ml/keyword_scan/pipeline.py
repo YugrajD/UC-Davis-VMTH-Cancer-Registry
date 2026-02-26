@@ -51,6 +51,15 @@ class KeywordOutputs:
     summary_json: str
 
 
+@dataclass(frozen=True)
+class _MatchResult:
+    term: str
+    group: str
+    code: str
+    keyword: str
+    method: str  # "keyword" or "no_match"
+
+
 def _normalize(text: str) -> str:
     """Lowercase, collapse hyphens/underscores to spaces, normalize whitespace."""
     text = text.lower()
@@ -94,63 +103,73 @@ def _match_diagnosis(
     text: str,
     keyword_index: list[tuple[str, re.Pattern, int]],
     taxonomy_labels: list[TaxonomyLabel],
-) -> tuple[str, str, str, str, str]:
-    """Return (matched_term, matched_group, matched_code, matched_keyword, method).
-
-    method is "keyword" on a match, "no_match" otherwise.
-    """
+) -> _MatchResult:
+    """Return the best keyword match for a diagnosis text, or a no_match result."""
     norm_text = _normalize(text)
     for kw, pattern, label_idx in keyword_index:
         if pattern.search(norm_text):
             label = taxonomy_labels[label_idx]
-            return label.term, label.group, label.code, kw, "keyword"
-    return "", "", "", "", "no_match"
+            return _MatchResult(
+                term=label.term, group=label.group, code=label.code,
+                keyword=kw, method="keyword",
+            )
+    return _MatchResult(term="", group="", code="", keyword="", method="no_match")
+
+
+def _load_diagnoses_df(config: KeywordConfig) -> pd.DataFrame:
+    """Load the input CSV, strip BOM from column names, and validate required columns."""
+    df = pd.read_csv(config.csv_path, encoding="latin-1")
+    df.columns = [col.lstrip("\ufeff").lstrip("ï»¿") for col in df.columns]
+    if config.max_rows is not None:
+        df = df.head(config.max_rows).copy()
+    for col in [config.id_col, config.text_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found. Available: {df.columns.tolist()}")
+    return df
+
+
+def _match_all_diagnoses(
+    df: pd.DataFrame,
+    config: KeywordConfig,
+    keyword_index: list[tuple[str, re.Pattern, int]],
+    taxonomy_labels: list[TaxonomyLabel],
+) -> list[dict]:
+    """Apply keyword matching to every row and return a list of result dicts."""
+    results = []
+    for _, row in df.iterrows():
+        text = str(row[config.text_col]) if pd.notna(row[config.text_col]) else ""
+        match = _match_diagnosis(text, keyword_index, taxonomy_labels)
+        result: dict = {config.id_col: row[config.id_col]}
+        if config.diag_num_col in df.columns:
+            result[config.diag_num_col] = row[config.diag_num_col]
+        result.update({
+            config.text_col: text,
+            "matched_term": match.term,
+            "matched_group": match.group,
+            "matched_code": match.code,
+            "matched_keyword": match.keyword,
+            "method": match.method,
+        })
+        results.append(result)
+    return results
 
 
 def run_keyword_scan(config: KeywordConfig) -> KeywordOutputs:
     """Execute the keyword-only diagnosis categorization pipeline."""
     os.makedirs(config.out_dir, exist_ok=True)
-    predictions_csv = os.path.join(config.out_dir, "keyword_predictions.csv")
-    summary_json = os.path.join(config.out_dir, "keyword_summary.json")
+    outputs = KeywordOutputs(
+        predictions_csv=os.path.join(config.out_dir, "keyword_predictions.csv"),
+        summary_json=os.path.join(config.out_dir, "keyword_summary.json"),
+    )
 
-    # Load diagnoses
-    df = pd.read_csv(config.csv_path, encoding="latin-1")
-    df.columns = [col.lstrip("\ufeff").lstrip("ï»¿") for col in df.columns]
-    if config.max_rows is not None:
-        df = df.head(config.max_rows).copy()
-
-    for col in [config.id_col, config.text_col]:
-        if col not in df.columns:
-            raise ValueError(f"Column {col!r} not found. Available: {df.columns.tolist()}")
-
-    # Load taxonomy and build keyword index
+    df = _load_diagnoses_df(config)
     taxonomy_labels = load_labels_taxonomy(config.labels_csv_path)
     keyword_index = _build_keyword_index(taxonomy_labels)
 
-    # Match each row
-    results = []
-    for _, row in df.iterrows():
-        text = str(row[config.text_col]) if pd.notna(row[config.text_col]) else ""
-        matched_term, matched_group, matched_code, matched_keyword, method = (
-            _match_diagnosis(text, keyword_index, taxonomy_labels)
-        )
-        result = {config.id_col: row[config.id_col]}
-        if config.diag_num_col in df.columns:
-            result[config.diag_num_col] = row[config.diag_num_col]
-        result.update({
-            config.text_col: text,
-            "matched_term": matched_term,
-            "matched_group": matched_group,
-            "matched_code": matched_code,
-            "matched_keyword": matched_keyword,
-            "method": method,
-        })
-        results.append(result)
-
+    results = _match_all_diagnoses(df, config, keyword_index, taxonomy_labels)
     out_df = pd.DataFrame(results)
-    out_df.to_csv(predictions_csv, index=False)
+    out_df.to_csv(outputs.predictions_csv, index=False)
 
-    # Summary
     method_counts = out_df["method"].value_counts().to_dict()
     matched_df = out_df[out_df["method"] == "keyword"]
     summary = {
@@ -161,7 +180,7 @@ def run_keyword_scan(config: KeywordConfig) -> KeywordOutputs:
         "top_matched_terms": matched_df["matched_term"].value_counts().head(20).to_dict(),
         "top_matched_groups": matched_df["matched_group"].value_counts().head(10).to_dict(),
     }
-    with open(summary_json, "w", encoding="utf-8") as f:
+    with open(outputs.summary_json, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
-    return KeywordOutputs(predictions_csv=predictions_csv, summary_json=summary_json)
+    return outputs

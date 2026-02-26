@@ -37,6 +37,20 @@ from .types import ScanConfig, ScanOutputs
 from .utils import clean_text, device_from_arg, merge_report_columns, split_numbered_diagnoses
 
 
+def _validate_columns(
+    dataframe: pd.DataFrame,
+    id_col: str,
+    text_cols: tuple[str, ...],
+) -> None:
+    if id_col not in dataframe.columns:
+        raise ValueError(f"Missing id column {id_col!r}. Available: {dataframe.columns.tolist()}")
+    missing = [c for c in text_cols if c not in dataframe.columns]
+    if missing:
+        raise ValueError(
+            f"Missing text columns {missing!r}. Available: {dataframe.columns.tolist()}"
+        )
+
+
 def _expand_multi_diagnoses(
     ids: list[str], texts: list[str]
 ) -> tuple[list[str], list[str], list[int], list[int], list[str]]:
@@ -121,10 +135,10 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
 
     # For the predictions CSV, show only the FINAL COMMENT column value instead
     # of the full merged text (which includes all report sections).
-    _fc_col = "FINAL COMMENT"
-    if _fc_col in dataframe.columns:
-        _fc_values = dataframe[_fc_col].map(clean_text).tolist()
-        original_texts = [_fc_values[i] for i in original_row_indices]
+    fc_col = "FINAL COMMENT"
+    if fc_col in dataframe.columns:
+        fc_values = dataframe[fc_col].map(clean_text).tolist()
+        original_texts = [fc_values[i] for i in original_row_indices]
 
     char_lens = np.array([len(t) for t in expanded_texts], dtype=np.int32)
 
@@ -214,8 +228,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
 
     # --- Step 8: Write output files ------------------------------------------
-    row_count = len(expanded_texts)
-
     write_predictions_csv(
         path=outputs.predictions_csv,
         ids=expanded_ids,
@@ -284,7 +296,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "model_name": config.model_name,
         "device": str(torch_device),
         "input_rows": int(len(texts)),
-        "expanded_rows": int(row_count),
+        "expanded_rows": int(len(expanded_texts)),
         "task": config.task,
         "text_cols": list(config.text_cols),
         "col_weights": config.col_weights,
@@ -309,17 +321,3 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     }
     write_summary_json(outputs.summary_json, summary)
     return outputs
-
-
-def _validate_columns(
-    dataframe: pd.DataFrame,
-    id_col: str,
-    text_cols: tuple[str, ...],
-) -> None:
-    if id_col not in dataframe.columns:
-        raise ValueError(f"Missing id column {id_col!r}. Available: {dataframe.columns.tolist()}")
-    missing = [c for c in text_cols if c not in dataframe.columns]
-    if missing:
-        raise ValueError(
-            f"Missing text columns {missing!r}. Available: {dataframe.columns.tolist()}"
-        )

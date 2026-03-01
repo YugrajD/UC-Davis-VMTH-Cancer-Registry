@@ -14,6 +14,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from transformers import AutoModelForMaskedLM, AutoTokenizer
+import transformers.utils.logging as hf_logging
 
 
 def load_tokenizer_and_model(
@@ -26,7 +27,10 @@ def load_tokenizer_and_model(
     use the masked-LM head, only the base transformer's hidden states.
     """
     tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=local_only)
+    hf_logging.set_verbosity_error()
     model = AutoModelForMaskedLM.from_pretrained(model_name, local_files_only=local_only)
+    hf_logging.set_verbosity_warning()
+    print("[Warning]: BertForMaskedLM does not inherit from GenerationMixin; generate() will break from transformers v4.50.")
     return tokenizer, model
 
 

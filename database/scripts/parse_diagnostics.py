@@ -235,7 +235,7 @@ def main():
                 writer.writerow([pc['case_id'], num, text])
 
     # --- reportText.csv ---
-    with open(os.path.join(OUTPUT_DIR, 'reportText.csv'), 'w', newline='', encoding='utf-8') as f:
+    with open(os.path.join(OUTPUT_DIR, 'report.csv'), 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['case_id'] + all_headings)
         for pc in parsed_cases:

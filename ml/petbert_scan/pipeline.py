@@ -173,8 +173,8 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     )
 
     # --- Step 4: Compare & categorize ----------------------------------------
-    # Each column independently scores against every label; the label with the
-    # highest similarity from any column wins.
+    # Each sub-diagnosis embedding is scored against every taxonomy label via
+    # cosine similarity; the closest label wins (subject to the min_sim threshold).
     categorization = run_categorization(
         texts=expanded_texts,
         text_embeddings=embeddings,

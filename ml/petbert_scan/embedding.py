@@ -3,7 +3,7 @@
 This module handles the core ML operations:
   - Loading the PetBERT model and tokenizer from HuggingFace.
   - Converting free-text strings into 768-dimensional embedding vectors by
-    extracting the [CLS] token representation from PetBERT's last hidden layer.
+    mean-pooling the attended token hidden states from PetBERT's last hidden layer.
   - Computing cosine similarity between two sets of embeddings.
   - Finding top-k nearest neighbors within an embedding matrix.
 """

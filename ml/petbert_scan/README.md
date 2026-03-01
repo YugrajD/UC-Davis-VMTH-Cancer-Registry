@@ -26,7 +26,7 @@ Use `--local-only` if the model is already cached and you want to avoid network 
 ## Architecture
 
 - `ml/petbert_scan/pipeline.py`: orchestration of loading, embedding, categorization, and writing outputs
-- `ml/petbert_scan/embedding.py`: model/tokenizer loading, per-column weighted embedding, and cosine utilities
+- `ml/petbert_scan/embedding.py`: model/tokenizer loading, mean-pooled sub-diagnosis embedding, and cosine utilities
 - `ml/petbert_scan/categorization.py`: embedding-based label selection logic
 - `ml/petbert_scan/utils.py`: text cleaning, section merging (display only), diagnosis splitting, device selection
 - `ml/labels/taxonomy.py`: reads `labels.csv` into typed taxonomy records

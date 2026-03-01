@@ -80,6 +80,8 @@ def device_from_arg(device: str) -> torch.device:
         return torch.device(device)
     if torch.cuda.is_available():
         return torch.device("cuda")
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return torch.device("xpu")
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")

@@ -2,6 +2,10 @@ import sys
 import warnings
 from pathlib import Path
 
+# Import torch before any sklearn/scipy import to prevent a DLL init conflict
+# on Windows with Intel XPU builds (WinError 1114 on c10.dll).
+import torch  # noqa: F401
+
 # Suppress noisy dependency deprecation warnings and print concise versions.
 warnings.filterwarnings("ignore", message=".*resume_download.*", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pandas")

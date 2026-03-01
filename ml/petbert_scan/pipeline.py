@@ -18,7 +18,7 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from .categorization import run_categorization
-from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from .embedding import embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from .io import (
     build_outputs,
     write_embeddings_npz,
@@ -146,26 +146,19 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
     torch_device = device_from_arg(config.device)
 
-    # Embed each column independently — each gets the full max_length token budget.
-    # col_emb_dict: {col: (N_rows, 768)}, col_content: {col: (N_rows,) bool}
-    col_emb_dict, col_content_dict, row_token_counts = embed_columns_separate(
+    # Embed each sub-diagnosis string independently.  Using the already-split
+    # sub-diagnosis strings (rather than full report sections repeated per row)
+    # ensures each sub-diagnosis gets its own distinct embedding.
+    # embeddings: (M, 768), token_counts: (M,)
+    embeddings, token_counts = embed_texts(
         tokenizer,
         model,
-        col_texts,
+        expanded_texts,
         device=torch_device,
         batch_size=config.batch_size,
         max_length=config.max_length,
+        desc="Embedding sub-diagnoses",
     )
-
-    # Expand per-column embeddings and content masks to the M sub-diagnosis rows.
-    idx = np.array(original_row_indices, dtype=np.intp)
-    cols = list(col_texts.keys())
-    col_embedding_list = [col_emb_dict[col][idx] for col in cols]       # list of (M, 768)
-    col_has_content_list = [col_content_dict[col][idx] for col in cols]  # list of (M,) bool
-    token_counts = row_token_counts[idx]                                  # (M,)
-
-    # For PCA / NPZ visualization: use a simple mean across columns.
-    embeddings = np.mean(np.stack(col_embedding_list, axis=0), axis=0).astype(np.float32)  # (M, 768)
 
     # --- Step 3: Build & embed taxonomy labels --------------------------------
     label_catalog = label_catalog_for_config(config)
@@ -184,11 +177,10 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     # highest similarity from any column wins.
     categorization = run_categorization(
         texts=expanded_texts,
-        text_embeddings=col_embedding_list,
+        text_embeddings=embeddings,
         label_embeddings=label_embeddings,
         labels=label_catalog.labels,
         embedding_min_sim=config.embedding_min_sim,
-        col_has_content=col_has_content_list,
     )
 
     # --- Step 5: Map label index -> ICD code, group, term --------------------

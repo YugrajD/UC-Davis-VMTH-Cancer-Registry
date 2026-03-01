@@ -47,10 +47,12 @@ def embed_texts(
       1. Tokenizes the text (padding shorter texts, truncating at max_length).
       2. Passes the token IDs through PetBERT's base transformer (skipping
          the masked-LM head) via ``model.base_model(...)``.
-      3. Extracts the **[CLS] token embedding** -- the first token's hidden
-         state from the last transformer layer (position 0 in the sequence).
-         This single 768-dim vector serves as the fixed-size representation
-         of the entire input text.
+      3. Computes the **mean of attended token embeddings** -- the average of
+         all non-padding token hidden states from the last transformer layer.
+         This 768-dim vector serves as the fixed-size representation of the
+         entire input text. Mean pooling outperforms [CLS] for cosine-based
+         retrieval when the model has not been fine-tuned for sentence
+         similarity.
 
     Returns:
         embeddings: ndarray of shape (num_texts, 768).
@@ -83,10 +85,14 @@ def embed_texts(
         # outputs.last_hidden_state has shape (batch, seq_len, 768).
         outputs = model.base_model(input_ids=input_ids, attention_mask=attention_mask)
 
-        # Take the [CLS] token (index 0) as the sentence-level embedding.
-        cls_embedding = outputs.last_hidden_state[:, 0, :]
+        # Mean-pool over attended (non-padding) tokens.
+        hidden = outputs.last_hidden_state               # (B, T, 768)
+        mask = attention_mask.unsqueeze(-1).float()      # (B, T, 1)
+        summed = (hidden * mask).sum(dim=1)              # (B, 768)
+        counts = mask.sum(dim=1).clamp(min=1e-9)         # (B, 1)
+        mean_embedding = summed / counts                 # (B, 768)
         all_embeddings.append(
-            cls_embedding.detach().cpu().numpy().astype(np.float32, copy=False)
+            mean_embedding.detach().cpu().numpy().astype(np.float32, copy=False)
         )
 
         # Count real (non-padding) tokens per text for diagnostics.

@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", default="ml/output/report", help="Output directory")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap on rows")
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size")
-    parser.add_argument("--max-length", type=int, default=256, help="Tokenizer max_length")
+    parser.add_argument("--max-length", type=int, default=512, help="Tokenizer max_length")
     parser.add_argument("--neighbors-k", type=int, default=3, help="Neighbors per row")
     parser.add_argument(
         "--task",

@@ -115,6 +115,7 @@ def main() -> int:
 
     print("Wrote:")
     print(outputs.predictions_csv)
+    print(outputs.column_scores_csv)
     print(outputs.provenance_csv)
     print(outputs.similarity_csv)
     print(outputs.visualization_csv)

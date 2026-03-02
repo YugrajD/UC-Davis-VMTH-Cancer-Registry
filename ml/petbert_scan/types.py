@@ -32,6 +32,7 @@ class ScanOutputs:
     provenance_csv: str
     similarity_csv: str
     visualization_csv: str
+    column_scores_csv: str
     neighbors_csv: str | None
     npz: str
     summary_json: str

@@ -3,13 +3,13 @@
 This is the main entry point for the data categorization pipeline. The high-level flow is:
 
   1.   Load and clean clinical report text from reportText.csv.
-  1.5  Split multi-diagnosis entries into individual sub-diagnoses so that
-       each sub-diagnosis is embedded and categorized independently.
-  2.   Embed every sub-diagnosis string with PetBERT (768-dim vector each).
+  2.   Embed each text column independently with PetBERT (768-dim vector each).
   3.   Load the Vet-ICD-O taxonomy and embed each label the same way.
-  4.   Compare diagnosis embeddings to label embeddings via cosine similarity.
-  5.   Pick the closest taxonomy label for each sub-diagnosis (with a confidence threshold).
-  6.   Map the chosen label index back to its ICD-O code, group, and term.
+  4.   Compare per-column embeddings to label embeddings via cosine similarity;
+       the label with the highest score across any column wins per case.
+  5.   Return the top-k qualifying labels per case (up to 5 above the confidence
+       threshold), or the top-1 as "low_confidence" if none pass.
+  6.   Map the chosen label indices back to ICD-O code, group, and term.
   7.   Write all results to CSV / NPZ / JSON output files.
 """
 
@@ -18,9 +18,10 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from .categorization import run_categorization
-from .embedding import embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from .embedding import cosine_similarity_matrix, embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from .io import (
     build_outputs,
+    write_column_scores_csv,
     write_embeddings_npz,
     write_neighbors_csv,
     write_predictions_csv,
@@ -32,7 +33,7 @@ from .io import (
 from labels.catalog import label_catalog_for_config
 from labels.projection import resolve_taxonomy_matches
 from .types import ScanConfig, ScanOutputs
-from .utils import clean_text, device_from_arg, merge_report_columns, split_numbered_diagnoses
+from .utils import clean_text, device_from_arg, merge_report_columns
 
 
 def _validate_columns(
@@ -49,60 +50,19 @@ def _validate_columns(
         )
 
 
-def _expand_multi_diagnoses(
-    ids: list[str], texts: list[str]
-) -> tuple[list[str], list[str], list[int], list[int], list[str]]:
-    """Split multi-diagnosis entries and expand all parallel lists.
-
-    Clinical entries formatted as ``"1) Osteosarcoma 2) Cystitis"`` are split
-    into individual sub-diagnosis strings.  Every other per-row list (IDs,
-    texts) is expanded so that downstream pipeline steps receive a flat list
-    of sub-diagnoses and can process them without knowing about the split.
-
-    Returns:
-        expanded_ids:          Patient ID repeated for each sub-diagnosis.
-        expanded_texts:        Individual sub-diagnosis strings.
-        original_row_indices:  Index of the original CSV row each sub-diagnosis
-                               came from (0-based).
-        diagnosis_indices:     Position of this sub-diagnosis within its
-                               original entry (1-based, matching the ``1)``,
-                               ``2)`` numbering in the source text).
-        original_texts:        The full unsplit text for each sub-diagnosis
-                               (duplicated so it aligns with the expanded
-                               lists).
-    """
-    expanded_ids: list[str] = []
-    expanded_texts: list[str] = []
-    original_row_indices: list[int] = []
-    diagnosis_indices: list[int] = []
-    original_texts: list[str] = []
-
-    for row_idx, (patient_id, text) in enumerate(zip(ids, texts)):
-        sub_diagnoses = split_numbered_diagnoses(text)
-        for diag_idx, sub_text in enumerate(sub_diagnoses, start=1):
-            expanded_ids.append(patient_id)
-            expanded_texts.append(sub_text)
-            original_row_indices.append(row_idx)
-            diagnosis_indices.append(diag_idx)
-            original_texts.append(text)
-
-    return expanded_ids, expanded_texts, original_row_indices, diagnosis_indices, original_texts
-
-
 def run_scan(config: ScanConfig) -> ScanOutputs:
     """Execute the full categorization pipeline end-to-end.
 
-    Reads clinical report rows from reportText.csv, splits multi-diagnosis
-    entries, embeds each report section independently with PetBERT, computes
-    cosine similarity against taxonomy labels for each column separately, and
-    assigns the label whose highest similarity across any column wins.
+    Reads clinical report rows from reportText.csv, embeds each report section
+    independently with PetBERT, computes cosine similarity against taxonomy labels
+    for each column separately, and assigns the top-k labels whose highest
+    similarity across any column exceeds the confidence threshold (up to 5 per case).
     """
 
     # --- Step 0: Prepare output file paths -----------------------------------
     outputs = build_outputs(config.out_dir, config.task)
 
     # --- Step 1: Load input data ---------------------------------------------
-    # Read the CSV containing patient IDs and clinical report free-text.
     dataframe = pd.read_csv(config.csv_path, encoding='latin-1')
     # Strip UTF-8 BOM from column names (e.g. ï»¿ prefix from Excel-exported CSVs)
     dataframe.columns = [col.lstrip('\ufeff').lstrip('ï»¿') for col in dataframe.columns]
@@ -110,55 +70,36 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         dataframe = dataframe.head(config.max_rows).copy()
     _validate_columns(dataframe, config.id_col, config.text_cols)
 
-    # Clean the ID column and build per-column text lists for embedding.
     ids = dataframe[config.id_col].map(clean_text).tolist()
     cols = list(config.text_cols)
     col_texts = {col: dataframe[col].map(clean_text).tolist() for col in cols}
+    n = len(ids)
+    row_indices = list(range(n))
 
-    # Also build a merged string per row for display / provenance purposes only
-    # (not used for embedding).
+    # Merged text per row for provenance display and neighbors
     texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
+    char_lens = np.array([len(t) for t in texts], dtype=np.int32)
 
-    # --- Step 1.5: Split multi-diagnosis entries ------------------------------
-    # Clinical entries often contain multiple diagnoses numbered as
-    # "1) Osteosarcoma 2) Chronic cystitis".  Split these into individual
-    # sub-diagnoses so each one is categorized independently.
-    # This expands N input rows into M sub-diagnosis rows (M >= N).
-    (
-        expanded_ids,
-        expanded_texts,
-        original_row_indices,
-        diagnosis_indices,
-        original_texts,
-    ) = _expand_multi_diagnoses(ids, texts)
-
-    # For the predictions CSV, show only the FINAL COMMENT column value instead
-    # of the full merged text (which includes all report sections).
-    fc_col = "FINAL COMMENT"
-    if fc_col in dataframe.columns:
-        fc_values = dataframe[fc_col].map(clean_text).tolist()
-        original_texts = [fc_values[i] for i in original_row_indices]
-
-    char_lens = np.array([len(t) for t in expanded_texts], dtype=np.int32)
-
-    # --- Step 2: Embed diagnosis texts with PetBERT --------------------------
-    # Load the pre-trained PetBERT tokenizer + model from HuggingFace (or local cache).
+    # --- Step 2: Embed each column independently with PetBERT ----------------
     tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
     torch_device = device_from_arg(config.device)
 
-    # Embed each sub-diagnosis string independently.  Using the already-split
-    # sub-diagnosis strings (rather than full report sections repeated per row)
-    # ensures each sub-diagnosis gets its own distinct embedding.
-    # embeddings: (M, 768), token_counts: (M,)
-    embeddings, token_counts = embed_texts(
+    col_embeddings, col_has_content, token_counts = embed_columns_separate(
         tokenizer,
         model,
-        expanded_texts,
+        col_texts,
         device=torch_device,
         batch_size=config.batch_size,
         max_length=config.max_length,
-        desc="Embedding sub-diagnoses",
     )
+
+    # Compute a mean embedding per row (across non-empty columns) for
+    # visualization, neighbors, and the embeddings NPZ.
+    col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)  # (C, N, 768)
+    content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)  # (C, N)
+    col_emb_masked = col_emb_stack * content_mask[:, :, None]  # (C, N, 768)
+    content_counts = np.maximum(content_mask.sum(axis=0), 1.0)  # (N,)
+    embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)  # (N, 768)
 
     # --- Step 3: Build & embed taxonomy labels --------------------------------
     label_catalog = label_catalog_for_config(config)
@@ -172,73 +113,126 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         desc="Embedding labels",
     )
 
-    # --- Step 4: Compare & categorize ----------------------------------------
-    # Each sub-diagnosis embedding is scored against every taxonomy label via
-    # cosine similarity; the closest label wins (subject to the min_sim threshold).
+    # --- Step 4: Categorize with top-k predictions ---------------------------
+    # Pass per-column embeddings; run_categorization takes the element-wise max
+    # similarity across columns so the strongest column wins per (row, label) pair.
+    col_emb_list = [col_embeddings[col] for col in cols]
+    col_has_content_list = [col_has_content[col] for col in cols]
+
     categorization = run_categorization(
-        texts=expanded_texts,
-        text_embeddings=embeddings,
+        texts=texts,
+        text_embeddings=col_emb_list,
         label_embeddings=label_embeddings,
         labels=label_catalog.labels,
         embedding_min_sim=config.embedding_min_sim,
+        col_has_content=col_has_content_list,
+        max_predictions=5,
     )
 
-    # --- Step 5: Map label index -> ICD code, group, term --------------------
+    # --- Step 5: Resolve top-k label indices -> term / group / code ----------
+    all_k_terms: list[list[str]] = []
+    all_k_groups: list[list[str]] = []
+    all_k_codes: list[list[str]] = []
+    for k_idxs, k_methods in zip(categorization.top_k_indices, categorization.top_k_methods):
+        terms, groups, codes = resolve_taxonomy_matches(
+            k_idxs, label_catalog.labels, label_catalog.taxonomy_labels
+        )
+        # Blank code for low_confidence predictions
+        codes = [c if m == "embedding" else "" for c, m in zip(codes, k_methods)]
+        all_k_terms.append(terms)
+        all_k_groups.append(groups)
+        all_k_codes.append(codes)
+
+    # Top-1 resolved info (for provenance, similarity, visualization)
     matched_terms, matched_groups, matched_codes = resolve_taxonomy_matches(
-        categorization.final_indices,
-        label_catalog.labels,
-        label_catalog.taxonomy_labels,
+        categorization.final_indices, label_catalog.labels, label_catalog.taxonomy_labels
     )
 
-    # --- Step 6: PCA for 2-D visualization -----------------------------------
+    # --- Step 6: Compute per-column top predictions for column scores ---------
+    col_top_terms: dict[str, list[str]] = {}
+    col_top_groups: dict[str, list[str]] = {}
+    col_top_codes: dict[str, list[str]] = {}
+    col_top_scores: dict[str, list[float]] = {}
+
+    for col in cols:
+        col_sims = cosine_similarity_matrix(col_embeddings[col], label_embeddings)  # (N, M)
+        col_top_idx = np.argmax(col_sims, axis=1)
+        col_top_sc = col_sims[np.arange(n), col_top_idx].astype(np.float32)
+        # Zero out scores for rows where this column was empty
+        col_top_sc[~col_has_content[col]] = 0.0
+        t, g, c = resolve_taxonomy_matches(
+            col_top_idx.tolist(), label_catalog.labels, label_catalog.taxonomy_labels
+        )
+        col_top_terms[col] = t
+        col_top_groups[col] = g
+        col_top_codes[col] = c
+        col_top_scores[col] = col_top_sc.tolist()
+
+    # Mark which column had the highest score per row (decisive column)
+    col_decisive: dict[str, list[bool]] = {col: [False] * n for col in cols}
+    for i in range(n):
+        best_col = max(cols, key=lambda c: col_top_scores[c][i])
+        col_decisive[best_col][i] = True
+
+    # --- Step 7: PCA for 2-D visualization -----------------------------------
     pca = PCA(n_components=2, random_state=0)
     pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
 
-    # --- Step 7: Write output files ------------------------------------------
+    # --- Step 8: Write output files ------------------------------------------
     write_predictions_csv(
         path=outputs.predictions_csv,
-        ids=expanded_ids,
+        ids=ids,
         id_col=config.id_col,
-        matched_terms=matched_terms,
-        matched_groups=matched_groups,
-        matched_codes=matched_codes,
-        final_scores=categorization.final_scores,
-        methods=categorization.methods,
-        original_row_indices=original_row_indices,
-        original_texts=original_texts,
+        all_k_terms=all_k_terms,
+        all_k_groups=all_k_groups,
+        all_k_codes=all_k_codes,
+        all_k_scores=categorization.top_k_scores,
+        all_k_methods=categorization.top_k_methods,
     )
 
     write_provenance_csv(
         path=outputs.provenance_csv,
-        ids=expanded_ids,
+        ids=ids,
         id_col=config.id_col,
-        texts=expanded_texts,
+        texts=texts,
         char_lens=char_lens,
         token_counts=token_counts,
         final_labels=categorization.final_labels,
         final_indices=categorization.final_indices,
         embedding_labels=categorization.embedding_labels,
         embedding_scores=categorization.embedding_scores,
-        original_row_indices=original_row_indices,
-        diagnosis_indices=diagnosis_indices,
+        original_row_indices=row_indices,
+        diagnosis_indices=[1] * n,
     )
 
     write_similarity_csv(
         path=outputs.similarity_csv,
-        original_row_indices=original_row_indices,
-        diagnosis_indices=diagnosis_indices,
+        original_row_indices=row_indices,
+        diagnosis_indices=[1] * n,
         label_scores=categorization.label_scores,
         labels=categorization.labels,
     )
 
     write_visualization_csv(
         path=outputs.visualization_csv,
-        ids=expanded_ids,
+        ids=ids,
         id_col=config.id_col,
         matched_groups=matched_groups,
         pca_2d=pca_2d,
-        original_row_indices=original_row_indices,
-        diagnosis_indices=diagnosis_indices,
+        original_row_indices=row_indices,
+        diagnosis_indices=[1] * n,
+    )
+
+    write_column_scores_csv(
+        path=outputs.column_scores_csv,
+        ids=ids,
+        id_col=config.id_col,
+        col_texts=col_texts,
+        col_top_terms=col_top_terms,
+        col_top_groups=col_top_groups,
+        col_top_codes=col_top_codes,
+        col_top_scores=col_top_scores,
+        col_decisive=col_decisive,
     )
 
     if outputs.neighbors_csv is not None:
@@ -247,22 +241,21 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         )
         write_neighbors_csv(
             path=outputs.neighbors_csv,
-            ids=expanded_ids,
-            texts=expanded_texts,
+            ids=ids,
+            texts=texts,
             id_col=config.id_col,
             text_col="merged_text",
             neighbor_idx=neighbor_idx,
             neighbor_sim=neighbor_sim,
         )
 
-    write_embeddings_npz(outputs.npz, embeddings, expanded_ids, expanded_texts)
+    write_embeddings_npz(outputs.npz, embeddings, ids, texts)
 
     summary = {
         "csv_path": config.csv_path,
         "model_name": config.model_name,
         "device": str(torch_device),
-        "input_rows": int(len(texts)),
-        "expanded_rows": int(len(expanded_texts)),
+        "input_rows": int(n),
         "task": config.task,
         "text_cols": list(config.text_cols),
         "col_weights": config.col_weights,

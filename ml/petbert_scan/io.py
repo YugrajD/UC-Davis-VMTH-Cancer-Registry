@@ -22,22 +22,11 @@ def build_outputs(out_dir: str, task: TaskMode) -> ScanOutputs:
         provenance_csv=os.path.join(out_dir, "petbert_scan_provenance.csv"),
         similarity_csv=os.path.join(out_dir, "petbert_scan_similarity_scores.csv"),
         visualization_csv=os.path.join(out_dir, "petbert_scan_visualization.csv"),
+        column_scores_csv=os.path.join(out_dir, "petbert_scan_column_scores.csv"),
         neighbors_csv=neighbors_csv,
         npz=os.path.join(out_dir, "petbert_scan_embeddings.npz"),
         summary_json=os.path.join(out_dir, "petbert_scan_summary.json"),
     )
-
-
-def _concat_group(values: list[str], *, count: int) -> str:
-    """Concatenate sub-diagnosis values for a single patient row.
-
-    When *count* is 1 the value is returned as-is (no prefix).
-    When *count* > 1 each value is prefixed with ``"k) "`` and all are
-    joined with a space.
-    """
-    if count == 1:
-        return values[0]
-    return " ".join(f"{i}) {v}" for i, v in enumerate(values, start=1))
 
 
 def write_predictions_csv(
@@ -45,55 +34,71 @@ def write_predictions_csv(
     path: str,
     ids: list[str],
     id_col: str,
-    matched_terms: list[str],
-    matched_groups: list[str],
-    matched_codes: list[str],
-    final_scores: list[float],
-    methods: list[str],
-    original_row_indices: list[int],
-    original_texts: list[str],
+    all_k_terms: list[list[str]],
+    all_k_groups: list[list[str]],
+    all_k_codes: list[list[str]],
+    all_k_scores: list[list[float]],
+    all_k_methods: list[list[str]],
 ) -> pd.DataFrame:
     """Write the presentation-ready predictions file.
 
-    Collapses sub-diagnoses back to one row per original patient.
-    Multi-diagnosis entries are concatenated with ``1)``, ``2)`` prefixes;
-    single-diagnosis entries are shown plain.  ``predicted_code`` is blanked
-    for uncategorized predictions (method ``low_confidence`` or ``empty``).
+    One row per (case, prediction rank). ``diagnosis_index`` is the rank of the
+    prediction for that case (1 = best match, up to 5). Cases where the text was
+    empty produce no rows.
     """
-    # Build a per-sub-diagnosis frame first
-    codes_cleaned = [
-        code if method not in ("low_confidence", "empty") else ""
-        for code, method in zip(matched_codes, methods)
-    ]
-    scores_str = [f"{s:.2f}" for s in final_scores]
-
-    sub_df = pd.DataFrame({
-        "row_index": original_row_indices,
-        id_col: ids,
-        "original_text": original_texts,
-        "predicted_term": matched_terms,
-        "predicted_group": matched_groups,
-        "predicted_code": codes_cleaned,
-        "confidence": scores_str,
-        "method": methods,
-    })
-
-    # Group by original row and concatenate
-    concat_cols = ["predicted_term", "predicted_group", "predicted_code", "confidence", "method"]
     rows = []
-    for row_idx, group in sub_df.groupby("row_index", sort=True):
-        count = len(group)
-        row = {
-            id_col: group[id_col].iloc[0],
-            "original_text": group["original_text"].iloc[0],
-        }
-        for col in concat_cols:
-            row[col] = _concat_group(group[col].tolist(), count=count)
-        rows.append(row)
-
+    for i, patient_id in enumerate(ids):
+        for rank, (term, group, code, score, method) in enumerate(
+            zip(all_k_terms[i], all_k_groups[i], all_k_codes[i], all_k_scores[i], all_k_methods[i]),
+            start=1,
+        ):
+            rows.append({
+                id_col: patient_id,
+                "diagnosis_index": rank,
+                "predicted_term": term,
+                "predicted_group": group,
+                "predicted_code": code,
+                "confidence": f"{score:.2f}",
+                "method": method,
+            })
     pred_df = pd.DataFrame(rows)
     pred_df.to_csv(path, index=False)
     return pred_df
+
+
+def write_column_scores_csv(
+    *,
+    path: str,
+    ids: list[str],
+    id_col: str,
+    col_texts: dict[str, list[str]],
+    col_top_terms: dict[str, list[str]],
+    col_top_groups: dict[str, list[str]],
+    col_top_codes: dict[str, list[str]],
+    col_top_scores: dict[str, list[float]],
+    col_decisive: dict[str, list[bool]],
+) -> None:
+    """Write the per-column similarity score file.
+
+    One row per (case x column). Shows which taxonomy label each text column
+    independently matched best, and which column was decisive (highest score)
+    for each case.
+    """
+    rows = []
+    for i, patient_id in enumerate(ids):
+        for col_name in col_texts:
+            rows.append({
+                "row_index": i,
+                id_col: patient_id,
+                "column_name": col_name,
+                "column_text": col_texts[col_name][i],
+                "top_term": col_top_terms[col_name][i],
+                "top_group": col_top_groups[col_name][i],
+                "top_code": col_top_codes[col_name][i],
+                "top_score": round(col_top_scores[col_name][i], 4),
+                "was_decisive": col_decisive[col_name][i],
+            })
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 def write_provenance_csv(

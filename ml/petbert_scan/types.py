@@ -24,6 +24,7 @@ class ScanConfig:
     embedding_min_sim: float
     device: str
     labels_csv_path: str
+    presence_classifier_path: str | None
 
 
 @dataclass(frozen=True)

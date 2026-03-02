@@ -15,10 +15,12 @@ This is the main entry point for the data categorization pipeline. The high-leve
 
 import pandas as pd
 import numpy as np
+import torch
 from sklearn.decomposition import PCA
 
 from .categorization import run_categorization
 from .embedding import cosine_similarity_matrix, embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from model.presence_classifier import PresenceClassifier
 from .io import (
     build_outputs,
     write_column_scores_csv,
@@ -119,6 +121,21 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     col_emb_list = [col_embeddings[col] for col in cols]
     col_has_content_list = [col_has_content[col] for col in cols]
 
+    # Optional: use the presence classifier to replace cosine similarity scores.
+    # The classifier takes the mean case embedding (across columns) and each label
+    # embedding and returns a presence probability for every (case, label) pair.
+    presence_score_matrix = None
+    if config.presence_classifier_path is not None:
+        print(f"Loading presence classifier from {config.presence_classifier_path}...")
+        classifier = PresenceClassifier.load(config.presence_classifier_path)
+        classifier.to(torch_device)
+        presence_score_matrix = classifier.score_matrix(
+            torch.from_numpy(embeddings),
+            torch.from_numpy(label_embeddings),
+        ).numpy()
+        classifier.cpu()
+        del classifier
+
     categorization = run_categorization(
         texts=texts,
         text_embeddings=col_emb_list,
@@ -127,6 +144,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         embedding_min_sim=config.embedding_min_sim,
         col_has_content=col_has_content_list,
         max_predictions=5,
+        score_matrix=presence_score_matrix,
     )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------

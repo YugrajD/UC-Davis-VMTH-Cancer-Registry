@@ -66,6 +66,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="ml/labels/labels.csv",
         help="Path to labels taxonomy CSV.",
     )
+    parser.add_argument(
+        "--presence-classifier",
+        default=None,
+        help=(
+            "Path to a trained PresenceClassifier checkpoint (.pt). "
+            "When set, presence probabilities replace cosine similarity for scoring labels."
+        ),
+    )
     return parser
 
 
@@ -105,6 +113,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
         labels_csv_path=args.labels_csv,
+        presence_classifier_path=args.presence_classifier,
     )
 
 

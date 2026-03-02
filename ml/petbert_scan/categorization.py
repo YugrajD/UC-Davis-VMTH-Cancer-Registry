@@ -37,15 +37,22 @@ def run_categorization(
     embedding_min_sim: float,
     col_has_content: list[np.ndarray] | None = None,
     max_predictions: int = 5,
+    score_matrix: np.ndarray | None = None,
 ) -> CategorizationResult:
-    """Categorize each diagnosis by cosine similarity to taxonomy label embeddings.
+    """Categorize each diagnosis by similarity to taxonomy label embeddings.
 
     When ``text_embeddings`` is a list of per-column embedding arrays, each
     column independently computes its similarity scores and the label with the
     highest score across *any* column wins.  Empty cells (tracked via
     ``col_has_content``) are masked out so they cannot influence the result.
+
+    If ``score_matrix`` is provided (shape N×M), it is used directly instead of
+    computing cosine similarity — e.g. when the presence classifier has already
+    produced a pre-scored (N, M) probability matrix.
     """
-    if isinstance(text_embeddings, list):
+    if score_matrix is not None:
+        sims = score_matrix
+    elif isinstance(text_embeddings, list):
         sim_matrices: list[np.ndarray] = []
         for i, emb in enumerate(text_embeddings):
             sim = cosine_similarity_matrix(emb, label_embeddings)  # (N, M)

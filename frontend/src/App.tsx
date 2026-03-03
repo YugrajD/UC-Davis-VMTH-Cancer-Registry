@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
@@ -29,6 +29,8 @@ function App() {
       <main className="max-w-[1400px] mx-auto px-6 py-6">
         {activeTab === 'data-upload' ? (
           <DataUpload />
+        ) : activeTab === 'analysis' ? (
+          <AnalysisView countyData={countyData} countRange={countRange} />
         ) : activeTab === 'cancer-types' ? (
           <div className="space-y-6">
             <div className="bg-white rounded-lg border border-gray-200 p-4">

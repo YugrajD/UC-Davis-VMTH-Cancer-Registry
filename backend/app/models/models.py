@@ -135,6 +135,39 @@ class PathologyReport(Base):
     case = relationship("CancerCase", back_populates="reports")
 
 
+class CalEnviroScreen(Base):
+    __tablename__ = "calenviroscreen"
+
+    id = Column(Integer, primary_key=True)
+    county_id = Column(Integer, ForeignKey("counties.id"), nullable=False, unique=True)
+    ces_score = Column(Numeric(6, 2))
+    pollution_burden = Column(Numeric(6, 2))
+    ozone = Column(Numeric(6, 2))
+    pm25 = Column(Numeric(6, 2))
+    diesel_pm = Column(Numeric(6, 2))
+    pesticides = Column(Numeric(6, 2))
+    toxic_releases = Column(Numeric(6, 2))
+    traffic = Column(Numeric(6, 2))
+    drinking_water = Column(Numeric(6, 2))
+    lead = Column(Numeric(6, 2))
+    cleanup_sites = Column(Numeric(6, 2))
+    groundwater_threats = Column(Numeric(6, 2))
+    hazardous_waste = Column(Numeric(6, 2))
+    solid_waste = Column(Numeric(6, 2))
+    impaired_water = Column(Numeric(6, 2))
+    pop_characteristics = Column(Numeric(6, 2))
+    asthma = Column(Numeric(6, 2))
+    low_birth_weight = Column(Numeric(6, 2))
+    cardiovascular = Column(Numeric(6, 2))
+    poverty = Column(Numeric(6, 2))
+    unemployment = Column(Numeric(6, 2))
+    housing_burden = Column(Numeric(6, 2))
+    education = Column(Numeric(6, 2))
+    linguistic_isolation = Column(Numeric(6, 2))
+
+    county = relationship("County")
+
+
 class IngestionLog(Base):
     __tablename__ = "ingestion_logs"
 

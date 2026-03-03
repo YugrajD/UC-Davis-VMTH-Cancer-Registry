@@ -128,6 +128,14 @@ export async function fetchCountiesGeoJSON(filters: FilterParams = {}): Promise<
   return fetchJson(url);
 }
 
+// --- CalEnviroScreen ---
+
+import type { CalEnviroScreenData } from '../types';
+
+export async function fetchCalEnviroScreen(): Promise<CalEnviroScreenData[]> {
+  return fetchJson('/api/v1/geo/calenviroscreen');
+}
+
 // --- Ingestion ---
 
 export interface IngestionRowResult {

@@ -181,6 +181,29 @@ class ReportSearchResponse(BaseModel):
     total: int
 
 
+# --- Breed Detail ---
+
+class BreedCancerTypeCount(BaseModel):
+    cancer_type: str
+    count: int
+
+class BreedCountyCount(BaseModel):
+    county_name: str
+    fips_code: str
+    count: int
+
+class BreedSexCount(BaseModel):
+    sex: str
+    count: int
+
+class BreedDetailOut(BaseModel):
+    breed: str
+    total_cases: int
+    sex_breakdown: List[BreedSexCount]
+    cancer_types: List[BreedCancerTypeCount]
+    county_cases: List[BreedCountyCount]
+
+
 # --- Filter Options ---
 
 class FilterOptions(BaseModel):

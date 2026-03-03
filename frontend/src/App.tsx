@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
+import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
   });
 
   const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
+  const cancerTypesState = useCancerTypesData(filters);
 
   const handleCountyClick = (county: string) => {
     setSelectedCounty(selectedCounty === county ? null : county);
@@ -27,6 +29,61 @@ function App() {
       <main className="max-w-[1400px] mx-auto px-6 py-6">
         {activeTab === 'data-upload' ? (
           <DataUpload />
+        ) : activeTab === 'cancer-types' ? (
+          <div className="space-y-6">
+            <div className="bg-white rounded-lg border border-gray-200 p-4">
+              <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
+                This view shows the distribution of cancer types across all ingested PetBERT cases.
+                Use the filters above to focus on specific sex or cancer types.
+              </p>
+            </div>
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
+                Cancer Types Distribution
+              </h2>
+              <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                Overview of cancer types by case count across California.
+              </p>
+
+              {cancerTypesState.loading ? (
+                <p className="text-sm text-[var(--color-text-secondary)]">Loading cancer type data...</p>
+              ) : cancerTypesState.error ? (
+                <p className="text-sm text-red-600">Error: {cancerTypesState.error}</p>
+              ) : cancerTypesState.data.length === 0 ? (
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  No cancer type data found for the selected filters.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {cancerTypesState.data
+                    .slice()
+                    .sort((a, b) => b.count - a.count)
+                    .slice(0, 10)
+                    .map((record) => {
+                      const maxCount = cancerTypesState.data[0]?.count || 1;
+                      const width = Math.max(5, (record.count / maxCount) * 100);
+                      return (
+                        <div key={record.cancer_type} className="flex items-center gap-4">
+                          <span className="w-48 text-sm text-[var(--color-text-primary)]">
+                            {record.cancer_type}
+                          </span>
+                          <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-[var(--color-teal)] to-[var(--color-teal-dark)] rounded-full flex items-center justify-end pr-2"
+                              style={{ width: `${width}%` }}
+                            >
+                              <span className="text-xs font-semibold text-white">
+                                {record.count.toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
         <>
         {/* Intro text */}
@@ -122,26 +179,44 @@ function App() {
             <p className="text-sm text-[var(--color-text-secondary)] mb-4">
               Overview of cancer types by case count across California.
             </p>
-            <div className="space-y-3">
-              {['Mast Cell Tumor', 'Lymphoma', 'Mammary Carcinoma', 'Hemangiosarcoma', 'Osteosarcoma', 'Soft Tissue Sarcoma'].map((type, i) => {
-                const count = Math.floor(80 - i * 8 + Math.random() * 10);
-                const maxCount = 90;
-                const width = (count / maxCount) * 100;
-                return (
-                  <div key={type} className="flex items-center gap-4">
-                    <span className="w-40 text-sm text-[var(--color-text-primary)]">{type}</span>
-                    <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
-                      <div 
-                        className="h-full bg-gradient-to-r from-[var(--color-teal)] to-[var(--color-teal-dark)] rounded-full flex items-center justify-end pr-2"
-                        style={{ width: `${width}%` }}
-                      >
-                        <span className="text-xs font-semibold text-white">{count}</span>
+
+            {cancerTypesState.loading ? (
+              <p className="text-sm text-[var(--color-text-secondary)]">Loading cancer type data...</p>
+            ) : cancerTypesState.error ? (
+              <p className="text-sm text-red-600">Error: {cancerTypesState.error}</p>
+            ) : cancerTypesState.data.length === 0 ? (
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                No cancer type data found for the selected filters.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {cancerTypesState.data
+                  .slice() // copy
+                  .sort((a, b) => b.count - a.count)
+                  .slice(0, 10)
+                  .map((record) => {
+                    const maxCount = cancerTypesState.data[0]?.count || 1;
+                    const width = Math.max(5, (record.count / maxCount) * 100);
+                    return (
+                      <div key={record.cancer_type} className="flex items-center gap-4">
+                        <span className="w-48 text-sm text-[var(--color-text-primary)]">
+                          {record.cancer_type}
+                        </span>
+                        <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-[var(--color-teal)] to-[var(--color-teal-dark)] rounded-full flex items-center justify-end pr-2"
+                            style={{ width: `${width}%` }}
+                          >
+                            <span className="text-xs font-semibold text-white">
+                              {record.count.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+              </div>
+            )}
           </div>
         )}
 

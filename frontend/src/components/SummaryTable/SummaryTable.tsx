@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { RegionSummary } from '../../types';
 
 interface SummaryTableProps {
   data: RegionSummary;
 }
+
+type SortDirection = 'asc' | 'desc';
 
 interface RowProps {
   item: RegionSummary;
@@ -12,9 +14,22 @@ interface RowProps {
   onToggle: () => void;
   expandedItems: Set<string>;
   onItemToggle: (name: string) => void;
+  globalSortDirection: SortDirection;
+  sortDirectionByName: Record<string, SortDirection | undefined>;
+  onToggleSortForItem: (name: string) => void;
 }
 
-function SummaryRow({ item, depth, isExpanded, onToggle, expandedItems, onItemToggle }: RowProps) {
+function SummaryRow({
+  item,
+  depth,
+  isExpanded,
+  onToggle,
+  expandedItems,
+  onItemToggle,
+  globalSortDirection,
+  sortDirectionByName,
+  onToggleSortForItem,
+}: RowProps) {
   const hasChildren = item.children && item.children.length > 0;
   const indent = depth * 20;
   
@@ -32,6 +47,23 @@ function SummaryRow({ item, depth, isExpanded, onToggle, expandedItems, onItemTo
         return '';
     }
   };
+
+  const effectiveSortDirection = (sortDirectionByName[item.name] ?? globalSortDirection);
+
+  const SortIcon = ({ direction }: { direction: SortDirection }) => (
+    <svg
+      className={`w-3 h-3 ml-1 inline-block transition-transform ${direction === 'asc' ? 'rotate-180' : ''}`}
+      fill="currentColor"
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+    >
+      <path
+        fillRule="evenodd"
+        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
 
   return (
     <>
@@ -60,8 +92,15 @@ function SummaryRow({ item, depth, isExpanded, onToggle, expandedItems, onItemTo
             <span className="text-sm">{item.name}</span>
           </div>
         </td>
-        <td className="py-2 px-3 text-right text-sm tabular-nums font-medium">
-          {item.count.toLocaleString()}
+        <td
+          className={`py-2 px-3 text-right text-sm tabular-nums font-medium ${hasChildren ? 'cursor-pointer select-none' : ''}`}
+          onClick={hasChildren ? () => onToggleSortForItem(item.name) : undefined}
+          title={hasChildren ? `Sort within ${item.name} (${effectiveSortDirection === 'desc' ? 'descending' : 'ascending'})` : undefined}
+        >
+          <span className="inline-flex items-center justify-end">
+            {item.count.toLocaleString()}
+            {hasChildren && <SortIcon direction={effectiveSortDirection} />}
+          </span>
         </td>
       </tr>
       
@@ -74,6 +113,9 @@ function SummaryRow({ item, depth, isExpanded, onToggle, expandedItems, onItemTo
           onToggle={() => onItemToggle(child.name)}
           expandedItems={expandedItems}
           onItemToggle={onItemToggle}
+          globalSortDirection={globalSortDirection}
+          sortDirectionByName={sortDirectionByName}
+          onToggleSortForItem={onToggleSortForItem}
         />
       ))}
     </>
@@ -84,6 +126,8 @@ export function SummaryTable({ data }: SummaryTableProps) {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(
     new Set(['California', 'UC Davis Catchment Area'])
   );
+  const [globalSortDirection, setGlobalSortDirection] = useState<SortDirection>('desc');
+  const [sortDirectionByName, setSortDirectionByName] = useState<Record<string, SortDirection | undefined>>({});
 
   const toggleItem = (name: string) => {
     const newExpanded = new Set(expandedItems);
@@ -95,9 +139,32 @@ export function SummaryTable({ data }: SummaryTableProps) {
     setExpandedItems(newExpanded);
   };
 
+  const toggleSortForItem = (name: string) => {
+    setSortDirectionByName((prev) => {
+      const current = prev[name] ?? globalSortDirection;
+      const next: SortDirection = current === 'desc' ? 'asc' : 'desc';
+      return { ...prev, [name]: next };
+    });
+  };
+
+  const sortedData = useMemo((): RegionSummary => {
+    const sortTree = (node: RegionSummary): RegionSummary => {
+      const children = node.children?.map(sortTree);
+      const direction = sortDirectionByName[node.name] ?? globalSortDirection;
+      const sortedChildren = children
+        ? [...children].sort((a, b) => {
+            const delta = a.count - b.count;
+            return direction === 'asc' ? delta : -delta;
+          })
+        : undefined;
+      return { ...node, children: sortedChildren };
+    };
+    return sortTree(data);
+  }, [data, globalSortDirection, sortDirectionByName]);
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
         <div>
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
             Regional Summary
@@ -106,31 +173,6 @@ export function SummaryTable({ data }: SummaryTableProps) {
             Case counts by region and county
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            const el = document.getElementById('filters-panel');
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-          }}
-          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-[var(--color-teal)] text-[var(--color-teal)] hover:bg-[var(--color-teal)] hover:text-white transition-colors"
-        >
-          Filters
-          <svg
-            className="w-3 h-3"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M3 4h18M6 10h12M10 16h4"
-            />
-          </svg>
-        </button>
       </div>
       
       <div className="overflow-x-auto custom-scrollbar">
@@ -140,19 +182,40 @@ export function SummaryTable({ data }: SummaryTableProps) {
               <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider">
                 Region / County
               </th>
-              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
+              <th
+                className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors select-none"
+                onClick={() => setGlobalSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'))}
+                title={globalSortDirection === 'desc' ? 'Sort ascending' : 'Sort descending'}
+              >
                 Count
+                <svg
+                  className={`w-3 h-3 ml-1 inline-block transition-transform ${
+                    globalSortDirection === 'asc' ? 'rotate-180' : ''
+                  }`}
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                  aria-hidden="true"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                    clipRule="evenodd"
+                  />
+                </svg>
               </th>
             </tr>
           </thead>
           <tbody>
             <SummaryRow
-              item={data}
+              item={sortedData}
               depth={0}
-              isExpanded={expandedItems.has(data.name)}
-              onToggle={() => toggleItem(data.name)}
+              isExpanded={expandedItems.has(sortedData.name)}
+              onToggle={() => toggleItem(sortedData.name)}
               expandedItems={expandedItems}
               onItemToggle={toggleItem}
+              globalSortDirection={globalSortDirection}
+              sortDirectionByName={sortDirectionByName}
+              onToggleSortForItem={toggleSortForItem}
             />
           </tbody>
         </table>

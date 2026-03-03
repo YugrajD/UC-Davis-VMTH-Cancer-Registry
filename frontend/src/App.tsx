@@ -151,6 +151,30 @@ function App() {
           </div>
         </div>
 
+        {/* Tab-specific content */}
+        {activeTab === 'breed-disparities' && (
+          <div className="mt-6 bg-white rounded-lg border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
+              Breed Disparities Analysis
+            </h2>
+            <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+              This section will display breed-specific cancer case counts.
+              Select a specific breed from the filter to see detailed statistics.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {['Golden Retriever', 'Boxer', 'Rottweiler', 'Labrador Retriever'].map(breed => (
+                <div key={breed} className="bg-gray-50 rounded-lg p-4 text-center">
+                  <p className="text-sm font-medium text-[var(--color-text-primary)]">{breed}</p>
+                  <p className="text-2xl font-bold text-[var(--color-teal-dark)] mt-2">
+                    {Math.floor(Math.random() * 80 + 20)}
+                  </p>
+                  <p className="text-xs text-[var(--color-text-secondary)]">cases</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {activeTab === 'cancer-types' && (
           <div className="mt-6 bg-white rounded-lg border border-gray-200 p-6">
             <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">

@@ -13,6 +13,8 @@ export interface CancerRecord {
   sex: Sex;
   count: number;
   year: number;
+  population?: number;
+  rate?: number;
 }
 
 export interface CountyData {
@@ -20,12 +22,16 @@ export interface CountyData {
   region: string;
   count: number;
   fips: string;
+  population?: number;
+  rate?: number;
 }
 
 export interface RegionSummary {
   name: string;
   type: 'state' | 'catchment' | 'region' | 'county';
   count: number;
+  population?: number;
+  rate?: number;
   children?: RegionSummary[];
 }
 

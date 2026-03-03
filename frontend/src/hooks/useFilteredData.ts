@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
-import { fetchIncidence, fetchCountiesGeoJSON } from '../api/client';
+import { fetchCountiesGeoJSON } from '../api/client';
 
 // Region mapping for UC Davis catchment area
 const COUNTY_REGIONS: Record<string, string> = {

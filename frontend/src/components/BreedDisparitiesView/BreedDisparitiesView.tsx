@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
 import { fetchFilterOptions, fetchBreedDetail } from '../../api/client';
@@ -19,6 +19,13 @@ export function BreedDisparitiesView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Autocomplete state
+  const [query, setQuery] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
   // Tooltip for map
   const [tooltip, setTooltip] = useState<{
     county: string;
@@ -35,6 +42,7 @@ export function BreedDisparitiesView() {
         setBreeds(breedNames);
         if (breedNames.length > 0) {
           setSelectedBreed(breedNames[0]);
+          setQuery(breedNames[0]);
         }
       })
       .catch(() => setError('Failed to load breed list'));
@@ -55,6 +63,72 @@ export function BreedDisparitiesView() {
         setLoading(false);
       });
   }, [selectedBreed]);
+
+  // Filtered suggestions
+  const suggestions = useMemo(() => {
+    if (!query.trim()) return breeds.slice(0, 20);
+    const lower = query.toLowerCase();
+    return breeds.filter((b) => b.toLowerCase().includes(lower)).slice(0, 20);
+  }, [query, breeds]);
+
+  // Reset highlight when suggestions change
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [suggestions]);
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (isOpen && listRef.current) {
+      const item = listRef.current.children[highlightedIndex] as HTMLElement | undefined;
+      item?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [highlightedIndex, isOpen]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (inputRef.current && !inputRef.current.parentElement?.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const selectBreed = (breed: string) => {
+    setSelectedBreed(breed);
+    setQuery(breed);
+    setIsOpen(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!isOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter') {
+        setIsOpen(true);
+        e.preventDefault();
+      }
+      return;
+    }
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setHighlightedIndex((i) => Math.min(i + 1, suggestions.length - 1));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setHighlightedIndex((i) => Math.max(i - 1, 0));
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (suggestions[highlightedIndex]) {
+          selectBreed(suggestions[highlightedIndex]);
+        }
+        break;
+      case 'Escape':
+        setIsOpen(false);
+        break;
+    }
+  };
 
   // Map helpers
   const countyMap = useMemo(() => {
@@ -80,26 +154,57 @@ export function BreedDisparitiesView() {
 
   return (
     <div className="space-y-6">
-      {/* Breed Dropdown */}
+      {/* Breed Autocomplete */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-4">
         <label
-          htmlFor="breed-select"
-          className="text-sm font-medium text-[var(--color-text-primary)]"
+          htmlFor="breed-input"
+          className="text-sm font-medium text-[var(--color-text-primary)] whitespace-nowrap"
         >
           Select Breed:
         </label>
-        <select
-          id="breed-select"
-          value={selectedBreed}
-          onChange={(e) => setSelectedBreed(e.target.value)}
-          className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-        >
-          {breeds.map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </select>
+        <div className="relative w-80">
+          <input
+            ref={inputRef}
+            id="breed-input"
+            type="text"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setIsOpen(true);
+            }}
+            onFocus={() => setIsOpen(true)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type to search breeds..."
+            autoComplete="off"
+            className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+          />
+          {isOpen && suggestions.length > 0 && (
+            <ul
+              ref={listRef}
+              className="absolute z-40 mt-1 w-full max-h-60 overflow-auto bg-white border border-gray-200 rounded-md shadow-lg"
+            >
+              {suggestions.map((breed, i) => (
+                <li
+                  key={breed}
+                  onMouseDown={() => selectBreed(breed)}
+                  onMouseEnter={() => setHighlightedIndex(i)}
+                  className={`px-3 py-2 text-sm cursor-pointer ${
+                    i === highlightedIndex
+                      ? 'bg-[var(--color-teal)] text-white'
+                      : 'text-[var(--color-text-primary)] hover:bg-gray-50'
+                  } ${breed === selectedBreed ? 'font-semibold' : ''}`}
+                >
+                  {breed}
+                </li>
+              ))}
+            </ul>
+          )}
+          {isOpen && query.trim() && suggestions.length === 0 && (
+            <div className="absolute z-40 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg px-3 py-2">
+              <p className="text-sm text-[var(--color-text-secondary)]">No breeds found</p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Loading / Error */}

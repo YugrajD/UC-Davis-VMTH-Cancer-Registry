@@ -78,7 +78,7 @@ function App() {
           </div>
 
           {/* Right column - Filters and Map */}
-          <div className="space-y-6">
+          <div className="space-y-6" id="filters-panel">
             <Filters filters={filters} onFilterChange={setFilters} />
             <ChoroplethMap
               data={countyData}
@@ -145,27 +145,6 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'regional-comparison' && (
-          <div className="mt-6 bg-white rounded-lg border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
-              Regional Comparison
-            </h2>
-            <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-              Case counts by region across California.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {regionSummary.children?.map(region => (
-                <div key={region.name} className="bg-gray-50 rounded-lg p-4">
-                  <p className="font-medium text-[var(--color-text-primary)]">{region.name}</p>
-                  <p className="text-3xl font-bold text-[var(--color-teal-dark)] mt-2">
-                    {region.count.toLocaleString()}
-                  </p>
-                  <p className="text-xs text-[var(--color-text-secondary)]">cases</p>
-                </div>
-              )) ?? null}
-            </div>
-          </div>
-        )}
         </>
         )}
       </main>

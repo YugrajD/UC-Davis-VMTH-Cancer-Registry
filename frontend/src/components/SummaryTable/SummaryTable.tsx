@@ -97,13 +97,40 @@ export function SummaryTable({ data }: SummaryTableProps) {
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-          Regional Summary
-        </h3>
-        <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-          Case counts by region and county
-        </p>
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+            Regional Summary
+          </h3>
+          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+            Case counts by region and county
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const el = document.getElementById('filters-panel');
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          }}
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-[var(--color-teal)] text-[var(--color-teal)] hover:bg-[var(--color-teal)] hover:text-white transition-colors"
+        >
+          Filters
+          <svg
+            className="w-3 h-3"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M3 4h18M6 10h12M10 16h4"
+            />
+          </svg>
+        </button>
       </div>
       
       <div className="overflow-x-auto custom-scrollbar">

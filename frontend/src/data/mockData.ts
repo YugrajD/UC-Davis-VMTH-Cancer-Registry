@@ -146,11 +146,11 @@ export function aggregateByCounty(
     
     if (existing) {
       existing.count += record.count;
-      existing.population += record.population;
+      existing.population += record.population ?? 0;
     } else {
       countyMap.set(record.county, {
         count: record.count,
-        population: record.population,
+        population: record.population ?? 0,
         region: record.region,
         fips: countyInfo?.fips || '',
       });
@@ -182,17 +182,17 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   
   // Calculate totals
   const totalCount = countyData.reduce((sum, c) => sum + c.count, 0);
-  const totalPop = countyData.reduce((sum, c) => sum + c.population, 0);
+  const totalPop = countyData.reduce((sum, c) => sum + (c.population ?? 0), 0);
   
   // Catchment area (Northern CA + Bay Area for this example)
   const catchmentRegions = ['Bay Area', 'Northern CA', 'Central Valley'];
   const catchmentCounties = countyData.filter(c => catchmentRegions.includes(c.region));
   const catchmentCount = catchmentCounties.reduce((sum, c) => sum + c.count, 0);
-  const catchmentPop = catchmentCounties.reduce((sum, c) => sum + c.population, 0);
+  const catchmentPop = catchmentCounties.reduce((sum, c) => sum + (c.population ?? 0), 0);
   
   const regions: RegionSummary[] = Array.from(regionMap.entries()).map(([regionName, counties]) => {
     const regionCount = counties.reduce((sum, c) => sum + c.count, 0);
-    const regionPop = counties.reduce((sum, c) => sum + c.population, 0);
+    const regionPop = counties.reduce((sum, c) => sum + (c.population ?? 0), 0);
     
     return {
       name: regionName,

@@ -7,10 +7,11 @@ from typing import Optional, List
 import json
 
 from app.database import get_db
-from app.models.models import County, CancerCase, CancerType, Patient, Species, CaseDiagnosis
+from app.models.models import County, CancerCase, CancerType, Patient, Species, CaseDiagnosis, CalEnviroScreen
 from app.schemas.schemas import (
     GeoJSONResponse, GeoJSONFeature, GeoJSONFeatureProperties,
-    CountyDetail, CountyOut, TopCancer, SpeciesBreakdown
+    CountyDetail, CountyOut, TopCancer, SpeciesBreakdown,
+    CalEnviroScreenOut,
 )
 
 router = APIRouter(prefix="/api/v1/geo", tags=["geo"])
@@ -188,3 +189,49 @@ async def get_county_detail(
         species_breakdown=species_breakdown,
         yearly_trend=yearly_trend,
     )
+
+
+@router.get("/calenviroscreen", response_model=List[CalEnviroScreenOut])
+async def get_calenviroscreen(
+    db: AsyncSession = Depends(get_db),
+):
+    """Return county-level CalEnviroScreen 4.0 data for all counties."""
+    result = await db.execute(
+        select(CalEnviroScreen, County.name, County.fips_code)
+        .join(County, County.id == CalEnviroScreen.county_id)
+        .order_by(County.name)
+    )
+    rows = result.all()
+
+    return [
+        CalEnviroScreenOut(
+            county_id=ces.county_id,
+            county_name=name,
+            county_fips=fips,
+            ces_score=float(ces.ces_score) if ces.ces_score is not None else None,
+            pollution_burden=float(ces.pollution_burden) if ces.pollution_burden is not None else None,
+            ozone=float(ces.ozone) if ces.ozone is not None else None,
+            pm25=float(ces.pm25) if ces.pm25 is not None else None,
+            diesel_pm=float(ces.diesel_pm) if ces.diesel_pm is not None else None,
+            pesticides=float(ces.pesticides) if ces.pesticides is not None else None,
+            toxic_releases=float(ces.toxic_releases) if ces.toxic_releases is not None else None,
+            traffic=float(ces.traffic) if ces.traffic is not None else None,
+            drinking_water=float(ces.drinking_water) if ces.drinking_water is not None else None,
+            lead=float(ces.lead) if ces.lead is not None else None,
+            cleanup_sites=float(ces.cleanup_sites) if ces.cleanup_sites is not None else None,
+            groundwater_threats=float(ces.groundwater_threats) if ces.groundwater_threats is not None else None,
+            hazardous_waste=float(ces.hazardous_waste) if ces.hazardous_waste is not None else None,
+            solid_waste=float(ces.solid_waste) if ces.solid_waste is not None else None,
+            impaired_water=float(ces.impaired_water) if ces.impaired_water is not None else None,
+            pop_characteristics=float(ces.pop_characteristics) if ces.pop_characteristics is not None else None,
+            asthma=float(ces.asthma) if ces.asthma is not None else None,
+            low_birth_weight=float(ces.low_birth_weight) if ces.low_birth_weight is not None else None,
+            cardiovascular=float(ces.cardiovascular) if ces.cardiovascular is not None else None,
+            poverty=float(ces.poverty) if ces.poverty is not None else None,
+            unemployment=float(ces.unemployment) if ces.unemployment is not None else None,
+            housing_burden=float(ces.housing_burden) if ces.housing_burden is not None else None,
+            education=float(ces.education) if ces.education is not None else None,
+            linguistic_isolation=float(ces.linguistic_isolation) if ces.linguistic_isolation is not None else None,
+        )
+        for ces, name, fips in rows
+    ]

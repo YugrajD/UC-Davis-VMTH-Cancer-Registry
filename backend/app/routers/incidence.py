@@ -7,7 +7,7 @@ from typing import Optional, List
 
 from app.database import get_db
 from app.models.models import CancerCase, CancerType, Patient, Species, Breed, County, CaseDiagnosis
-from app.schemas.schemas import IncidenceRecord, IncidenceResponse
+from app.schemas.schemas import IncidenceRecord, IncidenceResponse, BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
 
@@ -199,4 +199,81 @@ async def get_incidence_by_breed(
         filters_applied={"species": species, "cancer_type": cancer_type,
                          "county": county, "year_start": year_start,
                          "year_end": year_end, "sex": sex}
+    )
+
+
+@router.get("/breed-detail", response_model=BreedDetailOut)
+async def get_breed_detail(
+    breed: str = Query(..., description="Breed name to look up"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return cancer-type breakdown, sex breakdown, and county distribution for a single breed.
+
+    Includes ALL data where breed_id IS NOT NULL (mock + real).
+    """
+    # --- total cases ---
+    total_stmt = (
+        select(func.count(CaseDiagnosis.id))
+        .select_from(CaseDiagnosis)
+        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Breed, Patient.breed_id == Breed.id)
+        .where(Breed.name == breed)
+    )
+    total_cases = (await db.execute(total_stmt)).scalar() or 0
+
+    # --- sex breakdown ---
+    sex_stmt = (
+        select(Patient.sex.label("sex"), func.count(CaseDiagnosis.id).label("count"))
+        .select_from(CaseDiagnosis)
+        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Breed, Patient.breed_id == Breed.id)
+        .where(Breed.name == breed)
+        .group_by(Patient.sex)
+        .order_by(func.count(CaseDiagnosis.id).desc())
+    )
+    sex_rows = (await db.execute(sex_stmt)).all()
+    sex_breakdown = [BreedSexCount(sex=r.sex or "Unknown", count=r.count) for r in sex_rows]
+
+    # --- cancer types ---
+    ct_stmt = (
+        select(CancerType.name.label("cancer_type"), func.count(CaseDiagnosis.id).label("count"))
+        .select_from(CaseDiagnosis)
+        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Breed, Patient.breed_id == Breed.id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Breed.name == breed)
+        .group_by(CancerType.name)
+        .order_by(func.count(CaseDiagnosis.id).desc())
+    )
+    ct_rows = (await db.execute(ct_stmt)).all()
+    cancer_types = [BreedCancerTypeCount(cancer_type=r.cancer_type, count=r.count) for r in ct_rows]
+
+    # --- county distribution ---
+    county_stmt = (
+        select(
+            County.name.label("county_name"),
+            County.fips_code.label("fips_code"),
+            func.count(CaseDiagnosis.id).label("count"),
+        )
+        .select_from(CaseDiagnosis)
+        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
+        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Breed, Patient.breed_id == Breed.id)
+        .join(County, CancerCase.county_id == County.id)
+        .where(Breed.name == breed)
+        .group_by(County.name, County.fips_code)
+        .order_by(func.count(CaseDiagnosis.id).desc())
+    )
+    county_rows = (await db.execute(county_stmt)).all()
+    county_cases = [BreedCountyCount(county_name=r.county_name, fips_code=r.fips_code, count=r.count) for r in county_rows]
+
+    return BreedDetailOut(
+        breed=breed,
+        total_cases=total_cases,
+        sex_breakdown=sex_breakdown,
+        cancer_types=cancer_types,
+        county_cases=county_cases,
     )

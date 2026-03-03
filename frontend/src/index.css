@@ -1,17 +1,21 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary-orange: #E87722;
-  --color-primary-orange-dark: #D16A1F;
-  --color-teal: #4A9BA5;
-  --color-teal-light: #6BB5BF;
-  --color-teal-dark: #1A6B77;
-  --color-map-low: #E6F3F5;
-  --color-map-high: #1A6B77;
-  --color-text-primary: #333333;
-  --color-text-secondary: #666666;
+  /* UC Davis (approx) brand palette */
+  --color-primary-orange: #FFBF00; /* UC Davis Gold */
+  --color-primary-orange-dark: #E5AC00;
+
+  --color-teal-dark: #022851; /* UC Davis Blue */
+  --color-teal: #2D5DA8;
+  --color-teal-light: #6AA7D8;
+
+  --color-map-low: #E8F0FF;
+  --color-map-high: #022851;
+
+  --color-text-primary: #111827;
+  --color-text-secondary: #4B5563;
   --color-border: #E5E7EB;
-  --color-background: #F9FAFB;
+  --color-background: #F6F8FC;
   
   --font-sans: 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, sans-serif;
 }

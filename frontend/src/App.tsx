@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
@@ -29,6 +29,10 @@ function App() {
       <main className="max-w-[1400px] mx-auto px-6 py-6">
         {activeTab === 'data-upload' ? (
           <DataUpload />
+        ) : activeTab === 'breed-disparities' ? (
+          <BreedDisparitiesView />
+        ) : activeTab === 'analysis' ? (
+          <AnalysisView countyData={countyData} countRange={countRange} />
         ) : activeTab === 'cancer-types' ? (
           <div className="space-y-6">
             <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -154,7 +158,7 @@ function App() {
               Breed Disparities Analysis
             </h2>
             <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-              This section will display breed-specific cancer case counts. 
+              This section will display breed-specific cancer case counts.
               Select a specific breed from the filter to see detailed statistics.
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -168,6 +172,55 @@ function App() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'cancer-types' && (
+          <div className="mt-6 bg-white rounded-lg border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
+              Cancer Types Distribution
+            </h2>
+            <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+              Overview of cancer types by case count across California.
+            </p>
+
+            {cancerTypesState.loading ? (
+              <p className="text-sm text-[var(--color-text-secondary)]">Loading cancer type data...</p>
+            ) : cancerTypesState.error ? (
+              <p className="text-sm text-red-600">Error: {cancerTypesState.error}</p>
+            ) : cancerTypesState.data.length === 0 ? (
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                No cancer type data found for the selected filters.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {cancerTypesState.data
+                  .slice() // copy
+                  .sort((a, b) => b.count - a.count)
+                  .slice(0, 10)
+                  .map((record) => {
+                    const maxCount = cancerTypesState.data[0]?.count || 1;
+                    const width = Math.max(5, (record.count / maxCount) * 100);
+                    return (
+                      <div key={record.cancer_type} className="flex items-center gap-4">
+                        <span className="w-48 text-sm text-[var(--color-text-primary)]">
+                          {record.cancer_type}
+                        </span>
+                        <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-[var(--color-teal)] to-[var(--color-teal-dark)] rounded-full flex items-center justify-end pr-2"
+                            style={{ width: `${width}%` }}
+                          >
+                            <span className="text-xs font-semibold text-white">
+                              {record.count.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
           </div>
         )}
 

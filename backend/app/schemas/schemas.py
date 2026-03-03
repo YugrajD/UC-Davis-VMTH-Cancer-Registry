@@ -97,6 +97,37 @@ class GeoJSONResponse(BaseModel):
     features: List[GeoJSONFeature]
 
 
+class CalEnviroScreenOut(BaseModel):
+    county_id: int
+    county_name: str
+    county_fips: str
+    ces_score: Optional[float] = None
+    pollution_burden: Optional[float] = None
+    ozone: Optional[float] = None
+    pm25: Optional[float] = None
+    diesel_pm: Optional[float] = None
+    pesticides: Optional[float] = None
+    toxic_releases: Optional[float] = None
+    traffic: Optional[float] = None
+    drinking_water: Optional[float] = None
+    lead: Optional[float] = None
+    cleanup_sites: Optional[float] = None
+    groundwater_threats: Optional[float] = None
+    hazardous_waste: Optional[float] = None
+    solid_waste: Optional[float] = None
+    impaired_water: Optional[float] = None
+    pop_characteristics: Optional[float] = None
+    asthma: Optional[float] = None
+    low_birth_weight: Optional[float] = None
+    cardiovascular: Optional[float] = None
+    poverty: Optional[float] = None
+    unemployment: Optional[float] = None
+    housing_burden: Optional[float] = None
+    education: Optional[float] = None
+    linguistic_isolation: Optional[float] = None
+    model_config = {"from_attributes": True}
+
+
 class CountyDetail(BaseModel):
     county: CountyOut
     total_cases: int
@@ -148,6 +179,29 @@ class ReportOut(BaseModel):
 class ReportSearchResponse(BaseModel):
     reports: List[ReportOut]
     total: int
+
+
+# --- Breed Detail ---
+
+class BreedCancerTypeCount(BaseModel):
+    cancer_type: str
+    count: int
+
+class BreedCountyCount(BaseModel):
+    county_name: str
+    fips_code: str
+    count: int
+
+class BreedSexCount(BaseModel):
+    sex: str
+    count: int
+
+class BreedDetailOut(BaseModel):
+    breed: str
+    total_cases: int
+    sex_breakdown: List[BreedSexCount]
+    cancer_types: List[BreedCancerTypeCount]
+    county_cases: List[BreedCountyCount]
 
 
 # --- Filter Options ---

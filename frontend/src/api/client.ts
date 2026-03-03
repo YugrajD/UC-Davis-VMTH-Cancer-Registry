@@ -128,6 +128,29 @@ export async function fetchCountiesGeoJSON(filters: FilterParams = {}): Promise<
   return fetchJson(url);
 }
 
+// --- Breed Detail ---
+
+export interface BreedDetail {
+  breed: string;
+  total_cases: number;
+  sex_breakdown: { sex: string; count: number }[];
+  cancer_types: { cancer_type: string; count: number }[];
+  county_cases: { county_name: string; fips_code: string; count: number }[];
+}
+
+export async function fetchBreedDetail(breed: string): Promise<BreedDetail> {
+  const params = new URLSearchParams({ breed });
+  return fetchJson(`/api/v1/incidence/breed-detail?${params}`);
+}
+
+// --- CalEnviroScreen ---
+
+import type { CalEnviroScreenData } from '../types';
+
+export async function fetchCalEnviroScreen(): Promise<CalEnviroScreenData[]> {
+  return fetchJson('/api/v1/geo/calenviroscreen');
+}
+
 // --- Ingestion ---
 
 export interface IngestionRowResult {

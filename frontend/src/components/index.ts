@@ -5,3 +5,5 @@ export { CountyTable } from './CountyTable/CountyTable';
 export { ChoroplethMap } from './ChoroplethMap/ChoroplethMap';
 export { Footer } from './Footer/Footer';
 export { DataUpload } from './DataUpload/DataUpload';
+export { AnalysisView } from './AnalysisView/AnalysisView';
+export { BreedDisparitiesView } from './BreedDisparitiesView/BreedDisparitiesView';

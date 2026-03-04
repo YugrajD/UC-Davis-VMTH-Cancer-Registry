@@ -6,8 +6,11 @@ For every row in petbert_scan_predictions, assign one of four verdicts:
   completely_off — neither term nor group matches any keyword label for this case
   false_positive — the case has no keyword labels at all (should have been Uncategorized)
 
+Additionally, confirmed cancer cases that received no good or slightly_off prediction are
+counted as false negatives and included in evaluation.csv with verdict="false_negative".
+
 Output (written to --out-dir):
-  evaluation.csv         — petbert_scan_predictions columns + verdict
+  evaluation.csv         — petbert_scan_predictions columns + verdict (sorted by case_id)
   evaluation_summary.csv — overall + per predicted-group counts and percentages
 """
 
@@ -47,8 +50,12 @@ def evaluate(petbert_csv: Path, keyword_csv: Path, out_dir: Path) -> None:
         if row["matched_group"].strip():
             case_groups[row["case_id"]].add(row["matched_group"])
 
-    # Score every petbert prediction row
+    # All cases confirmed to have cancer ground truth
+    cancer_case_ids: set[str] = set(case_terms.keys())
+
+    # Score every petbert prediction row; track which cancer cases got a passing verdict
     out_rows: list[dict] = []
+    adequately_predicted: set[str] = set()
     for row in pb_rows:
         cid = row["case_id"]
         verdict = score_prediction(
@@ -56,28 +63,43 @@ def evaluate(petbert_csv: Path, keyword_csv: Path, out_dir: Path) -> None:
             case_terms.get(cid, set()), case_groups.get(cid, set()),
         )
         out_rows.append({**row, "verdict": verdict})
+        if verdict in ("good", "slightly_off"):
+            adequately_predicted.add(cid)
+
+    # False negatives: confirmed cancer cases with no good/slightly_off prediction
+    fn_case_ids: set[str] = cancer_case_ids - adequately_predicted
+    n_false_negatives = len(fn_case_ids)
 
     # ── Write output CSV ──────────────────────────────────────────────────────
     out_path = out_dir / "evaluation.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(pb_rows[0].keys()) + ["verdict"]
+    # Blank template for prediction fields (FN cases have no petbert row)
+    blank_pred = {k: "" for k in pb_rows[0].keys()}
+    fn_rows = [
+        {**blank_pred, "case_id": cid, "verdict": "false_negative"}
+        for cid in fn_case_ids
+    ]
+    all_rows = sorted(out_rows + fn_rows, key=lambda r: r["case_id"])
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(out_rows)
+        writer.writerows(all_rows)
 
     # ── Console summary ───────────────────────────────────────────────────────
     counts = Counter(r["verdict"] for r in out_rows)
-    total = len(out_rows)
+    # Include false negatives in the total so percentages reflect all cancer cases
+    total = len(out_rows) + n_false_negatives
 
-    print(f"\n=== Overall ({total} predictions) ===")
+    print(f"\n=== Overall ({total} prediction-cases) ===")
     for label, key in [
         ("Good", "good"),
         ("Slightly off", "slightly_off"),
         ("Completely off", "completely_off"),
         ("False positive", "false_positive"),
+        ("False negative", "false_negative"),
     ]:
-        n = counts[key]
+        n = counts[key] if key != "false_negative" else n_false_negatives
         print(f"  {label:<22} {n:>5}  ({n / total * 100:.1f}%)")
 
     # Per-group breakdown (excluding false positives — they have no matched group)
@@ -108,10 +130,11 @@ def evaluate(petbert_csv: Path, keyword_csv: Path, out_dir: Path) -> None:
         "slightly_off", "slightly_off_pct",
         "completely_off", "completely_off_pct",
         "false_positive", "false_positive_pct",
+        "false_negative", "false_negative_pct",
     ]
 
-    def make_summary_row(scope: str, c: Counter) -> dict:
-        n = sum(c.values())
+    def make_summary_row(scope: str, c: Counter, fn: int = 0) -> dict:
+        n = sum(c.values()) + fn
         return {
             "scope": scope,
             "total": n,
@@ -123,11 +146,13 @@ def evaluate(petbert_csv: Path, keyword_csv: Path, out_dir: Path) -> None:
             "completely_off_pct": round(c["completely_off"] / n * 100, 1),
             "false_positive": c["false_positive"],
             "false_positive_pct": round(c["false_positive"] / n * 100, 1),
+            "false_negative": fn,
+            "false_negative_pct": round(fn / n * 100, 1),
         }
 
-    summary_rows = [make_summary_row("OVERALL", counts)]
+    summary_rows = [make_summary_row("OVERALL", counts, fn=n_false_negatives)]
     for group, c in sorted(group_counts.items(), key=lambda x: -sum(x[1].values())):
-        # false_positives are excluded from group_counts; include them as 0
+        # false_positives and false_negatives are excluded from group_counts; include as 0
         summary_rows.append(make_summary_row(group, c))
 
     summary_path = out_dir / "evaluation_summary.csv"
@@ -137,7 +162,7 @@ def evaluate(petbert_csv: Path, keyword_csv: Path, out_dir: Path) -> None:
         writer.writerows(summary_rows)
 
     print(f"\nWrote:")
-    print(f"  {out_path}")
+    print(f"  {out_path}  ({n_false_negatives} false negatives included)")
     print(f"  {summary_path}")
 
 

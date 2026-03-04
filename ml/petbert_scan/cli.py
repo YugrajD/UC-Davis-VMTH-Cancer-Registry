@@ -74,6 +74,15 @@ def build_parser() -> argparse.ArgumentParser:
             "When set, presence probabilities replace cosine similarity for scoring labels."
         ),
     )
+    parser.add_argument(
+        "--embedding-cache",
+        default=None,
+        help=(
+            "Path to an embedding cache npz file. "
+            "If the cache exists and is valid, PetBERT embedding is skipped entirely. "
+            "If it doesn't exist yet, embeddings are computed and saved here for future runs."
+        ),
+    )
     return parser
 
 
@@ -114,6 +123,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         device=args.device,
         labels_csv_path=args.labels_csv,
         presence_classifier_path=args.presence_classifier,
+        embedding_cache_path=args.embedding_cache,
     )
 
 

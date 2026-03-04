@@ -11,8 +11,8 @@ Steps:
   7. Save the best checkpoint (by validation F1) to ml/model/checkpoints/.
 
 Usage:
-  python ml/model/train_classifier.py
-  python ml/model/train_classifier.py --epochs 40 --device cuda
+  python ml/scripts/utils/train_classifier.py
+  python ml/scripts/utils/train_classifier.py --epochs 40 --device cuda
 """
 
 import argparse
@@ -27,7 +27,7 @@ from sklearn.metrics import precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from model.presence_classifier import PresenceClassifier
 from petbert_scan.embedding import embed_texts, load_tokenizer_and_model
@@ -99,6 +99,21 @@ def main() -> int:
     parser.add_argument("--embed-batch-size", type=int, default=16,
                         help="Batch size for PetBERT embedding pass")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--pos-weight", type=float, default=1.0,
+                        help="BCEWithLogitsLoss pos_weight: >1 penalises false negatives more "
+                             "(e.g. 2.0 = FN twice as costly as FP). Default 1.0 (balanced).")
+    parser.add_argument("--recall-weight", type=float, default=0.5,
+                        help="Checkpoint selection weight given to recall vs precision. "
+                             "0.5 = standard F1, 1.0 = pure recall. Default 0.5.")
+    parser.add_argument("--embedding-cache", default=None,
+                        help="Path to embedding cache npz (from petbert_scan --embedding-cache). "
+                             "When provided, PetBERT is not loaded — embeddings are read from "
+                             "the cache using case_id, fixing the train/inference mismatch. "
+                             "Falls back to embedding merged_text if the cache is missing.")
+    parser.add_argument("--report-csv", default="ml/data/report.csv",
+                        help="Path to report CSV (used only for cache validation).")
+    parser.add_argument("--labels-csv", default="ml/labels/labels.csv",
+                        help="Path to labels CSV (used only for cache validation).")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -116,48 +131,88 @@ def main() -> int:
         print(f"Error: {args.pairs_csv} is empty. Run build_training_pairs.py first.")
         return 1
 
-    report_texts = [r["merged_text"] for r in rows]
     label_terms  = [r["label_term"]  for r in rows]
     label_groups = [r["label_group"] for r in rows]
+    label_strings = [f"{term} {group}" for term, group in zip(label_terms, label_groups)]
     targets = np.array([float(r["target"]) for r in rows], dtype=np.float32)
 
     n_pos = int(targets.sum())
     n_neg = len(targets) - n_pos
     print(f"  Total pairs: {len(rows)}  (positives={n_pos}, negatives={n_neg})")
 
-    # --- Embed with PetBERT (frozen) ------------------------------------
-    print(f"\nLoading PetBERT ({args.model})...")
-    tokenizer, petbert = load_tokenizer_and_model(args.model, local_only=args.local_only)
+    # --- Load or compute embeddings --------------------------------------
+    cache = None
+    if args.embedding_cache:
+        from petbert_scan.embedding_cache import load_cache
+        cache = load_cache(
+            args.embedding_cache,
+            model_name=args.model,
+            report_csv_path=args.report_csv,
+            labels_csv_path=args.labels_csv,
+        )
 
-    print("Embedding unique report texts...")
-    unique_texts = list(dict.fromkeys(report_texts))
-    text_to_idx = {t: i for i, t in enumerate(unique_texts)}
-    unique_report_embs, _ = embed_texts(
-        tokenizer, petbert, unique_texts,
-        device=device, batch_size=args.embed_batch_size, max_length=args.max_length,
-        desc="Reports",
-    )
-    report_embs = unique_report_embs[[text_to_idx[t] for t in report_texts]]
+    if cache is not None:
+        # Use per-column mean embeddings from cache — matches petbert_scan inference exactly.
+        print(f"Using cached embeddings from {args.embedding_cache}")
+        case_id_to_idx   = {cid: i for i, cid in enumerate(cache["case_ids"])}
+        label_to_idx     = {t: i   for i, t   in enumerate(cache["label_texts"])}
 
-    print("Embedding taxonomy label strings...")
-    label_strings = [f"{term} {group}" for term, group in zip(label_terms, label_groups)]
-    unique_label_strings = list(dict.fromkeys(label_strings))
-    label_str_to_idx = {s: i for i, s in enumerate(unique_label_strings)}
-    unique_label_embs, _ = embed_texts(
-        tokenizer, petbert, unique_label_strings,
-        device=device, batch_size=args.embed_batch_size, max_length=args.max_length,
-        desc="Labels",
-    )
-    label_embs = unique_label_embs[[label_str_to_idx[s] for s in label_strings]]
+        report_embs_list: list[np.ndarray] = []
+        label_embs_list:  list[np.ndarray] = []
+        targets_list:     list[float]      = []
+        skipped = 0
+        for row, lstr in zip(rows, label_strings):
+            ridx = case_id_to_idx.get(row["case_id"])
+            lidx = label_to_idx.get(lstr)
+            if ridx is None or lidx is None:
+                skipped += 1
+                continue
+            report_embs_list.append(cache["mean_embeddings"][ridx])
+            label_embs_list.append(cache["label_embeddings"][lidx])
+            targets_list.append(float(row["target"]))
+        if skipped:
+            print(f"  Warning: {skipped} rows skipped (case or label not in cache)")
+        report_embs = np.array(report_embs_list, dtype=np.float32)
+        label_embs  = np.array(label_embs_list,  dtype=np.float32)
+        targets     = np.array(targets_list,      dtype=np.float32)
+        print(f"  Using {len(targets)} pairs after cache lookup")
+    else:
+        # Fallback: embed merged_text with PetBERT (used on first cycle before cache exists).
+        if args.embedding_cache:
+            print(f"Cache not found at {args.embedding_cache} — falling back to PetBERT embedding.")
+            print("  Note: run petbert_scan with --embedding-cache first to fix train/inference mismatch.")
+        report_texts = [r["merged_text"] for r in rows]
+        print(f"\nLoading PetBERT ({args.model})...")
+        tokenizer, petbert = load_tokenizer_and_model(args.model, local_only=args.local_only)
 
-    # Free PetBERT memory — embeddings are now in numpy arrays on CPU
-    petbert.cpu()
-    del petbert, tokenizer
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+        print("Embedding unique report texts...")
+        unique_texts = list(dict.fromkeys(report_texts))
+        text_to_idx = {t: i for i, t in enumerate(unique_texts)}
+        unique_report_embs, _ = embed_texts(
+            tokenizer, petbert, unique_texts,
+            device=device, batch_size=args.embed_batch_size, max_length=args.max_length,
+            desc="Reports",
+        )
+        report_embs = unique_report_embs[[text_to_idx[t] for t in report_texts]]
+
+        print("Embedding taxonomy label strings...")
+        unique_label_strings = list(dict.fromkeys(label_strings))
+        label_str_to_idx = {s: i for i, s in enumerate(unique_label_strings)}
+        unique_label_embs, _ = embed_texts(
+            tokenizer, petbert, unique_label_strings,
+            device=device, batch_size=args.embed_batch_size, max_length=args.max_length,
+            desc="Labels",
+        )
+        label_embs = unique_label_embs[[label_str_to_idx[s] for s in label_strings]]
+
+        # Free PetBERT memory — embeddings are now in numpy arrays on CPU
+        petbert.cpu()
+        del petbert, tokenizer
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # --- Train / val split -----------------------------------------------
-    indices = np.arange(len(rows))
+    indices = np.arange(len(targets))
     train_idx, val_idx = train_test_split(
         indices,
         test_size=args.val_split,
@@ -189,17 +244,21 @@ def main() -> int:
         emb_dim=768, hidden_dim=args.hidden_dim, dropout=args.dropout,
     ).to(device)
 
-    pos_weight = torch.tensor([n_train_neg / max(n_train_pos, 1)], device=device)
+    # The WeightedRandomSampler already produces balanced 50/50 batches.
+    # pos_weight > 1.0 additionally penalises false negatives (missed cancers)
+    # more than false positives during training.
+    pos_weight = torch.tensor([args.pos_weight], dtype=torch.float32, device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.AdamW(classifier.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     # --- Training loop ---------------------------------------------------
-    best_f1 = -1.0
+    best_score = -1.0
     best_checkpoint = out_dir / "presence_classifier_best.pt"
+    rw = args.recall_weight  # shorthand
 
-    print(f"\n{'Epoch':>5}  {'Loss':>8}  {'F1':>6}  {'P':>6}  {'R':>6}  {'Acc':>6}")
-    print("-" * 45)
+    print(f"\n{'Epoch':>5}  {'Loss':>8}  {'F1':>6}  {'P':>6}  {'R':>6}  {'Acc':>6}  {'Score':>7}")
+    print("-" * 54)
 
     for epoch in range(1, args.epochs + 1):
         classifier.train()
@@ -220,17 +279,19 @@ def main() -> int:
         avg_loss = total_loss / len(train_ds)
         m = evaluate(classifier, val_loader, device)
 
-        marker = " *" if m["f1"] > best_f1 else ""
+        # Weighted score: rw=0.5 → standard F1, rw=1.0 → pure recall
+        score = (1 - rw) * m["precision"] + rw * m["recall"]
+        marker = " *" if score > best_score else ""
         print(
             f"{epoch:>5}  {avg_loss:>8.4f}  {m['f1']:>6.3f}  "
-            f"{m['precision']:>6.3f}  {m['recall']:>6.3f}  {m['accuracy']:>6.3f}{marker}"
+            f"{m['precision']:>6.3f}  {m['recall']:>6.3f}  {m['accuracy']:>6.3f}  {score:>7.3f}{marker}"
         )
 
-        if m["f1"] > best_f1:
-            best_f1 = m["f1"]
+        if score > best_score:
+            best_score = score
             classifier.save(best_checkpoint)
 
-    print(f"\nBest validation F1: {best_f1:.3f}")
+    print(f"\nBest checkpoint score (recall_weight={rw}): {best_score:.3f}")
     print(f"Checkpoint saved to: {best_checkpoint}")
     return 0
 

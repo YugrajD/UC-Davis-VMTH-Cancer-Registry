@@ -5,9 +5,9 @@ The history is written to ml/output/evaluation/evaluation_history.csv and
 a formatted trend table is printed to the console.
 
 Usage:
-  python ml/utils/log_evaluation.py
-  python ml/utils/log_evaluation.py --label "after training v1"
-  python ml/utils/log_evaluation.py --show          # print history without recording
+  python ml/scripts/utils/log_evaluation.py
+  python ml/scripts/utils/log_evaluation.py --label "after training v1"
+  python ml/scripts/utils/log_evaluation.py --show          # print history without recording
 """
 
 import argparse
@@ -31,6 +31,8 @@ _HISTORY_FIELDS = [
     "completely_off_pct",
     "false_positive",
     "false_positive_pct",
+    "false_negative",
+    "false_negative_pct",
 ]
 
 
@@ -76,7 +78,7 @@ def _print_history(rows: list[dict]) -> None:
 
     header = (
         f"{'#':>3}  {'Timestamp':<19}  {'Label':<25}  "
-        f"{'Good%':>6}  {'Slight%':>7}  {'Off%':>6}  {'FP%':>6}  {'Total':>7}"
+        f"{'Good%':>6}  {'Slight%':>7}  {'Off%':>6}  {'FP%':>6}  {'FN%':>6}  {'Total':>7}"
     )
     print()
     print("=== Evaluation History ===")
@@ -89,11 +91,13 @@ def _print_history(rows: list[dict]) -> None:
         sl  = float(row["slightly_off_pct"])
         off = float(row["completely_off_pct"])
         fp  = float(row["false_positive_pct"])
+        fn  = float(row.get("false_negative_pct") or 0)
 
-        pg   = float(prev["good_pct"])           if prev else None
-        psl  = float(prev["slightly_off_pct"])   if prev else None
-        poff = float(prev["completely_off_pct"]) if prev else None
-        pfp  = float(prev["false_positive_pct"]) if prev else None
+        pg   = float(prev["good_pct"])                      if prev else None
+        psl  = float(prev["slightly_off_pct"])              if prev else None
+        poff = float(prev["completely_off_pct"])            if prev else None
+        pfp  = float(prev["false_positive_pct"])            if prev else None
+        pfn  = float(prev.get("false_negative_pct") or 0)  if prev else None
 
         label = row["label"] or ""
         ts    = row["timestamp"][:19]  # trim microseconds
@@ -104,6 +108,7 @@ def _print_history(rows: list[dict]) -> None:
             f"{sl:>5.1f}%{_delta(sl, psl, True)}  "
             f"{off:>5.1f}%{_delta(off, poff, False)}  "
             f"{fp:>5.1f}%{_delta(fp, pfp, False)}  "
+            f"{fn:>5.1f}%{_delta(fn, pfn, False)}  "
             f"{row['total']:>7}"
         )
         prev = row
@@ -147,6 +152,8 @@ def main() -> int:
         "completely_off_pct":  overall["completely_off_pct"],
         "false_positive":      overall["false_positive"],
         "false_positive_pct":  overall["false_positive_pct"],
+        "false_negative":      overall["false_negative"],
+        "false_negative_pct":  overall["false_negative_pct"],
     }
 
     history_path.parent.mkdir(parents=True, exist_ok=True)

@@ -3,11 +3,14 @@
 Produces ml/data/training_pairs.csv — one row per (case, taxonomy label) pair
 with a binary target: 1 if the label is a confirmed diagnosis, 0 otherwise.
 
-Three sources of examples:
+Four sources of examples:
   Positives      — rows in keyword_predictions.csv where matched_term is non-blank
   Hard negatives — rows in evaluation.csv with verdict="false_positive"
                    (high cosine similarity but the case has no keyword label at all;
                    these are the most valuable training signal)
+  FP extra neg   — for each unique false-positive case, additional randomly-sampled
+                   taxonomy labels beyond those already covered by evaluation rows;
+                   teaches the classifier that these cases have NO valid label at all
   Easy negatives — for each labeled case, randomly sampled wrong taxonomy terms
 """
 
@@ -19,7 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from labels.taxonomy import load_labels_taxonomy
 from petbert_scan.utils import clean_text, merge_report_columns
@@ -49,7 +52,22 @@ def main() -> int:
         default=3,
         help="Random wrong taxonomy labels to sample per positive example (default: 3)",
     )
+    parser.add_argument(
+        "--fp-neg-per-case",
+        type=int,
+        default=10,
+        help="Extra random taxonomy labels to sample per unique false-positive case, "
+             "beyond those already covered by evaluation rows (default: 10)",
+    )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--max-pos-per-group",
+        type=int,
+        default=0,
+        help="Cap positive examples per taxonomy group to this count (0 = no cap). "
+             "Use to prevent overrepresented groups (e.g. Adenomas with 251 examples) "
+             "from dominating classifier training. Recommended: 80.",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -83,23 +101,30 @@ def main() -> int:
     # --- Build output rows -----------------------------------------------
     out_rows: list[dict] = []
 
-    # Positives
+    # Positives (optionally capped per group to reduce training imbalance)
+    group_pos_count: dict[str, int] = {}
     for cid, terms in case_pos_terms.items():
         text = case_to_text.get(cid, "")
         if not text:
             continue
         for term in terms:
+            group = term_to_group.get(term, "")
+            if args.max_pos_per_group > 0:
+                if group_pos_count.get(group, 0) >= args.max_pos_per_group:
+                    continue
+                group_pos_count[group] = group_pos_count.get(group, 0) + 1
             out_rows.append({
                 "case_id": cid,
                 "merged_text": text,
                 "label_term": term,
-                "label_group": term_to_group.get(term, ""),
+                "label_group": group,
                 "target": 1,
                 "source": "positive",
             })
 
     # Hard negatives — false positive predictions from evaluation
     eval_rows = load_csv(Path(args.evaluation_csv))
+    fp_case_covered: dict[str, set[str]] = {}  # case_id -> terms already added
     for row in eval_rows:
         if row["verdict"] != "false_positive":
             continue
@@ -114,6 +139,27 @@ def main() -> int:
             "target": 0,
             "source": "hard_negative",
         })
+        fp_case_covered.setdefault(row["case_id"], set()).add(row["predicted_term"])
+
+    # FP extra negatives — additional random labels for each unique FP case
+    # The hard negatives above only cover labels the pipeline already predicted.
+    # Sampling extra labels teaches the classifier that FP cases have NO valid
+    # label anywhere in the taxonomy, not just for the labels already seen.
+    for cid, covered_terms in fp_case_covered.items():
+        text = case_to_text.get(cid, "")
+        if not text:
+            continue
+        candidates = [(term, group) for term, group in all_term_group if term not in covered_terms]
+        sample = random.sample(candidates, min(args.fp_neg_per_case, len(candidates)))
+        for term, group in sample:
+            out_rows.append({
+                "case_id": cid,
+                "merged_text": text,
+                "label_term": term,
+                "label_group": group,
+                "target": 0,
+                "source": "fp_extra_negative",
+            })
 
     # Easy negatives — random wrong labels for labeled cases
     for cid, pos_terms in case_pos_terms.items():
@@ -143,11 +189,13 @@ def main() -> int:
 
     n_pos = sum(1 for r in out_rows if r["target"] == 1)
     n_hard = sum(1 for r in out_rows if r["source"] == "hard_negative")
+    n_fp_extra = sum(1 for r in out_rows if r["source"] == "fp_extra_negative")
     n_easy = sum(1 for r in out_rows if r["source"] == "easy_negative")
     print(f"Wrote {len(out_rows)} training pairs to {out_path}")
-    print(f"  Positives:      {n_pos}")
-    print(f"  Hard negatives: {n_hard}")
-    print(f"  Easy negatives: {n_easy}")
+    print(f"  Positives:          {n_pos}")
+    print(f"  Hard negatives:     {n_hard}")
+    print(f"  FP extra negatives: {n_fp_extra}")
+    print(f"  Easy negatives:     {n_easy}")
     return 0
 
 

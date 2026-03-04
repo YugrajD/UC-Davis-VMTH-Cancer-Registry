@@ -82,38 +82,75 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
     char_lens = np.array([len(t) for t in texts], dtype=np.int32)
 
-    # --- Step 2: Embed each column independently with PetBERT ----------------
-    tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
+    # --- Steps 2–3: Embed with PetBERT (or load from cache) ------------------
     torch_device = device_from_arg(config.device)
+    cache = None
+    if config.embedding_cache_path:
+        from .embedding_cache import load_cache, save_cache
+        cache = load_cache(
+            config.embedding_cache_path,
+            model_name=config.model_name,
+            report_csv_path=config.csv_path,
+            labels_csv_path=config.labels_csv_path,
+            expected_col_names=cols,
+        )
 
-    col_embeddings, col_has_content, token_counts = embed_columns_separate(
-        tokenizer,
-        model,
-        col_texts,
-        device=torch_device,
-        batch_size=config.batch_size,
-        max_length=config.max_length,
-    )
+    if cache is not None:
+        print(f"Loaded embeddings from cache: {config.embedding_cache_path}")
+        col_embeddings  = cache["col_embeddings"]
+        col_has_content = cache["col_has_content"]
+        embeddings      = cache["mean_embeddings"]
+        token_counts    = cache["token_counts"]
+        label_catalog   = label_catalog_for_config(config)
+        label_embeddings = cache["label_embeddings"]
+    else:
+        # --- Step 2: Embed each column independently with PetBERT ------------
+        tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
 
-    # Compute a mean embedding per row (across non-empty columns) for
-    # visualization, neighbors, and the embeddings NPZ.
-    col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)  # (C, N, 768)
-    content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)  # (C, N)
-    col_emb_masked = col_emb_stack * content_mask[:, :, None]  # (C, N, 768)
-    content_counts = np.maximum(content_mask.sum(axis=0), 1.0)  # (N,)
-    embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)  # (N, 768)
+        col_embeddings, col_has_content, token_counts = embed_columns_separate(
+            tokenizer,
+            model,
+            col_texts,
+            device=torch_device,
+            batch_size=config.batch_size,
+            max_length=config.max_length,
+        )
 
-    # --- Step 3: Build & embed taxonomy labels --------------------------------
-    label_catalog = label_catalog_for_config(config)
-    label_embeddings, _ = embed_texts(
-        tokenizer,
-        model,
-        label_catalog.label_texts,
-        device=torch_device,
-        batch_size=config.batch_size,
-        max_length=config.max_length,
-        desc="Embedding labels",
-    )
+        # Compute a mean embedding per row (across non-empty columns) for
+        # visualization, neighbors, and the embeddings NPZ.
+        col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)  # (C, N, 768)
+        content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)  # (C, N)
+        col_emb_masked = col_emb_stack * content_mask[:, :, None]  # (C, N, 768)
+        content_counts = np.maximum(content_mask.sum(axis=0), 1.0)  # (N,)
+        embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)  # (N, 768)
+
+        # --- Step 3: Build & embed taxonomy labels ----------------------------
+        label_catalog = label_catalog_for_config(config)
+        label_embeddings, _ = embed_texts(
+            tokenizer,
+            model,
+            label_catalog.label_texts,
+            device=torch_device,
+            batch_size=config.batch_size,
+            max_length=config.max_length,
+            desc="Embedding labels",
+        )
+
+        # Save cache if a path was provided (cache miss means we just computed)
+        if config.embedding_cache_path:
+            save_cache(
+                config.embedding_cache_path,
+                case_ids=ids,
+                col_embeddings=col_embeddings,
+                col_has_content=col_has_content,
+                mean_embeddings=embeddings,
+                token_counts=token_counts,
+                label_texts=label_catalog.label_texts,
+                label_embeddings=label_embeddings,
+                model_name=config.model_name,
+                report_csv_path=config.csv_path,
+                labels_csv_path=config.labels_csv_path,
+            )
 
     # --- Step 4: Categorize with top-k predictions ---------------------------
     # Pass per-column embeddings; run_categorization takes the element-wise max

@@ -65,6 +65,17 @@ def run_categorization(
         sims = np.stack(sim_matrices, axis=0).max(axis=0)  # (N, M)
     else:
         sims = cosine_similarity_matrix(text_embeddings, label_embeddings)
+
+    # Subtract per-label mean so universally-high labels (e.g. "Pyogenic granuloma")
+    # don't dominate argmax for every case.  After this shift, embedding_min_sim
+    # compares centered scores: 0.0 = average similarity, positive = above average.
+    finite_mask = np.isfinite(sims)
+    label_means = (
+        np.where(finite_mask, sims, 0.0).sum(axis=0)
+        / np.maximum(finite_mask.sum(axis=0), 1)
+    )
+    sims = sims - label_means[np.newaxis, :]
+
     top_idx = np.argmax(sims, axis=1)
     top_scores = sims[np.arange(len(top_idx)), top_idx].astype(np.float32, copy=False)
     top_labels = np.array([labels[i] for i in top_idx], dtype=object)

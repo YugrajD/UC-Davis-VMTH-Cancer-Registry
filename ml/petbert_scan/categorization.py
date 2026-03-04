@@ -1,11 +1,9 @@
-"""Embedding-based categorization core and result container.
+"""Embedding-based categorization: cosine similarity against taxonomy label embeddings.
 
-This module is responsible for the central decision logic:
-  1. Compute cosine similarity between each diagnosis embedding and every
-     taxonomy label embedding.
-  2. For each diagnosis, pick the highest-scoring label.
-  3. Apply a confidence threshold -- if the best score is too low, mark the
-     row as "Uncategorized" rather than guessing.
+For each diagnosis:
+  - Pick the top-1 label by cosine similarity.
+  - If the best score is below the threshold, mark as "low_confidence".
+  - If the text was empty, mark as "empty".
 """
 
 from dataclasses import dataclass
@@ -17,123 +15,127 @@ from .embedding import cosine_similarity_matrix
 
 @dataclass(frozen=True)
 class CategorizationResult:
-    """Container for all per-row categorization outputs.
-
-    Attributes:
-        final_labels:     The chosen taxonomy term per row (or "Uncategorized" / "").
-        final_indices:    Index into the taxonomy list for the chosen label (-1 if empty).
-        final_scores:     Cosine similarity score of the chosen label.
-        methods:          How each row was classified: "embedding", "low_confidence", or "empty".
-        keyword_labels:   Reserved for future keyword-based classification (always empty).
-        keyword_scores:   Reserved for future keyword scores (always 0.0).
-        embedding_labels: The raw top-1 label from cosine similarity (before thresholding).
-        embedding_scores: The raw top-1 cosine score (before thresholding).
-        label_scores:     Full (num_texts, num_labels) similarity matrix.
-        labels:           List of all taxonomy term strings.
-    """
-    final_labels: list[str]
-    final_indices: list[int]
-    final_scores: list[float]
-    methods: list[str]
-    keyword_labels: list[str]
-    keyword_scores: list[float]
-    embedding_labels: np.ndarray
-    embedding_scores: np.ndarray
-    label_scores: np.ndarray
-    labels: list[str]
+    final_labels: list[str]          # chosen taxonomy term, "Uncategorized", or ""
+    final_indices: list[int]         # index into labels (-1 if empty)
+    final_scores: list[float]        # cosine similarity of chosen label
+    methods: list[str]               # "embedding", "low_confidence", or "empty"
+    embedding_labels: np.ndarray     # top-1 label before thresholding (N,)
+    embedding_scores: np.ndarray     # top-1 score before thresholding (N,)
+    label_scores: np.ndarray         # full similarity matrix (N, M)
+    labels: list[str]                # all taxonomy term strings
+    top_k_indices: list[list[int]]   # per row: up to max_predictions label indices
+    top_k_scores: list[list[float]]  # per row: corresponding scores
+    top_k_methods: list[list[str]]   # per row: "embedding" or "low_confidence"
 
 
-def categorize_embeddings(
-    text_embeddings: np.ndarray, label_embeddings: np.ndarray, labels: list[str]
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Compute cosine similarities and pick the best label for each text.
-
-    Returns:
-        pred_labels:  (N,) array of label name strings (the top-1 match).
-        pred_scores:  (N,) array of similarity scores for the top-1 match.
-        pred_idx:     (N,) array of integer indices into ``labels``.
-        sims:         (N, M) full similarity matrix (texts x labels).
-    """
-    # sims[i, j] = cosine_similarity(text_embeddings[i], label_embeddings[j])
-    sims = cosine_similarity_matrix(text_embeddings, label_embeddings)
-
-    # For each text, find the label with the highest cosine similarity.
-    pred_idx = np.argmax(sims, axis=1)
-    pred_scores = sims[np.arange(len(pred_idx)), pred_idx].astype(np.float32, copy=False)
-    pred_labels = np.array([labels[i] for i in pred_idx], dtype=object)
-    return pred_labels, pred_scores, pred_idx, sims
-
-
-def run_hybrid_categorization(
+def run_categorization(
     *,
     texts: list[str],
-    text_embeddings: np.ndarray,
+    text_embeddings: np.ndarray | list[np.ndarray],
     label_embeddings: np.ndarray,
     labels: list[str],
     embedding_min_sim: float,
+    col_has_content: list[np.ndarray] | None = None,
+    max_predictions: int = 5,
+    score_matrix: np.ndarray | None = None,
 ) -> CategorizationResult:
-    """Categorize each diagnosis text against the taxonomy using cosine similarity.
+    """Categorize each diagnosis by similarity to taxonomy label embeddings.
 
-    For each row:
-      - If the text is empty -> method="empty", label="".
-      - If best cosine score >= embedding_min_sim (default 0.6) -> method="embedding",
-        use the best-matching taxonomy term.
-      - If best cosine score < threshold -> method="low_confidence",
-        label="Uncategorized" (but the closest label index is still recorded).
+    When ``text_embeddings`` is a list of per-column embedding arrays, each
+    column independently computes its similarity scores and the label with the
+    highest score across *any* column wins.  Empty cells (tracked via
+    ``col_has_content``) are masked out so they cannot influence the result.
 
-    The function is named "hybrid" because it was designed to support both
-    keyword-based and embedding-based approaches. Currently only embedding-based
-    categorization is active.
+    If ``score_matrix`` is provided (shape N×M), it is used directly instead of
+    computing cosine similarity — e.g. when the presence classifier has already
+    produced a pre-scored (N, M) probability matrix.
     """
-    embedding_labels, embedding_scores, embedding_idx, label_scores = categorize_embeddings(
-        text_embeddings, label_embeddings, labels
+    if score_matrix is not None:
+        sims = score_matrix
+    elif isinstance(text_embeddings, list):
+        sim_matrices: list[np.ndarray] = []
+        for i, emb in enumerate(text_embeddings):
+            sim = cosine_similarity_matrix(emb, label_embeddings)  # (N, M)
+            if col_has_content is not None:
+                # Rows where this column is empty cannot win — mask with -inf.
+                empty_rows = ~col_has_content[i]  # (N,) True where cell is empty
+                sim[empty_rows, :] = -np.inf
+            sim_matrices.append(sim)
+        # Element-wise max across columns: highest similarity for each (row, label) pair.
+        sims = np.stack(sim_matrices, axis=0).max(axis=0)  # (N, M)
+    else:
+        sims = cosine_similarity_matrix(text_embeddings, label_embeddings)
+
+    # Subtract per-label mean so universally-high labels (e.g. "Pyogenic granuloma")
+    # don't dominate argmax for every case.  After this shift, embedding_min_sim
+    # compares centered scores: 0.0 = average similarity, positive = above average.
+    finite_mask = np.isfinite(sims)
+    label_means = (
+        np.where(finite_mask, sims, 0.0).sum(axis=0)
+        / np.maximum(finite_mask.sum(axis=0), 1)
     )
-    embedding_scores = embedding_scores.astype(np.float32, copy=False)
+    sims = sims - label_means[np.newaxis, :]
+
+    top_idx = np.argmax(sims, axis=1)
+    top_scores = sims[np.arange(len(top_idx)), top_idx].astype(np.float32, copy=False)
+    top_labels = np.array([labels[i] for i in top_idx], dtype=object)
 
     final_labels: list[str] = []
     final_indices: list[int] = []
     final_scores: list[float] = []
     methods: list[str] = []
-    keyword_labels: list[str] = []
-    keyword_scores: list[float] = []
+    top_k_indices: list[list[int]] = []
+    top_k_scores: list[list[float]] = []
+    top_k_methods: list[list[str]] = []
 
-    for idx, text in enumerate(texts):
-        # Empty diagnosis text -- nothing to classify.
+    for i, text in enumerate(texts):
         if not text:
             final_labels.append("")
             final_indices.append(-1)
             final_scores.append(0.0)
             methods.append("empty")
-            keyword_labels.append("")
-            keyword_scores.append(0.0)
-            continue
-
-        # Keyword path is unused; always empty.
-        keyword_labels.append("")
-        keyword_scores.append(0.0)
-
-        # Apply the confidence threshold to decide whether to accept the
-        # embedding-based prediction or mark it as low-confidence.
-        if float(embedding_scores[idx]) >= embedding_min_sim:
-            final_labels.append(str(embedding_labels[idx]))
-            final_indices.append(int(embedding_idx[idx]))
-            final_scores.append(float(embedding_scores[idx]))
+            top_k_indices.append([])
+            top_k_scores.append([])
+            top_k_methods.append([])
+        elif float(top_scores[i]) >= embedding_min_sim:
+            final_labels.append(str(top_labels[i]))
+            final_indices.append(int(top_idx[i]))
+            final_scores.append(float(top_scores[i]))
             methods.append("embedding")
+            # Collect all labels above the threshold, ranked by score (up to max_predictions)
+            sorted_idx = np.argsort(-sims[i])
+            k_idxs, k_scores, k_meths = [], [], []
+            for rank_idx in sorted_idx:
+                score = float(sims[i, rank_idx])
+                if score < embedding_min_sim:
+                    break
+                k_idxs.append(int(rank_idx))
+                k_scores.append(score)
+                k_meths.append("embedding")
+                if len(k_idxs) >= max_predictions:
+                    break
+            top_k_indices.append(k_idxs)
+            top_k_scores.append(k_scores)
+            top_k_methods.append(k_meths)
         else:
             final_labels.append("Uncategorized")
-            final_indices.append(int(embedding_idx[idx]))
-            final_scores.append(float(embedding_scores[idx]))
+            final_indices.append(int(top_idx[i]))
+            final_scores.append(float(top_scores[i]))
             methods.append("low_confidence")
+            top_k_indices.append([int(top_idx[i])])
+            top_k_scores.append([float(top_scores[i])])
+            top_k_methods.append(["low_confidence"])
 
     return CategorizationResult(
         final_labels=final_labels,
         final_indices=final_indices,
         final_scores=final_scores,
         methods=methods,
-        keyword_labels=keyword_labels,
-        keyword_scores=keyword_scores,
-        embedding_labels=embedding_labels,
-        embedding_scores=embedding_scores,
-        label_scores=label_scores,
+        embedding_labels=top_labels,
+        embedding_scores=top_scores,
+        label_scores=sims,
         labels=labels,
+        top_k_indices=top_k_indices,
+        top_k_scores=top_k_scores,
+        top_k_methods=top_k_methods,
     )

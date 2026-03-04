@@ -83,16 +83,16 @@ def load_labels_taxonomy(labels_csv_path: str) -> list[TaxonomyLabel]:
 
 
 def build_taxonomy_label_texts(labels: list[TaxonomyLabel]) -> list[str]:
-    """Convert each taxonomy label into a descriptive sentence for embedding.
+    """Convert each taxonomy label into a short text string for embedding.
 
     Example output:
-      "Veterinary diagnosis term: Hemangiosarcoma, NOS. Group: Blood vessel tumors. Code: 9120/3."
+      "Hemangiosarcoma, NOS Blood vessel tumors"
 
-    These sentences are passed through PetBERT to produce label embeddings
+    These strings are passed through PetBERT to produce label embeddings
     that can be compared (via cosine similarity) against diagnosis text
     embeddings in the same 768-dim vector space.
     """
     return [
-        f"Veterinary diagnosis term: {label.term}. Group: {label.group}. Code: {label.code}."
+        f"{label.term} {label.group}"
         for label in labels
     ]

@@ -75,3 +75,8 @@ database/data/*.json
 
 # PetBERT scan output (predictions, embeddings, etc.)
 database/output/
+database/data/patient1.md
+database/data/output/demographics.csv
+database/data/output/diagnoses.csv
+database/data/output/reportText.csv
+database/data/patient2.md

@@ -5,8 +5,8 @@
 The current binary `PresenceClassifier` MLP scores each `(report_embedding, label_embedding)` pair
 independently and selects the winner by argmax. Because groups compete implicitly rather than
 explicitly, the classifier cannot redirect a wrong-group cosine match — it can only accept or
-reject individual pairs. This produces a hard **~42% completely-off (CO) floor** and a **~20%
-Good+Slight ceiling**, regardless of how long training continues.
+reject individual pairs. This produces a hard **~33% completely-off (CO) floor** and a **~33%
+Good+Slight ceiling** (Phase 11, 5,788 confirmed cases), regardless of how long training continues.
 
 The goal is to replace the binary pair-wise classifier with a **multi-class group classifier**
 that makes a single global decision per report: which cancer group(s) does this report belong to,
@@ -28,14 +28,14 @@ report text
 
 **Problem:** Labels compete implicitly through argmax after independent binary decisions.
 The classifier has no information about competing labels when it scores any single pair.
-Result: ~42% CO, ~20% Good+Slight ceiling.
+Result: ~33% CO floor, ~33% Good+Slight ceiling (Phase 11).
 
 ### Proposed (multi-class GroupClassifier)
 
 ```
 report text
     → PetBERT (frozen) → mean_embedding (768-dim)
-    → GroupClassifier MLP → score per group (40 outputs, sigmoid)
+    → GroupClassifier MLP → score per group (45 outputs, sigmoid)
     → threshold → predicted group(s)
     → for each predicted group:
         cosine similarity against only terms within that group → best term + ICD code
@@ -51,17 +51,17 @@ semantically tighter cluster).
 
 ## Training Data
 
-The keyword scan (training pipeline) provides ground-truth labels via
+The keyword pipeline (training only) provides ground-truth labels via
 `ml/output/diagnoses/keyword_predictions.csv`.
 
 | Split | Cases | Label |
 |-------|-------|-------|
-| Cancer cases (keyword-matched) | ~1,273 unique cases | Multi-hot encoding over matched_group values |
-| Non-cancer cases (no keyword match) | ~1,510 unique cases | Uncategorized (all zeros except Uncategorized bit) |
-| **Total** | **~2,783 cases** | |
+| Cancer cases (keyword-matched) | ~5,788 unique cases (44 groups) | Multi-hot encoding over matched_group values |
+| Non-cancer cases (no keyword match) | ~6,832 unique cases | Uncategorized (all zeros except Uncategorized bit) |
+| **Total** | **~12,620 cases** | |
 
 **Ground-truth assumption:** Cases not matched by the keyword scan are non-cancer.
-This is valid for a general veterinary clinic population (~18% cancer prevalence).
+This is valid for a general veterinary clinic population.
 As keyword coverage improves, training data quality improves automatically — no
 architectural changes needed.
 
@@ -78,23 +78,11 @@ for group in matched_groups_for_case:
 target[uncategorized_index] = 1.0
 ```
 
-### Class distribution (current keyword coverage)
+### Class distribution
 
-| Group | Cases | Notes |
-|-------|-------|-------|
-| Adenomas and adenocarcinomas | 209 | |
-| Blood vessel tumors | 153 | |
-| Osseous and chondromatous neoplasms | 122 | |
-| Epithelial neoplasms, NOS | 110 | |
-| Lipomatous neoplasms | 96 | |
-| Soft tissue tumors and sarcomas, NOS | 82 | |
-| Mast cell neoplasms | 82 | |
-| Malignant lymphomas, NOS or diffuse | 76 | |
-| ... | ... | |
-| 14 groups with <10 cases | 1–8 each | Underrepresented until keyword coverage grows |
-| **Uncategorized** | **~1,510** | Non-cancer majority class |
-
-Class imbalance is handled via **per-class BCE loss weights** (inverse frequency weighting).
+5,788 confirmed cancer cases across 44 groups (distribution varies by group; re-train
+`train_group_classifier.py` whenever keyword coverage improves). Class imbalance is
+handled via **per-class BCE loss weights** (inverse frequency weighting).
 
 ---
 
@@ -104,14 +92,14 @@ Class imbalance is handled via **per-class BCE loss weights** (inverse frequency
 GroupClassifier(
     input_dim  = 768,        # PetBERT mean_embedding
     hidden_dim = 256,
-    num_classes = 40,        # 39 cancer groups + 1 Uncategorized
+    num_classes = 45,        # 44 cancer groups + 1 Uncategorized
     dropout = 0.3
 )
 
 forward(x):
     x = ReLU(Linear(768 → 256))
     x = Dropout(0.3)
-    x = Sigmoid(Linear(256 → 40))   # independent probability per class (multi-label)
+    x = Sigmoid(Linear(256 → 45))   # independent probability per class (multi-label)
     return x
 ```
 
@@ -138,7 +126,7 @@ Replaces `PresenceClassifier.score_matrix()` in the PetBERT pipeline:
 
 ```
 1. Load cached mean_embedding for the report (or compute via PetBERT if not cached)
-2. Forward pass through GroupClassifier → 40 group probabilities
+2. Forward pass through GroupClassifier → 45 group probabilities
 3. Apply threshold (e.g. 0.3) → predicted group(s)
    - If no group exceeds threshold → predict Uncategorized
 4. For each predicted group:
@@ -155,90 +143,64 @@ eliminating the CO problem at the group level.
 
 ## Evaluation
 
-The existing evaluation framework (`evaluate_predictions.py`) applies directly.
+The existing evaluation framework (`training/binary/evaluate.py`) applies directly.
 
-### Baseline results (current keyword coverage, ~1,273 cancer cases)
+### Results by data volume
 
-Tested 2026-03-04 with 50 epochs, 39 groups, MPS device:
+| Data | Metric | Binary (Phase 11) | GroupClassifier @ 0.3 | GroupClassifier @ 0.8 |
+|------|--------|-------------------|-----------------------|-----------------------|
+| 1,273 cases (Phase 9) | Good+Slight | 20.4% | 14.3% | 23.4% |
+| 1,273 cases (Phase 9) | CO% | 42.7% | 55.9% | 50.7% |
+| 1,273 cases (Phase 9) | FP% | ~30% | 28.0% | 8.4% |
+| 1,273 cases (Phase 9) | FN% | 4% | 1.8% | 17.6% |
+| **5,788 cases (Phase 11)** | **Good+Slight** | **33.1%** | 13.9% | 21.9% |
+| **5,788 cases (Phase 11)** | **CO%** | **31.8%** | 57.5% | 54.5% |
+| **5,788 cases (Phase 11)** | **FN%** | **1.3%** | — | 15.6% |
 
-| Metric | Phase 9 (binary) | GroupClassifier @ 0.3 | GroupClassifier @ 0.8 |
-|--------|------------------|-----------------------|-----------------------|
-| Good+Slight | **20.4%** | 14.3% | **23.4%** |
-| CO% | 42.7% | 55.9% | 50.7% |
-| FP% | ~30% | 28.0% | **8.4%** |
-| FN% | 4% | 1.8% | 17.6% |
-| Predictions | ~9,500 | 8,608 | 3,255 |
-
-**Findings:**
-- At threshold 0.8: marginally better Good+Slight, much lower FP, but significantly higher FN
-- At threshold 0.3: more predictions, lower FN, but worse CO and Good+Slight than Phase 9
-- CO is not eliminated because 1,273 labeled cases is insufficient for the 768→39 MLP to
-  generalise — val loss (2.6) far exceeds train loss (0.38), indicating clear overfitting
-- The model correctly identifies ~90% of cancer cases at val (high recall) but with very
-  low precision (~0.1), flooding the output with wrong-group predictions
-
-**Why the CO floor persists at current data volumes:**
-The frozen PetBERT embedding space does not have sufficient discriminative power across
-39 cancer groups with ~33 examples per group on average. The MLP (~200k parameters,
-~2,276 training cases) memorises rather than generalises.
+**Findings at 5,788 cases:**
+- Binary PresenceClassifier is the clear winner at current data volumes
+- GroupClassifier still overfits (val loss >> train loss) despite 5,788 cases
+- The MLP memorises rather than generalises across 44 groups with ~132 examples per group on average
+- Re-train whenever keyword coverage improves — no architecture changes needed
 
 ### Expected trajectory as keyword coverage grows
 
 | Keyword-confirmed cases | Expected Good+Slight | Notes |
 |------------------------|---------------------|-------|
-| ~1,273 (current) | ~20–23% | Comparable to Phase 9 |
-| ~3,000 | 35–50% | Model starts generalising |
-| ~5,000+ | 60–80% | Meaningful CO reduction |
+| ~1,273 | ~20–23% | Comparable to Phase 9 binary |
+| ~5,788 (current) | GroupClassifier still overfits | Binary wins at 33.1% |
+| ~10,000 | GroupClassifier starts generalising | May match or exceed binary |
+| ~15,000+ | Meaningful CO reduction expected | GroupClassifier should pull ahead |
 
-Re-train by running `build_group_training_data.py` + `train_group_classifier.py` whenever
-keyword coverage improves. No architecture changes needed.
+Re-train by running `ml/scripts/run_training.py --mode group` whenever keyword coverage improves.
+No architecture changes needed.
 
 ---
 
-## Implementation Checklist
+## Implementation Status
 
-### Phase A — GroupClassifier model
+All phases A–E are implemented. Re-run training after keyword coverage improves.
 
-- [ ] Create `ml/model/group_classifier.py`
-  - `GroupClassifier` nn.Module (architecture above)
-  - `train_group_classifier(embeddings, targets, class_weights, ...)` training function
-  - `predict(embeddings, threshold)` inference function
-  - `save / load` checkpoint utilities
+### Phase A — GroupClassifier model ✓
 
-### Phase B — Training data preparation
+- [x] `ml/model/group_classifier.py` — `GroupClassifier` nn.Module with sigmoid output, inverse-frequency class weights, save/load
 
-- [ ] Create `ml/scripts/build_group_training_data.py`
-  - Load `keyword_predictions.csv` → multi-hot group targets per case
-  - Load `embedding_cache.npz` → mean_embeddings per case
-  - Identify non-cancer cases (cases in report.csv not in keyword_predictions.csv)
-  - Assign Uncategorized target to non-cancer cases
-  - Compute inverse-frequency class weights
-  - Output: `(embeddings, targets, class_weights, case_ids)` tensors
+### Phase B — Training data preparation ✓
 
-### Phase C — Training script
+- [x] `ml/training/group/build_training_data.py` — loads keyword_predictions.csv, builds multi-hot targets, computes class weights
 
-- [ ] Create `ml/scripts/train_group_classifier.py`
-  - CLI args: `--epochs`, `--lr`, `--hidden-dim`, `--threshold`, `--device`
-  - Train/val split (80/20, stratified by group)
-  - Per-epoch logging: loss, per-group precision/recall
-  - Checkpoint: save best model by macro F1 on validation set
+### Phase C — Training script ✓
 
-### Phase D — Inference integration
+- [x] `ml/training/group/train.py` — CLI with `--epochs`, `--lr`, `--hidden-dim`, `--threshold`, `--device`, `--max-class-weight`, `--weight-decay`
 
-- [ ] Update `ml/petbert_scan/categorization.py`
-  - Add `run_categorization_group(group_classifier, mean_embeddings, taxonomy, threshold)`
-  - For each predicted group: cosine similarity against group-restricted term list → top term
-  - Preserve existing output format
+### Phase D — Inference integration ✓
 
-- [ ] Update `ml/petbert_scan/pipeline.py`
-  - Add `--group-classifier` CLI flag (path to GroupClassifier checkpoint)
-  - When present: use group-based categorization instead of binary PresenceClassifier
+- [x] `ml/petbert_pipeline/categorization.py` — two-stage group → cosine-within-group inference
+- [x] `ml/petbert_pipeline/pipeline.py` — `--group-classifier` CLI flag; uses group-based categorization when present
 
-### Phase E — Evaluation and iteration
+### Phase E — Evaluation and iteration ✓
 
-- [ ] Run evaluation with existing `evaluate_predictions.py`
-- [ ] Tune threshold on validation set (precision/recall tradeoff for CO vs FN)
-- [ ] Document results in `classifier.md`
+- [x] Evaluation via `ml/training/binary/evaluate.py` — results documented in `classifier.md`
 
 ---
 
@@ -247,11 +209,11 @@ keyword coverage improves. No architecture changes needed.
 | File | Purpose |
 |------|---------|
 | `ml/model/group_classifier.py` | GroupClassifier model definition |
-| `ml/scripts/build_group_training_data.py` | Build embeddings + multi-hot targets from cache + keyword CSV |
-| `ml/scripts/train_group_classifier.py` | Training script |
+| `ml/training/group/build_training_data.py` | Build embeddings + multi-hot targets from cache + keyword CSV |
+| `ml/training/group/train.py` | Training script |
 | `ml/model/checkpoints/group_classifier_best.pt` | Saved checkpoint |
-| `ml/petbert_scan/categorization.py` | Inference integration (update existing) |
-| `ml/petbert_scan/pipeline.py` | CLI integration (update existing) |
+| `ml/petbert_pipeline/categorization.py` | Inference integration |
+| `ml/petbert_pipeline/pipeline.py` | CLI integration (`--group-classifier` flag) |
 
 ---
 

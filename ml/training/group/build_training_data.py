@@ -17,8 +17,8 @@ are treated as non-cancer (all-zeros target). This is valid for a general veteri
 clinic population where ~18% cancer prevalence is expected.
 
 Usage:
-  python ml/scripts/build_group_training_data.py
-  python ml/scripts/build_group_training_data.py \\
+  python ml/training/build_group_training_data.py
+  python ml/training/build_group_training_data.py \\
       --embedding-cache ml/data/embedding_cache.npz \\
       --keyword-csv ml/output/diagnoses/keyword_predictions.csv \\
       --out ml/output/group_training_data.npz
@@ -42,7 +42,7 @@ def build_training_data(
     if not Path(cache_path).exists():
         print(f"ERROR: cache not found at {cache_path}")
         print("Run the PetBERT scan first to generate the embedding cache:")
-        print("  ml/.venv/bin/python3 -m petbert_scan --embedding-cache ml/data/embedding_cache.npz --local-only")
+        print("  ml/.venv/bin/python3 -m petbert_pipeline --embedding-cache ml/data/embedding_cache.npz --local-only")
         sys.exit(1)
 
     cache = np.load(cache_path, allow_pickle=True)

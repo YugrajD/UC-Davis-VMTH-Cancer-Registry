@@ -3,7 +3,7 @@
 Deduplicates on (case_id, predicted_term) so the same wrong prediction
 from multiple cycles counts only once. The bank grows monotonically.
 
-Called automatically by run_training_cycle.py after each evaluate step (step 4.5).
+Called automatically by run_cycle.py after each evaluate step (step 4.5).
 The bank is then passed to build_training_pairs.py --co-neg-bank-csv in the next
 cycle's step 1, replacing the single-cycle evaluation.csv as the CO source.
 """
@@ -13,23 +13,11 @@ import csv
 from pathlib import Path
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Append CO negatives from evaluation.csv into the rolling bank."
-    )
-    parser.add_argument(
-        "--evaluation-csv",
-        default="ml/output/evaluation/evaluation.csv",
-        help="Evaluation CSV produced by evaluate_predictions.py (default: ml/output/evaluation/evaluation.csv)",
-    )
-    parser.add_argument(
-        "--bank-csv",
-        default="ml/output/evaluation/evaluation_co_bank.csv",
-        help="Path to the rolling CO-negative bank (default: ml/output/evaluation/evaluation_co_bank.csv)",
-    )
-    args = parser.parse_args()
-
-    bank_path = Path(args.bank_csv)
+def update_co_bank(
+    evaluation_csv: str = "ml/output/evaluation/evaluation.csv",
+    bank_csv: str = "ml/output/evaluation/evaluation_co_bank.csv",
+) -> int:
+    bank_path = Path(bank_csv)
     existing: dict[tuple, dict] = {}
 
     # Load existing bank — keep only completely_off rows
@@ -44,7 +32,7 @@ def main() -> int:
 
     # Append new completely_off rows from current evaluation
     fieldnames: list[str] | None = None
-    with open(args.evaluation_csv, encoding="utf-8") as f:
+    with open(evaluation_csv, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames
         for row in reader:
@@ -66,6 +54,27 @@ def main() -> int:
     print(f"CO bank updated: +{added} new rows  ({before} → {len(existing)} unique pairs)")
     print(f"  Bank written to {bank_path}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Append CO negatives from evaluation.csv into the rolling bank."
+    )
+    parser.add_argument(
+        "--evaluation-csv",
+        default="ml/output/evaluation/evaluation.csv",
+        help="Evaluation CSV produced by evaluate.py (default: ml/output/evaluation/evaluation.csv)",
+    )
+    parser.add_argument(
+        "--bank-csv",
+        default="ml/output/evaluation/evaluation_co_bank.csv",
+        help="Path to the rolling CO-negative bank (default: ml/output/evaluation/evaluation_co_bank.csv)",
+    )
+    args = parser.parse_args()
+    return update_co_bank(
+        evaluation_csv=args.evaluation_csv,
+        bank_csv=args.bank_csv,
+    )
 
 
 if __name__ == "__main__":

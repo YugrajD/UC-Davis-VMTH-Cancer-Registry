@@ -14,11 +14,13 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from model.constants import DEFAULT_DROPOUT, DEFAULT_HIDDEN_DIM, PETBERT_EMB_DIM
+
 
 class PresenceClassifier(nn.Module):
     """Lightweight binary classifier head on top of frozen PetBERT embeddings."""
 
-    def __init__(self, emb_dim: int = 768, hidden_dim: int = 256, dropout: float = 0.3):
+    def __init__(self, emb_dim: int = PETBERT_EMB_DIM, hidden_dim: int = DEFAULT_HIDDEN_DIM, dropout: float = DEFAULT_DROPOUT):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(emb_dim * 2, hidden_dim),
@@ -77,9 +79,9 @@ class PresenceClassifier(nn.Module):
         cls,
         path: str | Path,
         *,
-        emb_dim: int = 768,
-        hidden_dim: int = 256,
-        dropout: float = 0.3,
+        emb_dim: int = PETBERT_EMB_DIM,
+        hidden_dim: int = DEFAULT_HIDDEN_DIM,
+        dropout: float = DEFAULT_DROPOUT,
     ) -> "PresenceClassifier":
         model = cls(emb_dim=emb_dim, hidden_dim=hidden_dim, dropout=dropout)
         model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))

@@ -1,4 +1,5 @@
 import type { CancerRecord, CountyData, RegionSummary } from '../types';
+import type { IncidenceRecord } from '../api/client';
 
 // California counties with their regions and FIPS codes
 export const CALIFORNIA_COUNTIES: { name: string; region: string; fips: string; population: number }[] = [
@@ -39,6 +40,69 @@ export const CALIFORNIA_COUNTIES: { name: string; region: string; fips: string; 
   { name: 'Riverside', region: 'Southern CA', fips: '06065', population: 195000 },
   { name: 'San Bernardino', region: 'Southern CA', fips: '06071', population: 175000 },
   { name: 'Ventura', region: 'Southern CA', fips: '06111', population: 82000 },
+];
+
+// --- Static mock data for presentation views ---
+// These values are taken from the design screenshots so the
+// dashboard matches what you see in the presentation.
+
+// County‑level case counts used by:
+// - Regional Summary table
+// - County Details table
+// - California County Map
+export const MOCK_COUNTY_DATA: CountyData[] = [
+  // Central Valley
+  { county: 'Yolo', region: 'Central Valley', count: 56, fips: '' },
+  { county: 'Sacramento', region: 'Central Valley', count: 52, fips: '' },
+  { county: 'Placer', region: 'Central Valley', count: 24, fips: '' },
+  { county: 'El Dorado', region: 'Central Valley', count: 12, fips: '' },
+  { county: 'San Joaquin', region: 'Central Valley', count: 11, fips: '' },
+
+  // Bay Area
+  { county: 'Solano', region: 'Bay Area', count: 28, fips: '' },
+  { county: 'Contra Costa', region: 'Bay Area', count: 25, fips: '' },
+  { county: 'Alameda', region: 'Bay Area', count: 19, fips: '' },
+
+  // Northern CA
+  { county: 'Butte', region: 'Northern CA', count: 17, fips: '' },
+  { county: 'Sutter', region: 'Northern CA', count: 10, fips: '' },
+
+  // Additional low‑count counties so totals match the summary
+  { county: 'Shasta', region: 'Northern CA', count: 4, fips: '' },
+  { county: 'Nevada', region: 'Northern CA', count: 3, fips: '' },
+  { county: 'Yuba', region: 'Northern CA', count: 3, fips: '' },
+  { county: 'Glenn', region: 'Northern CA', count: 2, fips: '' },
+  { county: 'Colusa', region: 'Northern CA', count: 2, fips: '' },
+  { county: 'Marin', region: 'Bay Area', count: 1, fips: '' },
+];
+
+// Pre‑computed helpers derived from MOCK_COUNTY_DATA
+export const MOCK_REGION_SUMMARY: RegionSummary = generateRegionSummary(MOCK_COUNTY_DATA);
+
+export const MOCK_COUNT_RANGE = (() => {
+  const counts = MOCK_COUNTY_DATA.map((c) => c.count).filter((n) => n > 0);
+  if (counts.length === 0) {
+    return { min: 0, max: 1 };
+  }
+  return {
+    min: Math.min(...counts),
+    max: Math.max(...counts),
+  };
+})();
+
+// Cancer‑type distribution used by the Cancer Types tab.
+// Matches the values shown in the design screenshot.
+export const MOCK_CANCER_TYPE_INCIDENTS: IncidenceRecord[] = [
+  { cancer_type: 'Osseous and chondromatous neoplasms', count: 414 },
+  { cancer_type: 'Myelodysplastic syndromes', count: 246 },
+  { cancer_type: 'Adenomas and adenocarcinomas', count: 223 },
+  { cancer_type: 'Blood vessel tumors', count: 171 },
+  { cancer_type: 'Gliomas', count: 157 },
+  { cancer_type: 'Complex mixed and stromal neoplasms', count: 135 },
+  { cancer_type: 'Adnexal and skin appendage neoplasms', count: 102 },
+  { cancer_type: 'Ductal and lobular neoplasms', count: 86 },
+  { cancer_type: 'Neoplasms, NOS', count: 68 },
+  { cancer_type: 'Mature T- and NK-cell lymphomas', count: 67 },
 ];
 
 // Generate mock cancer records

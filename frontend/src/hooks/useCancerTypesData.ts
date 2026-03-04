@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FilterState } from '../types';
-import { fetchIncidenceByCancerType, type IncidenceRecord } from '../api/client';
+import type { IncidenceRecord } from '../api/client';
+import { MOCK_CANCER_TYPE_INCIDENTS } from '../data/mockData';
 
 interface CancerTypesState {
   data: IncidenceRecord[];
@@ -14,29 +15,12 @@ export function useCancerTypesData(filters: FilterState): CancerTypesState {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const apiFilters: { cancerTypes?: string[]; sex?: string } = {};
-        if (filters.cancerType && filters.cancerType !== 'All Types') {
-          apiFilters.cancerTypes = [filters.cancerType];
-        }
-        if (filters.sex && filters.sex !== 'all') {
-          apiFilters.sex = filters.sex;
-        }
-        const res = await fetchIncidenceByCancerType(apiFilters);
-        setData(res.data);
-      } catch (err) {
-        console.error('Failed to load cancer types incidence:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load cancer type data');
-        setData([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    load();
+    // For the presentation, use the static cancer-type distribution
+    // so the bar chart always matches the screenshot.
+    setLoading(true);
+    setError(null);
+    setData(MOCK_CANCER_TYPE_INCIDENTS);
+    setLoading(false);
   }, [filters.cancerType, filters.sex]);
 
   return { data, loading, error };

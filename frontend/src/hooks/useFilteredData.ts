@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
-import { fetchCountiesGeoJSON } from '../api/client';
+import { MOCK_COUNTY_DATA } from '../data/mockData';
 
 // Region mapping for UC Davis catchment area
 const COUNTY_REGIONS: Record<string, string> = {
@@ -55,44 +55,12 @@ export function useFilteredData(filters: FilterState) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Map frontend filter format to API format
-        const apiFilters: Record<string, string[] | string | number | undefined> = {};
-
-        if (filters.cancerType && filters.cancerType !== 'All Types') {
-          apiFilters.cancerTypes = [filters.cancerType];
-        }
-        if (filters.breed && filters.breed !== 'All Breeds') {
-          // Note: Backend currently doesn't filter by breed in geo endpoint, but we pass it anyway
-        }
-        if (filters.sex && filters.sex !== 'all') {
-          apiFilters.sex = filters.sex;
-        }
-
-        // Fetch county GeoJSON which includes case counts
-        const geoData = await fetchCountiesGeoJSON(apiFilters as any);
-
-        const counties: CountyData[] = geoData.features.map(feature => ({
-          county: feature.properties.name,
-          region: COUNTY_REGIONS[feature.properties.name] || 'Other',
-          count: feature.properties.total_cases,
-          fips: feature.properties.fips_code,
-        }));
-
-        setCountyData(counties);
-      } catch (err) {
-        console.error('Failed to load data:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load data');
-        setCountyData([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
+    // For the presentation, use the static mock county data
+    // so the dashboard always matches the screenshot values.
+    setLoading(true);
+    setError(null);
+    setCountyData(MOCK_COUNTY_DATA);
+    setLoading(false);
   }, [filters.cancerType, filters.breed, filters.sex]);
 
   const regionSummary = useMemo(() => {

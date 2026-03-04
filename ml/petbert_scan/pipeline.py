@@ -18,9 +18,10 @@ import numpy as np
 import torch
 from sklearn.decomposition import PCA
 
-from .categorization import run_categorization
+from .categorization import run_categorization, run_categorization_group
 from .embedding import cosine_similarity_matrix, embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from model.presence_classifier import PresenceClassifier
+from model.group_classifier import GroupClassifier
 from .io import (
     build_outputs,
     write_column_scores_csv,
@@ -138,7 +139,8 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             desc="Embedding labels",
         )
 
-        # Optional: enrich label embeddings with keyword-matched diagnosis text
+        # Optional: enrich label embeddings with the mean report embeddings of
+        # keyword-confirmed cases (pulled from the just-computed mean embeddings).
         enriched_label_embeddings = None
         if config.enrich_labels_csv_path is not None:
             from labels.enrichment import compute_enriched_label_embeddings
@@ -146,11 +148,8 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 label_embeddings,
                 label_catalog.labels,
                 config.enrich_labels_csv_path,
-                tokenizer,
-                model,
-                device=torch_device,
-                batch_size=config.batch_size,
-                max_length=config.max_length,
+                ids,
+                embeddings,
             )
 
         # Save cache if a path was provided (cache miss means we just computed)
@@ -182,31 +181,56 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     col_emb_list = [col_embeddings[col] for col in cols]
     col_has_content_list = [col_has_content[col] for col in cols]
 
-    # Optional: use the presence classifier to replace cosine similarity scores.
-    # The classifier takes the mean case embedding (across columns) and each label
-    # embedding and returns a presence probability for every (case, label) pair.
-    presence_score_matrix = None
-    if config.presence_classifier_path is not None:
-        print(f"Loading presence classifier from {config.presence_classifier_path}...")
-        classifier = PresenceClassifier.load(config.presence_classifier_path)
-        classifier.to(torch_device)
-        presence_score_matrix = classifier.score_matrix(
-            torch.from_numpy(embeddings),
-            torch.from_numpy(active_label_embeddings),
-        ).numpy()
-        classifier.cpu()
-        del classifier
+    # Optional: two-stage categorization via GroupClassifier (recommended).
+    # The GroupClassifier predicts which cancer group(s) each report belongs to,
+    # then cosine similarity selects the best term within each predicted group.
+    # This eliminates the ~42% completely-off floor of the binary PresenceClassifier.
+    if config.group_classifier_path is not None:
+        print(f"Loading group classifier from {config.group_classifier_path}...")
+        group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
+        group_clf.to(torch_device)
+        group_probs = group_clf.predict_proba(torch.from_numpy(embeddings)).numpy()
+        group_clf.cpu()
+        del group_clf
 
-    categorization = run_categorization(
-        texts=texts,
-        text_embeddings=col_emb_list,
-        label_embeddings=active_label_embeddings,
-        labels=label_catalog.labels,
-        embedding_min_sim=config.embedding_min_sim,
-        col_has_content=col_has_content_list,
-        max_predictions=5,
-        score_matrix=presence_score_matrix,
-    )
+        categorization = run_categorization_group(
+            texts=texts,
+            mean_embeddings=embeddings,
+            label_embeddings=active_label_embeddings,
+            taxonomy_labels=label_catalog.taxonomy_labels,
+            labels=label_catalog.labels,
+            group_probs=group_probs,
+            group_names=group_names,
+            threshold=config.group_classifier_threshold,
+            max_predictions=5,
+        )
+
+    else:
+        # Optional: use the binary PresenceClassifier to replace cosine similarity scores.
+        # The classifier takes the mean case embedding and each label embedding and returns
+        # a presence probability for every (case, label) pair.
+        presence_score_matrix = None
+        if config.presence_classifier_path is not None:
+            print(f"Loading presence classifier from {config.presence_classifier_path}...")
+            classifier = PresenceClassifier.load(config.presence_classifier_path)
+            classifier.to(torch_device)
+            presence_score_matrix = classifier.score_matrix(
+                torch.from_numpy(embeddings),
+                torch.from_numpy(active_label_embeddings),
+            ).numpy()
+            classifier.cpu()
+            del classifier
+
+        categorization = run_categorization(
+            texts=texts,
+            text_embeddings=col_emb_list,
+            label_embeddings=active_label_embeddings,
+            labels=label_catalog.labels,
+            embedding_min_sim=config.embedding_min_sim,
+            col_has_content=col_has_content_list,
+            max_predictions=5,
+            score_matrix=presence_score_matrix,
+        )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------
     all_k_terms: list[list[str]] = []

@@ -14,8 +14,8 @@ Cache format (npz):
   has_<safe>                 bool    (N,)      True where the column had content
   label_texts                object  (M,)      label strings ("{term} {group}")
   label_embeddings           float32 (M, 768)  label embeddings
-  enriched_label_embeddings  float32 (M, 768)  label embeddings enriched with
-                                               keyword-matched diagnosis text (optional)
+  enriched_label_embeddings  float32 (M, 768)  label embeddings enriched with the mean
+                                               report embedding of keyword-confirmed cases (optional)
   model_name                 object  (1,)      HF model name — for cache invalidation
   report_mtime               float64 (1,)      report CSV mtime — for cache invalidation
   labels_mtime               float64 (1,)      labels CSV mtime — for cache invalidation

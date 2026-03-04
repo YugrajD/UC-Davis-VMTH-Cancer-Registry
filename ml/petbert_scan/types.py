@@ -27,6 +27,8 @@ class ScanConfig:
     presence_classifier_path: str | None
     embedding_cache_path: str | None = None
     enrich_labels_csv_path: str | None = None
+    group_classifier_path: str | None = None
+    group_classifier_threshold: float = 0.3
 
 
 @dataclass(frozen=True)

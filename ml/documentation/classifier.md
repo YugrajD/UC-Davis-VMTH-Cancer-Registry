@@ -2,19 +2,35 @@
 
 ## Architecture Overview
 
-The pipeline has three stages:
+The system has **two pipelines with distinct roles**:
 
-1. **Keyword scan** (`keyword_scan/`) — regex/keyword matching on `diagnoses.csv` to produce ground-truth labels. Matches ~18.6% of diagnosis rows (1,537 / 9,172). Produces `keyword_predictions.csv`.
+### Production Pipeline — PetBERT Scan
 
-2. **PetBERT scan** (`petbert_scan/`) — embeds report text columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) and taxonomy labels with [SAVSNET/PetBERT](https://huggingface.co/SAVSNET/PetBERT), then assigns labels by cosine similarity. Uses a trained `PresenceClassifier` to replace raw cosine scores with presence probabilities.
+Maps **full pathology report text → cancer group + term + ICD code**. This is the only pipeline that runs in production.
 
-3. **Presence classifier** (`model/presence_classifier.py`) — small MLP trained on (report embedding, label embedding) → binary presence probability. Trained via `run_training_cycle.py` which loops: build training pairs → train → re-run petbert scan → evaluate → update CO bank → log.
+| Stage | Input | Output |
+|-------|-------|--------|
+| Embedding | Report text columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) | 768-dim mean-pooled embedding per case via frozen PetBERT |
+| Scoring | Report embedding vs. taxonomy label embeddings | Score per (case, label) pair — cosine similarity, or learned probability when a classifier is present |
+| Classification | Scores across all labels | Top-k predictions with confidence threshold → term + group + ICD code |
 
-### Training data sources (`build_training_pairs.py`)
+The current scorer is a binary `PresenceClassifier` MLP (`model/presence_classifier.py`) trained on `(report_embedding, label_embedding) → present/absent`. It replaces raw cosine similarity scores but is evaluated one pair at a time, which introduces a group-assignment ceiling (~42% completely-off). See [multiclass-classifier-plan.md](multiclass-classifier-plan.md) for the planned replacement.
+
+### Training Pipeline — Keyword Scan
+
+Maps **diagnosis field text → cancer label**, for the **sole purpose of generating ground-truth training labels for the PetBERT pipeline**. Does not run in production.
+
+The keyword scan matches structured diagnosis strings (e.g. `"SKIN DORSUM: SQUAMOUS CELL CARCINOMA"`) against a curated keyword dictionary to assign Vet-ICD-O labels. It currently covers ~18.6% of diagnosis rows (~1,273 unique cases across 39 cancer groups). The keyword pipeline is actively being improved by a domain expert.
+
+**Ground-truth assumption:** Cases not matched by the keyword scan are treated as **non-cancer (Uncategorized)**. This is valid for a general veterinary clinic population where ~18% cancer prevalence is expected. As keyword coverage improves, training label quality will improve accordingly.
+
+### Training data sources (`build_training_pairs.py`) — binary PresenceClassifier only
+
+These training sources apply to the current binary `PresenceClassifier`. They will not be used by the planned multi-class group classifier (see [multiclass-classifier-plan.md](multiclass-classifier-plan.md)).
 
 | Source | Description |
 |--------|-------------|
-| `positive` | Keyword-confirmed (case, term) pairs |
+| `positive` | Keyword-confirmed (case, term) pairs — from the keyword scan (training pipeline only) |
 | `hard_negative` | False-positive predictions from previous eval cycle |
 | `fp_extra_negative` | Additional random labels sampled for FP cases |
 | `co_negative` | Completely-off predictions from the rolling CO bank — the specific wrong-group (case, label) pairs that fool cosine similarity |
@@ -52,6 +68,60 @@ ml/.venv/bin/python3 ml/scripts/run_training_cycle.py \
 ```
 
 If starting fresh (no bank yet), use `--co-neg-per-case 5` for the first ~6 cycles until the bank exceeds ~20k pairs, then switch to `--co-neg-per-case 10`.
+
+---
+
+## Cold Start (after resetting embeddings or classifier)
+
+A cold start is required any time the embedding space changes — e.g. after updating PetBERT, changing label enrichment logic, or switching `--enrich-labels-csv`. Old bank pairs are anchored to the old cosine space and will add noise; the cache is no longer valid either (see Fix 7).
+
+### Prerequisites
+
+1. `ml/output/diagnoses/keyword_predictions.csv` must exist. If not, run the keyword scan first:
+   ```bash
+   ml/.venv/bin/python3 -m keyword_scan
+   ```
+
+2. `ml/data/report.csv` must exist (the input data).
+
+### Files to delete
+
+```bash
+rm -f ml/data/embedding_cache.npz                          # stale cache — rebuilt on first cycle
+rm -f ml/output/evaluation/evaluation_co_bank.csv          # old-space bank — must start fresh
+rm -f ml/model/checkpoints/presence_classifier_best.pt     # old checkpoint
+```
+
+### Warm-up phase (cycles 1–6, `--co-neg-per-case 5`)
+
+The first cycle's Step 0 detects the missing cache and runs PetBERT on all reports and labels (including enrichment). This is the only time PetBERT runs — all subsequent cycles load from cache. It takes several minutes.
+
+```bash
+ml/.venv/bin/python3 ml/scripts/run_training_cycle.py \
+  --label "cold-start c1" \
+  --co-neg-per-case 5 \
+  --fp-neg-per-case 10 \
+  --embedding-min-sim 0.05 \
+  --epochs 25 \
+  --recall-weight 0.25 \
+  --device mps \
+  --local-only \
+  --enrich-labels-csv ml/output/diagnoses/keyword_predictions.csv
+```
+
+Repeat with incremented labels (`cold-start c2`, …) for ~6 cycles. Check `ml/output/evaluation/evaluation_co_bank.csv` row count after each cycle. Bank grows ~3–6k pairs/cycle from scratch.
+
+### Switch to `--co-neg-per-case 10` once bank exceeds ~20k pairs
+
+At that point switch to the [standard command](#how-to-run) above. Based on Phase 4→5 history, expect Good+Slight to jump ~5–7pp on the first co=10 cycle. The system should stabilise at ~19–20% Good+Slight within a few further cycles.
+
+### Expected trajectory
+
+| Cycles completed | Approx bank size | Expected Good+Slight | Notes |
+|-----------------|-----------------|---------------------|-------|
+| 1–2 | <10k | 8–12% | Cache rebuilt; classifier untrained |
+| 3–6 | 10–25k | 10–16% | Bank filling; oscillation moderate |
+| 7+ (switch to co=10) | >25k | 17–22% | Stable; should reach Phase 9 levels |
 
 ---
 
@@ -201,17 +271,19 @@ Cycle 7 → 8: all metrics improved again with no regression. The oscillation is
 
 ---
 
-### Fix 6 — Label embedding enrichment (`labels/enrichment.py`)
+### Fix 6 — Label embedding enrichment (`labels/enrichment.py`) ⚠️ revised in Fix 9
 
-**Motivation:** Label text is minimal (`"{term} {group}"`), which limits how well PetBERT can match report language to taxonomy labels. The keyword scan already provides confirmed (case, label) pairs with real diagnosis text. Averaging each label's embedding with the mean embedding of its keyword-matched diagnoses adds clinical vocabulary to the label representations without requiring any new training data.
+**Motivation:** Label text is minimal (`"{term} {group}"`), which limits how well PetBERT can match report language to taxonomy labels. The keyword scan already provides confirmed (case, label) pairs. The idea was to blend each label's embedding with the mean embedding of its keyword-matched diagnosis strings to add clinical vocabulary.
 
-**Implementation:**
-- New `ml/labels/enrichment.py` — for each label term present in `keyword_predictions.csv`, embeds all keyword-matched diagnosis strings, takes the mean, and averages 50/50 with the original label embedding.
-- Enriched embeddings stored in the cache under `enriched_label_embeddings`. Both `petbert_scan` and `train_classifier.py` use enriched embeddings when present, ensuring train/inference consistency.
+**Original implementation (diagnosis-text-based — had minimal impact):**
+- `ml/labels/enrichment.py` — for each label term in `keyword_predictions.csv`, embedded all keyword-matched diagnosis strings, took the mean, and averaged 50/50 with the original label embedding.
+- Enriched embeddings stored in the cache under `enriched_label_embeddings`. Both `petbert_scan` and `train_classifier.py` use enriched embeddings when present.
 - CLI: `--enrich-labels-csv <path_to_keyword_predictions.csv>` on `petbert_scan` and `run_training_cycle.py`.
-- Cache invalidation: passing `--enrich-labels-csv` sets `require_enriched=True` in `load_cache`; if the cache lacks enriched embeddings it is rebuilt automatically.
+- Cache invalidation: passing `--enrich-labels-csv` sets `require_enriched=True` in `load_cache`; cache is rebuilt automatically if enriched embeddings are missing.
 
-**Bug found and fixed (2026-03-03):** In the first enriched cycle, the presence classifier's `score_matrix()` call was still receiving the original `label_embeddings` instead of `active_label_embeddings`. The classifier was trained on enriched embeddings but scored with original ones — producing garbage presence probabilities. Fixed by passing `active_label_embeddings` consistently to both `run_categorization` and `classifier.score_matrix`.
+**Why it had minimal impact:** The `diagnosis` column in `keyword_predictions.csv` contains short anatomic phrases (e.g. `"SKIN DORSUM: SQUAMOUS CELL CARCINOMA"`), which live in nearly the same region of PetBERT's embedding space as the label texts (`"Squamous cell carcinoma NOS Squamous cell neoplasms"`). Blending two vectors that are already close together barely moves the label embedding. Meanwhile the classifier matches against `mean_embeddings` — mean PetBERT embeddings of full clinical report columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) — which are in a very different part of the embedding space. The enrichment never bridged that gap.
+
+**Bug found and fixed (2026-03-03):** In the first enriched cycle, `score_matrix()` was still receiving the original `label_embeddings` instead of `active_label_embeddings`. The classifier trained on enriched embeddings but scored with original ones — garbage presence probabilities. Fixed by passing `active_label_embeddings` consistently to both `run_categorization` and `classifier.score_matrix`.
 
 ### Phase 6 — Label embedding enrichment (ongoing)
 
@@ -285,6 +357,95 @@ Oscillation persists but amplitude is narrowing (±7pp vs ±15pp before reset). 
 
 ---
 
+### Fix 9 — Cache-based label enrichment (revised `labels/enrichment.py`)
+
+**Problem:** Fix 6's diagnosis-text enrichment barely moved label embeddings because diagnosis strings and label strings already occupy the same compact region of PetBERT's space. The domain gap to full clinical report embeddings remained.
+
+**Fix:** Replace diagnosis-text embedding with cached report embeddings. For each keyword-confirmed `(case_id, label_term)` pair in `keyword_predictions.csv`, look up that case's `mean_embedding` from the embedding cache, average them per label term, and blend 50/50 with the original label embedding.
+
+```python
+# old: re-embed short diagnosis strings through PetBERT
+mean_diag = mean(embed(diagnosis_texts_for_label))
+enriched[label] = (label_emb + mean_diag) / 2
+
+# new: look up full-report embeddings already in the cache — no PetBERT call needed
+mean_report = mean(cache["mean_embeddings"][confirmed_case_indices])
+enriched[label] = (label_emb + mean_report) / 2
+```
+
+**Why this should help:** The classifier input is `(mean_report_embedding, label_embedding)`. Pulling the label embedding toward the centroid of confirmed-case report embeddings directly reduces the distance the classifier must bridge. No new PetBERT inference is needed — the embeddings are already in the cache.
+
+**Changes:**
+- `ml/labels/enrichment.py` — complete rewrite: removed `tokenizer`/`model`/`device` params, added `case_ids` and `mean_report_embeddings` params; reads cache row indices instead of embedding text
+- `ml/petbert_scan/pipeline.py` — updated call site to pass `ids` and `embeddings` (already computed at that point)
+
+**Requires cold start:** The embedding cache and CO bank must be reset before the first cycle. The cache's `enriched_label_embeddings` will now be computed from report embeddings instead of diagnosis text, so the old cache is stale. See the [Cold Start](#cold-start-after-resetting-embeddings-or-classifier) section.
+
+### Phase 10 — Cache-based enrichment (in progress)
+
+All runs on 2026-03-04, device: mps. Cold start performed (cache, bank, checkpoint deleted before c1).
+
+**Warm-up phase (co=5, bank building):**
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% | Bank size |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|-----------|
+| 00:49:24 | cold-start c1 | 10,667 | 1.4% | 5.9% | 7.3% | 51.5% | 33.2% | 8.0% | ~5.5k |
+| 00:51:49 | cold-start c2 | 10,492 | 1.9% | 5.3% | 7.2% | 51.8% | 33.0% | 8.0% | ~10.9k |
+| 00:54:15 | cold-start c3 | 9,592 | 3.5% | 5.7% | 9.2% | 54.5% | 29.3% | 7.0% | — |
+| 00:54:48 | cold-start c4 | 9,868 | 2.4% | 6.0% | 8.4% | 53.3% | 30.6% | 7.7% | — |
+| 00:55:19 | cold-start c5 | 9,918 | 2.7% | 5.3% | 8.0% | 53.9% | 31.0% | 7.1% | ~20.8k → switched to co=10 |
+
+**co=10 phase (bank >20k):**
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% | Bank size |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|-----------|
+| 00:56:09 | **cold-start c6 (co=10)** | 10,240 | **4.6%** | **6.8%** | **11.4%** | 49.0% | 33.9% | 5.7% | — |
+| 00:56:52 | **cold-start c7 (co=10)** | 9,977 | **5.0%** | **8.1%** | **13.1%** | 48.7% | 32.8% | 5.4% | — |
+| 00:57:25 | cold-start c8 (co=10) | 9,877 | 4.4% | 6.0% | 10.4% | 51.7% | 31.5% | 6.4% | ~27.3k |
+| 01:00:29 | **Phase 10 c9 (co=10)** | 10,008 | **5.7%** | **8.4%** | **14.1%** | 47.6% | 33.3% | 5.0% | ~28.2k |
+| 01:03:00 | Phase 10 c10 (co=10) | 10,026 | 4.7% | 7.0% | 11.7% | 49.9% | 32.5% | 5.9% | ~28.9k |
+| 01:03:58 | Phase 10 c11 (co=10) | 9,214 | 4.5% | 3.5% | 8.0% | 55.6% | 28.7% | 7.6% | ~30.4k |
+| 01:05:17 | Phase 10 c12 (co=10) | 10,473 | 4.3% | 7.6% | 11.9% | 47.3% | 35.1% | 5.7% | ~31.2k |
+| 01:06:20 | Phase 10 c13 (co=10) | 9,722 | 3.3% | 3.1% | 6.4% | 54.8% | 31.0% | 7.7% | ~32.3k |
+| 01:07:59 | **Phase 10 c14 (co=10)** | 10,343 | **5.2%** | **7.9%** | **13.1%** | 47.2% | 34.5% | 5.2% | ~32.6k |
+| 01:09:05 | Phase 10 c15 (co=10) | 9,926 | 4.8% | 6.9% | 11.7% | 49.8% | 32.8% | 5.6% | ~33.2k |
+| 01:10:16 | Phase 10 c16 (co=10) | 10,002 | 5.3% | 6.4% | 11.7% | 49.8% | 32.7% | 5.8% | ~33.4k |
+| 01:11:37 | Phase 10 c17 (co=10) | 10,109 | 4.7% | 8.2% | 12.9% | 48.1% | 33.6% | 5.5% | ~34.0k |
+| 01:12:52 | Phase 10 c18 (co=10) | 9,759 | 5.2% | 6.5% | 11.7% | 51.4% | 31.0% | 5.9% | ~34.3k |
+
+**Phase 10 plateau confirmed (13 co=10 cycles, 18 total):** Last 5 cycles (c14–c18): 13.1%, 11.7%, 11.7%, 12.9%, 11.7% — locked in 11–13% with no bad collapses and no improvement. Bank growth slowing to ~260–570 rows/cycle. **Conclusion:** Phase 10 with Fix 9 enrichment has converged at ~12% Good+Slight, significantly below Phase 9's 17.5–20.4%. The 50/50 label-report blend in Fix 9 creates hybrid embeddings that shift the cosine score landscape sufficiently to lower the effective ceiling. Further cycles under current settings are unlikely to break through 14.1%.
+
+---
+
+### Phase 11 — New keyword data (5,788 confirmed cases, 44 groups)
+
+All runs on 2026-03-04, device: mps. New `keyword_predictions.csv` and `report.csv` delivered with 5,788 keyword-confirmed cancer cases (up from 1,273) across 44 groups (up from 39) and 12,620 total reports. Full cold start performed (cache, bank, checkpoint deleted).
+
+**Context:** Cache rebuild covers all 12,620 reports. CO bank hit ~20k rows after c1 alone (54k predictions × 36.7% CO rate), allowing co=10 from c2 onward. No warm-up phase needed.
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|
+| 03:26:12 | cold-start c1 (co=5) | 54,058 | 3.3% | 13.0% | 16.3% | 36.7% | 42.7% | 4.3% |
+| 10:57:22 | new-data c2 (co=10) | 48,655 | 3.6% | 10.0% | 13.6% | 43.1% | 37.6% | 5.7% |
+| 10:58:54 | **new-data c3** | 45,445 | **8.7%** | **17.4%** | **26.1%** | **36.1%** | 35.6% | **2.2%** |
+| 11:00:17 | **new-data c4** | 42,151 | **11.5%** | **19.5%** | **31.0%** | **35.4%** | 32.1% | **1.5%** |
+| 11:01:37 | **new-data c5** | 43,299 | **11.5%** | **19.7%** | **31.2%** | **33.2%** | 34.2% | **1.4%** |
+| 11:02:55 | **new-data c6** | 42,026 | **11.9%** | **21.2%** | **33.1%** | **33.2%** | 32.4% | **1.3%** |
+| 11:04:48 | **new-data c7** | 43,891 | **11.2%** | **20.9%** | **32.1%** | **31.8%** | 34.8% | **1.3%** |
+| 11:06:10 | **new-data c8** | 41,908 | **12.0%** | **21.1%** | **33.1%** | 33.4% | 32.0% | **1.4%** |
+| 11:07:31 | **new-data c9** | 43,677 | **11.3%** | **20.8%** | **32.1%** | **32.0%** | 34.6% | **1.4%** |
+| 11:08:47 | **new-data c10** | 42,399 | **11.5%** | **19.3%** | **30.8%** | 34.9% | 32.4% | 1.9% |
+
+**Phase 11: stable plateau at ~32% Good+Slight, ~33% CO.** Both metrics dramatically exceed Phase 9 (20.4% Good+Slight, 42.7% CO). The old 42% CO floor is broken — CO now fluctuates 32–35%. FN is very low (~1.3–1.9%). No degenerate cycles. The improvement is driven entirely by the increased keyword coverage (1,273 → 5,788 confirmed cancer cases), which provides richer CO-negative training signal and better-calibrated positive examples.
+
+**GroupClassifier comparison (same new data):**
+- GC @ threshold 0.3: 13.9% Good+Slight, 57.5% CO — worse than binary
+- GC @ threshold 0.8: 21.9% Good+Slight, 54.5% CO, 15.6% FN — worse than binary c6+
+
+Binary PresenceClassifier is the clear winner at current data volumes. GroupClassifier still overfits (val loss >> train loss) despite 5,788 cases across 44 groups.
+
+---
+
 ## Summary of Progress
 
 | Phase | Best Good+Slight | Best CO% | Best FN% |
@@ -295,13 +456,17 @@ Oscillation persists but amplitude is narrowing (±7pp vs ±15pp before reset). 
 | Phase 3 (CO negatives, single-cycle) | 12.4% | 45.0% | 6.7% |
 | Phase 4 (rolling bank, co=5) | 16.1% | 46.8% | 5.7% |
 | Phase 5 (rolling bank, co=10) | 22.9% | 42.5% | 3.7% |
-| Phase 6–8 (enriched labels, oscillating) | 22.1% | 42.2% | 4.1% |
-| **Phase 9 (rw=0.25, oscillation resolved)** | **20.4%** | **42.7%** | **4.2%** (stable, 7 consecutive cycles) |
+| Phase 6–8 (diagnosis-text enrichment, oscillating) | 22.1% | 42.2% | 4.1% |
+| Phase 9 (rw=0.25, oscillation resolved) | 20.4% | 42.7% | 4.2% (stable, 7 consecutive cycles) |
+| Phase 10 (cache-based enrichment — Fix 9) | 14.1% | 47.6% | 5.0% (regression — do not use) |
+| **Phase 11 (new keyword data, 5,788 cases)** | **33.1%** | **31.8%** | **1.3%** (stable, 8+ consecutive cycles) |
 
 ---
 
-## Known Limitations
+## Known Limitations of the Binary PresenceClassifier
 
-- **Keyword ground truth is sparse**: only 18.6% of diagnosis rows are keyword-matched. Many true cancer cases are invisible to the evaluator, inflating false negative counts.
+- **Completely-off floor (~33%)**: with 5,788 training cases the CO floor dropped from ~42% to ~33%. Further reduction requires either more keyword-confirmed cases or a group-level architecture (GroupClassifier).
 - **Classifier trained on report-level embeddings**: the mean embedding across 3 text columns may lose fine-grained term-level signal present in individual sections.
-- **Completely-off floor (~42%)**: the presence classifier can only accept/reject individual (case, label) pairs — it cannot redirect a wrong-group cosine match to the correct group. Breaking below ~40% likely requires group-level re-ranking or better label embeddings.
+- **GroupClassifier still overfits at 5,788 cases**: needs ~10,000+ confirmed cases across 44 groups to generalize reliably. Re-train whenever keyword coverage improves.
+
+The planned multi-class group classifier (see [multiclass-classifier-plan.md](multiclass-classifier-plan.md)) directly addresses the CO floor by replacing pair-wise binary scoring with a single global group decision per report.

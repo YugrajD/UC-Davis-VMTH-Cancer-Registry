@@ -244,7 +244,7 @@ def main() -> int:
 
     # --- Training loop ---------------------------------------------------
     best_score = -1.0
-    best_checkpoint = out_dir / "presence_classifier_best.pt"
+    best_checkpoint = out_dir / "presence_classifier_current.pt"
     rw = args.recall_weight  # shorthand
 
     print(f"\n{'Epoch':>5}  {'Loss':>8}  {'F1':>6}  {'P':>6}  {'R':>6}  {'Acc':>6}  {'Score':>7}")

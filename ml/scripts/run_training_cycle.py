@@ -17,13 +17,17 @@ Usage:
 """
 
 import argparse
+import csv
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-_CHECKPOINT = "ml/model/checkpoints/presence_classifier_best.pt"
+_CHECKPOINT            = "ml/model/checkpoints/presence_classifier_current.pt"
+_CHECKPOINT_PRODUCTION = "ml/model/checkpoints/presence_classifier_best.pt"
+_HISTORY_CSV           = "ml/output/evaluation/evaluation_history.csv"
 _SCRIPTS = Path(__file__).parent
 _UTILS   = _SCRIPTS / "utils"
 
@@ -200,6 +204,32 @@ def main() -> int:
         [py, str(_UTILS / "log_evaluation.py"),
          "--label", label],
     )
+
+    # 5.5 ── Save best checkpoint ──────────────────────────────────────────────
+    # Read history and check whether the just-logged cycle is the new best
+    # Good+Slight. If so, copy the checkpoint to a stable production path.
+    history_path = Path(_HISTORY_CSV)
+    checkpoint_path = Path(_CHECKPOINT)
+    production_path = Path(_CHECKPOINT_PRODUCTION)
+
+    if history_path.exists() and checkpoint_path.exists():
+        with open(history_path, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        if rows:
+            best_gs = max(
+                float(r.get("good_pct", 0) or 0) + float(r.get("slightly_off_pct", 0) or 0)
+                for r in rows
+            )
+            current_gs = (
+                float(rows[-1].get("good_pct", 0) or 0)
+                + float(rows[-1].get("slightly_off_pct", 0) or 0)
+            )
+            if current_gs >= best_gs:
+                shutil.copy2(_CHECKPOINT, _CHECKPOINT_PRODUCTION)
+                print(
+                    f"\n★ New best Good+Slight: {current_gs:.1f}% — "
+                    f"checkpoint saved to {_CHECKPOINT_PRODUCTION}"
+                )
 
     return 0
 

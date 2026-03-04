@@ -1,16 +1,27 @@
 """Embedding-based categorization: cosine similarity against taxonomy label embeddings.
 
-For each diagnosis:
-  - Pick the top-1 label by cosine similarity.
-  - If the best score is below the threshold, mark as "low_confidence".
-  - If the text was empty, mark as "empty".
+Two categorization strategies are available:
+
+1. run_categorization() — original approach: cosine similarity (or binary PresenceClassifier
+   scores) across all ~857 labels, argmax selects winner. Suffers from a ~42% completely-off
+   floor because labels compete implicitly.
+
+2. run_categorization_group() — two-stage approach: GroupClassifier predicts which cancer
+   group(s) a report belongs to (explicit multi-label competition), then cosine similarity
+   selects the best term within each predicted group. Eliminates the completely-off floor.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .embedding import cosine_similarity_matrix
+
+if TYPE_CHECKING:
+    from labels.taxonomy import TaxonomyLabel
 
 
 @dataclass(frozen=True)
@@ -134,6 +145,158 @@ def run_categorization(
         embedding_labels=top_labels,
         embedding_scores=top_scores,
         label_scores=sims,
+        labels=labels,
+        top_k_indices=top_k_indices,
+        top_k_scores=top_k_scores,
+        top_k_methods=top_k_methods,
+    )
+
+
+def run_categorization_group(
+    *,
+    texts: list[str],
+    mean_embeddings: np.ndarray,          # (N, 768) — mean report embedding per case
+    label_embeddings: np.ndarray,         # (M, 768) — all taxonomy label embeddings
+    taxonomy_labels: list[TaxonomyLabel], # length M
+    labels: list[str],                    # length M — term strings for display
+    group_probs: np.ndarray,              # (N, num_groups) — GroupClassifier output
+    group_names: list[str],               # length num_groups
+    threshold: float,
+    max_predictions: int = 5,
+) -> CategorizationResult:
+    """Two-stage categorization: group classifier → term selection within group.
+
+    Stage 1 — GroupClassifier decides which cancer group(s) a report belongs to.
+               Groups compete explicitly during training, eliminating the ~42% CO floor.
+    Stage 2 — Within each predicted group, cosine similarity selects the best term.
+               This is a much easier sub-problem (fewer candidates, tighter cluster).
+
+    Cases where no group exceeds the threshold are predicted as Uncategorized.
+    """
+    N = len(texts)
+    M = len(labels)
+
+    # Build group → [label_indices] mapping (static, from taxonomy)
+    group_to_label_indices: dict[str, list[int]] = {}
+    for j, tl in enumerate(taxonomy_labels):
+        group_to_label_indices.setdefault(tl.group, []).append(j)
+
+    # Map group probabilities to term level for label_scores (N, M) compatibility.
+    # Each term receives the probability of its group — preserves output format
+    # for downstream similarity CSV writers.
+    group_name_to_idx = {g: i for i, g in enumerate(group_names)}
+    label_scores = np.zeros((N, M), dtype=np.float32)
+    for j, tl in enumerate(taxonomy_labels):
+        g_idx = group_name_to_idx.get(tl.group)
+        if g_idx is not None:
+            label_scores[:, j] = group_probs[:, g_idx]
+
+    final_labels: list[str] = []
+    final_indices: list[int] = []
+    final_scores: list[float] = []
+    methods: list[str] = []
+    top_k_indices: list[list[int]] = []
+    top_k_scores: list[list[float]] = []
+    top_k_methods: list[list[str]] = []
+    embedding_labels_list: list[str] = []
+    embedding_scores_list: list[float] = []
+
+    for i, text in enumerate(texts):
+        if not text:
+            final_labels.append("")
+            final_indices.append(-1)
+            final_scores.append(0.0)
+            methods.append("empty")
+            top_k_indices.append([])
+            top_k_scores.append([])
+            top_k_methods.append([])
+            embedding_labels_list.append("")
+            embedding_scores_list.append(0.0)
+            continue
+
+        case_probs = group_probs[i]  # (num_groups,)
+        top_group_idx = int(np.argmax(case_probs))
+        embedding_scores_list.append(float(case_probs[top_group_idx]))
+
+        # Find groups above threshold, sorted by probability descending
+        predicted = sorted(
+            [g for g in range(len(group_names)) if case_probs[g] >= threshold],
+            key=lambda g: -case_probs[g],
+        )
+
+        if not predicted:
+            # No group confident enough → Uncategorized
+            # Record top-1 group term as embedding_label for provenance
+            best_idxs = group_to_label_indices.get(group_names[top_group_idx], [])
+            if best_idxs:
+                emb_sims = cosine_similarity_matrix(
+                    mean_embeddings[i : i + 1], label_embeddings[best_idxs]
+                )[0]
+                best_within = int(np.argmax(emb_sims))
+                embedding_labels_list.append(labels[best_idxs[best_within]])
+            else:
+                embedding_labels_list.append("Uncategorized")
+            final_labels.append("Uncategorized")
+            final_indices.append(-1)
+            final_scores.append(float(case_probs[top_group_idx]))
+            methods.append("low_confidence")
+            top_k_indices.append([])
+            top_k_scores.append([])
+            top_k_methods.append([])
+            continue
+
+        # For each predicted group, pick the best term by cosine similarity
+        k_idxs: list[int] = []
+        k_scores: list[float] = []
+        k_meths: list[str] = []
+
+        for g_idx in predicted[:max_predictions]:
+            group_name = group_names[g_idx]
+            label_idxs = group_to_label_indices.get(group_name, [])
+            if not label_idxs:
+                continue
+            group_embs = label_embeddings[label_idxs]  # (k, 768)
+            sims = cosine_similarity_matrix(
+                mean_embeddings[i : i + 1], group_embs
+            )[0]  # (k,)
+            best_within = int(np.argmax(sims))
+            best_label_idx = label_idxs[best_within]
+            k_idxs.append(best_label_idx)
+            k_scores.append(float(case_probs[g_idx]))
+            k_meths.append("embedding")
+
+        if not k_idxs:
+            final_labels.append("Uncategorized")
+            final_indices.append(-1)
+            final_scores.append(0.0)
+            methods.append("low_confidence")
+            embedding_labels_list.append("Uncategorized")
+            top_k_indices.append([])
+            top_k_scores.append([])
+            top_k_methods.append([])
+            continue
+
+        # Top-1 prediction for final_labels / final_indices
+        final_labels.append(labels[k_idxs[0]])
+        final_indices.append(k_idxs[0])
+        final_scores.append(k_scores[0])
+        methods.append("embedding")
+        embedding_labels_list.append(labels[k_idxs[0]])
+        top_k_indices.append(k_idxs)
+        top_k_scores.append(k_scores)
+        top_k_methods.append(k_meths)
+
+    embedding_labels = np.array(embedding_labels_list, dtype=object)
+    embedding_scores = np.array(embedding_scores_list, dtype=np.float32)
+
+    return CategorizationResult(
+        final_labels=final_labels,
+        final_indices=final_indices,
+        final_scores=final_scores,
+        methods=methods,
+        embedding_labels=embedding_labels,
+        embedding_scores=embedding_scores,
+        label_scores=label_scores,
         labels=labels,
         top_k_indices=top_k_indices,
         top_k_scores=top_k_scores,

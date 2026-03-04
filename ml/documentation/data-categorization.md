@@ -1,7 +1,15 @@
 # Data Categorization Pipeline — How It Works
 
-This document describes how the pipeline maps veterinary pathology reports
-to standardized Vet-ICD-O-canine-1 codes using the PetBERT language model.
+This document describes the **PetBERT pipeline** — the production system that maps
+full veterinary pathology report text to standardized Vet-ICD-O-canine-1 codes.
+
+> **Two-pipeline architecture:**
+> - **PetBERT pipeline** (this document) — production system: `report text → cancer label`
+> - **Keyword pipeline** (`keyword_scan/`) — training only: `diagnosis field text → cancer label`
+>   Used solely to generate ground-truth labels for training the PetBERT pipeline.
+>   Does not run in production. Cases not matched by the keyword scan are treated as
+>   non-cancer (Uncategorized).
+
 Each report section is embedded independently and matched against the taxonomy
 via cosine similarity to produce up to 5 ranked predictions per case:
 
@@ -10,29 +18,31 @@ via cosine similarity to produce up to 5 ranked predictions per case:
 - **Code** -- the ICD-O morphology code (e.g. "9120/3")
 
 For CLI options, output file formats, and example commands see
-[data-categorization-usage.md](../ml/scripts/data-categorization-usage.md).
+[data-categorization-usage.md](data-categorization-usage.md).
 
 ---
 
 ## How It Works (High-Level)
 
-The pipeline does **not** fine-tune or train any model.  Instead it uses
-PetBERT purely as a **feature extractor** and compares embeddings via cosine
-similarity:
+The pipeline uses PetBERT purely as a **feature extractor** and scores
+(case, label) pairs either via cosine similarity or — when a trained presence
+classifier is available — via learned presence probabilities:
 
 1. Each selected text column (e.g. `HISTOPATHOLOGICAL SUMMARY`, `FINAL COMMENT`,
    `ANCILLARY TESTS`) is embedded independently through PetBERT, producing a
    768-dimensional vector per column per case via **mean pooling**.
 2. Every taxonomy label is also embedded through the same PetBERT model.
-3. For each case, the label with the highest cosine similarity across **any**
-   column is selected as the top candidate.
-4. All labels above the confidence threshold are returned as ranked predictions
+3. *(Optional)* Label embeddings are enriched by blending each one 50/50 with the
+   mean report embedding of its keyword-confirmed cases, pulling label
+   representations toward real clinical language.
+4. *(Optional)* A trained `PresenceClassifier` MLP scores every `(case, label)` pair,
+   replacing raw cosine similarity with a learned presence probability.
+5. For each case, the label with the highest score across **any** column is the
+   top candidate.
+6. All labels above the confidence threshold are returned as ranked predictions
    (up to 5 per case).  If no label passes the threshold the top-1 is returned
    as `low_confidence`.
-5. Each prediction's label index is resolved to a term, group, and code.
-
-There is no classification head, no softmax, and no training loop.  The
-"evaluation" is a nearest-neighbor lookup in embedding space.
+7. Each prediction's label index is resolved to a term, group, and code.
 
 ---
 
@@ -106,8 +116,9 @@ column.  Each text is:
 Empty cells in a column produce a zero-masked embedding so they cannot
 influence similarity scores.
 
-A mean embedding across non-empty columns is also computed per case and used
-for PCA visualization, nearest-neighbor search, and the embeddings NPZ.
+A mean embedding across non-empty columns is also computed per case (`mean_embeddings`)
+and used for PCA visualization, nearest-neighbor search, the embeddings NPZ, and
+the presence classifier (see Step 3.5 and 4).
 
 ### Step 3: Build and Embed Taxonomy Labels
 
@@ -124,6 +135,44 @@ short text string combining the term and group:
 
 These sentences are embedded through the **same** PetBERT model and tokenizer,
 producing a `(num_labels, 768)` matrix.
+
+### Step 3.5: Optional Label Enrichment (`--enrich-labels-csv`)
+
+When `--enrich-labels-csv` is provided, each label embedding is enriched using
+report embeddings from keyword-confirmed cases in `keyword_predictions.csv`:
+
+```
+For each label term T with at least one keyword-confirmed case:
+  confirmed_embs = mean_embeddings[cases where matched_term == T]
+  enriched[T] = (label_emb[T] + mean(confirmed_embs)) / 2
+```
+
+This pulls each label embedding toward the centroid of how real reports with
+that cancer read in PetBERT's space, reducing the distance the classifier must
+bridge between terse label text and full clinical narratives.
+
+Enriched embeddings are computed once and stored in the embedding cache under
+`enriched_label_embeddings`.  Passing `--enrich-labels-csv` on any subsequent
+run reuses the cached enriched embeddings without recomputing.
+
+**Coverage:** Only labels with at least one keyword-confirmed case are enriched
+(~18.6% of diagnosis rows have keyword matches). Labels with no confirmed cases
+are unchanged.
+
+### Step 3.6: Optional Presence Classifier Scoring (`--presence-classifier`)
+
+When `--presence-classifier` is provided, a trained `PresenceClassifier` MLP
+(from `ml/model/presence_classifier.py`) scores every `(case, label)` pair:
+
+```
+Input:  (mean_report_embedding[768], label_embedding[768])
+Output: presence probability  (replaces cosine similarity for ranking)
+```
+
+The score matrix `(N, num_labels)` is passed to `run_categorization()` in
+place of the per-column cosine similarities.  The per-column `column_scores.csv`
+still uses raw cosine similarity (the classifier operates on the cross-column
+mean embedding, not individual columns).
 
 ### Step 4: Cosine Similarity Matching (Per Column)
 
@@ -178,7 +227,7 @@ determined the final prediction).
 ### Step 8: Write Outputs
 
 Results are written to the `--out-dir` directory (see
-[data-categorization-usage.md](../ml/scripts/data-categorization-usage.md)
+[data-categorization-usage.md](data-categorization-usage.md)
 for output file formats).
 
 ---
@@ -228,6 +277,7 @@ All three pass the 0.6 threshold → 3 rows in `predictions.csv`.
 |------|------|
 | `ml/petbert_scan/pipeline.py` | Top-level orchestration (`run_scan`) |
 | `ml/petbert_scan/embedding.py` | PetBERT loading, per-column mean-pooled embedding, cosine similarity |
+| `ml/petbert_scan/embedding_cache.py` | Save/load the embedding cache (report + label embeddings) |
 | `ml/petbert_scan/categorization.py` | Top-k similarity matching and confidence thresholding |
 | `ml/petbert_scan/types.py` | `ScanConfig` and `ScanOutputs` dataclasses |
 | `ml/petbert_scan/utils.py` | Text cleaning, section merging (display only), device selection |
@@ -236,3 +286,5 @@ All three pass the 0.6 threshold → 3 rows in `predictions.csv`.
 | `ml/labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser |
 | `ml/labels/catalog.py` | Label catalog builder (label text generation) |
 | `ml/labels/projection.py` | Maps label index → term/group/code |
+| `ml/labels/enrichment.py` | Optional label enrichment using cached report embeddings (Step 3.5) |
+| `ml/model/presence_classifier.py` | `PresenceClassifier` MLP definition, `score_matrix()`, save/load |

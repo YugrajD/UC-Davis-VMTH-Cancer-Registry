@@ -87,17 +87,17 @@ def _print_history(rows: list[dict]) -> None:
 
     prev: dict | None = None
     for i, row in enumerate(rows, start=1):
-        g   = float(row["good_pct"])
-        sl  = float(row["slightly_off_pct"])
-        off = float(row["completely_off_pct"])
-        fp  = float(row["false_positive_pct"])
+        g   = float(row.get("good_pct")            or 0)
+        sl  = float(row.get("slightly_off_pct")   or 0)
+        off = float(row.get("completely_off_pct") or 0)
+        fp  = float(row.get("false_positive_pct") or 0)
         fn  = float(row.get("false_negative_pct") or 0)
 
-        pg   = float(prev["good_pct"])                      if prev else None
-        psl  = float(prev["slightly_off_pct"])              if prev else None
-        poff = float(prev["completely_off_pct"])            if prev else None
-        pfp  = float(prev["false_positive_pct"])            if prev else None
-        pfn  = float(prev.get("false_negative_pct") or 0)  if prev else None
+        pg   = float(prev.get("good_pct")            or 0) if prev else None
+        psl  = float(prev.get("slightly_off_pct")   or 0) if prev else None
+        poff = float(prev.get("completely_off_pct") or 0) if prev else None
+        pfp  = float(prev.get("false_positive_pct") or 0) if prev else None
+        pfn  = float(prev.get("false_negative_pct") or 0) if prev else None
 
         label = row["label"] or ""
         ts    = row["timestamp"][:19]  # trim microseconds

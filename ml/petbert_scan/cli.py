@@ -83,6 +83,17 @@ def build_parser() -> argparse.ArgumentParser:
             "If it doesn't exist yet, embeddings are computed and saved here for future runs."
         ),
     )
+    parser.add_argument(
+        "--enrich-labels-csv",
+        default=None,
+        help=(
+            "Path to keyword_predictions.csv. When provided, each taxonomy label embedding "
+            "is averaged with the mean embedding of its keyword-matched diagnosis texts, "
+            "adding clinical language context to the otherwise terse label strings. "
+            "Enriched embeddings are stored in the cache so subsequent runs reuse them "
+            "without re-running PetBERT on diagnosis texts."
+        ),
+    )
     return parser
 
 
@@ -124,6 +135,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         labels_csv_path=args.labels_csv,
         presence_classifier_path=args.presence_classifier,
         embedding_cache_path=args.embedding_cache,
+        enrich_labels_csv_path=args.enrich_labels_csv,
     )
 
 

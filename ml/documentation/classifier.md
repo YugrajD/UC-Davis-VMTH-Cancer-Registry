@@ -36,7 +36,7 @@ The pipeline has three stages:
 
 > **Note:** Use `ml/.venv/bin/python3` — the project venv is at `ml/.venv/`. Plain `python` or `python3` will not find the required packages.
 
-**Current recommended command** (bank already exists at `ml/output/evaluation/evaluation_co_bank.csv`, 27k+ pairs):
+**Current recommended command** (bank exists at `ml/output/evaluation/evaluation_co_bank.csv`, 47k+ pairs):
 
 ```bash
 ml/.venv/bin/python3 ml/scripts/run_training_cycle.py \
@@ -45,8 +45,10 @@ ml/.venv/bin/python3 ml/scripts/run_training_cycle.py \
   --fp-neg-per-case 10 \
   --embedding-min-sim 0.05 \
   --epochs 25 \
+  --recall-weight 0.25 \
   --device mps \
-  --local-only
+  --local-only \
+  --enrich-labels-csv ml/output/diagnoses/keyword_predictions.csv
 ```
 
 If starting fresh (no bank yet), use `--co-neg-per-case 5` for the first ~6 cycles until the bank exceeds ~20k pairs, then switch to `--co-neg-per-case 10`.
@@ -62,14 +64,14 @@ If starting fresh (no bank yet), use `--co-neg-per-case 5` for the first ~6 cycl
 | `--fp-neg-per-case` | `10` | Keep at 10; reducing to 5 weakens FP rejection |
 | `--epochs` | `25` | Beyond 25 shows diminishing returns |
 | `--pos-weight` | `1.0` | Do not increase; the sampler already balances training |
-| `--recall-weight` | `0.5` | Do not raise above 0.5 — causes the classifier to approve everything |
+| `--recall-weight` | `0.25` | Score = `(1-rw)·P + rw·R`. At rw=0.5, epoch-1 degenerate checkpoints (R≈0.95, P≈0.10) could win and produced bad cycles. At rw=0.25 they score ~0.31 vs mid-training balanced checkpoints at ~0.39 — they can no longer win. Do not raise above 0.5. |
 | `--max-pos-per-group` | `0` (no cap) | Do not cap — removes signal from already-good groups |
 
 ---
 
 ## Development History
 
-All runs on 2026-03-03, device: mps.
+All runs on 2026-03-03–04, device: mps.
 
 ### Phase 1 — Initial classifier (pre-normalization)
 
@@ -197,7 +199,93 @@ Once the bank exceeded ~20k pairs, raising the cap from 5 → 10 approximately d
 
 Cycle 7 → 8: all metrics improved again with no regression. The oscillation is resolved. With ~12k diverse CO pairs per cycle from a 27k-pair bank, the classifier sees a stable, sufficient training signal every cycle and no longer depends on the previous cycle being "bad" to get a strong update.
 
-**Summary of progress:**
+---
+
+### Fix 6 — Label embedding enrichment (`labels/enrichment.py`)
+
+**Motivation:** Label text is minimal (`"{term} {group}"`), which limits how well PetBERT can match report language to taxonomy labels. The keyword scan already provides confirmed (case, label) pairs with real diagnosis text. Averaging each label's embedding with the mean embedding of its keyword-matched diagnoses adds clinical vocabulary to the label representations without requiring any new training data.
+
+**Implementation:**
+- New `ml/labels/enrichment.py` — for each label term present in `keyword_predictions.csv`, embeds all keyword-matched diagnosis strings, takes the mean, and averages 50/50 with the original label embedding.
+- Enriched embeddings stored in the cache under `enriched_label_embeddings`. Both `petbert_scan` and `train_classifier.py` use enriched embeddings when present, ensuring train/inference consistency.
+- CLI: `--enrich-labels-csv <path_to_keyword_predictions.csv>` on `petbert_scan` and `run_training_cycle.py`.
+- Cache invalidation: passing `--enrich-labels-csv` sets `require_enriched=True` in `load_cache`; if the cache lacks enriched embeddings it is rebuilt automatically.
+
+**Bug found and fixed (2026-03-03):** In the first enriched cycle, the presence classifier's `score_matrix()` call was still receiving the original `label_embeddings` instead of `active_label_embeddings`. The classifier was trained on enriched embeddings but scored with original ones — producing garbage presence probabilities. Fixed by passing `active_label_embeddings` consistently to both `run_categorization` and `classifier.score_matrix`.
+
+### Phase 6 — Label embedding enrichment (ongoing)
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% | Bank size |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|-----------|
+| 23:14 | enriched labels v1 ❌ (bug: wrong embs at inference) | 4,437 | 0.1% | 1.3% | 1.4% | 37.3% | 34.0% | 27.4% | 33,446 |
+| 23:31 | enriched v2 (cycle 1, bug fixed) | 10,189 | 3.3% | 13.6% | 16.9% | 43.9% | 33.1% | 6.1% | 40,660 |
+| 23:32 | enriched v3 (cycle 2) | 8,998 | 0.4% | 3.8% | 4.2% | 58.7% | 26.3% | 10.8% | 44,577 |
+| 23:34 | enriched v4 (cycle 3) | 10,095 | 0.5% | 8.0% | 8.5% | 52.1% | 30.4% | 9.0% | — |
+| 23:34 | **enriched v5 (cycle 4)** | 9,818 | **4.7%** | **14.0%** | **18.7%** | **43.8%** | 31.9% | **5.6%** | — |
+| 23:34 | enriched v6 (cycle 5) | 8,946 | 0.2% | 5.0% | 5.2% | 58.0% | 25.3% | 11.4% | ~55k |
+
+**Observation:** Severe oscillation (±13pp) despite 44k+ bank. ~75% of bank pairs from old (unenriched) embedding space. Old pairs are valid negatives but shift the decision boundary each cycle because the "hardest" negatives in the old cosine space are different from the enriched space. Good cycles improving each time (16.9% → 18.7%), but oscillation is not resolving.
+
+**Fix 7 — Reset CO bank.** Same logic as Fix 1 (normalization changed the score distribution): when the embedding space changes, old bank pairs introduce noise. Reset bank and rebuild from enriched-space predictions only.
+
+### Phase 7 — Bank reset, co=5 (bank rebuilding)
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% | Bank size |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|-----------|
+| 23:36 | bank-reset c1 | 10,400 | 1.3% | 8.4% | 9.7% | 50.4% | 32.3% | 7.6% | — |
+| 23:36 | bank-reset c2 | 10,297 | 1.8% | 6.2% | 8.0% | 52.3% | 31.6% | 8.0% | — |
+| 23:36 | bank-reset c3 | 9,754 | 3.3% | 8.5% | 11.8% | 51.4% | 29.8% | 7.0% | — |
+| 23:37 | bank-reset c4 | 10,007 | 2.5% | 8.4% | 10.9% | 50.8% | 31.0% | 7.4% | — |
+| 23:37 | bank-reset c5 | 8,770 | 0.4% | 4.9% | 5.3% | 58.0% | 25.6% | 11.2% | — |
+| 23:37 | **bank-reset c6** | 9,837 | **3.8%** | **8.9%** | **12.7%** | **49.6%** | 31.8% | **5.9%** | 24,379 |
+
+Oscillation persists but amplitude is narrowing (±7pp vs ±15pp before reset). c6 peak of 12.7% mirrors Phase 4 cycle 6 before the co=10 switch (which jumped to 21%). Bank now exceeds 20k → switching to co=10.
+
+### Phase 8 — Enriched, co=10 (bank grown from reset)
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% | Bank size |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|-----------|
+| 23:37 | co10 c1 | 9,163 | 1.0% | 5.1% | 6.1% | 57.4% | 26.3% | 10.2% | 28,081 |
+| 23:38 | co10 c2 | 10,243 | 6.0% | 11.8% | 17.8% | 42.8% | 34.9% | 4.5% | 30,679 |
+| 23:38 | co10 c3 | 9,590 | 1.0% | 4.9% | 5.9% | 57.0% | 27.8% | 9.3% | 33,422 |
+| 23:38 | co10 c4 | 9,918 | 6.8% | 12.1% | 18.9% | 43.1% | 34.0% | 4.1% | 34,649 |
+| 23:38 | **co10 c5** | 9,381 | **7.4%** | **14.7%** | **22.1%** | **43.3%** | **30.5%** | **4.1%** | 35,804 |
+| 23:39 | co10 c6 | 9,510 | 0.9% | 5.3% | 6.2% | 56.3% | 28.2% | 9.3% | 38,052 |
+| 23:39 | co10 c7 | 10,120 | 6.7% | 11.8% | 18.5% | 42.6% | 34.7% | 4.2% | 38,665 |
+| 23:39 | co10 c8 | 9,127 | 1.1% | 6.8% | 7.9% | 55.5% | 26.6% | 10.1% | 40,714 |
+| 23:46 | co10 c9 | 10,303 | 6.3% | 11.8% | 18.1% | 42.2% | 35.6% | 4.2% | 41,101 |
+| 23:48 | **co10 c10** | 9,149 | **7.7%** | **12.6%** | **20.3%** | 46.1% | 29.2% | 4.4% | 41,923 |
+| 23:49 | co10 c11 | 9,592 | 1.1% | 9.8% | 10.9% | 51.6% | 28.6% | 8.9% | 43,233 |
+| 23:51 | co10 c12 | 9,840 | 7.1% | 12.0% | 19.1% | 43.4% | 33.4% | 4.2% | 43,636 |
+| 23:52 | co10 c13 | 8,915 | 0.5% | 4.5% | 5.0% | 57.7% | 26.5% | 10.7% | 45,738 |
+
+**Oscillation pattern:** Good cycles consistently land 18–22%; bad cycles drop to ~5–8%. Bad cycles are caused by the checkpoint selection metric being gamed by epoch-1 degenerate models (see Fix 8). Bad cycles trended upward over time (c6=6.2% → c8=7.9% → c11=10.9%) as the bank filled, but a bad c13 (5.0%) confirmed the root cause was the metric, not the bank size.
+
+### Fix 8 — Reduce `--recall-weight` to 0.25
+
+**Problem:** The checkpoint score formula is `(1 - rw) * precision + rw * recall`. At rw=0.5, an epoch-1 degenerate checkpoint with R=0.957 and P=0.095 scores `0.5×0.095 + 0.5×0.957 = 0.526`, beating all later balanced epochs. When this checkpoint is used for inference the classifier accepts nearly every (case, label) pair → CO and FN spike → bad cycle.
+
+**Fix:** Set `--recall-weight 0.25`. At rw=0.25, that same epoch-1 checkpoint scores `0.75×0.095 + 0.25×0.957 = 0.310`, while typical mid-training epochs (P≈0.20, R≈0.82) score `0.75×0.20 + 0.25×0.82 = 0.355` — balanced late checkpoints always win.
+
+**Result:** Zero bad cycles across 7 consecutive cycles. Oscillation eliminated.
+
+### Phase 9 — rw=0.25 (oscillation resolved)
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% | Bank size |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|-----------|
+| 23:55 | **rw025 c14** | 9,854 | **6.2%** | **11.3%** | **17.5%** | 44.6% | 32.9% | 4.9% | 46,081 |
+| 23:56 | **rw025 c15** | 9,197 | **7.6%** | **11.8%** | **19.4%** | 46.7% | 29.4% | 4.5% | 46,480 |
+| 23:57 | **rw025 c16** | 9,847 | **6.6%** | **12.6%** | **19.2%** | 43.5% | 32.7% | 4.6% | 46,843 |
+| 23:58 | **rw025 c17** | 9,433 | **7.3%** | **13.1%** | **20.4%** | 44.7% | 30.6% | 4.3% | 47,121 |
+| 00:00 | **rw025 c18** | 9,761 | **7.1%** | **13.2%** | **20.3%** | 42.8% | 32.6% | 4.3% | 47,492 |
+| 00:01 | **rw025 c19** | 9,501 | **6.6%** | **12.2%** | **18.8%** | 45.7% | 30.8% | 4.6% | — |
+| 00:02 | **rw025 c20** | 9,872 | **7.2%** | **12.7%** | **19.9%** | **42.7%** | 33.2% | 4.2% | 47,492 |
+
+**Phase 9: 7 consecutive good cycles — system converged.** All rw=0.25 cycles produced 17.5–20.4% Good+Slight with no bad cycle (vs. max 2 consecutive with rw=0.5). CO is at 42.7%, hitting the documented floor. FN stable at ~4%. Further improvement in Good+Slight or CO is unlikely under the current architecture without group-level re-ranking or better label embeddings (see Known Limitations).
+
+---
+
+## Summary of Progress
 
 | Phase | Best Good+Slight | Best CO% | Best FN% |
 |-------|-----------------|----------|----------|
@@ -206,7 +294,9 @@ Cycle 7 → 8: all metrics improved again with no regression. The oscillation is
 | Phase 2 (post-normalization) | 9.2% | 51.3% | 7.8% |
 | Phase 3 (CO negatives, single-cycle) | 12.4% | 45.0% | 6.7% |
 | Phase 4 (rolling bank, co=5) | 16.1% | 46.8% | 5.7% |
-| **Phase 5 (rolling bank, co=10)** | **22.9%** | **42.5%** | **3.7%** |
+| Phase 5 (rolling bank, co=10) | 22.9% | 42.5% | 3.7% |
+| Phase 6–8 (enriched labels, oscillating) | 22.1% | 42.2% | 4.1% |
+| **Phase 9 (rw=0.25, oscillation resolved)** | **20.4%** | **42.7%** | **4.2%** (stable, 7 consecutive cycles) |
 
 ---
 
@@ -214,5 +304,4 @@ Cycle 7 → 8: all metrics improved again with no regression. The oscillation is
 
 - **Keyword ground truth is sparse**: only 18.6% of diagnosis rows are keyword-matched. Many true cancer cases are invisible to the evaluator, inflating false negative counts.
 - **Classifier trained on report-level embeddings**: the mean embedding across 3 text columns may lose fine-grained term-level signal present in individual sections.
-- **Label text is minimal**: taxonomy labels are embedded as `"{term} {group}"` — richer descriptions (synonyms, ICD-O codes, clinical context) could improve embedding discrimination and reduce the completely-off rate upstream.
 - **Completely-off floor (~42%)**: the presence classifier can only accept/reject individual (case, label) pairs — it cannot redirect a wrong-group cosine match to the correct group. Breaking below ~40% likely requires group-level re-ranking or better label embeddings.

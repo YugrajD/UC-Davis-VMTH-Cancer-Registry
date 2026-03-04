@@ -102,6 +102,14 @@ def main() -> int:
              "reused every cycle after that, skipping PetBERT inference in Steps 2 and 3. "
              "Pass --embedding-cache '' to disable caching. (default: ml/data/embedding_cache.npz)",
     )
+    parser.add_argument(
+        "--enrich-labels-csv", default="",
+        help="Path to keyword_predictions.csv. When provided, taxonomy label embeddings are "
+             "enriched with the mean embedding of their keyword-matched diagnosis texts before "
+             "training and inference. Enrichment is computed once during the cache-build step "
+             "and stored in the cache for all subsequent cycles. "
+             "(default: disabled)",
+    )
     args = parser.parse_args()
 
     py    = sys.executable
@@ -123,6 +131,8 @@ def main() -> int:
         ]
         if args.local_only:
             pre_embed_cmd.append("--local-only")
+        if args.enrich_labels_csv:
+            pre_embed_cmd += ["--enrich-labels-csv", args.enrich_labels_csv]
         _step("Step 0/5 — Build embedding cache (first run only)", pre_embed_cmd, env=env)
 
     # 1 ── Build training pairs ────────────────────────────────────────────────
@@ -160,6 +170,8 @@ def main() -> int:
         pipeline_cmd.append("--local-only")
     if args.embedding_cache:
         pipeline_cmd += ["--embedding-cache", args.embedding_cache]
+    if args.enrich_labels_csv:
+        pipeline_cmd += ["--enrich-labels-csv", args.enrich_labels_csv]
 
     _step(
         "Step 3/5 — Re-run pipeline with trained classifier",

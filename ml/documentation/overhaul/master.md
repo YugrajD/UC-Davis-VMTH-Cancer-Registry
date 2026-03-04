@@ -1,4 +1,6 @@
-# ml/ Overhaul Part 2 — Master Plan
+# ml/ Overhaul Part 2 — Master Plan (Completed)
+
+> **Status: complete.** All steps implemented and verified. This document is retained as a historical reference.
 
 ## Goal
 Clean up the ml/ directory structure for clarity, modularity, and extensibility.

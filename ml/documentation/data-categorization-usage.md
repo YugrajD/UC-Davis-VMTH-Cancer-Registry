@@ -19,7 +19,7 @@ output.  For a technical explanation of how the pipeline works see
 - **Optional — presence classifier checkpoint:**
   - `ml/model/checkpoints/presence_classifier_best.pt`
   - Replaces cosine similarity scores with learned presence probabilities.
-  - Trained via `ml/scripts/run_training_cycle.py`; see `classifier.md`.
+  - Trained via `ml/scripts/run_training.py --mode binary`; see `classifier.md`.
 - **Optional — keyword predictions (for label enrichment):**
   - `ml/output/diagnoses/keyword_predictions.csv`
   - Used with `--enrich-labels-csv` to enrich label embeddings.
@@ -55,12 +55,12 @@ output.  For a technical explanation of how the pipeline works see
 
 **Basic run** — uses all defaults (`ml/data/report.csv`, top 3 sections, PetBERT, threshold 0.6):
 ```bash
-ml/.venv/bin/python3 -m petbert_scan --local-only
+ml/.venv/bin/python3 -m petbert_pipeline --local-only
 ```
 
 **With presence classifier and embedding cache** (standard mode for trained pipeline):
 ```bash
-ml/.venv/bin/python3 -m petbert_scan \
+ml/.venv/bin/python3 -m petbert_pipeline \
   --presence-classifier ml/model/checkpoints/presence_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
@@ -70,28 +70,28 @@ ml/.venv/bin/python3 -m petbert_scan \
 
 **All available sections** — include addendum and clinical abstract in addition to the defaults:
 ```bash
-ml/.venv/bin/python3 -m petbert_scan \
+ml/.venv/bin/python3 -m petbert_pipeline \
   --text-cols "HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS,ADDENDUM,CLINICAL ABSTRACT" \
   --local-only
 ```
 
 **Stricter confidence threshold** (cosine-only, no classifier):
 ```bash
-ml/.venv/bin/python3 -m petbert_scan \
+ml/.venv/bin/python3 -m petbert_pipeline \
   --embedding-min-sim 0.7 \
   --local-only
 ```
 
 **Quick test run** — process only the first 50 rows:
 ```bash
-ml/.venv/bin/python3 -m petbert_scan \
+ml/.venv/bin/python3 -m petbert_pipeline \
   --max-rows 50 \
   --local-only
 ```
 
 **Include nearest-neighbor output** alongside categorization:
 ```bash
-ml/.venv/bin/python3 -m petbert_scan \
+ml/.venv/bin/python3 -m petbert_pipeline \
   --task both \
   --neighbors-k 5 \
   --local-only
@@ -106,13 +106,13 @@ specific purpose so the data is easy to read and work with:
 
 | File | Rows | Purpose |
 |------|------|---------|
-| `petbert_scan_predictions.csv` | One per (case, prediction rank) | Presentation-ready results — up to 5 ranked predictions per case |
-| `petbert_scan_column_scores.csv` | One per (case × column) | Per-column similarity breakdown — shows which section drove each prediction |
-| `petbert_scan_provenance.csv` | One per case | Traceability and debug info: text stats and raw ML scores |
-| `petbert_scan_similarity_scores.csv` | One per case | Full score matrix (one column per taxonomy label); values are presence probabilities when classifier is active, cosine similarities otherwise |
-| `petbert_scan_visualization.csv` | One per case | PCA coordinates for 2-D plotting |
-| `petbert_scan_embeddings.npz` | N/A | Compressed NumPy archive with the raw 768-dim embedding vectors, ids, and texts |
-| `petbert_scan_summary.json` | N/A | Run metadata and aggregate counts (term/group/code distributions, method counts) |
+| `petbert_predictions.csv` | One per (case, prediction rank) | Presentation-ready results — up to 5 ranked predictions per case |
+| `petbert_column_scores.csv` | One per (case × column) | Per-column similarity breakdown — shows which section drove each prediction |
+| `petbert_provenance.csv` | One per case | Traceability and debug info: text stats and raw ML scores |
+| `petbert_similarity_scores.csv` | One per case | Full score matrix (one column per taxonomy label); values are presence probabilities when classifier is active, cosine similarities otherwise |
+| `petbert_visualization.csv` | One per case | PCA coordinates for 2-D plotting |
+| `petbert_embeddings.npz` | N/A | Compressed NumPy archive with the raw 768-dim embedding vectors, ids, and texts |
+| `petbert_summary.json` | N/A | Run metadata and aggregate counts (term/group/code distributions, method counts) |
 
 ### `predictions.csv` columns
 

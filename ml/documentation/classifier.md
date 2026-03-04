@@ -36,7 +36,7 @@ These training sources apply to the current binary `PresenceClassifier`. They wi
 | `co_negative` | Completely-off predictions from the rolling CO bank — the specific wrong-group (case, label) pairs that fool cosine similarity |
 | `easy_negative` | Random wrong labels for keyword-confirmed cases |
 
-### Evaluation verdicts (`evaluate_predictions.py`)
+### Evaluation verdicts (`training/binary/evaluate.py`)
 
 | Verdict | Meaning |
 |---------|---------|
@@ -52,10 +52,10 @@ These training sources apply to the current binary `PresenceClassifier`. They wi
 
 > **Note:** Use `ml/.venv/bin/python3` — the project venv is at `ml/.venv/`. Plain `python` or `python3` will not find the required packages.
 
-**Current recommended command** (bank exists at `ml/output/evaluation/evaluation_co_bank.csv`, 47k+ pairs):
+**Current recommended command** (bank exists at `ml/output/evaluation/evaluation_co_bank.csv`):
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training_cycle.py \
+ml/.venv/bin/python3 ml/scripts/run_training.py \
   --label "..." \
   --co-neg-per-case 10 \
   --fp-neg-per-case 10 \
@@ -63,11 +63,10 @@ ml/.venv/bin/python3 ml/scripts/run_training_cycle.py \
   --epochs 25 \
   --recall-weight 0.25 \
   --device mps \
-  --local-only \
-  --enrich-labels-csv ml/output/diagnoses/keyword_predictions.csv
+  --local-only
 ```
 
-If starting fresh (no bank yet), use `--co-neg-per-case 5` for the first ~6 cycles until the bank exceeds ~20k pairs, then switch to `--co-neg-per-case 10`.
+If starting fresh (no bank yet), use `--co-neg-per-case 5` for the first cycle until the bank exceeds ~20k pairs, then switch to `--co-neg-per-case 10`. With the current dataset (5,788 cancer cases), the bank fills to >20k after c1 alone — switch to co=10 from c2.
 
 ---
 
@@ -79,7 +78,7 @@ A cold start is required any time the embedding space changes — e.g. after upd
 
 1. `ml/output/diagnoses/keyword_predictions.csv` must exist. If not, run the keyword scan first:
    ```bash
-   ml/.venv/bin/python3 -m keyword_scan
+   ml/.venv/bin/python3 -m keyword_pipeline
    ```
 
 2. `ml/data/report.csv` must exist (the input data).
@@ -92,12 +91,12 @@ rm -f ml/output/evaluation/evaluation_co_bank.csv          # old-space bank — 
 rm -f ml/model/checkpoints/presence_classifier_best.pt     # old checkpoint
 ```
 
-### Warm-up phase (cycles 1–6, `--co-neg-per-case 5`)
+### Warm-up phase
 
-The first cycle's Step 0 detects the missing cache and runs PetBERT on all reports and labels (including enrichment). This is the only time PetBERT runs — all subsequent cycles load from cache. It takes several minutes.
+The first cycle's Step 0 detects the missing cache and runs PetBERT on all reports and labels. This is the only time PetBERT runs — all subsequent cycles load from cache. It takes several minutes.
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training_cycle.py \
+ml/.venv/bin/python3 ml/scripts/run_training.py \
   --label "cold-start c1" \
   --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
@@ -105,23 +104,23 @@ ml/.venv/bin/python3 ml/scripts/run_training_cycle.py \
   --epochs 25 \
   --recall-weight 0.25 \
   --device mps \
-  --local-only \
-  --enrich-labels-csv ml/output/diagnoses/keyword_predictions.csv
+  --local-only
 ```
 
-Repeat with incremented labels (`cold-start c2`, …) for ~6 cycles. Check `ml/output/evaluation/evaluation_co_bank.csv` row count after each cycle. Bank grows ~3–6k pairs/cycle from scratch.
+Check `ml/output/evaluation/evaluation_co_bank.csv` row count after c1. With the current dataset (5,788 cancer cases), the bank exceeds 20k after c1 alone (large case count × ~36% CO rate) — switch to co=10 immediately for c2. With smaller datasets, bank grows ~3–6k pairs/cycle and may take 5–6 cycles to reach 20k.
 
 ### Switch to `--co-neg-per-case 10` once bank exceeds ~20k pairs
 
-At that point switch to the [standard command](#how-to-run) above. Based on Phase 4→5 history, expect Good+Slight to jump ~5–7pp on the first co=10 cycle. The system should stabilise at ~19–20% Good+Slight within a few further cycles.
+Switch to the [standard command](#how-to-run) above. Expect a noticeable Good+Slight jump on the first co=10 cycle.
 
-### Expected trajectory
+### Expected trajectory (5,788 cancer cases)
 
-| Cycles completed | Approx bank size | Expected Good+Slight | Notes |
-|-----------------|-----------------|---------------------|-------|
-| 1–2 | <10k | 8–12% | Cache rebuilt; classifier untrained |
-| 3–6 | 10–25k | 10–16% | Bank filling; oscillation moderate |
-| 7+ (switch to co=10) | >25k | 17–22% | Stable; should reach Phase 9 levels |
+| Cycles completed | Expected Good+Slight | Notes |
+|-----------------|---------------------|-------|
+| c1 (co=5) | ~16% | Cache rebuilt; bank fills to >20k in this cycle |
+| c2 (co=10) | ~14% | Slight dip before classifier adjusts |
+| c3–c4 | ~26–31% | Rapid improvement |
+| c5+ (plateau) | ~32–33% | Stable; CO floor ~33% |
 
 ---
 

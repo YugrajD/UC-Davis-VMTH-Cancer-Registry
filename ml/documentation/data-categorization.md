@@ -5,7 +5,7 @@ full veterinary pathology report text to standardized Vet-ICD-O-canine-1 codes.
 
 > **Two-pipeline architecture:**
 > - **PetBERT pipeline** (this document) — production system: `report text → cancer label`
-> - **Keyword pipeline** (`keyword_scan/`) — training only: `diagnosis field text → cancer label`
+> - **Keyword pipeline** (`keyword_pipeline/`) — training only: `diagnosis field text → cancer label`
 >   Used solely to generate ground-truth labels for training the PetBERT pipeline.
 >   Does not run in production. Cases not matched by the keyword scan are treated as
 >   non-cancer (Uncategorized).
@@ -66,7 +66,7 @@ and a `case_id` column followed by named text-section columns:
 
 ## Pipeline Flow (Step by Step)
 
-The entry point is `run_scan()` in `ml/petbert_scan/pipeline.py`.
+The entry point is `run_scan()` in `ml/petbert_pipeline/pipeline.py`.
 
 ### Step 1: Load Input Data
 
@@ -275,14 +275,14 @@ All three pass the 0.6 threshold → 3 rows in `predictions.csv`.
 
 | File | Role |
 |------|------|
-| `ml/petbert_scan/pipeline.py` | Top-level orchestration (`run_scan`) |
-| `ml/petbert_scan/embedding.py` | PetBERT loading, per-column mean-pooled embedding, cosine similarity |
-| `ml/petbert_scan/embedding_cache.py` | Save/load the embedding cache (report + label embeddings) |
-| `ml/petbert_scan/categorization.py` | Top-k similarity matching and confidence thresholding |
-| `ml/petbert_scan/types.py` | `ScanConfig` and `ScanOutputs` dataclasses |
-| `ml/petbert_scan/utils.py` | Text cleaning, section merging (display only), device selection |
-| `ml/petbert_scan/io.py` | CSV/NPZ/JSON output writers |
-| `ml/petbert_scan/cli.py` | Command-line argument parsing |
+| `ml/petbert_pipeline/pipeline.py` | Top-level orchestration (`run_scan`) |
+| `ml/petbert_pipeline/embedding.py` | PetBERT loading, per-column mean-pooled embedding, cosine similarity |
+| `ml/petbert_pipeline/embedding_cache.py` | Save/load the embedding cache (report + label embeddings) |
+| `ml/petbert_pipeline/categorization.py` | Top-k similarity matching and confidence thresholding |
+| `ml/petbert_pipeline/types.py` | `ScanConfig` and `ScanOutputs` dataclasses |
+| `ml/petbert_pipeline/utils.py` | Text cleaning, section merging (display only), device selection |
+| `ml/petbert_pipeline/io.py` | CSV/NPZ/JSON output writers |
+| `ml/petbert_pipeline/cli.py` | Command-line argument parsing |
 | `ml/labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser |
 | `ml/labels/catalog.py` | Label catalog builder (label text generation) |
 | `ml/labels/projection.py` | Maps label index → term/group/code |

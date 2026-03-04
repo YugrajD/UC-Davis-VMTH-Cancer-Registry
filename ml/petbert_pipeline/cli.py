@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
             "When set, uses two-stage categorization: GroupClassifier predicts cancer group(s), "
             "then cosine similarity selects the best term within each group. "
             "Replaces --presence-classifier and eliminates the completely-off floor. "
-            "Train with: python ml/scripts/train_group_classifier.py"
+            "Train with: python ml/training/train_group_classifier.py"
         ),
     )
     parser.add_argument(

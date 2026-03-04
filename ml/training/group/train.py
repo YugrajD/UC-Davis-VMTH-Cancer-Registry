@@ -8,11 +8,11 @@ to iterate — it trains once on the cached embeddings and keyword ground truth.
 Re-train whenever the keyword pipeline improves (more coverage = better labels).
 
 Usage:
-  python ml/scripts/train_group_classifier.py
-  python ml/scripts/train_group_classifier.py --epochs 100 --device mps
+  python ml/training/group/train.py
+  python ml/training/group/train.py --epochs 100 --device mps
 
 After training, run the PetBERT pipeline with:
-  ml/.venv/bin/python3 -m petbert_scan \\
+  ml/.venv/bin/python3 -m petbert_pipeline \\
       --group-classifier ml/model/checkpoints/group_classifier_best.pt \\
       --embedding-cache ml/data/embedding_cache.npz \\
       --local-only
@@ -31,9 +31,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
-
-# Allow imports from ml/ directory (model, petbert_scan, labels, etc. live there)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from model.group_classifier import GroupClassifier
 
@@ -108,7 +105,7 @@ def train(
     if not Path(training_data_path).exists():
         print(f"ERROR: training data not found at {training_data_path}")
         print("Run build_group_training_data.py first:")
-        print("  python ml/scripts/build_group_training_data.py")
+        print("  python ml/training/build_group_training_data.py")
         sys.exit(1)
 
     data = np.load(training_data_path, allow_pickle=True)

@@ -20,6 +20,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from model.constants import DEFAULT_DROPOUT, DEFAULT_HIDDEN_DIM, PETBERT_EMB_DIM
+
 
 class GroupClassifier(nn.Module):
     """Multi-label group classifier on top of frozen PetBERT embeddings.
@@ -34,9 +36,9 @@ class GroupClassifier(nn.Module):
     def __init__(
         self,
         num_groups: int,
-        emb_dim: int = 768,
-        hidden_dim: int = 256,
-        dropout: float = 0.3,
+        emb_dim: int = PETBERT_EMB_DIM,
+        hidden_dim: int = DEFAULT_HIDDEN_DIM,
+        dropout: float = DEFAULT_DROPOUT,
     ):
         super().__init__()
         self.num_groups = num_groups

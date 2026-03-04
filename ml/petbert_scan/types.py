@@ -26,6 +26,7 @@ class ScanConfig:
     labels_csv_path: str
     presence_classifier_path: str | None
     embedding_cache_path: str | None = None
+    enrich_labels_csv_path: str | None = None
 
 
 @dataclass(frozen=True)

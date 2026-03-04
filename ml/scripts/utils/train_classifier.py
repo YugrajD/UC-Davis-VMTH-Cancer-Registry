@@ -160,6 +160,16 @@ def main() -> int:
         case_id_to_idx   = {cid: i for i, cid in enumerate(cache["case_ids"])}
         label_to_idx     = {t: i   for i, t   in enumerate(cache["label_texts"])}
 
+        # Use enriched label embeddings when available so the classifier trains on
+        # the same representations used during inference.
+        cached_label_embs = (
+            cache["enriched_label_embeddings"]
+            if cache.get("enriched_label_embeddings") is not None
+            else cache["label_embeddings"]
+        )
+        if cache.get("enriched_label_embeddings") is not None:
+            print("  Using enriched label embeddings from cache.")
+
         report_embs_list: list[np.ndarray] = []
         label_embs_list:  list[np.ndarray] = []
         targets_list:     list[float]      = []
@@ -171,7 +181,7 @@ def main() -> int:
                 skipped += 1
                 continue
             report_embs_list.append(cache["mean_embeddings"][ridx])
-            label_embs_list.append(cache["label_embeddings"][lidx])
+            label_embs_list.append(cached_label_embs[lidx])
             targets_list.append(float(row["target"]))
         if skipped:
             print(f"  Warning: {skipped} rows skipped (case or label not in cache)")

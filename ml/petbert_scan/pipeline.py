@@ -93,6 +93,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             report_csv_path=config.csv_path,
             labels_csv_path=config.labels_csv_path,
             expected_col_names=cols,
+            require_enriched=config.enrich_labels_csv_path is not None,
         )
 
     if cache is not None:
@@ -103,6 +104,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         token_counts    = cache["token_counts"]
         label_catalog   = label_catalog_for_config(config)
         label_embeddings = cache["label_embeddings"]
+        enriched_label_embeddings = cache.get("enriched_label_embeddings")
     else:
         # --- Step 2: Embed each column independently with PetBERT ------------
         tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
@@ -136,6 +138,21 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             desc="Embedding labels",
         )
 
+        # Optional: enrich label embeddings with keyword-matched diagnosis text
+        enriched_label_embeddings = None
+        if config.enrich_labels_csv_path is not None:
+            from labels.enrichment import compute_enriched_label_embeddings
+            enriched_label_embeddings = compute_enriched_label_embeddings(
+                label_embeddings,
+                label_catalog.labels,
+                config.enrich_labels_csv_path,
+                tokenizer,
+                model,
+                device=torch_device,
+                batch_size=config.batch_size,
+                max_length=config.max_length,
+            )
+
         # Save cache if a path was provided (cache miss means we just computed)
         if config.embedding_cache_path:
             save_cache(
@@ -150,11 +167,18 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 model_name=config.model_name,
                 report_csv_path=config.csv_path,
                 labels_csv_path=config.labels_csv_path,
+                enriched_label_embeddings=enriched_label_embeddings,
             )
 
     # --- Step 4: Categorize with top-k predictions ---------------------------
-    # Pass per-column embeddings; run_categorization takes the element-wise max
-    # similarity across columns so the strongest column wins per (row, label) pair.
+    # Use enriched label embeddings when available (richer context from
+    # keyword-matched diagnoses), otherwise fall back to plain label embeddings.
+    active_label_embeddings = (
+        enriched_label_embeddings
+        if enriched_label_embeddings is not None
+        else label_embeddings
+    )
+
     col_emb_list = [col_embeddings[col] for col in cols]
     col_has_content_list = [col_has_content[col] for col in cols]
 
@@ -168,7 +192,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         classifier.to(torch_device)
         presence_score_matrix = classifier.score_matrix(
             torch.from_numpy(embeddings),
-            torch.from_numpy(label_embeddings),
+            torch.from_numpy(active_label_embeddings),
         ).numpy()
         classifier.cpu()
         del classifier
@@ -176,7 +200,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     categorization = run_categorization(
         texts=texts,
         text_embeddings=col_emb_list,
-        label_embeddings=label_embeddings,
+        label_embeddings=active_label_embeddings,
         labels=label_catalog.labels,
         embedding_min_sim=config.embedding_min_sim,
         col_has_content=col_has_content_list,
@@ -210,7 +234,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     col_top_scores: dict[str, list[float]] = {}
 
     for col in cols:
-        col_sims = cosine_similarity_matrix(col_embeddings[col], label_embeddings)  # (N, M)
+        col_sims = cosine_similarity_matrix(col_embeddings[col], active_label_embeddings)  # (N, M)
         col_top_idx = np.argmax(col_sims, axis=1)
         col_top_sc = col_sims[np.arange(n), col_top_idx].astype(np.float32)
         # Zero out scores for rows where this column was empty

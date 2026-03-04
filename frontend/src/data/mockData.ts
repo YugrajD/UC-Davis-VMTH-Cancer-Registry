@@ -8,61 +8,76 @@ export const MOCK_BREEDS = [
   'Poodle', 'Mixed Breed',
 ];
 
+// Real distribution weights from seed data:
+// Sex: Male 15%, Female 15%, Neutered Male 35%, Spayed Female 35%
+// Counties: Sacramento 22%, San Joaquin 10%, Contra Costa 10%, Placer 9%,
+//   Solano 8%, Alameda 8%, Yolo 6%, Stanislaus 6%, Butte 4%, El Dorado 5%,
+//   Sutter 3%, Nevada 3%, Yuba 2%, Glenn 2%, Colusa 1%, Amador 1%
+// Cancer types (dogs): Lymphoma 25%, Mast Cell Tumor 22%, Hemangiosarcoma 15%,
+//   Osteosarcoma 12%, Melanoma 10%, TCC 6%, SCC 5%, Fibrosarcoma 5%
+
 const BREED_DETAILS: Record<string, BreedDetail> = {
   'Golden Retriever': {
     breed: 'Golden Retriever',
     total_cases: 142,
-    sex_breakdown: [{ sex: 'Male', count: 58 }, { sex: 'Neutered Male', count: 32 }, { sex: 'Female', count: 28 }, { sex: 'Spayed Female', count: 24 }],
+    sex_breakdown: [{ sex: 'Neutered Male', count: 50 }, { sex: 'Spayed Female', count: 49 }, { sex: 'Male', count: 22 }, { sex: 'Female', count: 21 }],
     cancer_types: [
-      { cancer_type: 'Lymphoma', count: 42 }, { cancer_type: 'Hemangiosarcoma', count: 35 },
-      { cancer_type: 'Mast Cell Tumor', count: 28 }, { cancer_type: 'Osteosarcoma', count: 18 },
-      { cancer_type: 'Melanoma', count: 12 }, { cancer_type: 'Soft Tissue Sarcoma', count: 7 },
+      { cancer_type: 'Lymphoma', count: 36 }, { cancer_type: 'Hemangiosarcoma', count: 28 },
+      { cancer_type: 'Mast Cell Tumor', count: 25 }, { cancer_type: 'Osteosarcoma', count: 21 },
+      { cancer_type: 'Melanoma', count: 14 }, { cancer_type: 'Soft Tissue Sarcoma', count: 10 },
+      { cancer_type: 'Transitional Cell Carcinoma', count: 8 },
     ],
     county_cases: [
-      { county_name: 'Yolo', fips_code: '06113', count: 28 }, { county_name: 'Sacramento', fips_code: '06067', count: 24 },
-      { county_name: 'Placer', fips_code: '06061', count: 18 }, { county_name: 'Solano', fips_code: '06095', count: 15 },
-      { county_name: 'Contra Costa', fips_code: '06013', count: 14 }, { county_name: 'Alameda', fips_code: '06001', count: 12 },
-      { county_name: 'Butte', fips_code: '06007', count: 10 }, { county_name: 'El Dorado', fips_code: '06017', count: 8 },
-      { county_name: 'San Joaquin', fips_code: '06077', count: 7 }, { county_name: 'Sutter', fips_code: '06101', count: 6 },
+      { county_name: 'Sacramento', fips_code: '06067', count: 31 }, { county_name: 'San Joaquin', fips_code: '06077', count: 14 },
+      { county_name: 'Contra Costa', fips_code: '06013', count: 14 }, { county_name: 'Placer', fips_code: '06061', count: 13 },
+      { county_name: 'Solano', fips_code: '06095', count: 11 }, { county_name: 'Alameda', fips_code: '06001', count: 11 },
+      { county_name: 'Yolo', fips_code: '06113', count: 9 }, { county_name: 'Stanislaus', fips_code: '06099', count: 9 },
+      { county_name: 'El Dorado', fips_code: '06017', count: 7 }, { county_name: 'Butte', fips_code: '06007', count: 6 },
+      { county_name: 'Sutter', fips_code: '06101', count: 4 }, { county_name: 'Nevada', fips_code: '06057', count: 4 },
     ],
   },
   'Labrador Retriever': {
     breed: 'Labrador Retriever',
     total_cases: 128,
-    sex_breakdown: [{ sex: 'Male', count: 52 }, { sex: 'Neutered Male', count: 30 }, { sex: 'Female', count: 26 }, { sex: 'Spayed Female', count: 20 }],
+    sex_breakdown: [{ sex: 'Neutered Male', count: 45 }, { sex: 'Spayed Female', count: 44 }, { sex: 'Male', count: 20 }, { sex: 'Female', count: 19 }],
     cancer_types: [
-      { cancer_type: 'Mast Cell Tumor', count: 38 }, { cancer_type: 'Lymphoma', count: 32 },
-      { cancer_type: 'Hemangiosarcoma', count: 22 }, { cancer_type: 'Osteosarcoma', count: 16 },
-      { cancer_type: 'Soft Tissue Sarcoma', count: 12 }, { cancer_type: 'Melanoma', count: 8 },
+      { cancer_type: 'Mast Cell Tumor', count: 32 }, { cancer_type: 'Lymphoma', count: 28 },
+      { cancer_type: 'Hemangiosarcoma', count: 19 }, { cancer_type: 'Osteosarcoma', count: 15 },
+      { cancer_type: 'Melanoma', count: 13 }, { cancer_type: 'Transitional Cell Carcinoma', count: 8 },
+      { cancer_type: 'Squamous Cell Carcinoma', count: 7 }, { cancer_type: 'Fibrosarcoma', count: 6 },
     ],
     county_cases: [
-      { county_name: 'Yolo', fips_code: '06113', count: 25 }, { county_name: 'Sacramento', fips_code: '06067', count: 22 },
-      { county_name: 'Placer', fips_code: '06061', count: 16 }, { county_name: 'Solano', fips_code: '06095', count: 14 },
-      { county_name: 'Contra Costa', fips_code: '06013', count: 12 }, { county_name: 'Alameda', fips_code: '06001', count: 11 },
-      { county_name: 'Butte', fips_code: '06007', count: 10 }, { county_name: 'El Dorado', fips_code: '06017', count: 7 },
-      { county_name: 'San Joaquin', fips_code: '06077', count: 6 }, { county_name: 'Sutter', fips_code: '06101', count: 5 },
+      { county_name: 'Sacramento', fips_code: '06067', count: 28 }, { county_name: 'San Joaquin', fips_code: '06077', count: 13 },
+      { county_name: 'Contra Costa', fips_code: '06013', count: 13 }, { county_name: 'Placer', fips_code: '06061', count: 12 },
+      { county_name: 'Solano', fips_code: '06095', count: 10 }, { county_name: 'Alameda', fips_code: '06001', count: 10 },
+      { county_name: 'Yolo', fips_code: '06113', count: 8 }, { county_name: 'Stanislaus', fips_code: '06099', count: 8 },
+      { county_name: 'El Dorado', fips_code: '06017', count: 6 }, { county_name: 'Butte', fips_code: '06007', count: 5 },
+      { county_name: 'Sutter', fips_code: '06101', count: 4 }, { county_name: 'Nevada', fips_code: '06057', count: 4 },
     ],
   },
   'Boxer': {
     breed: 'Boxer',
     total_cases: 98,
-    sex_breakdown: [{ sex: 'Male', count: 42 }, { sex: 'Neutered Male', count: 22 }, { sex: 'Female', count: 20 }, { sex: 'Spayed Female', count: 14 }],
+    sex_breakdown: [{ sex: 'Neutered Male', count: 34 }, { sex: 'Spayed Female', count: 34 }, { sex: 'Male', count: 15 }, { sex: 'Female', count: 15 }],
     cancer_types: [
-      { cancer_type: 'Mast Cell Tumor', count: 45 }, { cancer_type: 'Lymphoma', count: 22 },
+      { cancer_type: 'Mast Cell Tumor', count: 35 }, { cancer_type: 'Lymphoma', count: 20 },
       { cancer_type: 'Hemangiosarcoma', count: 12 }, { cancer_type: 'Melanoma', count: 10 },
-      { cancer_type: 'Soft Tissue Sarcoma', count: 9 },
+      { cancer_type: 'Osteosarcoma', count: 9 }, { cancer_type: 'Squamous Cell Carcinoma', count: 6 },
+      { cancer_type: 'Fibrosarcoma', count: 6 },
     ],
     county_cases: [
-      { county_name: 'Yolo', fips_code: '06113', count: 20 }, { county_name: 'Sacramento', fips_code: '06067', count: 18 },
-      { county_name: 'Placer', fips_code: '06061', count: 12 }, { county_name: 'Solano', fips_code: '06095', count: 11 },
-      { county_name: 'Contra Costa', fips_code: '06013', count: 10 }, { county_name: 'Butte', fips_code: '06007', count: 9 },
-      { county_name: 'Alameda', fips_code: '06001', count: 8 }, { county_name: 'El Dorado', fips_code: '06017', count: 5 },
-      { county_name: 'San Joaquin', fips_code: '06077', count: 5 },
+      { county_name: 'Sacramento', fips_code: '06067', count: 22 }, { county_name: 'San Joaquin', fips_code: '06077', count: 10 },
+      { county_name: 'Contra Costa', fips_code: '06013', count: 10 }, { county_name: 'Placer', fips_code: '06061', count: 9 },
+      { county_name: 'Solano', fips_code: '06095', count: 8 }, { county_name: 'Alameda', fips_code: '06001', count: 8 },
+      { county_name: 'Yolo', fips_code: '06113', count: 6 }, { county_name: 'Stanislaus', fips_code: '06099', count: 6 },
+      { county_name: 'El Dorado', fips_code: '06017', count: 5 }, { county_name: 'Butte', fips_code: '06007', count: 4 },
+      { county_name: 'Sutter', fips_code: '06101', count: 3 },
     ],
   },
 };
 
 // Generate a plausible breed detail for breeds without explicit data
+// Uses real distribution weights from seed_mock_data.py
 function generateBreedDetail(breed: string): BreedDetail {
   // Seeded from breed name for stability
   let h = 0;
@@ -73,28 +88,35 @@ function generateBreedDetail(breed: string): BreedDetail {
   return {
     breed,
     total_cases: total,
+    // Real sex distribution: ~15% Male, ~15% Female, ~35% Neutered Male, ~35% Spayed Female
     sex_breakdown: [
-      { sex: 'Male', count: Math.round(total * 0.35) },
-      { sex: 'Neutered Male', count: Math.round(total * 0.2) },
-      { sex: 'Female', count: Math.round(total * 0.25) },
-      { sex: 'Spayed Female', count: Math.round(total * 0.2) },
+      { sex: 'Neutered Male', count: Math.round(total * 0.35) },
+      { sex: 'Spayed Female', count: Math.round(total * 0.35) },
+      { sex: 'Male', count: Math.round(total * 0.15) },
+      { sex: 'Female', count: Math.round(total * 0.15) },
     ],
     cancer_types: [
-      { cancer_type: 'Lymphoma', count: Math.round(total * (0.15 + r() * 0.15)) },
-      { cancer_type: 'Mast Cell Tumor', count: Math.round(total * (0.1 + r() * 0.15)) },
-      { cancer_type: 'Hemangiosarcoma', count: Math.round(total * (0.08 + r() * 0.1)) },
-      { cancer_type: 'Osteosarcoma', count: Math.round(total * (0.05 + r() * 0.1)) },
-      { cancer_type: 'Melanoma', count: Math.round(total * (0.03 + r() * 0.08)) },
-      { cancer_type: 'Soft Tissue Sarcoma', count: Math.round(total * (0.02 + r() * 0.06)) },
+      { cancer_type: 'Lymphoma', count: Math.round(total * (0.20 + r() * 0.10)) },
+      { cancer_type: 'Mast Cell Tumor', count: Math.round(total * (0.17 + r() * 0.10)) },
+      { cancer_type: 'Hemangiosarcoma', count: Math.round(total * (0.10 + r() * 0.10)) },
+      { cancer_type: 'Osteosarcoma', count: Math.round(total * (0.08 + r() * 0.08)) },
+      { cancer_type: 'Melanoma', count: Math.round(total * (0.06 + r() * 0.08)) },
+      { cancer_type: 'Transitional Cell Carcinoma', count: Math.round(total * (0.03 + r() * 0.06)) },
+      { cancer_type: 'Squamous Cell Carcinoma', count: Math.round(total * (0.02 + r() * 0.06)) },
+      { cancer_type: 'Fibrosarcoma', count: Math.round(total * (0.02 + r() * 0.06)) },
     ].sort((a, b) => b.count - a.count),
+    // Real county weights: Sacramento 22%, San Joaquin 10%, Contra Costa 10%, Placer 9%, etc.
     county_cases: [
-      { county_name: 'Yolo', fips_code: '06113', count: Math.round(total * (0.15 + r() * 0.1)) },
-      { county_name: 'Sacramento', fips_code: '06067', count: Math.round(total * (0.12 + r() * 0.08)) },
+      { county_name: 'Sacramento', fips_code: '06067', count: Math.round(total * (0.18 + r() * 0.08)) },
+      { county_name: 'San Joaquin', fips_code: '06077', count: Math.round(total * (0.07 + r() * 0.06)) },
+      { county_name: 'Contra Costa', fips_code: '06013', count: Math.round(total * (0.07 + r() * 0.06)) },
       { county_name: 'Placer', fips_code: '06061', count: Math.round(total * (0.06 + r() * 0.06)) },
       { county_name: 'Solano', fips_code: '06095', count: Math.round(total * (0.05 + r() * 0.06)) },
-      { county_name: 'Contra Costa', fips_code: '06013', count: Math.round(total * (0.04 + r() * 0.05)) },
-      { county_name: 'Butte', fips_code: '06007', count: Math.round(total * (0.03 + r() * 0.04)) },
-      { county_name: 'Alameda', fips_code: '06001', count: Math.round(total * (0.02 + r() * 0.04)) },
+      { county_name: 'Alameda', fips_code: '06001', count: Math.round(total * (0.05 + r() * 0.06)) },
+      { county_name: 'Yolo', fips_code: '06113', count: Math.round(total * (0.04 + r() * 0.04)) },
+      { county_name: 'Stanislaus', fips_code: '06099', count: Math.round(total * (0.04 + r() * 0.04)) },
+      { county_name: 'El Dorado', fips_code: '06017', count: Math.round(total * (0.03 + r() * 0.04)) },
+      { county_name: 'Butte', fips_code: '06007', count: Math.round(total * (0.02 + r() * 0.04)) },
     ].filter(c => c.count > 0),
   };
 }
@@ -111,30 +133,32 @@ export function getMockBreedDetail(breed: string): BreedDetail {
 // - Regional Summary table
 // - County Details table
 // - California County Map
+// County weights from seed_mock_data.py (~5000 total cases):
+// Sacramento 22%, San Joaquin 10%, Contra Costa 10%, Placer 9%,
+// Solano 8%, Alameda 8%, Yolo 6%, Stanislaus 6%, Butte 4%,
+// El Dorado 5%, Sutter 3%, Nevada 3%, Yuba 2%, Glenn 2%, Colusa 1%, Amador 1%
 export const MOCK_COUNTY_DATA: CountyData[] = [
   // Central Valley
-  { county: 'Yolo', region: 'Central Valley', count: 56, fips: '' },
-  { county: 'Sacramento', region: 'Central Valley', count: 52, fips: '' },
-  { county: 'Placer', region: 'Central Valley', count: 24, fips: '' },
-  { county: 'El Dorado', region: 'Central Valley', count: 12, fips: '' },
-  { county: 'San Joaquin', region: 'Central Valley', count: 11, fips: '' },
+  { county: 'Sacramento', region: 'Central Valley', count: 1100, fips: '' },
+  { county: 'San Joaquin', region: 'Central Valley', count: 500, fips: '' },
+  { county: 'Placer', region: 'Central Valley', count: 450, fips: '' },
+  { county: 'Yolo', region: 'Central Valley', count: 300, fips: '' },
+  { county: 'Stanislaus', region: 'Central Valley', count: 300, fips: '' },
+  { county: 'El Dorado', region: 'Central Valley', count: 250, fips: '' },
 
   // Bay Area
-  { county: 'Solano', region: 'Bay Area', count: 28, fips: '' },
-  { county: 'Contra Costa', region: 'Bay Area', count: 25, fips: '' },
-  { county: 'Alameda', region: 'Bay Area', count: 19, fips: '' },
+  { county: 'Contra Costa', region: 'Bay Area', count: 500, fips: '' },
+  { county: 'Solano', region: 'Bay Area', count: 400, fips: '' },
+  { county: 'Alameda', region: 'Bay Area', count: 400, fips: '' },
 
   // Northern CA
-  { county: 'Butte', region: 'Northern CA', count: 17, fips: '' },
-  { county: 'Sutter', region: 'Northern CA', count: 10, fips: '' },
-
-  // Additional low‑count counties so totals match the summary
-  { county: 'Shasta', region: 'Northern CA', count: 4, fips: '' },
-  { county: 'Nevada', region: 'Northern CA', count: 3, fips: '' },
-  { county: 'Yuba', region: 'Northern CA', count: 3, fips: '' },
-  { county: 'Glenn', region: 'Northern CA', count: 2, fips: '' },
-  { county: 'Colusa', region: 'Northern CA', count: 2, fips: '' },
-  { county: 'Marin', region: 'Bay Area', count: 1, fips: '' },
+  { county: 'Butte', region: 'Northern CA', count: 200, fips: '' },
+  { county: 'Sutter', region: 'Northern CA', count: 150, fips: '' },
+  { county: 'Nevada', region: 'Northern CA', count: 150, fips: '' },
+  { county: 'Yuba', region: 'Northern CA', count: 100, fips: '' },
+  { county: 'Glenn', region: 'Northern CA', count: 100, fips: '' },
+  { county: 'Colusa', region: 'Northern CA', count: 50, fips: '' },
+  { county: 'Amador', region: 'Northern CA', count: 50, fips: '' },
 ];
 
 // Pre‑computed helpers derived from MOCK_COUNTY_DATA
@@ -152,18 +176,18 @@ export const MOCK_COUNT_RANGE = (() => {
 })();
 
 // Cancer‑type distribution used by the Cancer Types tab.
-// Matches the values shown in the design screenshot.
+// Based on real veterinary oncology data proportions (~5000 total):
+// Lymphoma 25%, Mast Cell Tumor 22%, Hemangiosarcoma 15%, Osteosarcoma 12%,
+// Melanoma 10%, TCC 6%, SCC 5%, Fibrosarcoma 5%
 export const MOCK_CANCER_TYPE_INCIDENTS: IncidenceRecord[] = [
-  { cancer_type: 'Osseous and chondromatous neoplasms', count: 414 },
-  { cancer_type: 'Myelodysplastic syndromes', count: 246 },
-  { cancer_type: 'Adenomas and adenocarcinomas', count: 223 },
-  { cancer_type: 'Blood vessel tumors', count: 171 },
-  { cancer_type: 'Gliomas', count: 157 },
-  { cancer_type: 'Complex mixed and stromal neoplasms', count: 135 },
-  { cancer_type: 'Adnexal and skin appendage neoplasms', count: 102 },
-  { cancer_type: 'Ductal and lobular neoplasms', count: 86 },
-  { cancer_type: 'Neoplasms, NOS', count: 68 },
-  { cancer_type: 'Mature T- and NK-cell lymphomas', count: 67 },
+  { cancer_type: 'Lymphoma', count: 1250 },
+  { cancer_type: 'Mast Cell Tumor', count: 1100 },
+  { cancer_type: 'Hemangiosarcoma', count: 750 },
+  { cancer_type: 'Osteosarcoma', count: 600 },
+  { cancer_type: 'Melanoma', count: 500 },
+  { cancer_type: 'Transitional Cell Carcinoma', count: 300 },
+  { cancer_type: 'Squamous Cell Carcinoma', count: 250 },
+  { cancer_type: 'Fibrosarcoma', count: 250 },
 ];
 
 // Mock CalEnviroScreen 4.0 data (county-level percentiles)

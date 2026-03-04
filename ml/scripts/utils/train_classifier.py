@@ -2,17 +2,21 @@
 
 Steps:
   1. Load training_pairs.csv.
-  2. Embed all unique report texts with PetBERT (frozen — no gradients through it).
-  3. Embed all unique taxonomy label strings with PetBERT (frozen).
-  4. Build a PyTorch Dataset from the cached embedding pairs.
-  5. Train PresenceClassifier with BCEWithLogitsLoss, using a weighted sampler
+  2. Look up per-column mean embeddings from the embedding cache (built by petbert_scan).
+     Using cached embeddings ensures train/inference consistency: both use the same
+     mean-of-columns representation, not a merged-text approximation.
+  3. Build a PyTorch Dataset from the cached embedding pairs.
+  4. Train PresenceClassifier with BCEWithLogitsLoss, using a weighted sampler
      and pos_weight to handle class imbalance.
-  6. Evaluate precision / recall / F1 on a held-out validation split after each epoch.
-  7. Save the best checkpoint (by validation F1) to ml/model/checkpoints/.
+  5. Evaluate precision / recall / F1 on a held-out validation split after each epoch.
+  6. Save the best checkpoint (by validation F1) to ml/model/checkpoints/.
+
+Requires an embedding cache built by petbert_scan --embedding-cache <path>.
+Use run_training_cycle.py to orchestrate the full cycle; it builds the cache automatically.
 
 Usage:
-  python ml/scripts/utils/train_classifier.py
-  python ml/scripts/utils/train_classifier.py --epochs 40 --device cuda
+  python ml/scripts/utils/train_classifier.py --embedding-cache ml/data/embedding_cache.npz
+  python ml/scripts/utils/train_classifier.py --embedding-cache ml/data/embedding_cache.npz --epochs 40
 """
 
 import argparse
@@ -30,7 +34,6 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from model.presence_classifier import PresenceClassifier
-from petbert_scan.embedding import embed_texts, load_tokenizer_and_model
 from petbert_scan.utils import device_from_arg
 
 
@@ -177,39 +180,16 @@ def main() -> int:
         targets     = np.array(targets_list,      dtype=np.float32)
         print(f"  Using {len(targets)} pairs after cache lookup")
     else:
-        # Fallback: embed merged_text with PetBERT (used on first cycle before cache exists).
-        if args.embedding_cache:
-            print(f"Cache not found at {args.embedding_cache} — falling back to PetBERT embedding.")
-            print("  Note: run petbert_scan with --embedding-cache first to fix train/inference mismatch.")
-        report_texts = [r["merged_text"] for r in rows]
-        print(f"\nLoading PetBERT ({args.model})...")
-        tokenizer, petbert = load_tokenizer_and_model(args.model, local_only=args.local_only)
-
-        print("Embedding unique report texts...")
-        unique_texts = list(dict.fromkeys(report_texts))
-        text_to_idx = {t: i for i, t in enumerate(unique_texts)}
-        unique_report_embs, _ = embed_texts(
-            tokenizer, petbert, unique_texts,
-            device=device, batch_size=args.embed_batch_size, max_length=args.max_length,
-            desc="Reports",
+        # No cache available — abort with a clear message rather than silently using
+        # merged-text embeddings (which would reintroduce the train/inference mismatch).
+        cache_path = args.embedding_cache or "ml/data/embedding_cache.npz"
+        print(
+            f"\nError: embedding cache not found or stale.\n"
+            f"Build it first by running petbert_scan once:\n\n"
+            f"  python -m petbert_scan --embedding-cache {cache_path}\n\n"
+            f"Or use run_training_cycle.py, which builds the cache automatically on first run."
         )
-        report_embs = unique_report_embs[[text_to_idx[t] for t in report_texts]]
-
-        print("Embedding taxonomy label strings...")
-        unique_label_strings = list(dict.fromkeys(label_strings))
-        label_str_to_idx = {s: i for i, s in enumerate(unique_label_strings)}
-        unique_label_embs, _ = embed_texts(
-            tokenizer, petbert, unique_label_strings,
-            device=device, batch_size=args.embed_batch_size, max_length=args.max_length,
-            desc="Labels",
-        )
-        label_embs = unique_label_embs[[label_str_to_idx[s] for s in label_strings]]
-
-        # Free PetBERT memory — embeddings are now in numpy arrays on CPU
-        petbert.cpu()
-        del petbert, tokenizer
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        return 1
 
     # --- Train / val split -----------------------------------------------
     indices = np.arange(len(targets))

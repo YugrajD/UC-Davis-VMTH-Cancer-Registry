@@ -3,7 +3,7 @@
 Produces ml/data/training_pairs.csv — one row per (case, taxonomy label) pair
 with a binary target: 1 if the label is a confirmed diagnosis, 0 otherwise.
 
-Four sources of examples:
+Five sources of examples:
   Positives      — rows in keyword_predictions.csv where matched_term is non-blank
   Hard negatives — rows in evaluation.csv with verdict="false_positive"
                    (high cosine similarity but the case has no keyword label at all;
@@ -11,6 +11,9 @@ Four sources of examples:
   FP extra neg   — for each unique false-positive case, additional randomly-sampled
                    taxonomy labels beyond those already covered by evaluation rows;
                    teaches the classifier that these cases have NO valid label at all
+  CO negatives   — rows in evaluation.csv with verdict="completely_off"
+                   (case has a keyword label, but the predicted label is the wrong group;
+                   teaches the classifier to reject specific wrong-group predictions)
   Easy negatives — for each labeled case, randomly sampled wrong taxonomy terms
 """
 
@@ -58,6 +61,29 @@ def main() -> int:
         default=10,
         help="Extra random taxonomy labels to sample per unique false-positive case, "
              "beyond those already covered by evaluation rows (default: 10)",
+    )
+    parser.add_argument(
+        "--co-neg-per-case",
+        type=int,
+        default=3,
+        help="Cap completely-off negatives per case (0 = no cap, default: 3). "
+             "These are wrong-group predictions from the previous cycle — "
+             "the most targeted signal for reducing the completely-off rate.",
+    )
+    parser.add_argument(
+        "--co-neg-extra-csv",
+        default="",
+        help="Optional path to a second evaluation.csv to pull additional CO negatives from "
+             "(e.g. from a previous best cycle). Combined with --evaluation-csv CO negatives "
+             "to reduce oscillation caused by single-cycle feedback.",
+    )
+    parser.add_argument(
+        "--co-neg-bank-csv",
+        default="",
+        help="Path to the rolling CO-negative bank (maintained by update_co_bank.py). "
+             "When provided and the file exists, CO negatives are read from the bank "
+             "INSTEAD OF --evaluation-csv, avoiding double-counting across cycles. "
+             "Falls back to --evaluation-csv if the bank doesn't exist yet.",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
@@ -124,6 +150,49 @@ def main() -> int:
 
     # Hard negatives — false positive predictions from evaluation
     eval_rows = load_csv(Path(args.evaluation_csv))
+
+    # CO negatives — completely-off predictions (case has keyword labels but wrong group)
+    # These are the specific (case, wrong-label) pairs that fool the cosine similarity step.
+    # Capped per case to avoid one prolific case dominating the training set.
+    # Optionally merged from a second historical evaluation CSV to reduce cycle-to-cycle
+    # oscillation caused by using only the most recent cycle's predictions.
+    # When a rolling bank is provided, use it as the sole CO source.
+    # This avoids double-counting: the bank already includes the previous cycle's
+    # completely-off rows, which are also present in evaluation.csv.
+    if args.co_neg_bank_csv and Path(args.co_neg_bank_csv).exists():
+        co_eval_sources = [load_csv(Path(args.co_neg_bank_csv))]
+        print(f"  Using CO bank ({args.co_neg_bank_csv})")
+    else:
+        co_eval_sources = [eval_rows]
+        if args.co_neg_extra_csv:
+            extra_path = Path(args.co_neg_extra_csv)
+            if extra_path.exists():
+                co_eval_sources.append(load_csv(extra_path))
+                print(f"  Loaded extra CO negatives from {args.co_neg_extra_csv}")
+            else:
+                print(f"  Warning: --co-neg-extra-csv path not found: {args.co_neg_extra_csv}")
+
+    co_case_count: dict[str, int] = {}
+    for co_rows in co_eval_sources:
+        for row in co_rows:
+            if row["verdict"] != "completely_off":
+                continue
+            text = case_to_text.get(row["case_id"], "")
+            if not text:
+                continue
+            if args.co_neg_per_case > 0:
+                if co_case_count.get(row["case_id"], 0) >= args.co_neg_per_case:
+                    continue
+                co_case_count[row["case_id"]] = co_case_count.get(row["case_id"], 0) + 1
+            out_rows.append({
+                "case_id": row["case_id"],
+                "merged_text": text,
+                "label_term": row["predicted_term"],
+                "label_group": row["predicted_group"],
+                "target": 0,
+                "source": "co_negative",
+            })
+
     fp_case_covered: dict[str, set[str]] = {}  # case_id -> terms already added
     for row in eval_rows:
         if row["verdict"] != "false_positive":
@@ -190,11 +259,13 @@ def main() -> int:
     n_pos = sum(1 for r in out_rows if r["target"] == 1)
     n_hard = sum(1 for r in out_rows if r["source"] == "hard_negative")
     n_fp_extra = sum(1 for r in out_rows if r["source"] == "fp_extra_negative")
+    n_co = sum(1 for r in out_rows if r["source"] == "co_negative")
     n_easy = sum(1 for r in out_rows if r["source"] == "easy_negative")
     print(f"Wrote {len(out_rows)} training pairs to {out_path}")
     print(f"  Positives:          {n_pos}")
     print(f"  Hard negatives:     {n_hard}")
     print(f"  FP extra negatives: {n_fp_extra}")
+    print(f"  CO negatives:       {n_co}")
     print(f"  Easy negatives:     {n_easy}")
     return 0
 

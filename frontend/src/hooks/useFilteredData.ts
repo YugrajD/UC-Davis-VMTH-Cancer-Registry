@@ -2,53 +2,6 @@ import { useMemo, useEffect, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
 import { MOCK_COUNTY_DATA } from '../data/mockData';
 
-// Region mapping for UC Davis catchment area
-const COUNTY_REGIONS: Record<string, string> = {
-  // Bay Area
-  'Alameda': 'Bay Area',
-  'Contra Costa': 'Bay Area',
-  'Marin': 'Bay Area',
-  'San Francisco': 'Bay Area',
-  'San Mateo': 'Bay Area',
-  'Santa Clara': 'Bay Area',
-  'Sonoma': 'Bay Area',
-  'Napa': 'Bay Area',
-  'Solano': 'Bay Area',
-  // Northern CA
-  'Butte': 'Northern CA',
-  'Shasta': 'Northern CA',
-  'Humboldt': 'Northern CA',
-  'Mendocino': 'Northern CA',
-  'Del Norte': 'Northern CA',
-  'Nevada': 'Northern CA',
-  'Yuba': 'Northern CA',
-  'Sutter': 'Northern CA',
-  'Glenn': 'Northern CA',
-  'Colusa': 'Northern CA',
-  // Central Valley
-  'Sacramento': 'Central Valley',
-  'San Joaquin': 'Central Valley',
-  'Fresno': 'Central Valley',
-  'Stanislaus': 'Central Valley',
-  'Kern': 'Central Valley',
-  'Yolo': 'Central Valley',
-  'Placer': 'Central Valley',
-  'El Dorado': 'Central Valley',
-  'Amador': 'Central Valley',
-  // Central Coast
-  'Monterey': 'Central Coast',
-  'Santa Cruz': 'Central Coast',
-  'San Luis Obispo': 'Central Coast',
-  'Santa Barbara': 'Central Coast',
-  // Southern CA
-  'Los Angeles': 'Southern CA',
-  'Orange': 'Southern CA',
-  'San Diego': 'Southern CA',
-  'Riverside': 'Southern CA',
-  'San Bernardino': 'Southern CA',
-  'Ventura': 'Southern CA',
-};
-
 export function useFilteredData(filters: FilterState) {
   const [countyData, setCountyData] = useState<CountyData[]>([]);
   const [loading, setLoading] = useState(true);

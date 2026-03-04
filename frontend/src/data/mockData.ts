@@ -2,10 +2,11 @@ import type { CountyData, RegionSummary, CalEnviroScreenData } from '../types';
 import type { IncidenceRecord, BreedDetail } from '../api/client';
 
 // --- Mock breed list and breed detail data ---
+// 10 dog breeds from 002_lookup_tables.sql — each gets ~325 cases (uniform pick)
 export const MOCK_BREEDS = [
   'Golden Retriever', 'Labrador Retriever', 'Boxer', 'German Shepherd',
-  'Rottweiler', 'Bernese Mountain Dog', 'Beagle', 'French Bulldog',
-  'Poodle', 'Mixed Breed',
+  'Rottweiler', 'Bernese Mountain Dog', 'Beagle', 'Bulldog',
+  'Poodle', 'Mixed Breed Dog',
 ];
 
 // Real distribution weights from seed data:
@@ -16,62 +17,69 @@ export const MOCK_BREEDS = [
 // Cancer types (dogs): Lymphoma 25%, Mast Cell Tumor 22%, Hemangiosarcoma 15%,
 //   Osteosarcoma 12%, Melanoma 10%, TCC 6%, SCC 5%, Fibrosarcoma 5%
 
+// Each dog breed gets ~325 cases (3250 dogs / 10 breeds, uniform pick)
 const BREED_DETAILS: Record<string, BreedDetail> = {
   'Golden Retriever': {
     breed: 'Golden Retriever',
-    total_cases: 142,
-    sex_breakdown: [{ sex: 'Neutered Male', count: 50 }, { sex: 'Spayed Female', count: 49 }, { sex: 'Male', count: 22 }, { sex: 'Female', count: 21 }],
+    total_cases: 328,
+    sex_breakdown: [{ sex: 'Neutered Male', count: 115 }, { sex: 'Spayed Female', count: 115 }, { sex: 'Male', count: 49 }, { sex: 'Female', count: 49 }],
     cancer_types: [
-      { cancer_type: 'Lymphoma', count: 36 }, { cancer_type: 'Hemangiosarcoma', count: 28 },
-      { cancer_type: 'Mast Cell Tumor', count: 25 }, { cancer_type: 'Osteosarcoma', count: 21 },
-      { cancer_type: 'Melanoma', count: 14 }, { cancer_type: 'Soft Tissue Sarcoma', count: 10 },
-      { cancer_type: 'Transitional Cell Carcinoma', count: 8 },
+      { cancer_type: 'Lymphoma', count: 82 }, { cancer_type: 'Hemangiosarcoma', count: 62 },
+      { cancer_type: 'Mast Cell Tumor', count: 56 }, { cancer_type: 'Osteosarcoma', count: 39 },
+      { cancer_type: 'Melanoma', count: 33 }, { cancer_type: 'Transitional Cell Carcinoma', count: 20 },
+      { cancer_type: 'Squamous Cell Carcinoma', count: 18 }, { cancer_type: 'Fibrosarcoma', count: 18 },
     ],
     county_cases: [
-      { county_name: 'Sacramento', fips_code: '06067', count: 31 }, { county_name: 'San Joaquin', fips_code: '06077', count: 14 },
-      { county_name: 'Contra Costa', fips_code: '06013', count: 14 }, { county_name: 'Placer', fips_code: '06061', count: 13 },
-      { county_name: 'Solano', fips_code: '06095', count: 11 }, { county_name: 'Alameda', fips_code: '06001', count: 11 },
-      { county_name: 'Yolo', fips_code: '06113', count: 9 }, { county_name: 'Stanislaus', fips_code: '06099', count: 9 },
-      { county_name: 'El Dorado', fips_code: '06017', count: 7 }, { county_name: 'Butte', fips_code: '06007', count: 6 },
-      { county_name: 'Sutter', fips_code: '06101', count: 4 }, { county_name: 'Nevada', fips_code: '06057', count: 4 },
+      { county_name: 'Sacramento', fips_code: '06067', count: 72 }, { county_name: 'San Joaquin', fips_code: '06077', count: 33 },
+      { county_name: 'Contra Costa', fips_code: '06013', count: 33 }, { county_name: 'Placer', fips_code: '06061', count: 30 },
+      { county_name: 'Solano', fips_code: '06095', count: 26 }, { county_name: 'Alameda', fips_code: '06001', count: 26 },
+      { county_name: 'Yolo', fips_code: '06113', count: 20 }, { county_name: 'Stanislaus', fips_code: '06099', count: 20 },
+      { county_name: 'El Dorado', fips_code: '06017', count: 16 }, { county_name: 'Butte', fips_code: '06007', count: 13 },
+      { county_name: 'Sutter', fips_code: '06101', count: 10 }, { county_name: 'Nevada', fips_code: '06057', count: 10 },
+      { county_name: 'Yuba', fips_code: '06115', count: 7 }, { county_name: 'Glenn', fips_code: '06021', count: 7 },
+      { county_name: 'Colusa', fips_code: '06011', count: 3 }, { county_name: 'Amador', fips_code: '06005', count: 2 },
     ],
   },
   'Labrador Retriever': {
     breed: 'Labrador Retriever',
-    total_cases: 128,
-    sex_breakdown: [{ sex: 'Neutered Male', count: 45 }, { sex: 'Spayed Female', count: 44 }, { sex: 'Male', count: 20 }, { sex: 'Female', count: 19 }],
+    total_cases: 321,
+    sex_breakdown: [{ sex: 'Neutered Male', count: 112 }, { sex: 'Spayed Female', count: 112 }, { sex: 'Male', count: 48 }, { sex: 'Female', count: 49 }],
     cancer_types: [
-      { cancer_type: 'Mast Cell Tumor', count: 32 }, { cancer_type: 'Lymphoma', count: 28 },
-      { cancer_type: 'Hemangiosarcoma', count: 19 }, { cancer_type: 'Osteosarcoma', count: 15 },
-      { cancer_type: 'Melanoma', count: 13 }, { cancer_type: 'Transitional Cell Carcinoma', count: 8 },
-      { cancer_type: 'Squamous Cell Carcinoma', count: 7 }, { cancer_type: 'Fibrosarcoma', count: 6 },
+      { cancer_type: 'Mast Cell Tumor', count: 74 }, { cancer_type: 'Lymphoma', count: 71 },
+      { cancer_type: 'Hemangiosarcoma', count: 48 }, { cancer_type: 'Osteosarcoma', count: 39 },
+      { cancer_type: 'Melanoma', count: 32 }, { cancer_type: 'Transitional Cell Carcinoma', count: 19 },
+      { cancer_type: 'Squamous Cell Carcinoma', count: 19 }, { cancer_type: 'Fibrosarcoma', count: 19 },
     ],
     county_cases: [
-      { county_name: 'Sacramento', fips_code: '06067', count: 28 }, { county_name: 'San Joaquin', fips_code: '06077', count: 13 },
-      { county_name: 'Contra Costa', fips_code: '06013', count: 13 }, { county_name: 'Placer', fips_code: '06061', count: 12 },
-      { county_name: 'Solano', fips_code: '06095', count: 10 }, { county_name: 'Alameda', fips_code: '06001', count: 10 },
-      { county_name: 'Yolo', fips_code: '06113', count: 8 }, { county_name: 'Stanislaus', fips_code: '06099', count: 8 },
-      { county_name: 'El Dorado', fips_code: '06017', count: 6 }, { county_name: 'Butte', fips_code: '06007', count: 5 },
-      { county_name: 'Sutter', fips_code: '06101', count: 4 }, { county_name: 'Nevada', fips_code: '06057', count: 4 },
+      { county_name: 'Sacramento', fips_code: '06067', count: 71 }, { county_name: 'San Joaquin', fips_code: '06077', count: 32 },
+      { county_name: 'Contra Costa', fips_code: '06013', count: 32 }, { county_name: 'Placer', fips_code: '06061', count: 29 },
+      { county_name: 'Solano', fips_code: '06095', count: 26 }, { county_name: 'Alameda', fips_code: '06001', count: 26 },
+      { county_name: 'Yolo', fips_code: '06113', count: 19 }, { county_name: 'Stanislaus', fips_code: '06099', count: 19 },
+      { county_name: 'El Dorado', fips_code: '06017', count: 16 }, { county_name: 'Butte', fips_code: '06007', count: 13 },
+      { county_name: 'Sutter', fips_code: '06101', count: 10 }, { county_name: 'Nevada', fips_code: '06057', count: 10 },
+      { county_name: 'Yuba', fips_code: '06115', count: 6 }, { county_name: 'Glenn', fips_code: '06021', count: 6 },
+      { county_name: 'Colusa', fips_code: '06011', count: 3 }, { county_name: 'Amador', fips_code: '06005', count: 3 },
     ],
   },
   'Boxer': {
     breed: 'Boxer',
-    total_cases: 98,
-    sex_breakdown: [{ sex: 'Neutered Male', count: 34 }, { sex: 'Spayed Female', count: 34 }, { sex: 'Male', count: 15 }, { sex: 'Female', count: 15 }],
+    total_cases: 318,
+    sex_breakdown: [{ sex: 'Neutered Male', count: 111 }, { sex: 'Spayed Female', count: 111 }, { sex: 'Male', count: 48 }, { sex: 'Female', count: 48 }],
     cancer_types: [
-      { cancer_type: 'Mast Cell Tumor', count: 35 }, { cancer_type: 'Lymphoma', count: 20 },
-      { cancer_type: 'Hemangiosarcoma', count: 12 }, { cancer_type: 'Melanoma', count: 10 },
-      { cancer_type: 'Osteosarcoma', count: 9 }, { cancer_type: 'Squamous Cell Carcinoma', count: 6 },
-      { cancer_type: 'Fibrosarcoma', count: 6 },
+      { cancer_type: 'Mast Cell Tumor', count: 89 }, { cancer_type: 'Lymphoma', count: 64 },
+      { cancer_type: 'Hemangiosarcoma', count: 48 }, { cancer_type: 'Melanoma', count: 32 },
+      { cancer_type: 'Osteosarcoma', count: 32 }, { cancer_type: 'Squamous Cell Carcinoma', count: 19 },
+      { cancer_type: 'Transitional Cell Carcinoma', count: 18 }, { cancer_type: 'Fibrosarcoma', count: 16 },
     ],
     county_cases: [
-      { county_name: 'Sacramento', fips_code: '06067', count: 22 }, { county_name: 'San Joaquin', fips_code: '06077', count: 10 },
-      { county_name: 'Contra Costa', fips_code: '06013', count: 10 }, { county_name: 'Placer', fips_code: '06061', count: 9 },
-      { county_name: 'Solano', fips_code: '06095', count: 8 }, { county_name: 'Alameda', fips_code: '06001', count: 8 },
-      { county_name: 'Yolo', fips_code: '06113', count: 6 }, { county_name: 'Stanislaus', fips_code: '06099', count: 6 },
-      { county_name: 'El Dorado', fips_code: '06017', count: 5 }, { county_name: 'Butte', fips_code: '06007', count: 4 },
-      { county_name: 'Sutter', fips_code: '06101', count: 3 },
+      { county_name: 'Sacramento', fips_code: '06067', count: 70 }, { county_name: 'San Joaquin', fips_code: '06077', count: 32 },
+      { county_name: 'Contra Costa', fips_code: '06013', count: 32 }, { county_name: 'Placer', fips_code: '06061', count: 29 },
+      { county_name: 'Solano', fips_code: '06095', count: 25 }, { county_name: 'Alameda', fips_code: '06001', count: 25 },
+      { county_name: 'Yolo', fips_code: '06113', count: 19 }, { county_name: 'Stanislaus', fips_code: '06099', count: 19 },
+      { county_name: 'El Dorado', fips_code: '06017', count: 16 }, { county_name: 'Butte', fips_code: '06007', count: 13 },
+      { county_name: 'Sutter', fips_code: '06101', count: 10 }, { county_name: 'Nevada', fips_code: '06057', count: 10 },
+      { county_name: 'Yuba', fips_code: '06115', count: 6 }, { county_name: 'Glenn', fips_code: '06021', count: 6 },
+      { county_name: 'Colusa', fips_code: '06011', count: 3 }, { county_name: 'Amador', fips_code: '06005', count: 3 },
     ],
   },
 };
@@ -84,7 +92,8 @@ function generateBreedDetail(breed: string): BreedDetail {
   for (let i = 0; i < breed.length; i++) h = Math.imul(31, h) + breed.charCodeAt(i) | 0;
   const r = () => { h = Math.imul(h ^ (h >>> 16), 0x45d9f3b); h = (h ^ (h >>> 16)) >>> 0; return (h % 100) / 100; };
 
-  const total = 40 + Math.round(r() * 80);
+  // ~325 cases per breed (3250 dogs / 10 breeds), with some natural variation
+  const total = 280 + Math.round(r() * 90);
   return {
     breed,
     total_cases: total,

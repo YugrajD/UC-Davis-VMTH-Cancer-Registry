@@ -17,16 +17,23 @@ interface AnalysisViewProps {
   countRange: { min: number; max: number };
 }
 
+interface TooltipPos {
+  x: number;
+  y: number;
+}
+
 function CancerMap({
   countyData,
   countRange,
   hoveredCounty,
   onHoverCounty,
+  onTooltipPos,
 }: {
   countyData: CountyData[];
   countRange: { min: number; max: number };
   hoveredCounty: string | null;
   onHoverCounty: (county: string | null) => void;
+  onTooltipPos: (pos: TooltipPos | null) => void;
 }) {
   const countyDataMap = useMemo(() => {
     const map = new Map<string, CountyData>();
@@ -72,8 +79,15 @@ function CancerMap({
                       hover: { fill: '#F5A623', stroke: '#E87722', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
                       pressed: { fill: '#E87722', outline: 'none' },
                     }}
-                    onMouseEnter={() => onHoverCounty(nameLower)}
-                    onMouseLeave={() => onHoverCounty(null)}
+                    onMouseEnter={(e) => {
+                      const event = e as unknown as React.MouseEvent;
+                      onHoverCounty(nameLower);
+                      onTooltipPos({ x: event.clientX, y: event.clientY });
+                    }}
+                    onMouseLeave={() => {
+                      onHoverCounty(null);
+                      onTooltipPos(null);
+                    }}
                   />
                 );
               })
@@ -104,11 +118,13 @@ function EnviroScreenMap({
   indicator,
   hoveredCounty,
   onHoverCounty,
+  onTooltipPos,
 }: {
   data: CalEnviroScreenData[];
   indicator: CESIndicator;
   hoveredCounty: string | null;
   onHoverCounty: (county: string | null) => void;
+  onTooltipPos: (pos: TooltipPos | null) => void;
 }) {
   const countyValueMap = useMemo(() => {
     const map = new Map<string, number | null>();
@@ -159,8 +175,15 @@ function EnviroScreenMap({
                       hover: { fill: '#F5A623', stroke: '#E87722', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
                       pressed: { fill: '#E87722', outline: 'none' },
                     }}
-                    onMouseEnter={() => onHoverCounty(nameLower)}
-                    onMouseLeave={() => onHoverCounty(null)}
+                    onMouseEnter={(e) => {
+                      const event = e as unknown as React.MouseEvent;
+                      onHoverCounty(nameLower);
+                      onTooltipPos({ x: event.clientX, y: event.clientY });
+                    }}
+                    onMouseLeave={() => {
+                      onHoverCounty(null);
+                      onTooltipPos(null);
+                    }}
                   />
                 );
               })
@@ -189,13 +212,18 @@ function EnviroScreenMap({
 export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
   const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<TooltipPos | null>(null);
   const { data: cesData, loading, error } = useCalEnviroScreenData();
 
   const handleHoverCounty = useCallback((county: string | null) => {
     setHoveredCounty(county);
   }, []);
 
-  // Build the info panel data for the hovered county
+  const handleTooltipPos = useCallback((pos: TooltipPos | null) => {
+    setTooltipPos(pos);
+  }, []);
+
+  // Build tooltip content for hovered county
   const hoveredInfo = useMemo(() => {
     if (!hoveredCounty) return null;
 
@@ -204,7 +232,6 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
     const indicatorLabel = CES_INDICATORS.find(i => i.value === selectedIndicator)?.label ?? selectedIndicator;
     const indicatorVal = cesEntry ? cesEntry[selectedIndicator] : null;
 
-    // Title-case the county name
     const displayName = hoveredCounty.replace(/\b\w/g, c => c.toUpperCase());
 
     return {
@@ -281,6 +308,7 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
             countRange={countRange}
             hoveredCounty={hoveredCounty}
             onHoverCounty={handleHoverCounty}
+            onTooltipPos={handleTooltipPos}
           />
         </div>
 
@@ -323,10 +351,34 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
               indicator={selectedIndicator}
               hoveredCounty={hoveredCounty}
               onHoverCounty={handleHoverCounty}
+              onTooltipPos={handleTooltipPos}
             />
           )}
         </div>
       </div>
+
+      {/* Floating tooltip that follows the cursor */}
+      {hoveredInfo && tooltipPos && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ left: tooltipPos.x + 14, top: tooltipPos.y - 14, transform: 'translateY(-100%)' }}
+        >
+          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[200px]">
+            <p className="font-semibold text-sm text-[var(--color-text-primary)]">{hoveredInfo.name} County</p>
+            <div className="mt-1.5 space-y-1">
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Cancer cases: <span className="font-medium text-[var(--color-text-primary)]">{hoveredInfo.cases.toLocaleString()}</span>
+              </p>
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                {hoveredInfo.indicatorLabel}:{' '}
+                <span className="font-medium text-[var(--color-text-primary)]">
+                  {hoveredInfo.indicatorVal != null ? hoveredInfo.indicatorVal.toFixed(1) : 'N/A'}
+                </span>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

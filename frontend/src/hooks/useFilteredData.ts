@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
-import { MOCK_COUNTY_DATA } from '../data/mockData';
+import { MOCK_RECORDS, aggregateByCounty } from '../data/mockData';
 
 export function useFilteredData(filters: FilterState) {
   const [countyData, setCountyData] = useState<CountyData[]>([]);
@@ -8,11 +8,14 @@ export function useFilteredData(filters: FilterState) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // For the presentation, use the static mock county data
-    // so the dashboard always matches the screenshot values.
     setLoading(true);
     setError(null);
-    setCountyData(MOCK_COUNTY_DATA);
+    const filtered = aggregateByCounty(MOCK_RECORDS, {
+      cancerType: filters.cancerType,
+      breed: filters.breed,
+      sex: filters.sex,
+    });
+    setCountyData(filtered);
     setLoading(false);
   }, [filters.cancerType, filters.breed, filters.sex]);
 

@@ -1,6 +1,47 @@
 import { useMemo, useEffect, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
-import { MOCK_RECORDS, aggregateByCounty } from '../data/mockData';
+import { MOCK_COUNTY_DATA } from '../data/mockData';
+
+// Deterministic pseudo-random from a string seed so the same filter
+// always produces the same numbers (no flicker on re-render).
+function seededRandom(seed: string) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(31, h) + seed.charCodeAt(i) | 0;
+  }
+  return () => {
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+    h = Math.imul(h ^ (h >>> 13), 0x45d9f3b);
+    h = (h ^ (h >>> 16)) >>> 0;
+    return (h % 100) / 100;
+  };
+}
+
+function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
+  const isDefault =
+    (!filters.sex || filters.sex === 'all') &&
+    (!filters.cancerType || filters.cancerType === 'All Types') &&
+    (!filters.breed || filters.breed === 'All Breeds');
+
+  if (isDefault) return base;
+
+  // Each filter narrows the data by a fraction, seeded so results are stable.
+  const key = `${filters.sex}|${filters.cancerType}|${filters.breed}`;
+  const rand = seededRandom(key);
+
+  // Sex splits roughly into quarters; cancer type ~1/8; breed ~1/10
+  let fraction = 1;
+  if (filters.sex && filters.sex !== 'all') fraction *= 0.25;
+  if (filters.cancerType && filters.cancerType !== 'All Types') fraction *= 0.12;
+  if (filters.breed && filters.breed !== 'All Breeds') fraction *= 0.10;
+
+  return base.map(c => {
+    // Add per-county variation (±40%) around the fraction
+    const variation = 0.6 + rand() * 0.8;
+    const newCount = Math.max(0, Math.round(c.count * fraction * variation));
+    return { ...c, count: newCount };
+  }).filter(c => c.count > 0);
+}
 
 export function useFilteredData(filters: FilterState) {
   const [countyData, setCountyData] = useState<CountyData[]>([]);
@@ -10,12 +51,7 @@ export function useFilteredData(filters: FilterState) {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const filtered = aggregateByCounty(MOCK_RECORDS, {
-      cancerType: filters.cancerType,
-      breed: filters.breed,
-      sex: filters.sex,
-    });
-    setCountyData(filtered);
+    setCountyData(applyFilters(MOCK_COUNTY_DATA, filters));
     setLoading(false);
   }, [filters.cancerType, filters.breed, filters.sex]);
 

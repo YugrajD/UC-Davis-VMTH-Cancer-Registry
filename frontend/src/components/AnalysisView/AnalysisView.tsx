@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
@@ -24,7 +24,17 @@ interface MapTooltip {
   y: number;
 }
 
-function CancerMap({ countyData, countRange }: { countyData: CountyData[]; countRange: { min: number; max: number } }) {
+function CancerMap({
+  countyData,
+  countRange,
+  hoveredCounty,
+  onHoverCounty,
+}: {
+  countyData: CountyData[];
+  countRange: { min: number; max: number };
+  hoveredCounty: string | null;
+  onHoverCounty: (county: string | null, e?: React.MouseEvent) => void;
+}) {
   const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
 
   const countyDataMap = useMemo(() => {
@@ -53,17 +63,19 @@ function CancerMap({ countyData, countRange }: { countyData: CountyData[]; count
             {({ geographies }) =>
               geographies.map((geo) => {
                 const name = (geo.properties.name || '') as string;
-                const info = countyDataMap.get(name.toLowerCase());
+                const nameLower = name.toLowerCase();
+                const info = countyDataMap.get(nameLower);
                 const count = info?.count ?? 0;
-                const fill = count > 0 ? colorScale(count) : '#E5E7EB';
+                const baseFill = count > 0 ? colorScale(count) : '#E5E7EB';
+                const isHovered = hoveredCounty === nameLower;
 
                 return (
                   <Geography
                     key={geo.rsmKey}
                     geography={geo}
-                    fill={fill}
-                    stroke="#FFFFFF"
-                    strokeWidth={0.5}
+                    fill={isHovered ? '#F5A623' : baseFill}
+                    stroke={isHovered ? '#E87722' : '#FFFFFF'}
+                    strokeWidth={isHovered ? 1.5 : 0.5}
                     style={{
                       default: { outline: 'none' },
                       hover: { fill: '#F5A623', stroke: '#E87722', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
@@ -71,6 +83,7 @@ function CancerMap({ countyData, countRange }: { countyData: CountyData[]; count
                     }}
                     onMouseEnter={(e) => {
                       const event = e as unknown as React.MouseEvent;
+                      onHoverCounty(nameLower, event);
                       setTooltip({
                         county: name,
                         value: `${count.toLocaleString()} cases`,
@@ -78,7 +91,10 @@ function CancerMap({ countyData, countRange }: { countyData: CountyData[]; count
                         y: event.clientY,
                       });
                     }}
-                    onMouseLeave={() => setTooltip(null)}
+                    onMouseLeave={() => {
+                      onHoverCounty(null);
+                      setTooltip(null);
+                    }}
                   />
                 );
               })
@@ -120,9 +136,13 @@ function CancerMap({ countyData, countRange }: { countyData: CountyData[]; count
 function EnviroScreenMap({
   data,
   indicator,
+  hoveredCounty,
+  onHoverCounty,
 }: {
   data: CalEnviroScreenData[];
   indicator: CESIndicator;
+  hoveredCounty: string | null;
+  onHoverCounty: (county: string | null, e?: React.MouseEvent) => void;
 }) {
   const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
 
@@ -160,16 +180,18 @@ function EnviroScreenMap({
             {({ geographies }) =>
               geographies.map((geo) => {
                 const name = (geo.properties.name || '') as string;
-                const val = countyValueMap.get(name.toLowerCase());
-                const fill = val != null ? colorScale(val) : '#E5E7EB';
+                const nameLower = name.toLowerCase();
+                const val = countyValueMap.get(nameLower);
+                const baseFill = val != null ? colorScale(val) : '#E5E7EB';
+                const isHovered = hoveredCounty === nameLower;
 
                 return (
                   <Geography
                     key={geo.rsmKey}
                     geography={geo}
-                    fill={fill}
-                    stroke="#FFFFFF"
-                    strokeWidth={0.5}
+                    fill={isHovered ? '#F5A623' : baseFill}
+                    stroke={isHovered ? '#E87722' : '#FFFFFF'}
+                    strokeWidth={isHovered ? 1.5 : 0.5}
                     style={{
                       default: { outline: 'none' },
                       hover: { fill: '#F5A623', stroke: '#E87722', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
@@ -177,6 +199,7 @@ function EnviroScreenMap({
                     }}
                     onMouseEnter={(e) => {
                       const event = e as unknown as React.MouseEvent;
+                      onHoverCounty(nameLower, event);
                       setTooltip({
                         county: name,
                         value: val != null ? `${indicatorLabel}: ${val.toFixed(1)}` : 'No data',
@@ -184,7 +207,10 @@ function EnviroScreenMap({
                         y: event.clientY,
                       });
                     }}
-                    onMouseLeave={() => setTooltip(null)}
+                    onMouseLeave={() => {
+                      onHoverCounty(null);
+                      setTooltip(null);
+                    }}
                   />
                 );
               })
@@ -225,7 +251,12 @@ function EnviroScreenMap({
 
 export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
   const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
+  const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const { data: cesData, loading, error } = useCalEnviroScreenData();
+
+  const handleHoverCounty = useCallback((county: string | null) => {
+    setHoveredCounty(county);
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -243,7 +274,7 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
           </a>{' '}
           environmental health indicators. CalEnviroScreen ranks communities based on pollution
           exposure and population vulnerability. Higher percentiles indicate greater environmental burden.
-          Use the dropdown to explore different indicators.
+          Use the dropdown to explore different indicators. Hover over a county on either map to highlight it on both.
         </p>
       </div>
 
@@ -259,7 +290,12 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
               Case count by county
             </p>
           </div>
-          <CancerMap countyData={countyData} countRange={countRange} />
+          <CancerMap
+            countyData={countyData}
+            countRange={countRange}
+            hoveredCounty={hoveredCounty}
+            onHoverCounty={handleHoverCounty}
+          />
         </div>
 
         {/* Right: CalEnviroScreen map */}
@@ -296,7 +332,12 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
               <p className="text-sm text-red-600">Error: {error}</p>
             </div>
           ) : (
-            <EnviroScreenMap data={cesData} indicator={selectedIndicator} />
+            <EnviroScreenMap
+              data={cesData}
+              indicator={selectedIndicator}
+              hoveredCounty={hoveredCounty}
+              onHoverCounty={handleHoverCounty}
+            />
           )}
         </div>
       </div>

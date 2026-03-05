@@ -217,7 +217,7 @@ def train(
         shutil.copy2(out_path, production_path)
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump({"best_f1": best_f1, "best_epoch": best_epoch}, f)
-        print(f"\n★ New best macro F1: {best_f1:.4f} — checkpoint saved to {production_path}")
+        print(f"\n* New best macro F1: {best_f1:.4f} -- checkpoint saved to {production_path}")
     else:
         print(f"\n  Production checkpoint unchanged (best F1 {prev_best_f1:.4f} > this run {best_f1:.4f})")
 

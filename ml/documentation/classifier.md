@@ -445,6 +445,47 @@ Binary PresenceClassifier is the clear winner at current data volumes. GroupClas
 
 ---
 
+### Windows Unicode fix (2026-03-05)
+
+When running on Windows (cp1252 console), `print()` calls containing `→` (U+2192) and `★` (U+2605) raise `UnicodeEncodeError` because those characters are not in the cp1252 codepage. Fixed by replacing them with ASCII equivalents (`->`, `*`, `--`) in:
+- `ml/training/binary/update_co_bank.py` — `→` in bank update message
+- `ml/training/binary/run_cycle.py` — `★` in best-checkpoint message
+- `ml/training/group/train.py` — `★` in best-F1 message
+- `ml/petbert_pipeline/embedding_cache.py` — `→` in all cache-miss messages
+
+### Phase 12 — XPU, cold start, same dataset (2026-03-05)
+
+All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, checkpoint deleted). Same `report.csv` and `keyword_predictions.csv` as Phase 11 (12,620 reports, 5,788 confirmed cancer cases, 44 groups).
+
+**Note on c1 bank anomaly:** c1's step 4.5 shows `39,104 -> 50,823` unique pairs, implying the bank already held 39,104 rows at the start of c1's update step. This is because two prior aborted runs (during Windows Unicode debugging) each wrote CO rows to the bank before failing on the print statement — the bank file was written *before* the failing `print()` call. This pre-seeded the bank with CO pairs from those evaluation runs, which used the same embedding cache and therefore the same cosine space. The pairs are valid; this explains why c1's training pairs included CO negatives despite the cold start, and why c1 started unusually high.
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% | Bank size |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|-----------|
+| 00:05:45 | **cold-start c1 (co=5)** | 42,948 | **9.0%** | **19.4%** | **28.4%** | 37.1% | 32.0% | 2.5% | 50,823 |
+| 00:09:01 | **c2 (co=10)** | 43,061 | **11.1%** | **18.0%** | **29.1%** | 36.0% | 33.3% | 1.6% | 61,391 |
+| 00:10:15 | **c3 (co=10)** | 43,462 | **11.5%** | **20.1%** | **31.6%** | 32.7% | 34.3% | 1.4% | 66,557 |
+| 00:11:25 | **c4 (co=10)** | 42,897 | **11.6%** | **20.4%** | **32.0%** | 33.1% | 33.6% | 1.3% | 70,087 |
+| 00:12:38 | c5 (co=10) | 42,786 | 11.2% | 19.0% | 30.2% | 34.7% | 33.3% | 1.7% | 73,596 |
+| 00:13:50 | c6 (co=10) | 42,971 | 11.7% | 19.8% | 31.5% | 33.3% | 33.7% | 1.5% | 76,249 |
+| 00:15:15 | c7 (co=10) | 43,805 | 11.3% | 20.6% | 31.9% | 32.1% | 34.6% | 1.4% | 78,410 |
+| 00:16:26 | c8 (co=10) | 43,385 | 11.0% | 19.3% | 30.3% | 34.3% | 33.6% | 1.8% | ~80,189 |
+
+**Phase 12 plateau confirmed (8 cycles).** Best Good+Slight: 32.0% (c4). Oscillation amplitude ±2pp around 31–32%, with no degenerate cycles. CO floor: 32–35%. FN: 1.3–2.5%. These results are consistent with Phase 11 (33.1% best, 31.8% CO) on the same dataset; Phase 12 is slightly below Phase 11's best, likely because the pre-seeded bank from aborted debug runs biased c1 training positively but did not improve the plateau.
+
+**Bank saturation:** New rows added per cycle declining rapidly (c2: +10,568 → c4: +3,530 → c7: +2,161 → c8: ~+1,779). Bank approaching saturation at ~80k unique CO pairs. Further cycles are unlikely to improve results.
+
+**Parameters confirmed stable:**
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `--co-neg-per-case` | 10 | Optimal; bank >20k from c1 in this run |
+| `--fp-neg-per-case` | 10 | Unchanged |
+| `--recall-weight` | 0.25 | No degenerate cycles in 8 consecutive runs |
+| `--epochs` | 25 | Unchanged |
+| `--embedding-min-sim` | 0.05 | Unchanged |
+
+---
+
 ## Summary of Progress
 
 | Phase | Best Good+Slight | Best CO% | Best FN% |
@@ -459,6 +500,7 @@ Binary PresenceClassifier is the clear winner at current data volumes. GroupClas
 | Phase 9 (rw=0.25, oscillation resolved) | 20.4% | 42.7% | 4.2% (stable, 7 consecutive cycles) |
 | Phase 10 (cache-based enrichment — Fix 9) | 14.1% | 47.6% | 5.0% (regression — do not use) |
 | **Phase 11 (new keyword data, 5,788 cases)** | **33.1%** | **31.8%** | **1.3%** (stable, 8+ consecutive cycles) |
+| **Phase 12 (XPU, cold start, same dataset)** | **32.0%** | **32.1%** | **1.3%** (stable, 8 cycles — confirms Phase 11 plateau) |
 
 ---
 

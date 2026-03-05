@@ -52,6 +52,10 @@ def write_predictions_csv(
             zip(all_k_terms[i], all_k_groups[i], all_k_codes[i], all_k_scores[i], all_k_methods[i]),
             start=1,
         ):
+            if method == "low_confidence":
+                term = "Uncategorized"
+                group = "Uncategorized"
+                code = ""
             rows.append({
                 id_col: patient_id,
                 "diagnosis_index": rank,

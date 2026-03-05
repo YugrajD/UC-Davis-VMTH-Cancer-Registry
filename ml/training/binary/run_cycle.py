@@ -213,7 +213,7 @@ def main() -> int:
             if current_gs >= best_gs:
                 shutil.copy2(_CHECKPOINT, _CHECKPOINT_PRODUCTION)
                 print(
-                    f"\n★ New best Good+Slight: {current_gs:.1f}% — "
+                    f"\n* New best Good+Slight: {current_gs:.1f}% -- "
                     f"checkpoint saved to {_CHECKPOINT_PRODUCTION}"
                 )
 

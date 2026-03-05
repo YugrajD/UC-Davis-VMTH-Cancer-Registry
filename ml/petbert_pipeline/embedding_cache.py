@@ -97,24 +97,24 @@ def load_cache(
         data = np.load(path, allow_pickle=True)
 
         if str(data["model_name"][0]) != model_name:
-            print(f"Embedding cache miss: model changed → recomputing")
+            print(f"Embedding cache miss: model changed -> recomputing")
             return None
         if not os.path.exists(report_csv_path) or not os.path.exists(labels_csv_path):
             return None
         if abs(float(data["report_mtime"][0]) - os.path.getmtime(report_csv_path)) > 1:
-            print("Embedding cache miss: report CSV modified → recomputing")
+            print("Embedding cache miss: report CSV modified -> recomputing")
             return None
         if abs(float(data["labels_mtime"][0]) - os.path.getmtime(labels_csv_path)) > 1:
-            print("Embedding cache miss: labels CSV modified → recomputing")
+            print("Embedding cache miss: labels CSV modified -> recomputing")
             return None
 
         col_names: list[str] = list(data["col_names"])
         if expected_col_names is not None and col_names != list(expected_col_names):
-            print(f"Embedding cache miss: columns changed → recomputing")
+            print(f"Embedding cache miss: columns changed -> recomputing")
             return None
 
         if require_enriched and "enriched_label_embeddings" not in data:
-            print("Embedding cache miss: enriched label embeddings missing → recomputing")
+            print("Embedding cache miss: enriched label embeddings missing -> recomputing")
             return None
 
         col_embeddings: dict[str, np.ndarray] = {}
@@ -142,5 +142,5 @@ def load_cache(
             "enriched_label_embeddings":  enriched,
         }
     except Exception as e:
-        print(f"Embedding cache load failed ({e}) → recomputing")
+        print(f"Embedding cache load failed ({e}) -> recomputing")
         return None

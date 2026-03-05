@@ -51,7 +51,7 @@ def update_co_bank(
         writer.writeheader()
         writer.writerows(existing.values())
 
-    print(f"CO bank updated: +{added} new rows  ({before} → {len(existing)} unique pairs)")
+    print(f"CO bank updated: +{added} new rows  ({before} -> {len(existing)} unique pairs)")
     print(f"  Bank written to {bank_path}")
     return 0
 

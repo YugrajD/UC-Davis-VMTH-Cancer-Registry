@@ -214,8 +214,15 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             print(f"Loading presence classifier from {config.presence_classifier_path}...")
             classifier = PresenceClassifier.load(config.presence_classifier_path)
             classifier.to(torch_device)
+            # Build (N, n_cols * 768) input matching what the classifier was trained on:
+            # each column embedded independently, empty columns zeroed.
+            col_emb_concat = np.concatenate(
+                [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
+                 for col in cols],
+                axis=1,
+            ).astype(np.float32)
             presence_score_matrix = classifier.score_matrix(
-                torch.from_numpy(embeddings),
+                torch.from_numpy(col_emb_concat),
                 torch.from_numpy(active_label_embeddings),
             ).numpy()
             classifier.cpu()

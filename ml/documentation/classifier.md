@@ -10,11 +10,11 @@ Maps **full pathology report text → cancer group + term + ICD code**. This is 
 
 | Stage | Input | Output |
 |-------|-------|--------|
-| Embedding | Report text columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) | 768-dim mean-pooled embedding per case via frozen PetBERT |
-| Scoring | Report embedding vs. taxonomy label embeddings | Score per (case, label) pair — cosine similarity, or learned probability when a classifier is present |
+| Embedding | Report text columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) | 768-dim embedding per column via frozen PetBERT; columns kept separate (not mean-pooled) |
+| Scoring | Concatenated per-column report embeddings vs. taxonomy label embeddings | Score per (case, label) pair — cosine similarity, or learned probability when a classifier is present |
 | Classification | Scores across all labels | Top-k predictions with confidence threshold → term + group + ICD code |
 
-The current scorer is a binary `PresenceClassifier` MLP (`model/presence_classifier.py`) trained on `(report_embedding, label_embedding) → present/absent`. It replaces raw cosine similarity scores but is evaluated one pair at a time, which introduces a group-assignment ceiling (~42% completely-off). See [multiclass-classifier-plan.md](multiclass-classifier-plan.md) for the planned replacement.
+The current scorer is a binary `PresenceClassifier` MLP (`model/presence_classifier.py`) trained on `([col1_emb ‖ col2_emb ‖ col3_emb ‖ label_emb] → present/absent)` — 3072-dim input (Fix 10). It replaces raw cosine similarity scores but is evaluated one pair at a time, which introduces a group-assignment ceiling. See [multiclass-classifier-plan.md](multiclass-classifier-plan.md) for the planned replacement.
 
 ### Training Pipeline — Keyword Scan
 
@@ -50,23 +50,23 @@ These training sources apply to the current binary `PresenceClassifier`. They wi
 
 ## How to Run
 
-> **Note:** Use `ml/.venv/bin/python3` — the project venv is at `ml/.venv/`. Plain `python` or `python3` will not find the required packages.
+> **Note (Windows):** Use `ml/.venv/Scripts/python.exe` on Windows (not `ml/.venv/bin/python3`). Adjust `--device` to match your hardware (`xpu`, `cuda`, `mps`, `cpu`).
 
 **Current recommended command** (bank exists at `ml/output/evaluation/evaluation_co_bank.csv`):
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --label "..." \
-  --co-neg-per-case 10 \
+  --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
   --embedding-min-sim 0.05 \
   --epochs 25 \
   --recall-weight 0.25 \
-  --device mps \
+  --device xpu \
   --local-only
 ```
 
-If starting fresh (no bank yet), use `--co-neg-per-case 5` for the first cycle until the bank exceeds ~20k pairs, then switch to `--co-neg-per-case 10`. With the current dataset (5,788 cancer cases), the bank fills to >20k after c1 alone — switch to co=10 from c2.
+> **Note (Phase 13):** With the per-column embedding architecture, `--co-neg-per-case 5` outperforms `--co-neg-per-case 10` consistently. Using co=10 with a large bank floods training with hard CO negatives and causes regression. Keep co=5 throughout — no need to switch to co=10 at 20k pairs.
 
 ---
 
@@ -88,7 +88,7 @@ A cold start is required any time the embedding space changes — e.g. after upd
 ```bash
 rm -f ml/data/embedding_cache.npz                          # stale cache — rebuilt on first cycle
 rm -f ml/output/evaluation/evaluation_co_bank.csv          # old-space bank — must start fresh
-rm -f ml/model/checkpoints/presence_classifier_best.pt     # old checkpoint
+rm -f ml/model/checkpoints/presence_classifier_current.pt     # old checkpoint
 ```
 
 ### Warm-up phase
@@ -96,31 +96,28 @@ rm -f ml/model/checkpoints/presence_classifier_best.pt     # old checkpoint
 The first cycle's Step 0 detects the missing cache and runs PetBERT on all reports and labels. This is the only time PetBERT runs — all subsequent cycles load from cache. It takes several minutes.
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --label "cold-start c1" \
   --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
   --embedding-min-sim 0.05 \
   --epochs 25 \
   --recall-weight 0.25 \
-  --device mps \
+  --device xpu \
   --local-only
 ```
 
-Check `ml/output/evaluation/evaluation_co_bank.csv` row count after c1. With the current dataset (5,788 cancer cases), the bank exceeds 20k after c1 alone (large case count × ~36% CO rate) — switch to co=10 immediately for c2. With smaller datasets, bank grows ~3–6k pairs/cycle and may take 5–6 cycles to reach 20k.
+Continue all subsequent cycles with `--co-neg-per-case 5`. Do **not** switch to co=10 — with the per-column architecture, co=10 causes regression (Phase 13 c2 experience).
 
-### Switch to `--co-neg-per-case 10` once bank exceeds ~20k pairs
-
-Switch to the [standard command](#how-to-run) above. Expect a noticeable Good+Slight jump on the first co=10 cycle.
-
-### Expected trajectory (5,788 cancer cases)
+### Expected trajectory (5,788 cancer cases, per-column architecture)
 
 | Cycles completed | Expected Good+Slight | Notes |
 |-----------------|---------------------|-------|
-| c1 (co=5) | ~16% | Cache rebuilt; bank fills to >20k in this cycle |
-| c2 (co=10) | ~14% | Slight dip before classifier adjusts |
-| c3–c4 | ~26–31% | Rapid improvement |
-| c5+ (plateau) | ~32–33% | Stable; CO floor ~33% |
+| c1 (co=5, cold start) | ~28–30% | Cache rebuilt; bank ~15k |
+| c2 (co=5) | ~26% | May dip slightly — continue |
+| c3–c4 (co=5) | ~38–39% | Large jump |
+| c5–c6 (co=5) | ~39–40% | Plateau; CO floor ~30% |
+| c7+ | may regress | Confirm plateau and stop |
 
 ---
 
@@ -486,6 +483,54 @@ All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, 
 
 ---
 
+### Fix 10 — Per-column embeddings (Idea #4, 2026-03-05)
+
+**Problem:** The binary PresenceClassifier received a single 768-dim `mean_embedding` (average of 3 report columns) as the report representation. This diluted column-specific signal. Worse, there was a train/inference mismatch: cosine similarity used per-column max pooling during inference, while the classifier trained on a mean. The classifier and the cosine ranker operated on different representations of the same report.
+
+**Fix (Option A — concatenation):** Instead of averaging the 3 column embeddings, concatenate them: `[col1_emb(768) ‖ col2_emb(768) ‖ col3_emb(768) ‖ label_emb(768)]` → 3072-dim input. Empty columns are zeroed. The `PresenceClassifier` is now parameterised by `n_cols` (serialised into the checkpoint); the legacy 768+768 format loads as `n_cols=1`.
+
+**Changes:**
+- `ml/model/presence_classifier.py` — `n_cols` parameter; input dim `n_cols * emb_dim + emb_dim`; `save()`/`load()` serialise `n_cols`
+- `ml/training/binary/train.py` — builds `col_emb_matrix` of shape `(N, n_cols * 768)` with empty columns zeroed; passes `n_cols` to classifier constructor
+- `ml/petbert_pipeline/pipeline.py` — builds `col_emb_concat` by concatenating per-column embeddings (empty cols zeroed) before `classifier.score_matrix()`
+
+**Requires cold start:** Architecture change invalidates the old checkpoint and embedding cache. Phase 12 best checkpoint backed up to `presence_classifier_best_phase12_mean.pt` before cold start.
+
+### Phase 13 — Per-column embeddings (2026-03-05)
+
+All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, `presence_classifier_current.pt` deleted). Same `report.csv` and `keyword_predictions.csv` as Phase 12.
+
+**Key finding:** `--co-neg-per-case 10` caused a severe regression in c2 (30.4% → 26.6% Good+Slight, CO +3.0%). Reverting to co=5 in c3 produced a large jump to 38.3% — and the system stayed on co=5 for the remainder. With the per-column architecture, flooding training with CO negatives (all 15k+ bank pairs at 10/case) over-corrects the classifier. Use co=5 consistently.
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% | Bank size |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|-----------|
+| 00:42:05 | cold-start c1 (co=5) | 42,272 | 8.3% | 22.1% | 30.4% | 36.6% | 30.5% | 2.5% | 15,455 |
+| 00:47:02 | c2 (co=10) ❌ | 42,786 | 8.2% | 18.4% | 26.6% | 39.6% | 31.0% | 2.9% | 31,845 |
+| 00:52:08 | **c3 (co=5)** | 39,564 | **12.6%** | **25.7%** | **38.3%** | **31.6%** | 28.9% | 1.1% | 41,079 |
+| 00:57:52 | **c4 (co=5)** | 39,373 | **12.8%** | **26.6%** | **39.4%** | **30.8%** | 28.7% | 1.2% | 46,801 |
+| 01:04:26 | **c5 (co=5)** | 39,537 | **12.7%** | **26.8%** | **39.5%** | **30.4%** | 28.9% | 1.2% | 51,135 |
+| 01:09:08 | **c6 (co=5) ⭐** | 39,323 | **12.8%** | **27.2%** | **40.0%** | **30.4%** | 28.5% | 1.1% | 54,406 |
+| 01:16:31 | c7 (co=5) | 41,024 | 10.5% | 25.3% | 35.8% | 32.3% | 30.0% | 1.9% | 58,990 |
+
+**Phase 13 best: 40.0% Good+Slight (c6)** — new all-time high. Checkpoint saved to `presence_classifier_best.pt`.
+
+**vs Phase 12 (mean embedding):**
+- Good+Slight: **40.0%** vs 32.0% (+8.0%)
+- CO: **30.4%** vs 33.1% (−2.7%)
+- FP: **28.5%** vs 33.6% (−5.1%)
+
+**Parameters confirmed:**
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `--co-neg-per-case` | **5** | Do NOT raise to 10 — causes regression with per-column architecture |
+| `--fp-neg-per-case` | 10 | Unchanged |
+| `--recall-weight` | 0.25 | Unchanged |
+| `--epochs` | 25 | Unchanged |
+| `--embedding-min-sim` | 0.05 | Unchanged |
+
+---
+
 ## Summary of Progress
 
 | Phase | Best Good+Slight | Best CO% | Best FN% |
@@ -499,15 +544,17 @@ All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, 
 | Phase 6–8 (diagnosis-text enrichment, oscillating) | 22.1% | 42.2% | 4.1% |
 | Phase 9 (rw=0.25, oscillation resolved) | 20.4% | 42.7% | 4.2% (stable, 7 consecutive cycles) |
 | Phase 10 (cache-based enrichment — Fix 9) | 14.1% | 47.6% | 5.0% (regression — do not use) |
-| **Phase 11 (new keyword data, 5,788 cases)** | **33.1%** | **31.8%** | **1.3%** (stable, 8+ consecutive cycles) |
-| **Phase 12 (XPU, cold start, same dataset)** | **32.0%** | **32.1%** | **1.3%** (stable, 8 cycles — confirms Phase 11 plateau) |
+| Phase 11 (new keyword data, 5,788 cases) | 33.1% | 31.8% | 1.3% (stable, 8+ consecutive cycles) |
+| Phase 12 (XPU, cold start, mean embedding) | 32.0% | 32.1% | 1.3% (stable, 8 cycles — confirms Phase 11 plateau) |
+| **Phase 13 (per-column embeddings — Fix 10)** | **40.0%** | **30.4%** | **1.1%** (plateau at c6, 7 cycles) |
 
 ---
 
 ## Known Limitations of the Binary PresenceClassifier
 
-- **Completely-off floor (~33%)**: with 5,788 training cases the CO floor dropped from ~42% to ~33%. Further reduction requires either more keyword-confirmed cases or a group-level architecture (GroupClassifier).
-- **Classifier trained on report-level embeddings**: the mean embedding across 3 text columns may lose fine-grained term-level signal present in individual sections.
+- **Completely-off floor (~30%)**: with 5,788 training cases and per-column embeddings (Phase 13), the CO floor sits at ~30–32%. Further reduction requires either more keyword-confirmed cases or a group-level architecture (GroupClassifier).
 - **GroupClassifier still overfits at 5,788 cases**: needs ~10,000+ confirmed cases across 44 groups to generalize reliably. Re-train whenever keyword coverage improves.
+- **co=10 regression with per-column architecture**: flooding training with CO negatives at 10/case causes the per-column classifier to over-correct. Always use co=5 with the current architecture.
+- **hidden_dim bottleneck (untested)**: `hidden_dim=256` compresses 3072-dim input at a 12:1 ratio; trying 512 or 768 may recover 1–3%. See [presence-classifier-optimizations.md](../../planning/presence-classifier-optimizations.md) for the full list of potential improvements.
 
 The planned multi-class group classifier (see [multiclass-classifier-plan.md](multiclass-classifier-plan.md)) directly addresses the CO floor by replacing pair-wise binary scoring with a single global group decision per report.

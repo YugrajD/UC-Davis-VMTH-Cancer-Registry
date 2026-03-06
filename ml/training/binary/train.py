@@ -129,7 +129,8 @@ def train(
         )
 
     if cache is not None:
-        # Use per-column mean embeddings from cache — matches petbert_pipeline inference exactly.
+        # Use per-column embeddings from cache — each column is fed to the classifier
+        # independently so it can learn column-specific signal instead of a diluted mean.
         print(f"Using cached embeddings from {embedding_cache}")
         case_id_to_idx   = {cid: i for i, cid in enumerate(cache["case_ids"])}
         label_to_idx     = {t: i   for i, t   in enumerate(cache["label_texts"])}
@@ -144,6 +145,19 @@ def train(
         if cache.get("enriched_label_embeddings") is not None:
             print("  Using enriched label embeddings from cache.")
 
+        # Precompute (N_cases, n_cols * PETBERT_EMB_DIM) with empty columns zeroed.
+        col_names = cache["col_names"]
+        n_cols = len(col_names)
+        n_cases = len(cache["case_ids"])
+        col_emb_matrix = np.zeros((n_cases, n_cols * PETBERT_EMB_DIM), dtype=np.float32)
+        for ci, col in enumerate(col_names):
+            has  = cache["col_has_content"][col]   # (N,) bool
+            embs = cache["col_embeddings"][col]    # (N, 768)
+            col_emb_matrix[:, ci * PETBERT_EMB_DIM:(ci + 1) * PETBERT_EMB_DIM] = (
+                np.where(has[:, None], embs, 0.0)
+            )
+        print(f"  Using {n_cols} report columns: {col_names}")
+
         report_embs_list: list[np.ndarray] = []
         label_embs_list:  list[np.ndarray] = []
         targets_list:     list[float]      = []
@@ -154,7 +168,7 @@ def train(
             if ridx is None or lidx is None:
                 skipped += 1
                 continue
-            report_embs_list.append(cache["mean_embeddings"][ridx])
+            report_embs_list.append(col_emb_matrix[ridx])
             label_embs_list.append(cached_label_embs[lidx])
             targets_list.append(float(row["target"]))
         if skipped:
@@ -203,7 +217,7 @@ def train(
 
     # --- Model, loss, optimiser ------------------------------------------
     classifier = PresenceClassifier(
-        emb_dim=PETBERT_EMB_DIM, hidden_dim=hidden_dim, dropout=dropout,
+        emb_dim=PETBERT_EMB_DIM, hidden_dim=hidden_dim, dropout=dropout, n_cols=n_cols,
     ).to(dev)
 
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)

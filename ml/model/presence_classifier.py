@@ -3,8 +3,12 @@
 Takes the concatenated PetBERT embeddings of a case report and a taxonomy label
 and predicts whether that label is a confirmed diagnosis for that case.
 
-Input:  [report_emb (768) | label_emb (768)] → 1536-dim concatenation
+Input:  [col1_emb (768) | ... | colN_emb (768) | label_emb (768)] → (n_cols+1)*768-dim
 Output: scalar logit (pass through sigmoid to get presence probability)
+
+n_cols=1 (default) reproduces the original mean-embedding behaviour.
+n_cols=3 feeds each report column independently so the classifier can learn
+column-specific diagnostic signal instead of receiving a diluted average.
 """
 
 from __future__ import annotations
@@ -20,10 +24,18 @@ from model.constants import DEFAULT_DROPOUT, DEFAULT_HIDDEN_DIM, PETBERT_EMB_DIM
 class PresenceClassifier(nn.Module):
     """Lightweight binary classifier head on top of frozen PetBERT embeddings."""
 
-    def __init__(self, emb_dim: int = PETBERT_EMB_DIM, hidden_dim: int = DEFAULT_HIDDEN_DIM, dropout: float = DEFAULT_DROPOUT):
+    def __init__(
+        self,
+        emb_dim: int = PETBERT_EMB_DIM,
+        hidden_dim: int = DEFAULT_HIDDEN_DIM,
+        dropout: float = DEFAULT_DROPOUT,
+        n_cols: int = 1,
+    ):
         super().__init__()
+        self.emb_dim = emb_dim
+        self.n_cols = n_cols
         self.net = nn.Sequential(
-            nn.Linear(emb_dim * 2, hidden_dim),
+            nn.Linear(n_cols * emb_dim + emb_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, 1),
@@ -33,13 +45,13 @@ class PresenceClassifier(nn.Module):
         """Return raw logits (not probabilities) suitable for BCEWithLogitsLoss.
 
         Args:
-            report_emb: (B, 768) report embeddings
-            label_emb:  (B, 768) label embeddings
+            report_emb: (B, n_cols * emb_dim) concatenated per-column embeddings
+            label_emb:  (B, emb_dim) label embeddings
         Returns:
             (B,) raw logits
         """
-        x = torch.cat([report_emb, label_emb], dim=-1)  # (B, 1536)
-        return self.net(x).squeeze(-1)  # (B,)
+        x = torch.cat([report_emb, label_emb], dim=-1)
+        return self.net(x).squeeze(-1)
 
     @torch.inference_mode()
     def score_matrix(
@@ -72,17 +84,28 @@ class PresenceClassifier(nn.Module):
         return scores  # (N, M) float32
 
     def save(self, path: str | Path) -> None:
-        torch.save(self.state_dict(), path)
+        torch.save({
+            "state_dict": self.state_dict(),
+            "n_cols": torch.tensor(self.n_cols),
+            "emb_dim": torch.tensor(self.emb_dim),
+        }, path)
 
     @classmethod
     def load(
         cls,
         path: str | Path,
         *,
-        emb_dim: int = PETBERT_EMB_DIM,
         hidden_dim: int = DEFAULT_HIDDEN_DIM,
         dropout: float = DEFAULT_DROPOUT,
     ) -> "PresenceClassifier":
-        model = cls(emb_dim=emb_dim, hidden_dim=hidden_dim, dropout=dropout)
-        model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+        data = torch.load(path, map_location="cpu", weights_only=True)
+        if isinstance(data, dict) and "state_dict" in data:
+            n_cols = int(data.get("n_cols", torch.tensor(1)).item())
+            emb_dim = int(data.get("emb_dim", torch.tensor(PETBERT_EMB_DIM)).item())
+            model = cls(emb_dim=emb_dim, hidden_dim=hidden_dim, dropout=dropout, n_cols=n_cols)
+            model.load_state_dict(data["state_dict"])
+        else:
+            # Legacy format — plain state dict saved before n_cols was introduced (n_cols=1)
+            model = cls(emb_dim=PETBERT_EMB_DIM, hidden_dim=hidden_dim, dropout=dropout, n_cols=1)
+            model.load_state_dict(data)
         return model

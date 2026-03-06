@@ -35,8 +35,10 @@ classifier is available — via learned presence probabilities:
 3. *(Optional)* Label embeddings are enriched by blending each one 50/50 with the
    mean report embedding of its keyword-confirmed cases, pulling label
    representations toward real clinical language.
-4. *(Optional)* A trained `PresenceClassifier` MLP scores every `(case, label)` pair,
-   replacing raw cosine similarity with a learned presence probability.
+4. An `(N, num_labels)` score matrix is produced by one of two **mutually exclusive**
+   strategies: cosine similarity (default, per-column max) or a trained
+   `PresenceClassifier` MLP (replaces cosine entirely when `--presence-classifier`
+   is passed).
 5. For each case, the label with the highest score across **any** column is the
    top candidate.
 6. All labels above the confidence threshold are returned as ranked predictions
@@ -159,22 +161,12 @@ run reuses the cached enriched embeddings without recomputing.
 (~18.6% of diagnosis rows have keyword matches). Labels with no confirmed cases
 are unchanged.
 
-### Step 3.6: Optional Presence Classifier Scoring (`--presence-classifier`)
+### Step 4: Score Matrix — Cosine Similarity or PresenceClassifier (mutually exclusive)
 
-When `--presence-classifier` is provided, a trained `PresenceClassifier` MLP
-(from `ml/model/presence_classifier.py`) scores every `(case, label)` pair:
+This step produces an `(N, num_labels)` score matrix used for ranking.  Two
+strategies are available; only one runs per execution:
 
-```
-Input:  (mean_report_embedding[768], label_embedding[768])
-Output: presence probability  (replaces cosine similarity for ranking)
-```
-
-The score matrix `(N, num_labels)` is passed to `run_categorization()` in
-place of the per-column cosine similarities.  The per-column `column_scores.csv`
-still uses raw cosine similarity (the classifier operates on the cross-column
-mean embedding, not individual columns).
-
-### Step 4: Cosine Similarity Matching (Per Column)
+**Default — Cosine Similarity (per column):**
 
 For each column, cosine similarity is computed against every label embedding:
 
@@ -193,6 +185,73 @@ Col: FINAL COMMENT [  0.68       0.55      ...      0.40   ]
                      -----       -----               -----
 Max across cols    [  0.72       0.55      ...      0.40   ]  <-- used for ranking
 ```
+
+**Alternative — PresenceClassifier MLP (`--presence-classifier`):**
+
+When `--presence-classifier` is provided, cosine similarity is skipped entirely.
+A trained `PresenceClassifier` MLP (from `ml/model/presence_classifier.py`)
+scores every `(case, label)` pair instead.
+
+**Why a learned classifier instead of cosine similarity?**
+
+Cosine similarity measures geometric closeness between two vectors in PetBERT's
+embedding space.  That works reasonably well when the label text ("Hemangiosarcoma,
+NOS Blood vessel tumors") and the report text happen to land near each other.
+But PetBERT was not trained to make those two things close — a terse label phrase
+and a multi-paragraph clinical narrative occupy very different regions of the
+embedding space.  A learned classifier can bridge that gap by training on
+(report_emb, label_emb, was_confirmed) examples drawn from keyword-confirmed cases.
+
+**Architecture:**
+
+```
+Input:  concat([report_emb (768), label_emb (768)])  →  1536-dim vector
+        Linear(1536 → hidden_dim)
+        ReLU
+        Dropout
+        Linear(hidden_dim → 1)
+Output: raw logit  →  sigmoid  →  presence probability in [0, 1]
+```
+
+The two embeddings are **concatenated**, not subtracted or dot-producted.
+Concatenation lets the MLP learn asymmetric relationships — e.g. it can fire on
+"report embedding is in region X AND label embedding is in region Y", which
+neither cosine nor dot-product can capture.
+
+**How the N×M score matrix is built (`score_matrix()`):**
+
+Naively you would run N×M separate forward passes, but that is too slow.
+Instead, `score_matrix()` tiles the embeddings and flattens to a single batch:
+
+```
+For each batch of B reports:
+  r: (B, 1, 768)  →  expand to  (B, M, 768)   # tile each report M times
+  l: (1, M, 768)  →  expand to  (B, M, 768)   # tile all labels B times
+  flatten both to (B*M, 768)
+  forward pass  →  (B*M,) logits  →  sigmoid  →  reshape to (B, M)
+
+Final output: (N, M) float32 probability matrix
+```
+
+This is the same matrix shape that cosine similarity produces, so **all
+downstream ranking logic is identical** — the argmax winner, the
+`embedding_min_sim` threshold, and the top-k selection all operate on it
+unchanged.  The classifier simply provides better-calibrated numbers in each
+cell.
+
+**Key difference from cosine:**
+
+| | Cosine similarity | PresenceClassifier |
+|--|--|--|
+| Input to scorer | per-column embeddings, element-wise max | cross-column **mean** report embedding only |
+| Embedding comparison | geometric angle | learned MLP on concatenation |
+| Training signal | none (unsupervised) | supervised on keyword-confirmed (case, label) pairs |
+| Per-column signal | preserved | lost (mean collapses columns) |
+
+Because the classifier uses the cross-column mean, it loses the per-column
+signal that lets cosine pick the most informative section.  `column_scores.csv`
+therefore always uses raw cosine regardless of which strategy is active, since
+the classifier has no per-column output.
 
 ### Step 5: Top-k Confidence Threshold
 

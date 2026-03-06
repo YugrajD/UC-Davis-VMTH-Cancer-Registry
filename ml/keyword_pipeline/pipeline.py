@@ -25,7 +25,7 @@ from labels.taxonomy import TaxonomyLabel, load_labels_taxonomy
 
 # Trailing qualifiers in taxonomy terms that are stripped when building the
 # core keyword (e.g. "Hemangioma, NOS" → core keyword "hemangioma").
-_OMA_RE = re.compile(r"\b(\w+oma)s?\b")
+_OMA_RE = re.compile(r"\b(\w+(?:oma|emia))s?\b")
 
 _QUALIFIER_RE = re.compile(
     r",?\s*\b("
@@ -64,10 +64,21 @@ class _MatchResult:
 
 
 def _normalize(text: str) -> str:
-    """Lowercase, collapse hyphens/underscores to spaces, normalize whitespace."""
+    """Lowercase, collapse punctuation to spaces, normalize whitespace, apply synonyms.
+
+    Commas, parentheses, and slashes are stripped so that taxonomy terms like
+    "Neoplasm, malignant" and "B-cell leukemia/lymphoma" produce clean keyword
+    tokens that match free-text diagnoses.  Synonym substitutions handle common
+    pathology shorthands that do not appear verbatim in the taxonomy.
+    """
     text = text.lower()
-    text = re.sub(r"[-_]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"[-_/]", " ", text)
+    text = re.sub(r"[,();:]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    # Synonym substitutions: map common diagnosis shorthand to taxonomy terms.
+    text = re.sub(r"\bneoplasia\b", "neoplasm", text)
+    text = re.sub(r"\bplasma cell tumor\b", "plasmacytoma", text)
+    return text
 
 
 def _build_keyword_index(
@@ -121,7 +132,7 @@ def _build_oma_index(
     for i, label in enumerate(taxonomy_labels):
         norm = _normalize(label.term)
         for word in norm.split():
-            if word.endswith("oma") and word not in oma_index:
+            if (word.endswith("oma") or word.endswith("emia")) and word not in oma_index:
                 oma_index[word] = i
     return oma_index
 

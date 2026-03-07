@@ -1,9 +1,9 @@
 # Core ML
 torch==2.9.1
 transformers==4.46.3
-numpy==1.26.4
-pandas==2.2.0
-scikit-learn==1.4.0
+numpy>=2.0.0
+pandas==2.2.3
+scikit-learn==1.5.0
 scipy==1.17.1
 
 # HuggingFace (version-sensitive with transformers)

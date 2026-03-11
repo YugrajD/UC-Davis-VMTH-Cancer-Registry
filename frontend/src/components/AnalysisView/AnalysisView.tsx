@@ -4,6 +4,7 @@ import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import type { CountyData, CESIndicator, CalEnviroScreenData } from '../../types';
 import { CES_INDICATORS } from '../../types';
+import { HUMAN_CANCER_RATES } from '../../data/humanCancerRates';
 
 const GEO_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
 
@@ -223,6 +224,105 @@ function EnviroScreenMap({
   );
 }
 
+function HumanCancerMap() {
+  const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
+
+  const rateMap = useMemo(() => {
+    const map = new Map<string, { rate: number | null; cases: number | null }>();
+    HUMAN_CANCER_RATES.forEach(d => map.set(d.county.toLowerCase(), { rate: d.rate, cases: d.cases }));
+    return map;
+  }, []);
+
+  const rateRange = useMemo(() => {
+    const vals = HUMAN_CANCER_RATES.map(d => d.rate).filter((v): v is number => v !== null);
+    return { min: Math.min(...vals), max: Math.max(...vals) };
+  }, []);
+
+  const colorScale = useMemo(() => {
+    return scaleLinear<string>()
+      .domain([rateRange.min, (rateRange.min + rateRange.max) / 2, rateRange.max])
+      .range(['#F3E5F5', '#9C27B0', '#4A148C']);
+  }, [rateRange]);
+
+  return (
+    <div className="relative">
+      <div style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
+        <ComposableMap
+          projection="geoMercator"
+          projectionConfig={MAP_PROJECTION_CONFIG}
+          width={400}
+          height={400}
+          style={{ width: '100%', height: '100%' }}
+        >
+          <Geographies geography={GEO_URL}>
+            {({ geographies }) =>
+              geographies.map((geo) => {
+                const name = (geo.properties.name || '') as string;
+                const info = rateMap.get(name.toLowerCase());
+                const rate = info?.rate;
+                const fill = rate != null ? colorScale(rate) : '#E5E7EB';
+
+                return (
+                  <Geography
+                    key={geo.rsmKey}
+                    geography={geo}
+                    fill={fill}
+                    stroke="#FFFFFF"
+                    strokeWidth={0.5}
+                    style={{
+                      default: { outline: 'none' },
+                      hover: { fill: '#F5A623', stroke: '#E87722', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
+                      pressed: { fill: '#E87722', outline: 'none' },
+                    }}
+                    onMouseEnter={(e) => {
+                      const event = e as unknown as React.MouseEvent;
+                      const casesStr = info?.cases != null ? ` (${info.cases.toLocaleString()}/yr)` : '';
+                      setTooltip({
+                        county: name,
+                        value: rate != null ? `${rate.toFixed(1)} per 100K${casesStr}` : 'Suppressed',
+                        x: event.clientX,
+                        y: event.clientY,
+                      });
+                    }}
+                    onMouseLeave={() => setTooltip(null)}
+                  />
+                );
+              })
+            }
+          </Geographies>
+        </ComposableMap>
+      </div>
+
+      {/* Legend */}
+      <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
+        <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">Rate per 100K</p>
+        <div className="w-28 h-3 rounded" style={{ background: 'linear-gradient(to right, #F3E5F5, #9C27B0, #4A148C)' }} />
+        <div className="flex justify-between mt-1">
+          <span className="text-[10px] text-[var(--color-text-secondary)]">{rateRange.min.toFixed(0)}</span>
+          <span className="text-[10px] text-[var(--color-text-secondary)]">{rateRange.max.toFixed(0)}</span>
+        </div>
+        <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
+          <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
+          <span className="text-[10px] text-[var(--color-text-secondary)]">Suppressed</span>
+        </div>
+      </div>
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ left: tooltip.x + 12, top: tooltip.y - 12, transform: 'translateY(-100%)' }}
+        >
+          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[160px]">
+            <p className="font-semibold text-sm text-[var(--color-text-primary)]">{tooltip.county}</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">{tooltip.value}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
   const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
   const { data: cesData, loading, error } = useCalEnviroScreenData();
@@ -232,7 +332,16 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
       {/* Description */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
-          Compare cancer incidence across California counties with{' '}
+          Compare veterinary cancer incidence, human cancer incidence from the{' '}
+          <a
+            href="https://www.californiahealthmaps.org/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
+          >
+            California Cancer Registry
+          </a>
+          , and environmental health indicators from{' '}
           <a
             href="https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40"
             target="_blank"
@@ -241,14 +350,13 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
           >
             CalEnviroScreen 4.0
           </a>{' '}
-          environmental health indicators. CalEnviroScreen ranks communities based on pollution
-          exposure and population vulnerability. Higher percentiles indicate greater environmental burden.
-          Use the dropdown to explore different indicators.
+          across California counties. Identifying geographic overlap between animal and human cancer
+          patterns alongside environmental burden may reveal shared risk factors.
         </p>
       </div>
 
       {/* Side-by-side maps */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Cancer incidence map */}
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
@@ -298,6 +406,27 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
           ) : (
             <EnviroScreenMap data={cesData} indicator={selectedIndicator} />
           )}
+        </div>
+
+        {/* Human Cancer Registry map */}
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+              Human Cancer Registry
+            </h3>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+              Age-adjusted rate per 100K (2017–2021) &middot;{' '}
+              <a
+                href="https://statecancerprofiles.cancer.gov/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
+              >
+                Source
+              </a>
+            </p>
+          </div>
+          <HumanCancerMap />
         </div>
       </div>
     </div>

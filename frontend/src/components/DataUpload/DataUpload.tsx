@@ -1,7 +1,5 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { uploadCSV, type IngestionResponse, type IngestionRowResult } from '../../api/client';
-
-const PREVIEW_ROWS = 5;
 
 interface CsvPreview {
   headers: string[];
@@ -9,11 +7,10 @@ interface CsvPreview {
   totalRows: number;
 }
 
-function parseCsvPreview(text: string): CsvPreview {
+function parseCsv(text: string): CsvPreview {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length === 0) return { headers: [], rows: [], totalRows: 0 };
 
-  // Simple CSV parse (handles quoted fields with commas)
   const parseLine = (line: string): string[] => {
     const result: string[] = [];
     let current = '';
@@ -44,51 +41,82 @@ function parseCsvPreview(text: string): CsvPreview {
 
   const headers = parseLine(lines[0]);
   const dataLines = lines.slice(1);
-  const rows = dataLines.slice(0, PREVIEW_ROWS).map(parseLine);
+  const rows = dataLines.map(parseLine);
   return { headers, rows, totalRows: dataLines.length };
 }
 
-function FilePreview({ file }: { file: File }) {
+function PreviewModal({ file, onClose }: { file: File; onClose: () => void }) {
   const [preview, setPreview] = useState<CsvPreview | null>(null);
-  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadPreview = useCallback(() => {
-    if (preview) {
-      setOpen(o => !o);
-      return;
-    }
+  useEffect(() => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const text = e.target?.result as string;
-        setPreview(parseCsvPreview(text));
-        setOpen(true);
+        setPreview(parseCsv(e.target?.result as string));
       } catch {
         setError('Could not parse file');
       }
     };
     reader.onerror = () => setError('Could not read file');
     reader.readAsText(file);
-  }, [file, preview]);
+  }, [file]);
+
+  // Close on Escape
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onClose]);
 
   return (
-    <div className="mt-3">
-      <button
-        onClick={loadPreview}
-        className="text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium transition-colors"
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50" />
+
+      {/* Modal */}
+      <div
+        className="relative bg-white rounded-xl shadow-2xl flex flex-col w-full max-w-5xl max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
       >
-        {open ? 'Hide preview' : 'Preview file'}
-      </button>
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-      {open && preview && (
-        <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden">
-          <div className="overflow-x-auto max-h-64">
-            <table className="w-full text-xs">
-              <thead className="bg-gray-50 sticky top-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+          <div>
+            <h2 className="text-base font-semibold text-[var(--color-text-primary)]">{file.name}</h2>
+            {preview && (
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                {preview.headers.length} columns &middot; {preview.totalRows.toLocaleString()} rows &middot;{' '}
+                {(file.size / 1024).toFixed(1)} KB
+              </p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        {error ? (
+          <div className="p-6">
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+        ) : !preview ? (
+          <div className="flex items-center justify-center py-16">
+            <div className="w-6 h-6 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+          </div>
+        ) : (
+          <div className="overflow-auto flex-1 min-h-0">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 w-12">#</th>
                   {preview.headers.map((h, i) => (
-                    <th key={i} className="px-3 py-1.5 text-left font-medium text-gray-500 uppercase whitespace-nowrap">
+                    <th key={i} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
                       {h}
                     </th>
                   ))}
@@ -97,8 +125,9 @@ function FilePreview({ file }: { file: File }) {
               <tbody className="divide-y divide-gray-100">
                 {preview.rows.map((row, ri) => (
                   <tr key={ri} className="hover:bg-gray-50">
+                    <td className="px-4 py-1.5 text-xs text-gray-400">{ri + 1}</td>
                     {row.map((cell, ci) => (
-                      <td key={ci} className="px-3 py-1.5 text-gray-700 whitespace-nowrap max-w-[200px] truncate">
+                      <td key={ci} className="px-4 py-1.5 text-gray-700 whitespace-nowrap max-w-[300px] truncate" title={cell}>
                         {cell || <span className="text-gray-300">—</span>}
                       </td>
                     ))}
@@ -107,12 +136,25 @@ function FilePreview({ file }: { file: File }) {
               </tbody>
             </table>
           </div>
-          <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-200 text-[10px] text-gray-400">
-            Showing {Math.min(PREVIEW_ROWS, preview.rows.length)} of {preview.totalRows} rows
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
+  );
+}
+
+function FilePreview({ file }: { file: File }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-2 text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium transition-colors"
+      >
+        Preview file
+      </button>
+      {open && <PreviewModal file={file} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
@@ -134,11 +176,11 @@ export function DataUpload() {
 
   const handleUpload = async () => {
     if (!fileA && !fileB) {
-      setError('Please select at least Dataset A (PetBERT Predictions).');
+      setError('Please select at least Dataset A (Clinical Notes).');
       return;
     }
     if (!fileA && fileB) {
-      setError('Dataset A (PetBERT Predictions) is required to process data.');
+      setError('Dataset A (Clinical Notes) is required to process data.');
       return;
     }
 
@@ -172,17 +214,11 @@ export function DataUpload() {
         {/* Dataset A */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-1">
-            Dataset A — PetBERT Predictions
+            Dataset A — Clinical Notes
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-            CSV with columns:{' '}
-            <code className="bg-gray-100 px-1 rounded">anon_id</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">original_text</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">predicted_term</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">predicted_group</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">predicted_code</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">confidence</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">method</code>
+            CSV with columns: <code className="bg-gray-100 px-1 rounded">anon_id</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">clinical_notes</code>
           </p>
           <label className="block">
             <span className="sr-only">Choose Dataset A file</span>

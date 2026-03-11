@@ -323,140 +323,93 @@ function HumanCancerMap() {
   );
 }
 
-type MapLayout = 'comparison' | 'three-way';
+type MapId = 'vmth' | 'enviro' | 'human';
+
+const MAP_OPTIONS: { id: MapId; label: string }[] = [
+  { id: 'vmth', label: 'VMTH Cancer Incidence' },
+  { id: 'enviro', label: 'CalEnviroScreen 4.0' },
+  { id: 'human', label: 'Human Cancer Registry' },
+];
 
 export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
   const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
-  const [layout, setLayout] = useState<MapLayout>('three-way');
+  const [showAll, setShowAll] = useState(true);
+  const [twoMapSelection, setTwoMapSelection] = useState<[MapId, MapId]>(['vmth', 'enviro']);
   const { data: cesData, loading, error } = useCalEnviroScreenData();
 
-  const showHumanMap = layout === 'three-way';
+  const visibleMaps: MapId[] = showAll
+    ? ['vmth', 'enviro', 'human']
+    : twoMapSelection;
 
-  return (
-    <div className="space-y-6">
-      {/* Description + layout toggle */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 flex flex-col sm:flex-row sm:items-start gap-4">
-        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1">
-          {showHumanMap ? (
-            <>
-              Compare veterinary cancer incidence, human cancer incidence from the{' '}
-              <a
-                href="https://www.californiahealthmaps.org/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
-              >
-                California Cancer Registry
-              </a>
-              , and environmental health indicators from{' '}
-              <a
-                href="https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
-              >
-                CalEnviroScreen 4.0
-              </a>{' '}
-              across California counties. Identifying geographic overlap between animal and human cancer
-              patterns alongside environmental burden may reveal shared risk factors.
-            </>
-          ) : (
-            <>
-              Compare cancer incidence across California counties with{' '}
-              <a
-                href="https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
-              >
-                CalEnviroScreen 4.0
-              </a>{' '}
-              environmental health indicators. CalEnviroScreen ranks communities based on pollution
-              exposure and population vulnerability. Higher percentiles indicate greater environmental burden.
-              Use the dropdown to explore different indicators.
-            </>
-          )}
-        </p>
-        <div className="flex rounded-lg border border-gray-300 overflow-hidden shrink-0">
-          <button
-            onClick={() => setLayout('comparison')}
-            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-              layout === 'comparison'
-                ? 'bg-[var(--color-teal)] text-white'
-                : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
-            }`}
-          >
-            2 Maps
-          </button>
-          <button
-            onClick={() => setLayout('three-way')}
-            className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 transition-colors ${
-              layout === 'three-way'
-                ? 'bg-[var(--color-teal)] text-white'
-                : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
-            }`}
-          >
-            3 Maps
-          </button>
-        </div>
-      </div>
+  const handleSlotChange = (slot: 0 | 1, value: MapId) => {
+    setTwoMapSelection(prev => {
+      const other = prev[slot === 0 ? 1 : 0];
+      // If picking the same map that's in the other slot, swap them
+      if (value === other) {
+        return slot === 0 ? [value, prev[0]] : [prev[1], value];
+      }
+      return slot === 0 ? [value, prev[1]] : [prev[0], value];
+    });
+  };
 
-      {/* Maps grid */}
-      <div className={`grid grid-cols-1 ${showHumanMap ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-6`}>
-        {/* Cancer incidence map */}
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-              Cancer Incidence
-            </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-              Case count by county
-            </p>
-          </div>
-          <CancerMap countyData={countyData} countRange={countRange} />
-        </div>
-
-        {/* CalEnviroScreen map */}
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
-            <div>
+  const renderMap = (id: MapId) => {
+    switch (id) {
+      case 'vmth':
+        return (
+          <div key={id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
               <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-                CalEnviroScreen 4.0
+                Cancer Incidence
               </h3>
               <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                Environmental health percentile
+                Case count by county
               </p>
             </div>
-            <select
-              value={selectedIndicator}
-              onChange={(e) => setSelectedIndicator(e.target.value as CESIndicator)}
-              className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-            >
-              {CES_INDICATORS.map((ind) => (
-                <option key={ind.value} value={ind.value}>
-                  {ind.label}
-                </option>
-              ))}
-            </select>
+            <CancerMap countyData={countyData} countRange={countRange} />
           </div>
-
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-24">
-              <div className="w-8 h-8 border-4 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
-              <p className="mt-4 text-sm text-[var(--color-text-secondary)]">Loading CalEnviroScreen data...</p>
+        );
+      case 'enviro':
+        return (
+          <div key={id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+                  CalEnviroScreen 4.0
+                </h3>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Environmental health percentile
+                </p>
+              </div>
+              <select
+                value={selectedIndicator}
+                onChange={(e) => setSelectedIndicator(e.target.value as CESIndicator)}
+                className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+              >
+                {CES_INDICATORS.map((ind) => (
+                  <option key={ind.value} value={ind.value}>
+                    {ind.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : error ? (
-            <div className="p-6">
-              <p className="text-sm text-red-600">Error: {error}</p>
-            </div>
-          ) : (
-            <EnviroScreenMap data={cesData} indicator={selectedIndicator} />
-          )}
-        </div>
 
-        {/* Human Cancer Registry map (three-way only) */}
-        {showHumanMap && (
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-24">
+                <div className="w-8 h-8 border-4 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+                <p className="mt-4 text-sm text-[var(--color-text-secondary)]">Loading CalEnviroScreen data...</p>
+              </div>
+            ) : error ? (
+              <div className="p-6">
+                <p className="text-sm text-red-600">Error: {error}</p>
+              </div>
+            ) : (
+              <EnviroScreenMap data={cesData} indicator={selectedIndicator} />
+            )}
+          </div>
+        );
+      case 'human':
+        return (
+          <div key={id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
               <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
                 Human Cancer Registry
@@ -475,7 +428,91 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
             </div>
             <HumanCancerMap />
           </div>
+        );
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Description + controls */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+          <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1">
+            Compare veterinary cancer incidence, human cancer incidence from the{' '}
+            <a
+              href="https://www.californiahealthmaps.org/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
+            >
+              California Cancer Registry
+            </a>
+            , and environmental health indicators from{' '}
+            <a
+              href="https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
+            >
+              CalEnviroScreen 4.0
+            </a>{' '}
+            across California counties. Identifying geographic overlap between animal and human cancer
+            patterns alongside environmental burden may reveal shared risk factors.
+          </p>
+          <div className="flex rounded-lg border border-gray-300 overflow-hidden shrink-0">
+            <button
+              onClick={() => setShowAll(false)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                !showAll
+                  ? 'bg-[var(--color-teal)] text-white'
+                  : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
+              }`}
+            >
+              2 Maps
+            </button>
+            <button
+              onClick={() => setShowAll(true)}
+              className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 transition-colors ${
+                showAll
+                  ? 'bg-[var(--color-teal)] text-white'
+                  : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
+              }`}
+            >
+              3 Maps
+            </button>
+          </div>
+        </div>
+
+        {/* Map selectors for 2-map mode */}
+        {!showAll && (
+          <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-gray-100">
+            <span className="text-xs font-medium text-[var(--color-text-secondary)]">Show:</span>
+            <select
+              value={twoMapSelection[0]}
+              onChange={(e) => handleSlotChange(0, e.target.value as MapId)}
+              className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+            >
+              {MAP_OPTIONS.map(opt => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+            <span className="text-xs text-[var(--color-text-secondary)]">and</span>
+            <select
+              value={twoMapSelection[1]}
+              onChange={(e) => handleSlotChange(1, e.target.value as MapId)}
+              className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+            >
+              {MAP_OPTIONS.map(opt => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
         )}
+      </div>
+
+      {/* Maps grid */}
+      <div className={`grid grid-cols-1 ${showAll ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-6`}>
+        {visibleMaps.map(renderMap)}
       </div>
     </div>
   );

@@ -323,41 +323,87 @@ function HumanCancerMap() {
   );
 }
 
+type MapLayout = 'comparison' | 'three-way';
+
 export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
   const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
+  const [layout, setLayout] = useState<MapLayout>('three-way');
   const { data: cesData, loading, error } = useCalEnviroScreenData();
+
+  const showHumanMap = layout === 'three-way';
 
   return (
     <div className="space-y-6">
-      {/* Description */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
-          Compare veterinary cancer incidence, human cancer incidence from the{' '}
-          <a
-            href="https://www.californiahealthmaps.org/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
-          >
-            California Cancer Registry
-          </a>
-          , and environmental health indicators from{' '}
-          <a
-            href="https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
-          >
-            CalEnviroScreen 4.0
-          </a>{' '}
-          across California counties. Identifying geographic overlap between animal and human cancer
-          patterns alongside environmental burden may reveal shared risk factors.
+      {/* Description + layout toggle */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4 flex flex-col sm:flex-row sm:items-start gap-4">
+        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1">
+          {showHumanMap ? (
+            <>
+              Compare veterinary cancer incidence, human cancer incidence from the{' '}
+              <a
+                href="https://www.californiahealthmaps.org/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
+              >
+                California Cancer Registry
+              </a>
+              , and environmental health indicators from{' '}
+              <a
+                href="https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
+              >
+                CalEnviroScreen 4.0
+              </a>{' '}
+              across California counties. Identifying geographic overlap between animal and human cancer
+              patterns alongside environmental burden may reveal shared risk factors.
+            </>
+          ) : (
+            <>
+              Compare cancer incidence across California counties with{' '}
+              <a
+                href="https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
+              >
+                CalEnviroScreen 4.0
+              </a>{' '}
+              environmental health indicators. CalEnviroScreen ranks communities based on pollution
+              exposure and population vulnerability. Higher percentiles indicate greater environmental burden.
+              Use the dropdown to explore different indicators.
+            </>
+          )}
         </p>
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden shrink-0">
+          <button
+            onClick={() => setLayout('comparison')}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+              layout === 'comparison'
+                ? 'bg-[var(--color-teal)] text-white'
+                : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
+            }`}
+          >
+            2 Maps
+          </button>
+          <button
+            onClick={() => setLayout('three-way')}
+            className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 transition-colors ${
+              layout === 'three-way'
+                ? 'bg-[var(--color-teal)] text-white'
+                : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
+            }`}
+          >
+            3 Maps
+          </button>
+        </div>
       </div>
 
-      {/* Side-by-side maps */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Cancer incidence map */}
+      {/* Maps grid */}
+      <div className={`grid grid-cols-1 ${showHumanMap ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-6`}>
+        {/* Cancer incidence map */}
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
             <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
@@ -370,7 +416,7 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
           <CancerMap countyData={countyData} countRange={countRange} />
         </div>
 
-        {/* Right: CalEnviroScreen map */}
+        {/* CalEnviroScreen map */}
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
             <div>
@@ -408,26 +454,28 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
           )}
         </div>
 
-        {/* Human Cancer Registry map */}
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-              Human Cancer Registry
-            </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-              Age-adjusted rate per 100K (2017–2021) &middot;{' '}
-              <a
-                href="https://statecancerprofiles.cancer.gov/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
-              >
-                Source
-              </a>
-            </p>
+        {/* Human Cancer Registry map (three-way only) */}
+        {showHumanMap && (
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+                Human Cancer Registry
+              </h3>
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                Age-adjusted rate per 100K (2017–2021) &middot;{' '}
+                <a
+                  href="https://statecancerprofiles.cancer.gov/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]"
+                >
+                  Source
+                </a>
+              </p>
+            </div>
+            <HumanCancerMap />
           </div>
-          <HumanCancerMap />
-        </div>
+        )}
       </div>
     </div>
   );

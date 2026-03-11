@@ -1,5 +1,120 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { uploadCSV, type IngestionResponse, type IngestionRowResult } from '../../api/client';
+
+const PREVIEW_ROWS = 5;
+
+interface CsvPreview {
+  headers: string[];
+  rows: string[][];
+  totalRows: number;
+}
+
+function parseCsvPreview(text: string): CsvPreview {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length === 0) return { headers: [], rows: [], totalRows: 0 };
+
+  // Simple CSV parse (handles quoted fields with commas)
+  const parseLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"' && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else if (ch === '"') {
+          inQuotes = false;
+        } else {
+          current += ch;
+        }
+      } else if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseLine(lines[0]);
+  const dataLines = lines.slice(1);
+  const rows = dataLines.slice(0, PREVIEW_ROWS).map(parseLine);
+  return { headers, rows, totalRows: dataLines.length };
+}
+
+function FilePreview({ file }: { file: File }) {
+  const [preview, setPreview] = useState<CsvPreview | null>(null);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadPreview = useCallback(() => {
+    if (preview) {
+      setOpen(o => !o);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        setPreview(parseCsvPreview(text));
+        setOpen(true);
+      } catch {
+        setError('Could not parse file');
+      }
+    };
+    reader.onerror = () => setError('Could not read file');
+    reader.readAsText(file);
+  }, [file, preview]);
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={loadPreview}
+        className="text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium transition-colors"
+      >
+        {open ? 'Hide preview' : 'Preview file'}
+      </button>
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      {open && preview && (
+        <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden">
+          <div className="overflow-x-auto max-h-64">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  {preview.headers.map((h, i) => (
+                    <th key={i} className="px-3 py-1.5 text-left font-medium text-gray-500 uppercase whitespace-nowrap">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {preview.rows.map((row, ri) => (
+                  <tr key={ri} className="hover:bg-gray-50">
+                    {row.map((cell, ci) => (
+                      <td key={ci} className="px-3 py-1.5 text-gray-700 whitespace-nowrap max-w-[200px] truncate">
+                        {cell || <span className="text-gray-300">—</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-200 text-[10px] text-gray-400">
+            Showing {Math.min(PREVIEW_ROWS, preview.rows.length)} of {preview.totalRows} rows
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StatusIcon({ status }: { status: IngestionRowResult['status'] }) {
   if (status === 'inserted') return <span className="text-green-600 font-bold">+</span>;
@@ -19,11 +134,11 @@ export function DataUpload() {
 
   const handleUpload = async () => {
     if (!fileA && !fileB) {
-      setError('Please select at least Dataset A (Clinical Notes).');
+      setError('Please select at least Dataset A (PetBERT Predictions).');
       return;
     }
     if (!fileA && fileB) {
-      setError('Dataset A (Clinical Notes) is required to process data.');
+      setError('Dataset A (PetBERT Predictions) is required to process data.');
       return;
     }
 
@@ -57,11 +172,17 @@ export function DataUpload() {
         {/* Dataset A */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-1">
-            Dataset A — Clinical Notes
+            Dataset A — PetBERT Predictions
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-            CSV with columns: <code className="bg-gray-100 px-1 rounded">anon_id</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">clinical_notes</code>
+            CSV with columns:{' '}
+            <code className="bg-gray-100 px-1 rounded">anon_id</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">original_text</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">predicted_term</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">predicted_group</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">predicted_code</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">confidence</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">method</code>
           </p>
           <label className="block">
             <span className="sr-only">Choose Dataset A file</span>
@@ -78,7 +199,10 @@ export function DataUpload() {
             />
           </label>
           {fileA && (
-            <p className="mt-2 text-xs text-green-700">{fileA.name} selected</p>
+            <>
+              <p className="mt-2 text-xs text-green-700">{fileA.name} selected</p>
+              <FilePreview file={fileA} />
+            </>
           )}
         </div>
 
@@ -88,9 +212,12 @@ export function DataUpload() {
             Dataset B — Demographics
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-            CSV with columns: <code className="bg-gray-100 px-1 rounded">anon_id</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">zip_code</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">sex</code>
+            CSV with columns:{' '}
+            <code className="bg-gray-100 px-1 rounded">case_id</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">DtOfRq</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">Sex</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">Species</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">Breed</code>
           </p>
           <label className="block">
             <span className="sr-only">Choose Dataset B file</span>
@@ -107,7 +234,10 @@ export function DataUpload() {
             />
           </label>
           {fileB && (
-            <p className="mt-2 text-xs text-green-700">{fileB.name} selected</p>
+            <>
+              <p className="mt-2 text-xs text-green-700">{fileB.name} selected</p>
+              <FilePreview file={fileB} />
+            </>
           )}
         </div>
       </div>

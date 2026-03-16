@@ -5,24 +5,43 @@ import argparse
 from .pipeline import run_scan
 from .types import ScanConfig
 
+_DEFAULT_TEXT_COLS = "HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS"
+_DEFAULT_COL_WEIGHTS = "FINAL COMMENT:2.0,HISTOPATHOLOGICAL SUMMARY:1.5,ANCILLARY TESTS:0.5"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Scan a CSV of clinical diagnosis strings with PetBERT and produce categorizations (and optional nearest neighbors)."
+        description="Scan a reportText CSV with PetBERT and produce categorizations (and optional nearest neighbors)."
     )
-    parser.add_argument("--csv", default="ml/data/data.csv", help="Path to input CSV")
-    parser.add_argument("--id-col", default="anon_id", help="ID column name")
-    parser.add_argument("--text-col", default="Clinical Diagnoses", help="Text column name")
+    parser.add_argument("--csv", default="ml/data/report.csv", help="Path to input CSV")
+    parser.add_argument("--id-col", default="case_id", help="ID column name")
+    parser.add_argument(
+        "--text-cols",
+        default=_DEFAULT_TEXT_COLS,
+        help=(
+            "Comma-separated column names to embed independently and weighted-average. "
+            f"Default: '{_DEFAULT_TEXT_COLS}'"
+        ),
+    )
+    parser.add_argument(
+        "--col-weights",
+        default=_DEFAULT_COL_WEIGHTS,
+        help=(
+            "Per-column embedding weights as 'COL:weight,...' pairs. "
+            "Columns absent from this list default to 1.0. "
+            f"Default: '{_DEFAULT_COL_WEIGHTS}'"
+        ),
+    )
     parser.add_argument("--model", default="SAVSNET/PetBERT", help="HF model name or local path")
     parser.add_argument(
         "--local-only",
         action="store_true",
         help="Use only local cached model files (no network calls).",
     )
-    parser.add_argument("--out-dir", default="ml/output/data", help="Output directory")
+    parser.add_argument("--out-dir", default="ml/output/report", help="Output directory")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap on rows")
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size")
-    parser.add_argument("--max-length", type=int, default=256, help="Tokenizer max_length")
+    parser.add_argument("--max-length", type=int, default=512, help="Tokenizer max_length")
     parser.add_argument("--neighbors-k", type=int, default=3, help="Neighbors per row")
     parser.add_argument(
         "--task",
@@ -39,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--device",
         default="auto",
-        choices=["auto", "cpu", "cuda", "mps"],
+        choices=["auto", "cpu", "cuda", "mps", "xpu"],
         help="Compute device",
     )
     parser.add_argument(
@@ -48,28 +67,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to labels taxonomy CSV.",
     )
     parser.add_argument(
-        "--carcinoma-csv",
-        default="ml/data/dataCarcinoma.csv",
-        help="Auxiliary label CSV containing carcinoma-positive anon_ids.",
+        "--presence-classifier",
+        default=None,
+        help=(
+            "Path to a trained PresenceClassifier checkpoint (.pt). "
+            "When set, presence probabilities replace cosine similarity for scoring labels."
+        ),
     )
     parser.add_argument(
-        "--sarcoma-csv",
-        default="ml/data/dataSarcoma.csv",
-        help="Auxiliary label CSV containing sarcoma-positive anon_ids.",
-    )
-    parser.add_argument(
-        "--use-auxiliary-labels",
-        action="store_true",
-        help="Use carcinoma/sarcoma CSVs as extra supervision by anon_id.",
+        "--embedding-cache",
+        default=None,
+        help=(
+            "Path to an embedding cache npz file. "
+            "If the cache exists and is valid, PetBERT embedding is skipped entirely. "
+            "If it doesn't exist yet, embeddings are computed and saved here for future runs."
+        ),
     )
     return parser
 
 
+def _parse_col_weights(raw: str) -> dict[str, float]:
+    """Parse 'COL:weight,...' into a dict. Silently skips malformed pairs."""
+    result: dict[str, float] = {}
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if ":" not in token:
+            continue
+        col, _, val = token.rpartition(":")
+        try:
+            result[col.strip()] = float(val.strip())
+        except ValueError:
+            pass
+    return result
+
+
 def build_config(args: argparse.Namespace) -> ScanConfig:
+    text_cols = tuple(c.strip() for c in args.text_cols.split(",") if c.strip())
+    col_weights = _parse_col_weights(args.col_weights)
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
-        text_col=args.text_col,
+        text_cols=text_cols,
+        col_weights=col_weights,
         model_name=args.model,
         local_only=args.local_only,
         out_dir=args.out_dir,
@@ -81,9 +122,8 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
         labels_csv_path=args.labels_csv,
-        carcinoma_csv_path=args.carcinoma_csv,
-        sarcoma_csv_path=args.sarcoma_csv,
-        use_auxiliary_labels=args.use_auxiliary_labels,
+        presence_classifier_path=args.presence_classifier,
+        embedding_cache_path=args.embedding_cache,
     )
 
 
@@ -94,6 +134,7 @@ def main() -> int:
 
     print("Wrote:")
     print(outputs.predictions_csv)
+    print(outputs.column_scores_csv)
     print(outputs.provenance_csv)
     print(outputs.similarity_csv)
     print(outputs.visualization_csv)

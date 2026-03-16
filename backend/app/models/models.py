@@ -154,3 +154,22 @@ class IngestionLog(Base):
     rows_errored = Column(Integer, default=0)
     errors = Column(JSONB, default=list)
     warnings = Column(JSONB, default=list)
+
+
+class IngestionJob(Base):
+    __tablename__ = "ingestion_jobs"
+
+    id = Column(Integer, primary_key=True)
+    uploaded_by_email = Column(String(255), nullable=False)
+    uploaded_by_sub = Column(String(255), nullable=False)
+    dataset_a_filename = Column(String(255), nullable=False)
+    dataset_b_filename = Column(String(255), nullable=False)
+    storage_path = Column(String(500), nullable=False)
+    status = Column(String(20), nullable=False, default="pending_review")
+    reviewed_by_email = Column(String(255))
+    reviewed_at = Column(DateTime(timezone=True))
+    rejection_reason = Column(Text)
+    ingestion_log_id = Column(Integer, ForeignKey("ingestion_logs.id"))
+    processing_error = Column(Text)
+    created_at = Column(DateTime(timezone=True))
+    updated_at = Column(DateTime(timezone=True))

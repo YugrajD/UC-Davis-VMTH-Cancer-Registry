@@ -218,7 +218,7 @@ export function DataUpload() {
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mb-4">
             CSV with columns: <code className="bg-gray-100 px-1 rounded">anon_id</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">clinical_notes</code>
+            <code className="bg-gray-100 px-1 rounded">Clinical Diagnoses</code>
           </p>
           <label className="block">
             <span className="sr-only">Choose Dataset A file</span>

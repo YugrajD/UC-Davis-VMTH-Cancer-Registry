@@ -8,6 +8,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       CORS_ORIGINS: ${CORS_ORIGINS:-'["http://localhost:5173"]'}
+      ML_WORKER_URL: ${ML_WORKER_URL:-http://ml-worker:8001}
     ports:
       - "8000:8000"
     volumes:
@@ -79,6 +80,18 @@ services:
     command: python /database/seed/county_boundaries.py
     profiles:
       - geo-seed
+
+  ml-worker:
+    build: ./ml-worker
+    container_name: vmth_cancer_ml_worker
+    volumes:
+      - ./ml:/ml
+    ports:
+      - "8001:8001"
+    environment:
+      HF_HOME: /ml/.cache/huggingface
+      PETBERT_MODEL_PATH: ${PETBERT_MODEL_PATH:-/ml/models/petbert}
+    command: uvicorn app:app --host 0.0.0.0 --port 8001
 
 volumes:
   frontend_node_modules:

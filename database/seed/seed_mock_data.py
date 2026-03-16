@@ -75,23 +75,9 @@ CANCER_BY_SPECIES = {
     },
 }
 
-# Age ranges by species (mean, std)
-AGE_PARAMS = {
-    "Dog": (8.5, 3.0),
-    "Cat": (10.0, 3.5),
-}
-
-# Weight ranges by species (mean, std) in kg
-WEIGHT_PARAMS = {
-    "Dog": (25.0, 12.0),
-    "Cat": (4.5, 1.5),
-}
-
 SEXES = ["Male", "Female", "Neutered Male", "Spayed Female"]
 SEX_WEIGHTS = [0.15, 0.15, 0.35, 0.35]
 
-STAGES = ["I", "II", "III", "IV"]
-STAGE_WEIGHTS = [0.25, 0.35, 0.25, 0.15]
 
 OUTCOMES = ["alive", "deceased", "unknown"]
 OUTCOME_WEIGHTS = [0.40, 0.45, 0.15]
@@ -215,17 +201,16 @@ def run():
     county_map = {name: id_ for id_, name in cur.fetchall()}
 
     # -------------------------------------------------------------------
-    # Generate patients and cases
+    # Generate patients, diagnoses, and reports
     # -------------------------------------------------------------------
     total_cases = 5000
     print(f"Generating {total_cases} cancer cases...")
 
     patient_rows = []
-    case_rows = []
+    diagnosis_rows = []
     report_rows = []
 
     patient_id = 0
-    case_id = 0
     report_count = 0
 
     for i in range(total_cases):
@@ -239,14 +224,6 @@ def run():
         # Pick sex
         sex = random.choices(SEXES, weights=SEX_WEIGHTS, k=1)[0]
 
-        # Generate age
-        mean_age, std_age = AGE_PARAMS[species_name]
-        age = max(0.5, round(random.gauss(mean_age, std_age), 1))
-
-        # Generate weight
-        mean_w, std_w = WEIGHT_PARAMS[species_name]
-        weight = max(0.1, round(random.gauss(mean_w, std_w), 2))
-
         # Pick county
         county_name = weighted_choice(COUNTY_WEIGHTS)
         county_id = county_map[county_name]
@@ -258,27 +235,23 @@ def run():
         month = random.randint(1, 12)
         day = random.randint(1, 28)
         diagnosis_date = date(year, month, day)
-        registered_date = diagnosis_date - timedelta(days=random.randint(0, 60))
-
         # Pick cancer type based on species
         cancer_name = weighted_choice(CANCER_BY_SPECIES[species_name])
         cancer_type_id = cancer_type_map[cancer_name]
 
-        # Stage and outcome
-        stage = random.choices(STAGES, weights=STAGE_WEIGHTS, k=1)[0]
+        # Outcome
         outcome = random.choices(OUTCOMES, weights=OUTCOME_WEIGHTS, k=1)[0]
 
         patient_id += 1
-        case_id += 1
 
         patient_rows.append((
-            patient_id, species_id, breed_id, sex, age, weight,
-            county_id, registered_date
+            patient_id, species_id, breed_id, sex,
+            county_id, diagnosis_date, outcome
         ))
 
-        case_rows.append((
-            case_id, patient_id, cancer_type_id, diagnosis_date,
-            stage, outcome, county_id
+        # One case_diagnosis per patient (mock data has one cancer type per patient)
+        diagnosis_rows.append((
+            patient_id, cancer_type_id
         ))
 
         # Generate pathology report for ~10% of cases (= ~500 reports)
@@ -288,7 +261,7 @@ def run():
             confidence = round(random.uniform(0.75, 0.99), 4)
             report_date = diagnosis_date + timedelta(days=random.randint(1, 14))
             report_rows.append((
-                case_id, report_text, cancer_name, confidence, report_date
+                patient_id, report_text, cancer_name, confidence, report_date
             ))
 
     # -------------------------------------------------------------------
@@ -297,25 +270,24 @@ def run():
     print(f"Inserting {len(patient_rows)} patients...")
     execute_values(
         cur,
-        """INSERT INTO patients (id, species_id, breed_id, sex, age_years, weight_kg,
-                                 county_id, registered_date)
+        """INSERT INTO patients (id, species_id, breed_id, sex,
+                                 county_id, diagnosis_date, outcome)
            VALUES %s ON CONFLICT DO NOTHING""",
         patient_rows
     )
 
-    print(f"Inserting {len(case_rows)} cancer cases...")
+    print(f"Inserting {len(diagnosis_rows)} case diagnoses...")
     execute_values(
         cur,
-        """INSERT INTO cancer_cases (id, patient_id, cancer_type_id, diagnosis_date,
-                                     stage, outcome, county_id)
+        """INSERT INTO case_diagnoses (patient_id, cancer_type_id)
            VALUES %s ON CONFLICT DO NOTHING""",
-        case_rows
+        diagnosis_rows
     )
 
     print(f"Inserting {len(report_rows)} pathology reports...")
     execute_values(
         cur,
-        """INSERT INTO pathology_reports (case_id, report_text, classification,
+        """INSERT INTO pathology_reports (patient_id, report_text, classification,
                                           confidence_score, report_date)
            VALUES %s ON CONFLICT DO NOTHING""",
         report_rows
@@ -323,41 +295,41 @@ def run():
 
     # Reset sequences
     cur.execute("SELECT setval('patients_id_seq', (SELECT MAX(id) FROM patients))")
-    cur.execute("SELECT setval('cancer_cases_id_seq', (SELECT MAX(id) FROM cancer_cases))")
+    cur.execute("SELECT setval('case_diagnoses_id_seq', (SELECT MAX(id) FROM case_diagnoses))")
 
     # Create materialized views (one statement at a time)
     print("Creating materialized views...")
     cur.execute("DROP MATERIALIZED VIEW IF EXISTS mv_county_cancer_incidence CASCADE")
     cur.execute("""
         CREATE MATERIALIZED VIEW mv_county_cancer_incidence AS
-        SELECT cc.county_id, co.name AS county_name, ct.id AS cancer_type_id,
+        SELECT p.county_id, co.name AS county_name, ct.id AS cancer_type_id,
                ct.name AS cancer_type_name,
-               EXTRACT(YEAR FROM cc.diagnosis_date)::INTEGER AS year,
+               EXTRACT(YEAR FROM p.diagnosis_date)::INTEGER AS year,
                COUNT(*) AS case_count, s.name AS species_name
-        FROM cancer_cases cc
-        JOIN counties co ON cc.county_id = co.id
-        JOIN cancer_types ct ON cc.cancer_type_id = ct.id
-        JOIN patients p ON cc.patient_id = p.id
+        FROM case_diagnoses cd
+        JOIN patients p ON cd.patient_id = p.id
+        JOIN counties co ON p.county_id = co.id
+        JOIN cancer_types ct ON cd.cancer_type_id = ct.id
         JOIN species s ON p.species_id = s.id
-        GROUP BY cc.county_id, co.name, ct.id, ct.name,
-                 EXTRACT(YEAR FROM cc.diagnosis_date), s.name
+        GROUP BY p.county_id, co.name, ct.id, ct.name,
+                 EXTRACT(YEAR FROM p.diagnosis_date), s.name
     """)
     print("  mv_county_cancer_incidence created.")
 
     cur.execute("DROP MATERIALIZED VIEW IF EXISTS mv_yearly_trends CASCADE")
     cur.execute("""
         CREATE MATERIALIZED VIEW mv_yearly_trends AS
-        SELECT EXTRACT(YEAR FROM cc.diagnosis_date)::INTEGER AS year,
+        SELECT EXTRACT(YEAR FROM p.diagnosis_date)::INTEGER AS year,
                ct.id AS cancer_type_id, ct.name AS cancer_type_name,
                s.id AS species_id, s.name AS species_name,
                COUNT(*) AS case_count,
-               COUNT(*) FILTER (WHERE cc.outcome = 'deceased') AS deceased_count,
-               COUNT(*) FILTER (WHERE cc.outcome = 'alive') AS alive_count
-        FROM cancer_cases cc
-        JOIN cancer_types ct ON cc.cancer_type_id = ct.id
-        JOIN patients p ON cc.patient_id = p.id
+               COUNT(*) FILTER (WHERE p.outcome = 'deceased') AS deceased_count,
+               COUNT(*) FILTER (WHERE p.outcome = 'alive') AS alive_count
+        FROM case_diagnoses cd
+        JOIN patients p ON cd.patient_id = p.id
+        JOIN cancer_types ct ON cd.cancer_type_id = ct.id
         JOIN species s ON p.species_id = s.id
-        GROUP BY EXTRACT(YEAR FROM cc.diagnosis_date), ct.id, ct.name, s.id, s.name
+        GROUP BY EXTRACT(YEAR FROM p.diagnosis_date), ct.id, ct.name, s.id, s.name
     """)
     print("  mv_yearly_trends created.")
 
@@ -375,7 +347,7 @@ def run():
     print("County boundaries loaded.")
 
     conn.commit()
-    print(f"Done! Inserted {len(patient_rows)} patients, {len(case_rows)} cases, {len(report_rows)} reports.")
+    print(f"Done! Inserted {len(patient_rows)} patients, {len(diagnosis_rows)} diagnoses, {len(report_rows)} reports.")
     cur.close()
     conn.close()
 

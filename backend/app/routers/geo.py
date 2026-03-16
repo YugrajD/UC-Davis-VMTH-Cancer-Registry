@@ -7,7 +7,7 @@ from typing import Optional, List
 import json
 
 from app.database import get_db
-from app.models.models import County, CancerCase, CancerType, Patient, Species, CaseDiagnosis, CalEnviroScreen
+from app.models.models import County, CancerType, Patient, Species, CaseDiagnosis, CalEnviroScreen
 from app.schemas.schemas import (
     GeoJSONResponse, GeoJSONFeature, GeoJSONFeatureProperties,
     CountyDetail, CountyOut, TopCancer, SpeciesBreakdown,
@@ -41,10 +41,10 @@ async def get_counties_geojson(
         conditions.append("s.name = ANY(:species)")
         params["species"] = species
     if year_start:
-        conditions.append("EXTRACT(YEAR FROM cc.diagnosis_date) >= :year_start")
+        conditions.append("EXTRACT(YEAR FROM p.diagnosis_date) >= :year_start")
         params["year_start"] = year_start
     if year_end:
-        conditions.append("EXTRACT(YEAR FROM cc.diagnosis_date) <= :year_end")
+        conditions.append("EXTRACT(YEAR FROM p.diagnosis_date) <= :year_end")
         params["year_end"] = year_end
     if sex and sex != "All" and sex != "all":
         mapped_sex = SEX_MAP.get(sex, sex)
@@ -52,10 +52,10 @@ async def get_counties_geojson(
         params["sex"] = mapped_sex
 
     conditions.append("p.data_source = 'petbert'")
-    # If filtering by cancer_type, restrict to cases that have that diagnosis
+    # If filtering by cancer_type, restrict to patients that have that diagnosis
     if cancer_type:
         conditions.append(
-            "cc.id IN (SELECT cd.case_id FROM case_diagnoses cd "
+            "p.id IN (SELECT cd.patient_id FROM case_diagnoses cd "
             "JOIN cancer_types ct ON ct.id = cd.cancer_type_id WHERE ct.name = ANY(:cancer_type))"
         )
         params["cancer_type"] = cancer_type
@@ -72,23 +72,21 @@ async def get_counties_geojson(
         FROM counties c
         LEFT JOIN (
             SELECT
-                cc.county_id,
-                COUNT(DISTINCT cc.id) AS total,
+                p.county_id,
+                COUNT(DISTINCT p.id) AS total,
                 (SELECT ct2.name
                  FROM case_diagnoses cd
-                 JOIN cancer_cases cc2 ON cc2.id = cd.case_id
-                 JOIN patients p2 ON p2.id = cc2.patient_id AND p2.data_source = 'petbert'
+                 JOIN patients p2 ON p2.id = cd.patient_id AND p2.data_source = 'petbert'
                  JOIN cancer_types ct2 ON ct2.id = cd.cancer_type_id
-                 WHERE cc2.county_id = cc.county_id
+                 WHERE p2.county_id = p.county_id
                  GROUP BY ct2.name
                  ORDER BY COUNT(*) DESC
                  LIMIT 1
                 ) AS top_cancer
-            FROM cancer_cases cc
-            JOIN patients p ON cc.patient_id = p.id
+            FROM patients p
             JOIN species s ON p.species_id = s.id
             WHERE {where_clause}
-            GROUP BY cc.county_id
+            GROUP BY p.county_id
         ) case_counts ON c.id = case_counts.county_id
         WHERE c.geom IS NOT NULL
         ORDER BY c.name
@@ -125,11 +123,10 @@ async def get_county_detail(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="County not found")
 
-    # Total cases (ingested only)
+    # Total cases (ingested only) — count distinct patients
     result = await db.execute(
-        select(func.count(CancerCase.id))
-        .join(Patient, Patient.id == CancerCase.patient_id)
-        .where(CancerCase.county_id == county_id, Patient.data_source == "petbert")
+        select(func.count(Patient.id))
+        .where(Patient.county_id == county_id, Patient.data_source == "petbert")
     )
     total_cases = result.scalar() or 0
 
@@ -137,10 +134,9 @@ async def get_county_detail(
     result = await db.execute(
         select(CancerType.name, func.count(CaseDiagnosis.id).label("cnt"))
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-        .where(CancerCase.county_id == county_id, Patient.data_source == "petbert")
+        .where(Patient.county_id == county_id, Patient.data_source == "petbert")
         .group_by(CancerType.name)
         .order_by(func.count(CaseDiagnosis.id).desc())
     )
@@ -148,13 +144,12 @@ async def get_county_detail(
 
     # Species breakdown (ingested only)
     result = await db.execute(
-        select(Species.name, func.count(CancerCase.id).label("cnt"))
-        .select_from(CancerCase)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        select(Species.name, func.count(Patient.id).label("cnt"))
+        .select_from(Patient)
         .join(Species, Species.id == Patient.species_id)
-        .where(CancerCase.county_id == county_id, Patient.data_source == "petbert")
+        .where(Patient.county_id == county_id, Patient.data_source == "petbert")
         .group_by(Species.name)
-        .order_by(func.count(CancerCase.id).desc())
+        .order_by(func.count(Patient.id).desc())
     )
     species_rows = result.all()
     species_breakdown = [
@@ -168,14 +163,13 @@ async def get_county_detail(
     # Yearly trend (ingested only)
     result = await db.execute(
         select(
-            func.extract("year", CancerCase.diagnosis_date).label("year"),
-            func.count(CancerCase.id).label("count")
+            func.extract("year", Patient.diagnosis_date).label("year"),
+            func.count(Patient.id).label("count")
         )
-        .select_from(CancerCase)
-        .join(Patient, Patient.id == CancerCase.patient_id)
-        .where(CancerCase.county_id == county_id, Patient.data_source == "petbert")
-        .group_by(func.extract("year", CancerCase.diagnosis_date))
-        .order_by(func.extract("year", CancerCase.diagnosis_date))
+        .select_from(Patient)
+        .where(Patient.county_id == county_id, Patient.data_source == "petbert")
+        .group_by(func.extract("year", Patient.diagnosis_date))
+        .order_by(func.extract("year", Patient.diagnosis_date))
     )
     yearly_trend = [{"year": int(r.year), "count": r.count} for r in result.all()]
 

@@ -168,7 +168,7 @@ class ClassifyResult(BaseModel):
 
 class ReportOut(BaseModel):
     id: int
-    case_id: int
+    patient_id: int
     report_text: str
     classification: Optional[str] = None
     confidence_score: Optional[float] = None

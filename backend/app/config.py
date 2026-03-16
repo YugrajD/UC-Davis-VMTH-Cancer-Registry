@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = '["http://localhost:5173"]'
     APP_TITLE: str = "UC Davis VMTH Cancer Registry API"
     APP_VERSION: str = "1.0.0"
+    ML_WORKER_URL: str = "http://localhost:8001"
 
     @property
     def cors_origins_list(self) -> List[str]:

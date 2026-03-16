@@ -1,5 +1,7 @@
 # Developer Setup Guide
 
+Quick-start guide for developers joining the project. For the full setup walkthrough — including Supabase project creation, database migrations, authentication, admin accounts, and data loading — see **[SETUP_GUIDE.md](./SETUP_GUIDE.md)**.
+
 ## Prerequisites
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
@@ -15,21 +17,13 @@ cd UC-Davis-VMTH-Cancer-Registry
 
 ## 2. Create the `.env` File
 
-Copy the example and fill in the Supabase credentials:
-
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and replace the placeholder values with the actual Supabase connection strings. Ask a team member for the credentials — **never commit this file to git**.
+Open `.env` and replace the placeholder values. Each variable has a comment explaining where to find it in the Supabase dashboard. Ask a team member for credentials if needed — **never commit this file to git**.
 
-Your `.env` should look like:
-
-```
-DATABASE_URL=postgresql+asyncpg://postgres.[PROJECT-REF]:[PASSWORD]@aws-0-us-west-2.pooler.supabase.com:5432/postgres
-DATABASE_URL_SYNC=postgresql://postgres.[PROJECT-REF]:[PASSWORD]@aws-0-us-west-2.pooler.supabase.com:5432/postgres
-CORS_ORIGINS=["http://localhost:5173"]
-```
+At minimum you need the database URLs. For authentication and admin features you also need the Supabase auth keys and `ADMIN_EMAILS`. See [SETUP_GUIDE.md](./SETUP_GUIDE.md#3-configure-environment-variables) for details on every variable.
 
 ## 3. Start the Application
 
@@ -37,12 +31,13 @@ CORS_ORIGINS=["http://localhost:5173"]
 docker compose up --build
 ```
 
-This starts two containers:
+This starts three containers:
 
 | Service | URL | Description |
 |---|---|---|
 | **backend** | http://localhost:8000 | FastAPI server |
 | **frontend** | http://localhost:5173 | React dashboard |
+| **ml-worker** | http://localhost:8001 | PetBERT ML classification service |
 
 The backend connects to the shared Supabase database — no local database setup is needed.
 
@@ -56,7 +51,7 @@ If you want to run the frontend locally for faster hot-reload:
 
 ```bash
 # Start only the backend in Docker
-docker compose up backend
+docker compose up backend ml-worker
 
 # In a separate terminal, run the frontend locally
 cd frontend
@@ -65,6 +60,25 @@ npx vite
 ```
 
 The frontend Vite config automatically proxies API requests to `http://localhost:8000`.
+
+## Loading Data
+
+```bash
+# Mock data (~5,000 synthetic cases)
+docker compose --profile seed run seed
+
+# County boundaries (required for maps)
+docker compose --profile geo-seed run geo-seed
+
+# Real PetBERT data (requires files in database/data/)
+docker compose --profile ingest run ingest
+```
+
+See [SETUP_GUIDE.md](./SETUP_GUIDE.md#7-load-data) for details on each option.
+
+## Authentication & Admin Setup
+
+The project uses Supabase Auth for login and an `ADMIN_EMAILS` env var to grant admin privileges. See [SETUP_GUIDE.md](./SETUP_GUIDE.md#5-create-user-accounts-in-supabase-auth) for how to create accounts and configure admin access.
 
 ## Supabase Table Editor
 
@@ -97,3 +111,5 @@ Restart Docker Desktop and retry:
 ```bash
 docker compose up --build
 ```
+
+For more troubleshooting scenarios see [SETUP_GUIDE.md](./SETUP_GUIDE.md#troubleshooting).

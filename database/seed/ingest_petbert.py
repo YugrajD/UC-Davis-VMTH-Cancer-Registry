@@ -281,11 +281,9 @@ def run():
 
     cur.execute("SELECT COALESCE(MAX(id), 0) FROM patients")
     next_patient_id = cur.fetchone()[0] + 1
-    cur.execute("SELECT COALESCE(MAX(id), 0) FROM cancer_cases")
-    next_case_id = cur.fetchone()[0] + 1
 
     # ------------------------------------------------------------------
-    # Build and insert patients (unchanged)
+    # Build and insert patients
     # ------------------------------------------------------------------
     patient_rows = []
     warnings = []
@@ -309,30 +307,27 @@ def run():
             dog_species_id,
             None,           # breed_id
             sex,
-            None,           # age_years
-            None,           # weight_kg
             county_id,
-            None,           # registered_date
             anon_id,
             raw_zip or None,
             "petbert",
+            None,           # diagnosis_date
+            None,           # outcome
         ))
 
     print(f"\nInserting {len(patient_rows)} patients...")
     execute_values(
         cur,
         """INSERT INTO patients
-               (id, species_id, breed_id, sex, age_years, weight_kg,
-                county_id, registered_date, anon_id, zip_code, data_source)
+               (id, species_id, breed_id, sex,
+                county_id, anon_id, zip_code, data_source,
+                diagnosis_date, outcome)
            VALUES %s
            ON CONFLICT (anon_id) WHERE anon_id IS NOT NULL DO UPDATE SET
                species_id = EXCLUDED.species_id,
                breed_id = EXCLUDED.breed_id,
                sex = EXCLUDED.sex,
-               age_years = EXCLUDED.age_years,
-               weight_kg = EXCLUDED.weight_kg,
                county_id = EXCLUDED.county_id,
-               registered_date = EXCLUDED.registered_date,
                zip_code = EXCLUDED.zip_code,
                data_source = EXCLUDED.data_source""",
         patient_rows,
@@ -354,69 +349,19 @@ def run():
     anon_to_patient_id = {row[1]: row[0] for row in cur.fetchall()}
     patient_ids = [anon_to_patient_id[a] for a in ids_to_process if anon_to_patient_id.get(a)]
 
-    # Get-or-create one registry case per patient (dog)
-    cur.execute(
-        "SELECT id, patient_id FROM cancer_cases WHERE patient_id = ANY(%s)",
-        (patient_ids,),
-    )
-    # One case per patient: keep the one with highest id (most recent)
-    patient_id_to_case_id = {}
-    for case_id, pid in cur.fetchall():
-        patient_id_to_case_id[pid] = max(patient_id_to_case_id.get(pid, case_id), case_id)
-
-    case_rows = []
-    for anon_id in ids_to_process:
-        patient_id = anon_to_patient_id.get(anon_id)
-        if not patient_id or patient_id in patient_id_to_case_id:
-            continue
-        demo = visits.get(anon_id, {})
-        raw_zip = demo.get("zip", "")
-        county_name = lookup_county(raw_zip) if raw_zip else None
-        county_id = county_map.get(county_name) if county_name else None
-        case_rows.append((
-            next_case_id,
-            patient_id,
-            None, None, None, None, county_id,
-            None, None, None, None, None, None, None,
-        ))
-        patient_id_to_case_id[patient_id] = next_case_id
-        next_case_id += 1
-
-    if case_rows:
-        print(f"Inserting {len(case_rows)} new registry cases (one per dog)...")
-        execute_values(
-            cur,
-            """INSERT INTO cancer_cases
-                   (id, patient_id, cancer_type_id, diagnosis_date, stage, outcome,
-                    county_id, source_row_index, diagnosis_index,
-                    icd_o_code, predicted_term, original_text, confidence,
-                    prediction_method)
-               VALUES %s ON CONFLICT DO NOTHING""",
-            case_rows,
-        )
-        # Resolve case_id for newly inserted (in case of conflict we already have patient_id_to_case_id)
-        cur.execute(
-            "SELECT id, patient_id FROM cancer_cases WHERE patient_id = ANY(%s)",
-            (patient_ids,),
-        )
-        for case_id, pid in cur.fetchall():
-            patient_id_to_case_id[pid] = max(patient_id_to_case_id.get(pid, case_id), case_id)
-
     # ------------------------------------------------------------------
-    # All PetBERT predictions as case_diagnoses (many per case)
+    # All PetBERT predictions as case_diagnoses (many per patient)
     # ------------------------------------------------------------------
-    # Replace any existing diagnoses for these cases (idempotent re-run)
+    # Replace any existing diagnoses for these patients (idempotent re-run)
     if patient_ids:
         cur.execute(
-            "DELETE FROM case_diagnoses WHERE case_id IN "
-            "(SELECT id FROM cancer_cases WHERE patient_id = ANY(%s))",
+            "DELETE FROM case_diagnoses WHERE patient_id = ANY(%s)",
             (patient_ids,),
         )
     diagnosis_rows = []
     for anon_id in ids_to_process:
         patient_id = anon_to_patient_id.get(anon_id)
-        case_id = patient_id_to_case_id.get(patient_id) if patient_id else None
-        if not case_id:
+        if not patient_id:
             continue
         for diag in petbert[anon_id]:
             group = diag["predicted_group"] or "Unknown"
@@ -435,11 +380,10 @@ def run():
                     cancer_type_map[group] = cur.fetchone()[0]
             cancer_type_id = cancer_type_map[group]
             diagnosis_rows.append((
-                case_id,
+                patient_id,
                 cancer_type_id,
                 diag["icd_o_code"] or None,
                 diag["predicted_term"] or None,
-                diag["original_text"] or None,
                 round(diag["confidence"], 2) if diag["confidence"] else None,
                 diag["method"] or None,
                 diag["row_index"],
@@ -455,14 +399,13 @@ def run():
     execute_values(
         cur,
         """INSERT INTO case_diagnoses
-               (case_id, cancer_type_id, icd_o_code, predicted_term, original_text,
+               (patient_id, cancer_type_id, icd_o_code, predicted_term,
                 confidence, prediction_method, source_row_index, diagnosis_index)
            VALUES %s""",
         diagnosis_rows,
     )
 
     cur.execute("SELECT setval('patients_id_seq', (SELECT COALESCE(MAX(id), 1) FROM patients))")
-    cur.execute("SELECT setval('cancer_cases_id_seq', (SELECT COALESCE(MAX(id), 1) FROM cancer_cases))")
     cur.execute("SELECT setval('case_diagnoses_id_seq', (SELECT COALESCE(MAX(id), 1) FROM case_diagnoses))")
 
     # ------------------------------------------------------------------
@@ -492,7 +435,7 @@ def run():
             now,
             now,
             len(diagnosis_rows),
-            len(case_rows) + len(diagnosis_rows),
+            len(patient_rows) + len(diagnosis_rows),
             0,
             0,
             psycopg2.extras.Json(warnings),
@@ -507,7 +450,6 @@ def run():
     unique_codes = set(r[2] for r in diagnosis_rows if r[2])  # icd_o_code
     print(f"\nDone!")
     print(f"  Patients: {len(patient_rows)}")
-    print(f"  Registry cases (one per dog): {len(case_rows)}")
     print(f"  Cancer diagnoses (predictions): {len(diagnosis_rows)}")
     print(f"  Unique ICD-O codes: {len(unique_codes)}")
     if warnings:

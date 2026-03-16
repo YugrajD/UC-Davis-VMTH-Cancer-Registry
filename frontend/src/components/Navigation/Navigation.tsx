@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import type { TabType } from '../../types';
 import { TABS } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
+import { LoginModal } from '../LoginModal/LoginModal';
 
 interface NavigationProps {
   activeTab: TabType;
@@ -7,6 +10,15 @@ interface NavigationProps {
 }
 
 export function Navigation({ activeTab, onTabChange }: NavigationProps) {
+  const { user, isAdmin, signOut, loading } = useAuth();
+  const [showLogin, setShowLogin] = useState(false);
+
+  // Filter tabs: only show Review Queue for admins
+  const visibleTabs = TABS.filter(tab => {
+    if (tab.id === 'review-queue') return isAdmin;
+    return true;
+  });
+
   return (
     <header className="bg-white border-b border-gray-200">
       {/* Top banner */}
@@ -15,12 +27,37 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
           <span className="text-sm font-medium tracking-wide">
             UC Davis Veterinary Medicine
           </span>
-          <span className="text-sm opacity-80">
-            Veterinary Medical Teaching Hospital
-          </span>
+          <div className="flex items-center gap-4">
+            {!loading && (
+              user ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-sm opacity-80">{user.email}</span>
+                  {isAdmin && (
+                    <span className="text-xs bg-white/20 px-1.5 py-0.5 rounded">Admin</span>
+                  )}
+                  <button
+                    onClick={() => signOut()}
+                    className="text-sm opacity-80 hover:opacity-100 underline transition-opacity"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowLogin(true)}
+                  className="text-sm opacity-80 hover:opacity-100 underline transition-opacity"
+                >
+                  Sign In
+                </button>
+              )
+            )}
+            <span className="text-sm opacity-80">
+              Veterinary Medical Teaching Hospital
+            </span>
+          </div>
         </div>
       </div>
-      
+
       {/* Main header */}
       <div className="py-4 px-6 border-b border-gray-100">
         <div className="max-w-[1400px] mx-auto">
@@ -41,20 +78,20 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
           </div>
         </div>
       </div>
-      
+
       {/* Navigation tabs */}
       <nav className="px-6">
         <div className="max-w-[1400px] mx-auto">
           <div className="flex gap-1">
-            {TABS.map((tab) => (
+            {visibleTabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
                 className={`
                   px-5 py-3 text-sm font-medium transition-all duration-200
                   border-b-3 -mb-[1px]
-                  ${activeTab === tab.id 
-                    ? 'bg-[var(--color-primary-orange)] text-[var(--color-teal-dark)] border-[var(--color-primary-orange)] rounded-t-md' 
+                  ${activeTab === tab.id
+                    ? 'bg-[var(--color-primary-orange)] text-[var(--color-teal-dark)] border-[var(--color-primary-orange)] rounded-t-md'
                     : 'text-[var(--color-teal)] hover:bg-gray-50 border-transparent hover:border-[var(--color-teal-light)]'
                   }
                 `}
@@ -65,6 +102,8 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
           </div>
         </div>
       </nav>
+
+      {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
     </header>
   );
 }

@@ -12,16 +12,20 @@ A full-stack veterinary cancer catchment area dashboard modeled after the UCSF H
 
 ## Quick Start
 
-```bash
-# Start all services
-docker compose up -d
+See **[docs/DEVELOPER_SETUP.md](docs/DEVELOPER_SETUP.md)** for the full setup guide, including environment variables, database migrations, authentication, and admin account configuration.
 
-# Run database migrations (automatic on first start via init scripts)
-# Seed mock data (~5000 cases)
+```bash
+cp .env.example .env   # Fill in your Supabase credentials
+docker compose up --build
+
+# Seed mock data (~5,000 cases)
 docker compose --profile seed run seed
 
+# Load county boundaries (required for maps)
+docker compose --profile geo-seed run geo-seed
+
 # Access the application
-open http://localhost:5173    # Frontend
+open http://localhost:5173       # Frontend
 open http://localhost:8000/docs  # API docs (Swagger)
 ```
 

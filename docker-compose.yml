@@ -9,11 +9,16 @@ services:
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       CORS_ORIGINS: ${CORS_ORIGINS:-'["http://localhost:5173"]'}
       ML_WORKER_URL: ${ML_WORKER_URL:-http://ml-worker:8001}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+      SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      UPLOAD_DIR: /app/uploads
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
       - ./ml:/ml
+      - uploads_data:/app/uploads
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -23,6 +28,8 @@ services:
     container_name: vmth_cancer_frontend
     environment:
       VITE_API_URL: http://backend:8000
+      VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+      VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     ports:
       - "5173:5173"
     volumes:
@@ -95,3 +102,4 @@ services:
 
 volumes:
   frontend_node_modules:
+  uploads_data:

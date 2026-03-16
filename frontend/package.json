@@ -10,6 +10,7 @@
         "preview": "vite preview"
     },
     "dependencies": {
+        "@supabase/supabase-js": "^2.99.1",
         "@types/d3-array": "^3.2.2",
         "@types/d3-scale": "^4.0.9",
         "d3-array": "^3.2.4",

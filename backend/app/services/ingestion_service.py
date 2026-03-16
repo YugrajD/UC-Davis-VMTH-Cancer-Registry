@@ -386,6 +386,9 @@ async def ingest_upload(
         warnings=warnings,
     )
     db.add(log)
+    await db.flush()
+
+    log_id = log.id
 
     await db.commit()
 
@@ -396,4 +399,5 @@ async def ingest_upload(
         errors=0,
         warnings=warnings,
         row_results=row_results,
+        ingestion_log_id=log_id,
     )

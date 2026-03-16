@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
-import { fetchFilterOptions, fetchBreedDetail } from '../../api/client';
-import type { BreedDetail, FilterOptions } from '../../api/client';
+import type { BreedDetail } from '../../api/client';
+import { MOCK_BREEDS, getMockBreedDetail } from '../../data/mockData';
 
 const GEO_URL =
   'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
@@ -34,34 +34,23 @@ export function BreedDisparitiesView() {
     y: number;
   } | null>(null);
 
-  // Load breed list from filters endpoint
+  // Load breed list from mock data
   useEffect(() => {
-    fetchFilterOptions()
-      .then((opts: FilterOptions) => {
-        const breedNames = opts.breeds.map((b) => b.name).sort();
-        setBreeds(breedNames);
-        if (breedNames.length > 0) {
-          setSelectedBreed(breedNames[0]);
-          setQuery(breedNames[0]);
-        }
-      })
-      .catch(() => setError('Failed to load breed list'));
+    const breedNames = [...MOCK_BREEDS].sort();
+    setBreeds(breedNames);
+    if (breedNames.length > 0) {
+      setSelectedBreed(breedNames[0]);
+      setQuery(breedNames[0]);
+    }
   }, []);
 
-  // Fetch breed detail whenever selected breed changes
+  // Get breed detail from mock data
   useEffect(() => {
     if (!selectedBreed) return;
     setLoading(true);
     setError(null);
-    fetchBreedDetail(selectedBreed)
-      .then((data) => {
-        setDetail(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
+    setDetail(getMockBreedDetail(selectedBreed));
+    setLoading(false);
   }, [selectedBreed]);
 
   // Filtered suggestions

@@ -11,7 +11,8 @@ TaskMode = Literal["categorize", "neighbors", "both"]
 class ScanConfig:
     csv_path: str
     id_col: str
-    text_col: str
+    text_cols: tuple[str, ...]  # columns to embed independently; best-match label wins
+    col_weights: dict[str, float]  # reserved; no longer used for scoring
     model_name: str
     local_only: bool
     out_dir: str
@@ -23,9 +24,8 @@ class ScanConfig:
     embedding_min_sim: float
     device: str
     labels_csv_path: str
-    carcinoma_csv_path: str
-    sarcoma_csv_path: str
-    use_auxiliary_labels: bool
+    presence_classifier_path: str | None
+    embedding_cache_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,7 @@ class ScanOutputs:
     provenance_csv: str
     similarity_csv: str
     visualization_csv: str
+    column_scores_csv: str
     neighbors_csv: str | None
     npz: str
     summary_json: str

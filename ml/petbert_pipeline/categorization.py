@@ -240,9 +240,9 @@ def run_categorization_group(
             final_indices.append(-1)
             final_scores.append(float(case_probs[top_group_idx]))
             methods.append("low_confidence")
-            top_k_indices.append([])
-            top_k_scores.append([])
-            top_k_methods.append([])
+            top_k_indices.append([-1])
+            top_k_scores.append([float(case_probs[top_group_idx])])
+            top_k_methods.append(["low_confidence"])
             continue
 
         # For each predicted group, pick the best term by cosine similarity
@@ -271,9 +271,9 @@ def run_categorization_group(
             final_scores.append(0.0)
             methods.append("low_confidence")
             embedding_labels_list.append("Uncategorized")
-            top_k_indices.append([])
-            top_k_scores.append([])
-            top_k_methods.append([])
+            top_k_indices.append([-1])
+            top_k_scores.append([0.0])
+            top_k_methods.append(["low_confidence"])
             continue
 
         # Top-1 prediction for final_labels / final_indices

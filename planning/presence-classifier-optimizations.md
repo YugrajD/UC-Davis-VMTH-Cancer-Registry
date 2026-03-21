@@ -83,7 +83,42 @@ is decisive for mast cell tumors via special staining). Could also hurt if the a
 
 ---
 
-## Idea D — Two-layer MLP (low-medium effort)
+## Idea D — Per-column independent scoring (medium effort)
+
+**Motivation:** The current 3072-dim concatenation feeds all three column embeddings into a single
+MLP, which must learn cross-column interactions with limited data. An alternative is to score each
+column against the label independently and then aggregate:
+
+```
+concat(col1_emb ‖ label_emb) → MLP → score1
+concat(col2_emb ‖ label_emb) → MLP → score2
+concat(col3_emb ‖ label_emb) → MLP → score3
+    ↓
+aggregate (max or weighted sum) → final score
+```
+
+**Advantages:**
+- Smaller input per pass (1536-dim vs 3072-dim) — easier to train at current data volumes
+- Empty columns contribute no score rather than injecting a block of zeros into the input
+- Per-column scores are naturally interpretable (consistent with `column_scores.csv`)
+- If MLP weights are shared across columns, more parameter-efficient
+
+**Disadvantages:**
+- Loses cross-column interactions — the MLP can no longer learn "HISTOPATHOLOGICAL SUMMARY says X
+  *and* FINAL COMMENT says Y → present". This may matter since FINAL COMMENT is the pathologist's
+  conclusion and HISTOPATHOLOGICAL SUMMARY is the raw findings; they can be complementary.
+- Requires deciding on an aggregation strategy — max is simplest but essentially replicates the
+  cosine similarity approach with a learned scorer.
+
+**Open question:** Whether cross-column interactions are learnable at 5,788 cases and a 12:1
+compression ratio (3072→256). If not, the per-column approach may perform equally well with a
+simpler architecture.
+
+**Requires architecture changes** and a cold start (new checkpoint format). Cache is still valid.
+
+---
+
+## Idea E — Two-layer MLP (low-medium effort)
 
 **Motivation:** Current network: `Linear(3072→256) → ReLU → Dropout → Linear(256→1)`.
 Adding a second hidden layer (`256→128` or `512→256`) gives the model more representational capacity.
@@ -96,7 +131,7 @@ is large. With ~100k training pairs, a second layer is unlikely to matter much.
 
 ---
 
-## Idea E — More keyword data (highest long-term impact, not a code change)
+## Idea F — More keyword data (highest long-term impact, not a code change)
 
 **Motivation:** Every phase improvement that materially broke a ceiling came from more/better data
 (Phase 11: 1,273 → 5,788 cases, +17pp Good+Slight) rather than architecture changes.
@@ -114,8 +149,9 @@ improves to ~10,000+ cases, expect:
 1. **Idea A (hidden_dim=512)** — run c1 with Phase 13 bank/cache still in place, compare to Phase 13 c3–c6
 2. If A improves: run full cycle sequence with hidden_dim=512
 3. **Idea B (epochs=40)** — combine with whichever hidden_dim wins
-4. Skip Idea C/D unless A+B plateau below Phase 13 — the implementation cost isn't worth marginal gains
-5. Wait for **Idea E** (more keyword data) for the next step-change improvement
+4. **Idea D (per-column independent scoring)** — worth testing if A+B plateau; simpler architecture may generalise better at current data volumes
+5. Skip Idea C/E unless A+B+D all plateau below Phase 13 — the implementation cost isn't worth marginal gains
+6. Wait for **Idea F** (more keyword data) for the next step-change improvement
 
 ---
 
@@ -126,8 +162,9 @@ improves to ~10,000+ cases, expect:
 | `--hidden-dim` change | Yes | Yes | No (retrain from scratch) |
 | `--epochs` change | Yes | Yes | No (retrain from scratch) |
 | Attention architecture (Idea C) | Yes | Yes | No (new architecture) |
-| Two-layer MLP (Idea D) | Yes | Yes | No (new architecture) |
-| New keyword data (Idea E) | No | No | No (full cold start) |
+| Per-column independent scoring (Idea D) | Yes | Yes | No (new architecture) |
+| Two-layer MLP (Idea E) | Yes | Yes | No (new architecture) |
+| New keyword data (Idea F) | No | No | No (full cold start) |
 
 All hyperparameter experiments can reuse the existing embedding cache (`ml/data/embedding_cache.npz`)
 and CO bank (`ml/output/evaluation/evaluation_co_bank.csv`). Only delete `presence_classifier_current.pt`

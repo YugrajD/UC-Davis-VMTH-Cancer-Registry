@@ -558,3 +558,64 @@ All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, 
 - **hidden_dim bottleneck (untested)**: `hidden_dim=256` compresses 3072-dim input at a 12:1 ratio; trying 512 or 768 may recover 1–3%. See [presence-classifier-optimizations.md](../../planning/presence-classifier-optimizations.md) for the full list of potential improvements.
 
 The planned multi-class group classifier (see [multiclass-classifier-plan.md](multiclass-classifier-plan.md)) directly addresses the CO floor by replacing pair-wise binary scoring with a single global group decision per report.
+
+---
+
+## Work in Progress — Fine-tuned PetBERT Classifier
+
+### Motivation
+
+In production there will be no diagnosis text field available — only the raw report text columns. The binary `PresenceClassifier` and `GroupClassifier` both operate on frozen PetBERT embeddings, so PetBERT itself never learns veterinary diagnostic language from this task. Fine-tuning PetBERT end-to-end on the group classification objective should allow it to directly use report text to predict cancer groups, without needing a separate embedding + classifier head pipeline.
+
+### Approach
+
+The fine-tuned model replaces the frozen-embedding + GroupClassifier two-stage approach with a single sequence classification model:
+
+```
+Training:   report text + (diagnosis → keyword pipeline → group label) → fine-tune PetBERT
+Inference:  report text → fine-tuned PetBERT → group probabilities → cosine within group → ICD term
+```
+
+The keyword pipeline is used **only to generate training labels** from the existing diagnosis text. At inference, the diagnosis field is not needed — the fine-tuned model has learned to predict groups directly from report text. Within the predicted group, cosine similarity against taxonomy label embeddings (using the base unfinetuned PetBERT) still selects the best specific ICD term.
+
+### Scripts
+
+| Script | Role |
+|--------|------|
+| `ml/training/finetune/build_dataset.py` | Build HuggingFace `DatasetDict` from `report.csv` + `keyword_predictions.csv`; compute inverse-frequency class weights |
+| `ml/training/finetune/train.py` | Fine-tune `AutoModelForSequenceClassification` on top of PetBERT using `WeightedTrainer` (custom HF Trainer with class-weighted CrossEntropyLoss) |
+
+### Usage
+
+```bash
+# Step 1 — build the fine-tuning dataset
+ml/.venv/bin/python3 ml/training/finetune/build_dataset.py \
+  --reports-csv database/data/output/report.csv \
+  --predictions-csv ml/output/diagnoses/keyword_predictions.csv \
+  --labels-csv ml/labels/labels.csv \
+  --out-dir ml/data/finetune_dataset
+
+# Step 2 — fine-tune PetBERT
+ml/.venv/bin/python3 ml/training/finetune/train.py \
+  --dataset ml/data/finetune_dataset \
+  --out-dir ml/model/checkpoints/petbert_finetuned \
+  --epochs 5
+
+# Step 3 — run the pipeline with the fine-tuned model
+ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
+  --finetuned-model-path ml/model/checkpoints/petbert_finetuned \
+  --local-only
+```
+
+### Known Issues (WIP)
+
+- **`WeightedTrainer` constructor order**: `__init__(self, class_weights=None, *args, **kwargs)` is fragile — if `model` is passed positionally it binds to `class_weights`. Should be `(self, *args, class_weights=None, **kwargs)`.
+- **Device mismatch risk**: class weights tensor is moved to `self.args.device` during `__init__`, but `self.args.device` may not be resolved yet at construction time. Safer to move during `compute_loss`.
+- **No stratified val split**: `build_dataset.py` calls `train_test_split` without `stratify_by_column="labels"`, so rare cancer groups may be underrepresented in validation.
+- **`--finetuned-model-path` and `--presence-classifier` are not mutually exclusive**: the pipeline does not guard against using both together. If both are set, the PresenceClassifier silently receives zero embeddings and produces wrong scores.
+- **`evaluation_strategy`/`save_strategy` deprecated**: newer versions of `transformers` use `eval_strategy` instead.
+- **No `local_files_only` in `build_dataset.py`**: `AutoTokenizer.from_pretrained` will attempt a network call unless `--local-only` is passed at the CLI level (which `build_dataset.py` does not currently support).
+
+### Status
+
+Not yet benchmarked. The WIP pipeline integration (`--finetuned-model-path` flag in `run_pipeline.py`) is functional but the known issues above should be resolved before a full training run.

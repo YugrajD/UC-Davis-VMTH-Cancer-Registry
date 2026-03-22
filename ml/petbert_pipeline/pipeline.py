@@ -107,31 +107,65 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         label_embeddings = cache["label_embeddings"]
         enriched_label_embeddings = cache.get("enriched_label_embeddings")
     else:
-        # --- Step 2: Embed each column independently with PetBERT ------------
-        tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
+        # Step 2: Extract text representations (via PetBERT or FineTuned Model)
+        # this uses direct classification
+        if config.finetuned_model_path is not None:
+            from .embedding import load_finetuned_classifier, predict_groups_finetuned
+            print(f"Loading fine-tuned PetBERT classifier from {config.finetuned_model_path}...")
+            tokenizer, ft_model, idx_to_group = load_finetuned_classifier(
+                config.finetuned_model_path, local_only=config.local_only
+            )
+            
+            print("Predicting cancer groups directly with fine-tuned model...")
+            group_probs = predict_groups_finetuned(
+                tokenizer,
+                ft_model,
+                texts,
+                device=torch_device,
+                batch_size=config.batch_size,
+                max_length=config.max_length,
+            )
+            
+            # keep index 0 as Uncategorized, matching the training schema
+            # more testing required for independent embeddings vs classifier
+            group_names = [idx_to_group[i] for i in range(len(idx_to_group))]
+            
+            # still need dummy embeddings/has_content for compatibility with the rest of the pipeline
+            col_embeddings = {col: np.zeros((n, 768), dtype=np.float32) for col in cols}
+            col_has_content = {col: np.ones(n, dtype=bool) for col in cols}
+            embeddings = np.zeros((n, 768), dtype=np.float32)
+            token_counts = np.zeros(n, dtype=np.int32)
+            
+            # base model must be loaded to embed the taxonomy labels for term selection between groups
+            print("Loading base SAVSNET/PetBERT to embed taxonomy labels...")
+            _, base_model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
+            
+        else:
+            tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
+            base_model = model
 
-        col_embeddings, col_has_content, token_counts = embed_columns_separate(
-            tokenizer,
-            model,
-            col_texts,
-            device=torch_device,
-            batch_size=config.batch_size,
-            max_length=config.max_length,
-        )
+            col_embeddings, col_has_content, token_counts = embed_columns_separate(
+                tokenizer,
+                model,
+                col_texts,
+                device=torch_device,
+                batch_size=config.batch_size,
+                max_length=config.max_length,
+            )
 
-        # Compute a mean embedding per row (across non-empty columns) for
-        # visualization, neighbors, and the embeddings NPZ.
-        col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)  # (C, N, 768)
-        content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)  # (C, N)
-        col_emb_masked = col_emb_stack * content_mask[:, :, None]  # (C, N, 768)
-        content_counts = np.maximum(content_mask.sum(axis=0), 1.0)  # (N,)
-        embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)  # (N, 768)
+            # Compute a mean embedding per row (across non-empty columns) for
+            # visualization, neighbors, and the embeddings NPZ.
+            col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)  # (C, N, 768)
+            content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)  # (C, N)
+            col_emb_masked = col_emb_stack * content_mask[:, :, None]  # (C, N, 768)
+            content_counts = np.maximum(content_mask.sum(axis=0), 1.0)  # (N,)
+            embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)  # (N, 768)
 
         # --- Step 3: Build & embed taxonomy labels ----------------------------
         label_catalog = label_catalog_for_config(config)
         label_embeddings, _ = embed_texts(
             tokenizer,
-            model,
+            base_model,
             label_catalog.label_texts,
             device=torch_device,
             batch_size=config.batch_size,
@@ -185,13 +219,18 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     # The GroupClassifier predicts which cancer group(s) each report belongs to,
     # then cosine similarity selects the best term within each predicted group.
     # This eliminates the ~42% completely-off floor of the binary PresenceClassifier.
-    if config.group_classifier_path is not None:
-        print(f"Loading group classifier from {config.group_classifier_path}...")
-        group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
-        group_clf.to(torch_device)
-        group_probs = group_clf.predict_proba(torch.from_numpy(embeddings)).numpy()
-        group_clf.cpu()
-        del group_clf
+    if config.group_classifier_path is not None or config.finetuned_model_path is not None:
+        if config.finetuned_model_path is None:
+            # Use external GroupClassifier on frozen embeddings
+            print(f"Loading group classifier from {config.group_classifier_path}...")
+            group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
+            group_clf.to(torch_device)
+            group_probs = group_clf.predict_proba(torch.from_numpy(embeddings)).numpy()
+            group_clf.cpu()
+            del group_clf
+        else:
+            # We already have group_probs and group_names from the fine-tuned PetBERT model
+            print("Using group probabilities mapped from the fine-tuned sequence classifier.")
 
         categorization = run_categorization_group(
             texts=texts,

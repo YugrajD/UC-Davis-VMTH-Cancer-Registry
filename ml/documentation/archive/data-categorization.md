@@ -120,7 +120,7 @@ influence similarity scores.
 
 A mean embedding across non-empty columns is also computed per case (`mean_embeddings`)
 and used for PCA visualization, nearest-neighbor search, the embeddings NPZ, and
-the presence classifier (see Step 3.5 and 4).
+label enrichment (see Step 3.5). The presence classifier uses per-column concatenation, not this mean (see Step 4).
 
 ### Step 3: Build and Embed Taxonomy Labels
 
@@ -205,18 +205,20 @@ embedding space.  A learned classifier can bridge that gap by training on
 **Architecture:**
 
 ```
-Input:  concat([report_emb (768), label_emb (768)])  →  1536-dim vector
-        Linear(1536 → hidden_dim)
+Input:  concat([col1_emb (768), col2_emb (768), col3_emb (768), label_emb (768)])  →  3072-dim vector
+        Linear(3072 → hidden_dim)
         ReLU
         Dropout
         Linear(hidden_dim → 1)
 Output: raw logit  →  sigmoid  →  presence probability in [0, 1]
 ```
 
-The two embeddings are **concatenated**, not subtracted or dot-producted.
-Concatenation lets the MLP learn asymmetric relationships — e.g. it can fire on
-"report embedding is in region X AND label embedding is in region Y", which
-neither cosine nor dot-product can capture.
+The three per-column report embeddings and the label embedding are **concatenated**,
+not averaged or dot-multiplied. Empty columns are zeroed. Concatenation lets the MLP
+learn column-specific relationships — e.g. it can fire on signal from FINAL COMMENT
+specifically regardless of what the other columns contain. The number of columns
+(`n_cols`) is saved into the checkpoint so old single-column checkpoints remain
+loadable.
 
 **How the N×M score matrix is built (`score_matrix()`):**
 
@@ -225,9 +227,9 @@ Instead, `score_matrix()` tiles the embeddings and flattens to a single batch:
 
 ```
 For each batch of B reports:
-  r: (B, 1, 768)  →  expand to  (B, M, 768)   # tile each report M times
-  l: (1, M, 768)  →  expand to  (B, M, 768)   # tile all labels B times
-  flatten both to (B*M, 768)
+  r: (B, 1, n_cols*768)  →  expand to  (B, M, n_cols*768)   # tile each report M times
+  l: (1, M, 768)         →  expand to  (B, M, 768)           # tile all labels B times
+  flatten both, concat along last dim  →  (B*M, (n_cols+1)*768)
   forward pass  →  (B*M,) logits  →  sigmoid  →  reshape to (B, M)
 
 Final output: (N, M) float32 probability matrix
@@ -243,15 +245,14 @@ cell.
 
 | | Cosine similarity | PresenceClassifier |
 |--|--|--|
-| Input to scorer | per-column embeddings, element-wise max | cross-column **mean** report embedding only |
+| Input to scorer | per-column embeddings, element-wise max | per-column embeddings **concatenated** (3072-dim + label) |
 | Embedding comparison | geometric angle | learned MLP on concatenation |
 | Training signal | none (unsupervised) | supervised on keyword-confirmed (case, label) pairs |
-| Per-column signal | preserved | lost (mean collapses columns) |
+| Per-column signal | preserved | preserved (each column fed independently) |
 
-Because the classifier uses the cross-column mean, it loses the per-column
-signal that lets cosine pick the most informative section.  `column_scores.csv`
-therefore always uses raw cosine regardless of which strategy is active, since
-the classifier has no per-column output.
+`column_scores.csv` always uses raw cosine regardless of which strategy is active,
+since the classifier produces a single scalar per (case, label) pair with no
+per-column breakdown.
 
 ### Step 5: Top-k Confidence Threshold
 

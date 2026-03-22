@@ -170,7 +170,7 @@ Continue all subsequent cycles with `--co-neg-per-case 5`. Do **not** switch to 
 - CO floor is data-limited, not architecture-limited. Further reduction requires more
   keyword-confirmed cases or a group-level architecture.
 - `hidden_dim=256` compresses 3072-dim input at a 12:1 ratio — may be a bottleneck.
-  See `planning/presence-classifier-optimizations.md` for potential improvements.
+  Trying `hidden_dim=512` or `hidden_dim=768` may recover 1–3%.
 
 ---
 
@@ -259,12 +259,39 @@ Re-train by running this command whenever `keyword_predictions.csv` is updated.
 |------|--------|-------------------|-----------------------|-----------------------|
 | 1,273 cases | Good+Slight | 20.4% | 14.3% | 23.4% |
 | 1,273 cases | CO% | 42.7% | 55.9% | 50.7% |
+| 1,273 cases | FP% | ~30% | 28.0% | 8.4% |
+| 1,273 cases | FN% | 4.2% | 1.8% | 17.6% |
 | **5,788 cases** | **Good+Slight** | **33.1%** | 13.9% | 21.9% |
 | **5,788 cases** | **CO%** | **31.8%** | 57.5% | 54.5% |
 | **5,788 cases** | **FN%** | **1.3%** | — | 15.6% |
 
 Binary PresenceClassifier is the clear winner at current data volumes. GroupClassifier
 overfits (val loss >> train loss) at 5,788 cases across 44 groups (~132 cases/group avg).
+
+### Embedding Experiments (What Was Tried)
+
+#### Priority embedding — FINAL COMMENT first ❌ (2026-03-21)
+
+**Hypothesis:** The mean embedding dilutes the diagnostic signal. FINAL COMMENT is the
+pathologist's conclusion — the most group-discriminating column. Using it as the sole 768-dim
+input (falling back to HISTOPATHOLOGICAL SUMMARY, then ANCILLARY TESTS if empty) should
+give the MLP a cleaner signal without changing the model architecture.
+
+**Result:** Regression. Macro F1 fell from 0.1020 (mean baseline) to 0.0695. The model
+reverted to the degenerate "approve everything" pattern: recall ≈ 1.0, precision ≈ 0 for
+almost every group. Val loss diverged more severely than the mean baseline (train 0.64,
+val 2.4+ at epoch 25). Reverted.
+
+**Why it failed:** The problem is data volume (~132 cases/group), not embedding quality.
+The 768-dim input size and total training examples are identical regardless of which column
+is selected. Choosing FINAL COMMENT doesn't give the model more data — it gives it different
+data, which may actually be noisier because some cases have an empty FINAL COMMENT and fall
+back to a different column, making the input distribution inconsistent.
+
+**Conclusion:** Embedding selection is not a lever for the GroupClassifier at current data
+volumes. The overfitting ceiling can only be broken by more keyword-confirmed cases.
+
+---
 
 ### Expected Trajectory as Keyword Coverage Grows
 

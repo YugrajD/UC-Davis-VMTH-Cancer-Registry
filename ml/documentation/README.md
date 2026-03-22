@@ -145,6 +145,7 @@ embedding_cache.npz  (768-dim PetBERT embeddings, cached)
     │         └── output/evaluation/evaluation_history.csv
     │
     └──► [Step 5.5] auto-promote best checkpoint
+              If current cycle's Good+Slight ≥ all-time best:
               presence_classifier_current.pt → presence_classifier_best.pt
 ```
 
@@ -206,4 +207,7 @@ ml/.venv/bin/python3 ml/scripts/run_training.py --mode group --device mps
 | `keyword-pipeline.md` | Keyword pipeline: how it works, CLI reference, output formats, known limitations |
 | `classifiers.md` | All three approaches: architecture, flowcharts, advantages/disadvantages, constraints, evaluation results, comparison |
 | `training-guide.md` | Practical how-to: cold start steps, run commands, parameters, what triggers a cold start |
-| `training-log.md` | Phase-by-phase training history and cycle-by-cycle result tables |
+| `training-log.md` | Index — links to per-method training logs |
+| `training-log/training-log-binary.md` | Binary PresenceClassifier — phase-by-phase history, Phases 1–13 |
+| `training-log/training-log-group.md` | GroupClassifier — experiments and results |
+| `training-log/training-log-finetune.md` | Fine-tuned PetBERT — prerequisite checklist, no runs yet |

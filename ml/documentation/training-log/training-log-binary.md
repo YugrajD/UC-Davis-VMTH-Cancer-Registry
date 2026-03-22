@@ -299,12 +299,6 @@ All runs on 2026-03-04, device: mps. New `keyword_predictions.csv` and `report.c
 
 **Phase 11: stable plateau at ~32% Good+Slight, ~33% CO.** Both metrics dramatically exceed Phase 9 (20.4% Good+Slight, 42.7% CO). The old 42% CO floor is broken — CO now fluctuates 32–35%. FN is very low (~1.3–1.9%). No degenerate cycles. The improvement is driven entirely by the increased keyword coverage (1,273 → 5,788 confirmed cancer cases), which provides richer CO-negative training signal and better-calibrated positive examples.
 
-**GroupClassifier comparison (same new data):**
-- GC @ threshold 0.3: 13.9% Good+Slight, 57.5% CO — worse than binary
-- GC @ threshold 0.8: 21.9% Good+Slight, 54.5% CO, 15.6% FN — worse than binary c6+
-
-Binary PresenceClassifier is the clear winner at current data volumes. GroupClassifier still overfits (val loss >> train loss) despite 5,788 cases across 44 groups.
-
 ---
 
 ### Windows Unicode fix (2026-03-05)

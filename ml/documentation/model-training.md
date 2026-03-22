@@ -155,6 +155,8 @@ on cached embeddings, evaluate. Re-run whenever keyword coverage improves.
 |---|---|---|---|---|
 | 1,273 cases | Good+Slight | 20.4% | 14.3% | 23.4% |
 | 1,273 cases | CO% | 42.7% | 55.9% | 50.7% |
+| 1,273 cases | FP% | ~30% | 28.0% | 8.4% |
+| 1,273 cases | FN% | 4.2% | 1.8% | 17.6% |
 | **5,788 cases** | **Good+Slight** | **33.1%** | 13.9% | 21.9% |
 | **5,788 cases** | **CO%** | **31.8%** | 57.5% | 54.5% |
 | **5,788 cases** | **FN%** | **1.3%** | — | 15.6% |
@@ -275,6 +277,8 @@ stage, not an addition to it.
 - Cached embeddings cannot be reused — every run requires a full forward pass
 - Still shares the group-level ceiling: term selection within the predicted group
   remains cosine-based (unless discriminating keywords are used)
+
+> **Known code issues** must be resolved before running. See [petbert-pipeline.md](petbert-pipeline.md#wip-fine-tuned-petbert-mode) for the full list.
 
 ---
 

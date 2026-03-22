@@ -10,7 +10,7 @@ keyword matching.
 >   Does not run in production. Diagnosis rows with no keyword match are treated as
 >   non-cancer (Uncategorized).
 > - **PetBERT pipeline** (`petbert_pipeline/`) — production system: `report text → cancer label`
->   See [data-categorization.md](data-categorization.md).
+>   See [petbert-pipeline.md](petbert-pipeline.md).
 
 The keyword pipeline requires no ML model. Each diagnosis string is scanned for
 known taxonomy term keywords using word-boundary regex patterns. The longest
@@ -189,17 +189,17 @@ per individual diagnosis (a single pathology report can have multiple rows):
 
 **Standard run** (from repo root):
 ```bash
-PYTHONPATH=ml ml/.venv/bin/python3 -m keyword_pipeline \
+PYTHONPATH=ml ml/.venv/Scripts/python.exe -m keyword_pipeline \
   --csv database/data/output/diagnoses.csv \
-  --labels ml/labels/labels.csv \
+  --labels-csv ml/labels/labels.csv \
   --out-dir ml/output/diagnoses
 ```
 
 **Quick test on first 200 rows:**
 ```bash
-PYTHONPATH=ml ml/.venv/bin/python3 -m keyword_pipeline \
+PYTHONPATH=ml ml/.venv/Scripts/python.exe -m keyword_pipeline \
   --csv database/data/output/diagnoses.csv \
-  --labels ml/labels/labels.csv \
+  --labels-csv ml/labels/labels.csv \
   --out-dir ml/output/diagnoses \
   --max-rows 200
 ```

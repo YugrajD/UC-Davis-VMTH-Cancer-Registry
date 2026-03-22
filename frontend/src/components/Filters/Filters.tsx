@@ -1,25 +1,16 @@
-import { useState, useEffect } from 'react';
 import type { FilterState, Sex, RateType } from '../../types';
 import { SEX_OPTIONS, RATE_OPTIONS } from '../../types';
-import { fetchFilterOptions } from '../../api/client';
+import { MOCK_BREEDS, MOCK_CANCER_TYPE_INCIDENTS } from '../../data/mockData';
 
 interface FiltersProps {
   filters: FilterState;
   onFilterChange: (filters: FilterState) => void;
 }
 
-export function Filters({ filters, onFilterChange }: FiltersProps) {
-  const [cancerTypes, setCancerTypes] = useState<string[]>(['All Types']);
-  const [breeds, setBreeds] = useState<string[]>(['All Breeds']);
+const cancerTypes = ['All Types', ...MOCK_CANCER_TYPE_INCIDENTS.map(ct => ct.cancer_type)];
+const breeds = ['All Breeds', ...MOCK_BREEDS];
 
-  useEffect(() => {
-    fetchFilterOptions().then(opts => {
-      setCancerTypes(['All Types', ...opts.cancer_types.map(ct => ct.name)]);
-      setBreeds(['All Breeds', ...opts.breeds.map(b => b.name)]);
-    }).catch(err => {
-      console.error('Failed to load filter options:', err);
-    });
-  }, []);
+export function Filters({ filters, onFilterChange }: FiltersProps) {
 
   const handleChange = (key: keyof FilterState, value: string) => {
     onFilterChange({

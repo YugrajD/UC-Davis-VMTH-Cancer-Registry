@@ -6,7 +6,7 @@ from sqlalchemy import select, func
 from typing import Optional, List
 
 from app.database import get_db
-from app.models.models import CancerCase, CancerType, Patient, Species, Breed, County, CaseDiagnosis
+from app.models.models import CancerType, Patient, Species, Breed, County, CaseDiagnosis
 from app.schemas.schemas import IncidenceRecord, IncidenceResponse, BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
@@ -32,9 +32,9 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
     if county:
         stmt = stmt.where(County.name.in_(county))
     if year_start:
-        stmt = stmt.where(func.extract("year", CancerCase.diagnosis_date) >= year_start)
+        stmt = stmt.where(func.extract("year", Patient.diagnosis_date) >= year_start)
     if year_end:
-        stmt = stmt.where(func.extract("year", CancerCase.diagnosis_date) <= year_end)
+        stmt = stmt.where(func.extract("year", Patient.diagnosis_date) <= year_end)
     if sex and sex not in ("All", "all"):
         mapped_sex = SEX_MAP.get(sex, sex)
         stmt = stmt.where(Patient.sex == mapped_sex)
@@ -56,20 +56,19 @@ async def get_incidence(
             CancerType.name.label("cancer_type"),
             County.name.label("county"),
             Species.name.label("species"),
-            func.extract("year", CancerCase.diagnosis_date).label("year"),
+            func.extract("year", Patient.diagnosis_date).label("year"),
             func.count(CaseDiagnosis.id).label("count"),
         )
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .join(Species, Patient.species_id == Species.id)
-        .join(County, CancerCase.county_id == County.id)
+        .join(County, Patient.county_id == County.id)
     )
     stmt = _apply_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
     stmt = stmt.group_by(
         CancerType.name, County.name, Species.name,
-        func.extract("year", CancerCase.diagnosis_date)
+        func.extract("year", Patient.diagnosis_date)
     ).order_by(func.count(CaseDiagnosis.id).desc())
 
     result = await db.execute(stmt)
@@ -108,11 +107,10 @@ async def get_incidence_by_cancer_type(
             func.count(CaseDiagnosis.id).label("count"),
         )
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .join(Species, Patient.species_id == Species.id)
-        .join(County, CancerCase.county_id == County.id)
+        .join(County, Patient.county_id == County.id)
     )
     stmt = _apply_filters(stmt, species, None, county, year_start, year_end, sex)
     stmt = stmt.group_by(CancerType.name).order_by(func.count(CaseDiagnosis.id).desc())
@@ -142,11 +140,10 @@ async def get_incidence_by_species(
             func.count(CaseDiagnosis.id).label("count"),
         )
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(Species, Patient.species_id == Species.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-        .join(County, CancerCase.county_id == County.id)
+        .join(County, Patient.county_id == County.id)
     )
     stmt = _apply_filters(stmt, None, cancer_type, county, year_start, year_end, sex)
     stmt = stmt.group_by(Species.name).order_by(func.count(CaseDiagnosis.id).desc())
@@ -178,12 +175,11 @@ async def get_incidence_by_breed(
             func.count(CaseDiagnosis.id).label("count"),
         )
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(Species, Patient.species_id == Species.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-        .join(County, CancerCase.county_id == County.id)
+        .join(County, Patient.county_id == County.id)
     )
     stmt = _apply_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
     stmt = stmt.group_by(Breed.name, Species.name).order_by(func.count(CaseDiagnosis.id).desc())
@@ -215,8 +211,7 @@ async def get_breed_detail(
     total_stmt = (
         select(func.count(CaseDiagnosis.id))
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(Breed, Patient.breed_id == Breed.id)
         .where(Breed.name == breed)
     )
@@ -226,8 +221,7 @@ async def get_breed_detail(
     sex_stmt = (
         select(Patient.sex.label("sex"), func.count(CaseDiagnosis.id).label("count"))
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(Breed, Patient.breed_id == Breed.id)
         .where(Breed.name == breed)
         .group_by(Patient.sex)
@@ -240,8 +234,7 @@ async def get_breed_detail(
     ct_stmt = (
         select(CancerType.name.label("cancer_type"), func.count(CaseDiagnosis.id).label("count"))
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .where(Breed.name == breed)
@@ -259,10 +252,9 @@ async def get_breed_detail(
             func.count(CaseDiagnosis.id).label("count"),
         )
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(Breed, Patient.breed_id == Breed.id)
-        .join(County, CancerCase.county_id == County.id)
+        .join(County, Patient.county_id == County.id)
         .where(Breed.name == breed)
         .group_by(County.name, County.fips_code)
         .order_by(func.count(CaseDiagnosis.id).desc())

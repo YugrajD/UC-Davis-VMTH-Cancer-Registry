@@ -1,53 +1,47 @@
 import { useMemo, useEffect, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
-import { fetchCountiesGeoJSON } from '../api/client';
+import { MOCK_COUNTY_DATA } from '../data/mockData';
 
-// Region mapping for UC Davis catchment area
-const COUNTY_REGIONS: Record<string, string> = {
-  // Bay Area
-  'Alameda': 'Bay Area',
-  'Contra Costa': 'Bay Area',
-  'Marin': 'Bay Area',
-  'San Francisco': 'Bay Area',
-  'San Mateo': 'Bay Area',
-  'Santa Clara': 'Bay Area',
-  'Sonoma': 'Bay Area',
-  'Napa': 'Bay Area',
-  'Solano': 'Bay Area',
-  // Northern CA
-  'Butte': 'Northern CA',
-  'Shasta': 'Northern CA',
-  'Humboldt': 'Northern CA',
-  'Mendocino': 'Northern CA',
-  'Del Norte': 'Northern CA',
-  'Nevada': 'Northern CA',
-  'Yuba': 'Northern CA',
-  'Sutter': 'Northern CA',
-  'Glenn': 'Northern CA',
-  'Colusa': 'Northern CA',
-  // Central Valley
-  'Sacramento': 'Central Valley',
-  'San Joaquin': 'Central Valley',
-  'Fresno': 'Central Valley',
-  'Stanislaus': 'Central Valley',
-  'Kern': 'Central Valley',
-  'Yolo': 'Central Valley',
-  'Placer': 'Central Valley',
-  'El Dorado': 'Central Valley',
-  'Amador': 'Central Valley',
-  // Central Coast
-  'Monterey': 'Central Coast',
-  'Santa Cruz': 'Central Coast',
-  'San Luis Obispo': 'Central Coast',
-  'Santa Barbara': 'Central Coast',
-  // Southern CA
-  'Los Angeles': 'Southern CA',
-  'Orange': 'Southern CA',
-  'San Diego': 'Southern CA',
-  'Riverside': 'Southern CA',
-  'San Bernardino': 'Southern CA',
-  'Ventura': 'Southern CA',
-};
+// Deterministic pseudo-random from a string seed so the same filter
+// always produces the same numbers (no flicker on re-render).
+function seededRandom(seed: string) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(31, h) + seed.charCodeAt(i) | 0;
+  }
+  return () => {
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+    h = Math.imul(h ^ (h >>> 13), 0x45d9f3b);
+    h = (h ^ (h >>> 16)) >>> 0;
+    return (h % 100) / 100;
+  };
+}
+
+function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
+  const isDefault =
+    (!filters.sex || filters.sex === 'all') &&
+    (!filters.cancerType || filters.cancerType === 'All Types') &&
+    (!filters.breed || filters.breed === 'All Breeds');
+
+  if (isDefault) return base;
+
+  // Each filter narrows the data by a fraction, seeded so results are stable.
+  const key = `${filters.sex}|${filters.cancerType}|${filters.breed}`;
+  const rand = seededRandom(key);
+
+  // Sex splits roughly into quarters; cancer type ~1/8; breed ~1/10
+  let fraction = 1;
+  if (filters.sex && filters.sex !== 'all') fraction *= 0.25;
+  if (filters.cancerType && filters.cancerType !== 'All Types') fraction *= 0.12;
+  if (filters.breed && filters.breed !== 'All Breeds') fraction *= 0.10;
+
+  return base.map(c => {
+    // Add per-county variation (±40%) around the fraction
+    const variation = 0.6 + rand() * 0.8;
+    const newCount = Math.max(0, Math.round(c.count * fraction * variation));
+    return { ...c, count: newCount };
+  }).filter(c => c.count > 0);
+}
 
 export function useFilteredData(filters: FilterState) {
   const [countyData, setCountyData] = useState<CountyData[]>([]);
@@ -55,44 +49,10 @@ export function useFilteredData(filters: FilterState) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Map frontend filter format to API format
-        const apiFilters: Record<string, string[] | string | number | undefined> = {};
-
-        if (filters.cancerType && filters.cancerType !== 'All Types') {
-          apiFilters.cancerTypes = [filters.cancerType];
-        }
-        if (filters.breed && filters.breed !== 'All Breeds') {
-          // Note: Backend currently doesn't filter by breed in geo endpoint, but we pass it anyway
-        }
-        if (filters.sex && filters.sex !== 'all') {
-          apiFilters.sex = filters.sex;
-        }
-
-        // Fetch county GeoJSON which includes case counts
-        const geoData = await fetchCountiesGeoJSON(apiFilters as any);
-
-        const counties: CountyData[] = geoData.features.map(feature => ({
-          county: feature.properties.name,
-          region: COUNTY_REGIONS[feature.properties.name] || 'Other',
-          count: feature.properties.total_cases,
-          fips: feature.properties.fips_code,
-        }));
-
-        setCountyData(counties);
-      } catch (err) {
-        console.error('Failed to load data:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load data');
-        setCountyData([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
+    setLoading(true);
+    setError(null);
+    setCountyData(applyFilters(MOCK_COUNTY_DATA, filters));
+    setLoading(false);
   }, [filters.cancerType, filters.breed, filters.sex]);
 
   const regionSummary = useMemo(() => {

@@ -6,8 +6,7 @@ CSV columns: case_id, DtOfRq, Sex, Species, Breed
 
 Creates:
   - New breed rows (insert-if-missing) for breeds not yet in the DB
-  - New patient rows with breed_id, sex, species_id, data_source='demographics'
-  - One cancer_case per patient (with diagnosis_date from DtOfRq)
+  - New patient rows with breed_id, sex, species_id, diagnosis_date, data_source='demographics'
 
 Usage:
   export $(grep -v '^#' .env | xargs)
@@ -93,8 +92,6 @@ def run():
 
     cur.execute("SELECT COALESCE(MAX(id), 0) FROM patients")
     next_patient_id = cur.fetchone()[0] + 1
-    cur.execute("SELECT COALESCE(MAX(id), 0) FROM cancer_cases")
-    next_case_id = cur.fetchone()[0] + 1
 
     # Insert missing breeds
     unique_breeds = set()
@@ -143,82 +140,33 @@ def run():
             dog_species_id,
             breed_id,
             r["sex"],
-            None,           # age_years
-            None,           # weight_kg
             None,           # county_id (no ZIP in this CSV)
-            r["date"],      # registered_date
             r["case_id"],   # anon_id
             None,           # zip_code
             "demographics",
+            r["date"],      # diagnosis_date
+            None,           # outcome
         ))
 
     print(f"Inserting {len(patient_rows)} patients...")
     execute_values(
         cur,
         """INSERT INTO patients
-               (id, species_id, breed_id, sex, age_years, weight_kg,
-                county_id, registered_date, anon_id, zip_code, data_source)
+               (id, species_id, breed_id, sex,
+                county_id, anon_id, zip_code, data_source,
+                diagnosis_date, outcome)
            VALUES %s
            ON CONFLICT (anon_id) WHERE anon_id IS NOT NULL DO UPDATE SET
                species_id = EXCLUDED.species_id,
                breed_id = EXCLUDED.breed_id,
                sex = EXCLUDED.sex,
-               registered_date = EXCLUDED.registered_date,
-               data_source = EXCLUDED.data_source""",
+               data_source = EXCLUDED.data_source,
+               diagnosis_date = EXCLUDED.diagnosis_date""",
         patient_rows,
     )
 
-    # Resolve patient IDs
-    case_ids = [r["case_id"] for r in rows]
-    cur.execute(
-        "SELECT id, anon_id FROM patients WHERE anon_id = ANY(%s)",
-        (case_ids,),
-    )
-    anon_to_patient_id = {row[1]: row[0] for row in cur.fetchall()}
-    patient_ids = list(anon_to_patient_id.values())
-
-    # Get existing cases for these patients
-    cur.execute(
-        "SELECT id, patient_id FROM cancer_cases WHERE patient_id = ANY(%s)",
-        (patient_ids,),
-    )
-    patient_id_to_case_id = {pid: cid for cid, pid in cur.fetchall()}
-
-    # Create one cancer_case per patient (if not already present)
-    case_rows = []
-    for r in rows:
-        patient_id = anon_to_patient_id.get(r["case_id"])
-        if not patient_id or patient_id in patient_id_to_case_id:
-            continue
-        case_rows.append((
-            next_case_id,
-            patient_id,
-            None,           # cancer_type_id
-            r["date"],      # diagnosis_date
-            None,           # stage
-            None,           # outcome
-            None,           # county_id
-            None, None, None, None, None, None, None,
-        ))
-        patient_id_to_case_id[patient_id] = next_case_id
-        next_case_id += 1
-
-    if case_rows:
-        print(f"Inserting {len(case_rows)} cancer cases...")
-        execute_values(
-            cur,
-            """INSERT INTO cancer_cases
-                   (id, patient_id, cancer_type_id, diagnosis_date, stage, outcome,
-                    county_id, source_row_index, diagnosis_index,
-                    icd_o_code, predicted_term, original_text, confidence,
-                    prediction_method)
-               VALUES %s ON CONFLICT DO NOTHING""",
-            case_rows,
-        )
-
     # Reset sequences
     cur.execute("SELECT setval('patients_id_seq', (SELECT COALESCE(MAX(id), 1) FROM patients))")
-    cur.execute("SELECT setval('cancer_cases_id_seq', (SELECT COALESCE(MAX(id), 1) FROM cancer_cases))")
 
     # Refresh materialized views (may not exist in Supabase)
     print("Refreshing materialized views...")
@@ -246,7 +194,7 @@ def run():
                 DEMOGRAPHICS_FILE.name,
                 now, now,
                 len(rows),
-                len(patient_rows) + len(case_rows),
+                len(patient_rows),
                 0, 0,
                 Json(warnings),
             ),
@@ -260,7 +208,6 @@ def run():
 
     print(f"\nDone!")
     print(f"  Patients inserted/updated: {len(patient_rows)}")
-    print(f"  Cancer cases created: {len(case_rows)}")
     print(f"  New breeds added: {len(new_breeds)}")
     if warnings:
         print(f"  Warnings: {len(warnings)}")

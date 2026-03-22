@@ -34,7 +34,7 @@ ml/
 ├── training/               Training scripts, organized by mode
 │   ├── binary/             Binary PresenceClassifier training cycle
 │   ├── group/              GroupClassifier training (one-shot)
-│   └── finetune/           PetBERT fine-tuning (placeholder)
+│   └── finetune/           PetBERT fine-tuning (WIP — see classifier.md)
 ├── requirements.txt        Pinned Python dependencies
 └── .venv/                  Python virtual environment
 ```
@@ -106,6 +106,15 @@ All scripts for the iterative training cycle. Orchestrated by `ml/scripts/run_tr
 |---|---|
 | `build_training_data.py` | Builds multi-hot targets for `GroupClassifier` from cached embeddings |
 | `train.py` | Trains `GroupClassifier` (one-shot, not iterative) |
+
+### `training/finetune/` — PetBERT fine-tuning (WIP)
+
+End-to-end fine-tuning of PetBERT as a sequence classifier on the group prediction task. Uses keyword pipeline output as training labels; produces a self-contained HuggingFace checkpoint used via `--finetuned-model-path` in the production pipeline. See `documentation/classifier.md` for full details and known issues.
+
+| File | Role |
+|---|---|
+| `build_dataset.py` | Build HuggingFace `DatasetDict` from report text + keyword labels; compute class weights |
+| `train.py` | Fine-tune `AutoModelForSequenceClassification` on top of PetBERT with weighted CrossEntropyLoss |
 
 ---
 

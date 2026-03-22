@@ -3,10 +3,11 @@
 The production system that maps full veterinary pathology report text to standardized
 Vet-ICD-O-canine-1 cancer labels (term, group, ICD code).
 
-> **Role in the two-pipeline architecture:**
-> This pipeline runs in production. It takes report text columns as input — the diagnosis
-> field is not available at inference time. The **keyword pipeline** (`keyword-pipeline.md`)
-> runs separately to generate ground-truth training labels from the diagnosis field.
+> **Role in the three-pipeline architecture:**
+> This pipeline runs in production (`production/petbert_pipeline/`). It takes report text
+> columns as input — the diagnosis field is not available at inference time. The
+> **keyword pipeline** (`evaluation/keyword_pipeline/`) runs separately to generate
+> ground-truth training labels from the diagnosis field.
 
 ---
 
@@ -45,7 +46,7 @@ The pipeline reads `ml/data/report.csv` — one row per case:
 
 ## Pipeline Flow
 
-The entry point is `run_scan()` in `ml/petbert_pipeline/pipeline.py`.
+The entry point is `run_scan()` in `ml/production/petbert_pipeline/pipeline.py`.
 
 ### Step 1: Load Input Data
 
@@ -196,7 +197,7 @@ All three pass the 0.6 threshold → 3 rows in `predictions.csv`.
 | `--text-cols` | `HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS` | Columns to embed independently |
 | `--model` | `SAVSNET/PetBERT` | HuggingFace model name or local path |
 | `--local-only` | off | Use only locally cached model files |
-| `--out-dir` | `ml/output/report` | Output directory |
+| `--out-dir` | `ml/output/production` | Output directory |
 | `--max-rows` | all | Optional cap on rows to process |
 | `--batch-size` | 16 | Texts per embedding batch |
 | `--max-length` | 512 | Maximum token length (texts truncated beyond this) |
@@ -218,12 +219,12 @@ All three pass the 0.6 threshold → 3 rows in `predictions.csv`.
 
 **Standard production run:**
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py --local-only
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py --local-only
 ```
 
 **With presence classifier and embedding cache:**
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --presence-classifier ml/model/checkpoints/presence_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
@@ -232,7 +233,7 @@ ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
 
 **With group classifier:**
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --group-classifier ml/model/checkpoints/group_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
@@ -241,14 +242,14 @@ ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
 
 **All report sections:**
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --text-cols "HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS,ADDENDUM,CLINICAL ABSTRACT" \
   --local-only
 ```
 
 **Quick test (first 50 rows):**
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py --max-rows 50 --local-only
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py --max-rows 50 --local-only
 ```
 
 ---
@@ -317,14 +318,14 @@ ml/.venv/bin/python3 ml/scripts/run_pipeline.py --max-rows 50 --local-only
 
 | File | Role |
 |------|------|
-| `ml/petbert_pipeline/pipeline.py` | Top-level orchestration (`run_scan`) |
-| `ml/petbert_pipeline/embedding.py` | PetBERT loading, per-column embedding, fine-tuned classifier support |
-| `ml/petbert_pipeline/embedding_cache.py` | Save/load the embedding cache |
-| `ml/petbert_pipeline/categorization.py` | Top-k matching, confidence thresholding, group-based categorization |
-| `ml/petbert_pipeline/types.py` | `ScanConfig` and `ScanOutputs` dataclasses |
-| `ml/petbert_pipeline/utils.py` | Text cleaning, device selection |
-| `ml/petbert_pipeline/io.py` | CSV/NPZ/JSON output writers |
-| `ml/petbert_pipeline/cli.py` | CLI argument parsing |
+| `ml/production/petbert_pipeline/pipeline.py` | Top-level orchestration (`run_scan`) |
+| `ml/production/petbert_pipeline/embedding.py` | PetBERT loading, per-column embedding, fine-tuned classifier support |
+| `ml/production/petbert_pipeline/embedding_cache.py` | Save/load the embedding cache |
+| `ml/production/petbert_pipeline/categorization.py` | Top-k matching, confidence thresholding, group-based categorization |
+| `ml/production/petbert_pipeline/types.py` | `ScanConfig` and `ScanOutputs` dataclasses |
+| `ml/production/petbert_pipeline/utils.py` | Text cleaning, device selection |
+| `ml/production/petbert_pipeline/io.py` | CSV/NPZ/JSON output writers |
+| `ml/production/petbert_pipeline/cli.py` | CLI argument parsing |
 | `ml/labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser |
 | `ml/labels/catalog.py` | Label catalog builder |
 | `ml/labels/projection.py` | Maps label index → term/group/code |
@@ -384,20 +385,20 @@ report text.
 
 ```bash
 # Step 1 — build dataset
-ml/.venv/bin/python3 ml/training/finetune/build_dataset.py \
-  --reports-csv database/data/output/report.csv \
-  --predictions-csv ml/output/diagnoses/keyword_predictions.csv \
+ml/.venv/Scripts/python.exe ml/training/finetune/build_dataset.py \
+  --reports-csv ml/data/report.csv \
+  --predictions-csv ml/output/evaluation/keyword_predictions.csv \
   --labels-csv ml/labels/labels.csv \
   --out-dir ml/data/finetune_dataset
 
 # Step 2 — fine-tune
-ml/.venv/bin/python3 ml/training/finetune/train.py \
+ml/.venv/Scripts/python.exe ml/training/finetune/train.py \
   --dataset ml/data/finetune_dataset \
   --out-dir ml/model/checkpoints/petbert_finetuned \
   --epochs 5
 
 # Step 3 — run pipeline with fine-tuned model
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --finetuned-model-path ml/model/checkpoints/petbert_finetuned \
   --local-only
 ```

@@ -19,7 +19,7 @@ currently the best performer.
 
 ## Evaluation Verdicts
 
-All approaches are evaluated by `ml/training/binary/evaluate.py`:
+All approaches are evaluated by `ml/evaluation/evaluate.py`:
 
 | Verdict | Meaning |
 |---------|---------|
@@ -43,35 +43,31 @@ PetBERT (frozen)
 per-column embeddings (3 × 768)
     ↓
 for each of ~857 taxonomy labels:
-    concat(col1_emb ‖ label_emb) → MLP → score1
-    concat(col2_emb ‖ label_emb) → MLP → score2   (shared weights)
-    concat(col3_emb ‖ label_emb) → MLP → score3
-    max(score1, score2, score3)
+    concat(col1_emb ‖ col2_emb ‖ col3_emb ‖ label_emb)
+    → 3072-dim → Linear(3072 → 512) → ReLU → Dropout → Linear(512 → 1)
     ↓
 argmax across all label scores
     ↓
 predicted label
 ```
 
-Each column is paired with the label embedding independently (1536-dim input per pair)
-and scored by a shared MLP. Max-pooling across the three per-column logits gives the
-final score — the most informative column wins. Empty columns are zeroed before pairing.
-Labels compete implicitly through argmax.
+The three column embeddings and the label embedding are concatenated into a 3072-dim
+vector and scored by an MLP with a 512-dim hidden layer. Empty columns are zeroed
+before concatenation. Labels compete implicitly through argmax.
 
-**Why per-pair over concat:** The Phase 13 concat architecture compressed 3072-dim into
-a 256-dim hidden layer (12:1 ratio). Per-pair halves the input to 1536-dim (6:1 ratio),
-directly addressing the known compression bottleneck. Column-label relationships are
-also learned independently rather than entangled.
+**Why hidden_dim=512 (Phase 16):** The Phase 13 architecture used hidden_dim=256,
+creating a 12:1 compression bottleneck (3072→256). Widening to 512 (6:1 ratio)
+recovered +1.9pp (40.0% → 41.9%). The bottleneck was confirmed real.
 
 Two modes are stored in the checkpoint (`col_pair_mode`):
 
-| `col_pair_mode` | Input dim | Aggregation | Notes |
-|---|---|---|---|
-| `True` (default) | 2 × 768 = 1536 | max over columns | Phase 14+ |
-| `False` (legacy) | 4 × 768 = 3072 | — | Phase 13 and earlier |
+| `col_pair_mode` | Input dim | Notes |
+|---|---|---|
+| `False` (current) | 4 × 768 = 3072 | Phase 13, 16 — production |
+| `True` (experimental) | 2 × 768 = 1536 per pair | Phase 14–15 — regressions, not used |
 
-`n_cols` and `col_pair_mode` are saved into the checkpoint. Legacy checkpoints (no
-`col_pair_mode` key) default to `False` and load without modification.
+`n_cols`, `col_pair_mode`, and `hidden_dim` are saved into the checkpoint. Legacy
+checkpoints without these keys fall back to safe defaults and load without modification.
 
 ### Training Data Sources
 
@@ -94,7 +90,7 @@ that fool cosine similarity, accumulated across all previous cycles.
 
 **Continuing from an existing bank (standard):**
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode binary \
   --label "cycle N" \
   --co-neg-per-case 5 \
@@ -102,7 +98,8 @@ ml/.venv/bin/python3 ml/scripts/run_training.py \
   --embedding-min-sim 0.05 \
   --epochs 25 \
   --recall-weight 0.25 \
-  --device mps \
+  --hidden-dim 512 \
+  --device xpu \
   --local-only
 ```
 
@@ -112,10 +109,7 @@ Required any time the embedding space changes (PetBERT update, architecture chan
 new keyword data). Old bank pairs are anchored to the old cosine space and will add noise.
 
 **Prerequisites:**
-1. `ml/output/diagnoses/keyword_predictions.csv` must exist. If not:
-   ```bash
-   ml/.venv/bin/python3 -m keyword_pipeline
-   ```
+1. `ml/output/evaluation/keyword_predictions.csv` must exist. If not, run the keyword pipeline (see `keyword-pipeline.md`).
 2. `ml/data/report.csv` must exist.
 
 **Files to delete:**
@@ -127,7 +121,7 @@ rm -f ml/model/checkpoints/presence_classifier_current.pt
 
 **Cold-start c1 command** (same as standard, label it clearly):
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode binary \
   --label "cold-start c1" \
   --co-neg-per-case 5 \
@@ -135,7 +129,8 @@ ml/.venv/bin/python3 ml/scripts/run_training.py \
   --embedding-min-sim 0.05 \
   --epochs 25 \
   --recall-weight 0.25 \
-  --device mps \
+  --hidden-dim 512 \
+  --device xpu \
   --local-only
 ```
 
@@ -159,6 +154,7 @@ Continue all subsequent cycles with `--co-neg-per-case 5`. Do **not** switch to 
 | Parameter | Recommended | Notes |
 |-----------|-------------|-------|
 | `--embedding-min-sim` | `0.05` | Scores are mean-subtracted — use 0.05, not 0.5 |
+| `--hidden-dim` | `512` | Phase 16 standard; widening from 256 resolved 12:1 bottleneck |
 | `--co-neg-per-case` | `5` | Do NOT raise to 10 with per-column architecture — causes regression |
 | `--fp-neg-per-case` | `10` | Keep at 10; reducing to 5 weakens FP rejection |
 | `--epochs` | `25` | Beyond 25 shows diminishing returns |
@@ -278,7 +274,7 @@ evaluate. Re-run whenever keyword coverage improves — no architectural changes
 ### How to Train
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py --mode group --device mps
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode group --device xpu
 ```
 
 Re-train by running this command whenever `keyword_predictions.csv` is updated.
@@ -344,8 +340,8 @@ volumes. The overfitting ceiling can only be broken by more keyword-confirmed ca
 - [x] `ml/model/group_classifier.py` — model definition
 - [x] `ml/training/group/build_training_data.py` — multi-hot targets from cache + keyword CSV
 - [x] `ml/training/group/train.py` — training script
-- [x] `ml/petbert_pipeline/categorization.py` — two-stage group → cosine inference
-- [x] `ml/petbert_pipeline/pipeline.py` — `--group-classifier` CLI flag
+- [x] `ml/production/petbert_pipeline/categorization.py` — two-stage group → cosine inference
+- [x] `ml/production/petbert_pipeline/pipeline.py` — `--group-classifier` CLI flag
 
 ### Worth Trying: Discriminating-Keyword Term Selection
 
@@ -486,7 +482,7 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
 | | Binary PresenceClassifier | GroupClassifier | Fine-tuned PetBERT |
 |---|---|---|---|
 | **Status** | Production best | Implemented, not competitive | WIP |
-| **Best result** | 40.0% Good+Slight | 21.9% Good+Slight | Not benchmarked |
+| **Best result** | 41.9% Good+Slight (Phase 16) | 21.9% Good+Slight | Not benchmarked |
 | **PetBERT** | Frozen | Frozen | Fine-tuned end-to-end |
 | **Training style** | Iterative (CO feedback) | One-shot | One-shot |
 | **Data requirement** | Works from ~1,273 cases | Needs ~10,000+ cases | Needs ~10,000+ cases |

@@ -4,9 +4,9 @@ How to run each training approach, from prerequisites through to a trained check
 For architectural details, approach comparisons, and pros/cons see [model-training.md](model-training.md).
 
 > **Prerequisites for all approaches:**
-> - `ml/output/diagnoses/keyword_predictions.csv` must exist (run the keyword pipeline first if not)
+> - `ml/output/evaluation/keyword_predictions.csv` must exist (run `ml/scripts/run_evaluation.py` first if not)
 > - `ml/data/report.csv` must exist
-> - Use `ml/.venv/bin/python3` (macOS/Linux) or `ml/.venv/Scripts/python.exe` (Windows)
+> - Use `ml/.venv/Scripts/python.exe` (Windows) or `ml/.venv/bin/python3` (macOS/Linux)
 
 ---
 
@@ -29,7 +29,7 @@ rm -f ml/model/checkpoints/presence_classifier_current.pt
 Then run c1 — Step 0 will rebuild the embedding cache automatically (takes several minutes):
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode binary \
   --label "cold-start c1" \
   --co-neg-per-case 5 \
@@ -37,7 +37,8 @@ ml/.venv/bin/python3 ml/scripts/run_training.py \
   --embedding-min-sim 0.05 \
   --epochs 25 \
   --recall-weight 0.25 \
-  --device mps \
+  --hidden-dim 512 \
+  --device xpu \
   --local-only
 ```
 
@@ -46,7 +47,7 @@ ml/.venv/bin/python3 ml/scripts/run_training.py \
 Continue with the same command, updating `--label` each time:
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode binary \
   --label "c2" \
   --co-neg-per-case 5 \
@@ -54,7 +55,8 @@ ml/.venv/bin/python3 ml/scripts/run_training.py \
   --embedding-min-sim 0.05 \
   --epochs 25 \
   --recall-weight 0.25 \
-  --device mps \
+  --hidden-dim 512 \
+  --device xpu \
   --local-only
 ```
 
@@ -98,21 +100,21 @@ Trains a multi-label MLP that predicts cancer group(s) per report. One-shot — 
 no iterative cycles. Re-run whenever keyword coverage improves.
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py --mode group --device mps
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode group --device xpu
 ```
 
 This builds training data from the embedding cache and `keyword_predictions.csv`, trains
 for the configured number of epochs, and saves to `ml/model/checkpoints/group_classifier_best.pt`.
 
-> **Note:** GroupClassifier is not yet competitive at 5,788 cases (21.9% vs binary 40.0%).
+> **Note:** GroupClassifier is not yet competitive at 5,788 cases (21.9% vs binary 41.9%).
 > Re-train when keyword coverage reaches ~10,000 confirmed cases.
 
 ### Options
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_training.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode group \
-  --device mps \
+  --device xpu \
   --epochs 50 \
   --lr 1e-3 \
   --threshold 0.3
@@ -128,9 +130,9 @@ known code issues in `petbert-pipeline.md` before running.
 ### Step 1 — Build dataset
 
 ```bash
-ml/.venv/bin/python3 ml/training/finetune/build_dataset.py \
-  --reports-csv database/data/output/report.csv \
-  --predictions-csv ml/output/diagnoses/keyword_predictions.csv \
+ml/.venv/Scripts/python.exe ml/training/finetune/build_dataset.py \
+  --reports-csv ml/data/report.csv \
+  --predictions-csv ml/output/evaluation/keyword_predictions.csv \
   --labels-csv ml/labels/labels.csv \
   --out-dir ml/data/finetune_dataset
 ```
@@ -141,10 +143,7 @@ HuggingFace `DatasetDict` with computed class weights to `ml/data/finetune_datas
 ### Step 2 — Fine-tune
 
 ```bash
-# Enable MPS fallback (required on Apple Silicon)
-export PYTORCH_ENABLE_MPS_FALLBACK=1
-
-ml/.venv/bin/python3 ml/training/finetune/train.py \
+ml/.venv/Scripts/python.exe ml/training/finetune/train.py \
   --dataset ml/data/finetune_dataset \
   --out-dir ml/model/checkpoints/petbert_finetuned \
   --epochs 5 \
@@ -158,7 +157,7 @@ HuggingFace format (loadable with `--finetuned-model-path` in the production pip
 ### Step 3 — Run pipeline
 
 ```bash
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --finetuned-model-path ml/model/checkpoints/petbert_finetuned \
   --local-only
 ```
@@ -171,14 +170,14 @@ After training, run inference with the best checkpoint:
 
 ```bash
 # With binary PresenceClassifier (current best)
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --presence-classifier ml/model/checkpoints/presence_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
   --local-only
 
 # With GroupClassifier
-ml/.venv/bin/python3 ml/scripts/run_pipeline.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --group-classifier ml/model/checkpoints/group_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \

@@ -12,8 +12,8 @@ Step 0 runs only when the embedding cache doesn't exist yet.  After the first
 cycle, Steps 2 and 3 load embeddings from cache — PetBERT is never called again.
 
 Usage:
-  env PYTHONPATH=ml python ml/training/binary/run_cycle.py --label "classifier v2"
-  env PYTHONPATH=ml python ml/training/binary/run_cycle.py --label "v3" --epochs 30 --device mps
+  env PYTHONPATH=ml python ml/training/run_cycle.py --label "classifier v2"
+  env PYTHONPATH=ml python ml/training/run_cycle.py --label "v3" --epochs 30 --device mps
 """
 
 import argparse
@@ -22,19 +22,18 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from petbert_pipeline.pipeline import run_scan
-from petbert_pipeline.types import ScanConfig
+from model.constants import DEFAULT_TEXT_COLS
+from production.petbert_pipeline.pipeline import run_scan
+from production.petbert_pipeline.types import ScanConfig
 from training.binary.build_training_pairs import build_pairs
-from training.binary.evaluate import evaluate
-from training.binary.log_evaluation import log_evaluation
+from evaluation.evaluate import evaluate
+from evaluation.log_evaluation import log_evaluation
 from training.binary.train import train
 from training.binary.update_co_bank import update_co_bank
 
 _CHECKPOINT            = "ml/model/checkpoints/presence_classifier_current.pt"
 _CHECKPOINT_PRODUCTION = "ml/model/checkpoints/presence_classifier_best.pt"
 _HISTORY_CSV           = "ml/output/evaluation/evaluation_history.csv"
-
-_DEFAULT_TEXT_COLS = ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "ANCILLARY TESTS")
 
 
 def _print_banner(title: str) -> None:
@@ -54,11 +53,11 @@ def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> S
     return ScanConfig(
         csv_path="ml/data/report.csv",
         id_col="case_id",
-        text_cols=_DEFAULT_TEXT_COLS,
+        text_cols=DEFAULT_TEXT_COLS,
         col_weights={},
         model_name="SAVSNET/PetBERT",
         local_only=args.local_only,
-        out_dir="ml/output/report",
+        out_dir="ml/output/production",
         max_rows=None,
         batch_size=16,
         max_length=512,
@@ -73,7 +72,7 @@ def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> S
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run a full PetBERT training cycle.")
     parser.add_argument(
         "--label", default="",
@@ -140,7 +139,7 @@ def main() -> int:
         "--hidden-dim", type=int, default=256,
         help="MLP hidden layer size (default: 256). Try 512 or 768 to reduce compression.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     label = args.label or f"classifier {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
@@ -181,8 +180,8 @@ def main() -> int:
     # 4 ── Evaluate ────────────────────────────────────────────────────────────
     _print_banner("Step 4/5 — Evaluate predictions")
     evaluate(
-        petbert_csv=Path("ml/output/report/petbert_predictions.csv"),
-        keyword_csv=Path("ml/output/diagnoses/keyword_predictions.csv"),
+        petbert_csv=Path("ml/output/production/petbert_predictions.csv"),
+        keyword_csv=Path("ml/output/evaluation/keyword_predictions.csv"),
         out_dir=Path("ml/output/evaluation"),
     )
 

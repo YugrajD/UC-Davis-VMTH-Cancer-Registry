@@ -14,16 +14,15 @@ Modes:
           Steps: keyword_pipeline → build_group_data → train_group
 """
 
+import argparse
 import sys
 from pathlib import Path
 
 # Add ml/ to the path so all packages are importable without env PYTHONPATH=ml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import argparse
-
-from keyword_pipeline.pipeline import KeywordConfig, run_keyword_scan
-from training.binary.run_cycle import main as run_binary_cycle
+from evaluation.keyword_pipeline.pipeline import KeywordConfig, run_keyword_scan
+from training.run_cycle import main as run_binary_cycle
 from training.group.build_training_data import build_training_data
 from training.group.train import train as train_group
 
@@ -35,7 +34,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=["binary", "group"], default="binary",
                         help="Training mode: binary PresenceClassifier (default) or group GroupClassifier")
     parser.add_argument("--skip-keyword-scan", action="store_true",
-                        help="Skip keyword pipeline step (reuse existing ml/output/diagnoses/keyword_predictions.csv)")
+                        help="Skip keyword pipeline step (reuse existing ml/output/evaluation/keyword_predictions.csv)")
     # Binary training args forwarded to run_binary_cycle:
     parser.add_argument("--label", default="",
                         help="Label for evaluation history (binary mode only)")
@@ -62,21 +61,19 @@ def main() -> int:
     if not args.skip_keyword_scan:
         print("\n=== Step 1: Keyword pipeline ===")
         run_keyword_scan(KeywordConfig(
-            csv_path="database/data/output/diagnoses.csv",
+            csv_path="ml/data/diagnoses.csv",
             id_col="case_id",
             diag_num_col="diagnosis_number",
             text_col="diagnosis",
             labels_csv_path="ml/labels/labels.csv",
-            out_dir="ml/output/diagnoses",
+            out_dir="ml/output/evaluation",
             max_rows=None,
         ))
 
     # Step 2: Train
     if args.mode == "binary":
         print("\n=== Step 2: Binary training cycle ===")
-        # run_binary_cycle uses argparse internally; pass args via sys.argv swap
-        old_argv, sys.argv = sys.argv, [
-            "run_training.py",
+        cycle_argv = [
             "--label", args.label,
             "--epochs", str(args.epochs),
             "--device", args.device,
@@ -86,21 +83,18 @@ def main() -> int:
             "--embedding-min-sim", str(args.embedding_min_sim),
             "--hidden-dim", str(args.hidden_dim),
         ] + (["--local-only"] if args.local_only else [])
-        try:
-            run_binary_cycle()
-        finally:
-            sys.argv = old_argv
+        run_binary_cycle(argv=cycle_argv)
 
     elif args.mode == "group":
         print("\n=== Step 2a: Build group training data ===")
         build_training_data(
             cache_path="ml/data/embedding_cache.npz",
-            keyword_csv_path="ml/output/diagnoses/keyword_predictions.csv",
-            out_path="ml/output/group_training_data.npz",
+            keyword_csv_path="ml/output/evaluation/keyword_predictions.csv",
+            out_path="ml/output/training/group_training_data.npz",
         )
         print("\n=== Step 2b: Train group classifier ===")
         train_group(
-            training_data_path="ml/output/group_training_data.npz",
+            training_data_path="ml/output/training/group_training_data.npz",
             out_path="ml/model/checkpoints/group_classifier_current.pt",
             epochs=args.epochs,
             lr=1e-3,

@@ -28,14 +28,12 @@ from sklearn.metrics import precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-from model.constants import PETBERT_EMB_DIM
+from model.constants import DEFAULT_TEXT_COLS, PETBERT_EMB_DIM
 from model.presence_classifier import PresenceClassifier
-from petbert_pipeline.pipeline import run_scan
-from petbert_pipeline.types import ScanConfig
-from petbert_pipeline.utils import device_from_arg
+from production.petbert_pipeline.pipeline import run_scan
+from production.petbert_pipeline.types import ScanConfig
+from production.petbert_pipeline.utils import device_from_arg
 from training.binary.build_training_pairs import build_pairs as build_training_pairs
-
-_DEFAULT_TEXT_COLS = ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "ANCILLARY TESTS")
 
 
 def _print_banner(title: str) -> None:
@@ -58,11 +56,11 @@ def _ensure_embedding_cache(
     run_scan(ScanConfig(
         csv_path="ml/data/report.csv",
         id_col="case_id",
-        text_cols=_DEFAULT_TEXT_COLS,
+        text_cols=DEFAULT_TEXT_COLS,
         col_weights={},
         model_name="SAVSNET/PetBERT",
         local_only=local_only,
-        out_dir="ml/output/report",
+        out_dir="ml/output/production",
         max_rows=None,
         batch_size=16,
         max_length=512,
@@ -153,7 +151,6 @@ def train(
     recall_weight: float = 0.5,
     skip_prerequisites: bool = False,
     local_only: bool = False,
-    col_combine: str = "learned",
 ) -> int:
     # Auto-build prerequisites if missing (i.e., run_cycle Steps 0–1)
     if not skip_prerequisites:
@@ -192,7 +189,7 @@ def train(
     # --- Load or compute embeddings --------------------------------------
     cache = None
     if embedding_cache:
-        from petbert_pipeline.embedding_cache import load_cache
+        from production.petbert_pipeline.embedding_cache import load_cache
         cache = load_cache(
             embedding_cache,
             model_name="SAVSNET/PetBERT",
@@ -378,13 +375,6 @@ def main() -> int:
     parser.add_argument("--local-only", action="store_true",
                         help="Use only locally cached PetBERT model files (no network calls). "
                              "Only relevant when the embedding cache needs to be built.")
-    parser.add_argument("--col-combine", default="learned",
-                        choices=["max", "mean", "learned"],
-                        help="How to combine per-column logits in col_pair_mode. "
-                             "'max': most informative column wins. "
-                             "'mean': average. "
-                             "'learned': Linear(n_cols→1) learns column weights globally. "
-                             "Default: learned.")
     args = parser.parse_args()
     return train(
         pairs_csv=args.pairs_csv,
@@ -404,7 +394,6 @@ def main() -> int:
         recall_weight=args.recall_weight,
         skip_prerequisites=args.skip_prerequisites,
         local_only=args.local_only,
-        col_combine=args.col_combine,
     )
 
 

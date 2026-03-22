@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from petbert_pipeline.types import ScanConfig
-
 from .taxonomy import TaxonomyLabel, build_taxonomy_label_texts, load_labels_taxonomy
 
 
@@ -25,15 +23,15 @@ class LabelCatalog:
     include_score_columns: bool
 
 
-def label_catalog_for_config(config: ScanConfig) -> LabelCatalog:
+def label_catalog_for_config(labels_csv_path: str) -> LabelCatalog:
     """Load the taxonomy CSV and build the label catalog for the pipeline.
 
     Steps:
-      1. Parse ml/labels/labels.csv into TaxonomyLabel records.
+      1. Parse the labels CSV into TaxonomyLabel records.
       2. Extract the plain term string for each label.
       3. Build descriptive sentences (used as PetBERT input for label embedding).
     """
-    taxonomy_labels = load_labels_taxonomy(config.labels_csv_path)
+    taxonomy_labels = load_labels_taxonomy(labels_csv_path)
     labels = [label.term for label in taxonomy_labels]
     return LabelCatalog(
         labels=labels,

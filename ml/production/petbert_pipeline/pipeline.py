@@ -103,7 +103,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         col_has_content = cache["col_has_content"]
         embeddings      = cache["mean_embeddings"]
         token_counts    = cache["token_counts"]
-        label_catalog   = label_catalog_for_config(config)
+        label_catalog   = label_catalog_for_config(config.labels_csv_path)
         label_embeddings = cache["label_embeddings"]
         enriched_label_embeddings = cache.get("enriched_label_embeddings")
     else:
@@ -162,7 +162,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)  # (N, 768)
 
         # --- Step 3: Build & embed taxonomy labels ----------------------------
-        label_catalog = label_catalog_for_config(config)
+        label_catalog = label_catalog_for_config(config.labels_csv_path)
         label_embeddings, _ = embed_texts(
             tokenizer,
             base_model,

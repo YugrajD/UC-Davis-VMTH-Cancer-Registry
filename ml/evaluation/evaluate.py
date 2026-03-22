@@ -170,12 +170,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate PetBERT predictions against keyword ground truth.")
     parser.add_argument(
         "--petbert-csv",
-        default="ml/output/report/petbert_scan_predictions.csv",
-        help="Path to petbert_scan_predictions.csv",
+        default="ml/output/production/petbert_predictions.csv",
+        help="Path to petbert_predictions.csv",
     )
     parser.add_argument(
         "--keyword-csv",
-        default="ml/output/diagnoses/keyword_predictions.csv",
+        default="ml/output/evaluation/keyword_predictions.csv",
         help="Path to keyword_predictions.csv",
     )
     parser.add_argument(

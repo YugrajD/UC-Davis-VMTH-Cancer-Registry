@@ -5,7 +5,7 @@ cancer labels (term, group, ICD code). Three classifier approaches have been exp
 
 | Approach | Status | Best result |
 |---|---|---|
-| Binary PresenceClassifier | Production best | 40.0% Good+Slight |
+| Binary PresenceClassifier | Production best | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
 | GroupClassifier | Implemented, not yet competitive | 21.9% Good+Slight |
 | Fine-tuned PetBERT | Work in progress | Not benchmarked |
 
@@ -287,7 +287,7 @@ stage, not an addition to it.
 | | Binary PresenceClassifier | GroupClassifier | Fine-tuned PetBERT |
 |---|---|---|---|
 | **Status** | Production best | Implemented, not competitive | Work in progress |
-| **Best result** | 40.0% Good+Slight | 21.9% Good+Slight | Not benchmarked |
+| **Best result** | 41.9% Good+Slight (Phase 16) | 21.9% Good+Slight | Not benchmarked |
 | **PetBERT** | Frozen | Frozen | Fine-tuned end-to-end |
 | **Training style** | Iterative (CO feedback) | One-shot | One-shot |
 | **Data requirement** | Works from ~1,273 cases | Needs ~10,000+ cases | Needs ~10,000+ cases |

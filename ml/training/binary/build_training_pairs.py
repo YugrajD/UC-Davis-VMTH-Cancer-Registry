@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from labels.taxonomy import load_labels_taxonomy
-from petbert_pipeline.utils import clean_text, merge_report_columns
+from production.petbert_pipeline.utils import clean_text, merge_report_columns
 
 _TEXT_COLS = [
     "HISTOPATHOLOGICAL SUMMARY",
@@ -42,7 +42,7 @@ def load_csv(path: Path) -> list[dict]:
 def build_pairs(
     *,
     report_csv: str = "ml/data/report.csv",
-    keyword_csv: str = "ml/output/diagnoses/keyword_predictions.csv",
+    keyword_csv: str = "ml/output/evaluation/keyword_predictions.csv",
     evaluation_csv: str = "ml/output/evaluation/evaluation.csv",
     labels_csv: str = "ml/labels/labels.csv",
     out: str = "ml/data/training_pairs.csv",
@@ -230,7 +230,7 @@ def build_pairs(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build training pairs for the presence classifier.")
     parser.add_argument("--report-csv", default="ml/data/report.csv")
-    parser.add_argument("--keyword-csv", default="ml/output/diagnoses/keyword_predictions.csv")
+    parser.add_argument("--keyword-csv", default="ml/output/evaluation/keyword_predictions.csv")
     parser.add_argument("--evaluation-csv", default="ml/output/evaluation/evaluation.csv")
     parser.add_argument("--labels-csv", default="ml/labels/labels.csv")
     parser.add_argument("--out", default="ml/data/training_pairs.csv")

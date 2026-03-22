@@ -4,12 +4,12 @@ This document describes the **keyword pipeline** — the system that maps indivi
 diagnosis field text to standardized Vet-ICD-O-canine-1 labels using rule-based
 keyword matching.
 
-> **Role in the two-pipeline architecture:**
-> - **Keyword pipeline** (this document) — training only: `diagnosis text → cancer label`
->   Produces ground-truth labels used to train the PetBERT classifier.
->   Does not run in production. Diagnosis rows with no keyword match are treated as
->   non-cancer (Uncategorized).
-> - **PetBERT pipeline** (`petbert_pipeline/`) — production system: `report text → cancer label`
+> **Role in the three-pipeline architecture:**
+> - **Keyword pipeline** (this document) — evaluation only: `diagnosis text → cancer label`
+>   Lives in `evaluation/keyword_pipeline/`. Produces ground-truth labels used to train
+>   the PetBERT classifier. Does not run in production. Diagnosis rows with no keyword
+>   match are treated as non-cancer (Uncategorized).
+> - **PetBERT pipeline** (`production/petbert_pipeline/`) — production system: `report text → cancer label`
 >   See [petbert-pipeline.md](petbert-pipeline.md).
 
 The keyword pipeline requires no ML model. Each diagnosis string is scanned for
@@ -57,7 +57,7 @@ training signal.
 
 ## Pipeline Flow (Step by Step)
 
-The entry point is `run_keyword_scan()` in `ml/keyword_pipeline/pipeline.py`.
+The entry point is `run_keyword_scan()` in `ml/evaluation/keyword_pipeline/pipeline.py`.
 
 ### Step 1: Normalize Text
 
@@ -160,7 +160,7 @@ Results are written to `--out-dir`:
 
 ## Input Format
 
-The pipeline reads `database/data/output/diagnoses.csv`, which contains one row
+The pipeline reads `ml/data/diagnoses.csv`, which contains one row
 per individual diagnosis (a single pathology report can have multiple rows):
 
 | Column | Role |
@@ -175,12 +175,12 @@ per individual diagnosis (a single pathology report can have multiple rows):
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--csv` | `database/data/output/diagnoses.csv` | Input diagnoses CSV path |
+| `--csv` | `ml/data/diagnoses.csv` | Input diagnoses CSV path |
 | `--id-col` | `case_id` | Case ID column name |
 | `--diag-num-col` | `diagnosis_number` | Diagnosis number column name (optional; passed through to output if present) |
 | `--text-col` | `diagnosis` | Column containing the diagnosis text to match |
 | `--labels-csv` | `ml/labels/labels.csv` | Path to Vet-ICD-O taxonomy CSV |
-| `--out-dir` | `ml/output/diagnoses` | Output directory |
+| `--out-dir` | `ml/output/evaluation` | Output directory |
 | `--max-rows` | all | Cap on input rows (useful for quick testing) |
 
 ---
@@ -189,18 +189,23 @@ per individual diagnosis (a single pathology report can have multiple rows):
 
 **Standard run** (from repo root):
 ```bash
-PYTHONPATH=ml ml/.venv/Scripts/python.exe -m keyword_pipeline \
-  --csv database/data/output/diagnoses.csv \
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py
+```
+
+Or invoking the keyword pipeline directly:
+```bash
+PYTHONPATH=ml ml/.venv/Scripts/python.exe -m evaluation.keyword_pipeline \
+  --csv ml/data/diagnoses.csv \
   --labels-csv ml/labels/labels.csv \
-  --out-dir ml/output/diagnoses
+  --out-dir ml/output/evaluation
 ```
 
 **Quick test on first 200 rows:**
 ```bash
-PYTHONPATH=ml ml/.venv/Scripts/python.exe -m keyword_pipeline \
-  --csv database/data/output/diagnoses.csv \
+PYTHONPATH=ml ml/.venv/Scripts/python.exe -m evaluation.keyword_pipeline \
+  --csv ml/data/diagnoses.csv \
   --labels-csv ml/labels/labels.csv \
-  --out-dir ml/output/diagnoses \
+  --out-dir ml/output/evaluation \
   --max-rows 200
 ```
 
@@ -291,10 +296,10 @@ like `"NO EVIDENCE OF METASTASIS"` (see negation limitation above).
 
 | File | Role |
 |------|------|
-| `ml/keyword_pipeline/pipeline.py` | Core logic: `_normalize`, `_build_keyword_index`, `_build_oma_index`, `_match_diagnosis`, `run_keyword_scan` |
-| `ml/keyword_pipeline/cli.py` | Command-line argument parsing |
-| `ml/keyword_pipeline/__main__.py` | `python -m keyword_pipeline` entry point |
+| `ml/evaluation/keyword_pipeline/pipeline.py` | Core logic: `_normalize`, `_build_keyword_index`, `_build_oma_index`, `_match_diagnosis`, `run_keyword_scan` |
+| `ml/evaluation/keyword_pipeline/cli.py` | Command-line argument parsing |
+| `ml/evaluation/keyword_pipeline/__main__.py` | `python -m evaluation.keyword_pipeline` entry point |
 | `ml/labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser (`TaxonomyLabel`, `load_labels_taxonomy`) |
 | `ml/labels/labels.csv` | Vet-ICD-O-canine-1 taxonomy (~845 unique terms) |
-| `ml/output/diagnoses/keyword_predictions.csv` | Output: per-row match results |
-| `ml/output/diagnoses/keyword_summary.json` | Output: aggregate run statistics |
+| `ml/output/evaluation/keyword_predictions.csv` | Output: per-row match results |
+| `ml/output/evaluation/keyword_summary.json` | Output: aggregate run statistics |

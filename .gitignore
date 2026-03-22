@@ -51,6 +51,9 @@ Thumbs.db
 # Geo data downloads
 geo/data/
 
+# ML backup (local restructure backup — never commit)
+ml_backup/
+
 # ML model weights
 ml/model/weights/
 *.pt

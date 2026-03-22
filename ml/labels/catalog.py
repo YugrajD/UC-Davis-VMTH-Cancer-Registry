@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from petbert_scan.types import ScanConfig
+from petbert_pipeline.types import ScanConfig
 
 from .taxonomy import TaxonomyLabel, build_taxonomy_label_texts, load_labels_taxonomy
 

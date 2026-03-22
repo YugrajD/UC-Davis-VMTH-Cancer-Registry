@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Parse and de-identify 2024-2025 diagnostics.csv into three output files:
+Parse and de-identify all '* diagnostics.csv' files in database/data/ into three output files:
   - demographics.csv
   - diagnoses.csv
-  - reportText.csv
+  - report.csv
 """
 
 import csv
+import glob
 import re
 import os
 from collections import OrderedDict
 
-INPUT_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', '2024-2025 diagnostics.csv')
+DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'output')
 
 # Map known typos/variants to canonical heading names
@@ -193,8 +194,19 @@ def parse_cases(input_file):
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    cases = parse_cases(INPUT_FILE)
-    print(f"Found {len(cases)} cases")
+    input_files = sorted(glob.glob(os.path.join(DATA_DIR, '* diagnostics.csv')))
+    if not input_files:
+        print(f"No '* diagnostics.csv' files found in {DATA_DIR}")
+        return
+
+    all_raw_cases = []
+    for path in input_files:
+        file_cases = parse_cases(path)
+        print(f"  {os.path.basename(path)}: {len(file_cases)} cases")
+        all_raw_cases.extend(file_cases)
+
+    cases = all_raw_cases
+    print(f"Total: {len(cases)} cases across {len(input_files)} file(s)")
 
     # Parse each case and collect all heading names (preserving first-seen order)
     all_headings = []

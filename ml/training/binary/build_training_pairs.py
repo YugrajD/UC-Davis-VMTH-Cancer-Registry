@@ -20,15 +20,12 @@ Five sources of examples:
 import argparse
 import csv
 import random
-import sys
 from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 from labels.taxonomy import load_labels_taxonomy
-from petbert_scan.utils import clean_text, merge_report_columns
+from petbert_pipeline.utils import clean_text, merge_report_columns
 
 _TEXT_COLS = [
     "HISTOPATHOLOGICAL SUMMARY",
@@ -40,6 +37,194 @@ _TEXT_COLS = [
 def load_csv(path: Path) -> list[dict]:
     with open(path, encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def build_pairs(
+    *,
+    report_csv: str = "ml/data/report.csv",
+    keyword_csv: str = "ml/output/diagnoses/keyword_predictions.csv",
+    evaluation_csv: str = "ml/output/evaluation/evaluation.csv",
+    labels_csv: str = "ml/labels/labels.csv",
+    out: str = "ml/data/training_pairs.csv",
+    easy_neg_per_pos: int = 3,
+    fp_neg_per_case: int = 10,
+    co_neg_per_case: int = 3,
+    co_neg_extra_csv: str = "",
+    co_neg_bank_csv: str = "",
+    seed: int = 42,
+    max_pos_per_group: int = 0,
+) -> None:
+    random.seed(seed)
+
+    # --- Load report text ------------------------------------------------
+    df = pd.read_csv(report_csv, encoding="latin-1")
+    df.columns = [col.lstrip("\ufeff").lstrip("ï»¿") for col in df.columns]
+    available_cols = [c for c in _TEXT_COLS if c in df.columns]
+    if not available_cols:
+        print(f"Warning: none of {_TEXT_COLS} found in report CSV. Found: {df.columns.tolist()}")
+    df["_merged"] = df.apply(lambda row: merge_report_columns(row, available_cols), axis=1)
+    case_to_text: dict[str, str] = {
+        clean_text(row["case_id"]): row["_merged"]
+        for _, row in df.iterrows()
+        if clean_text(row.get("case_id", ""))
+    }
+
+    # --- Load taxonomy labels --------------------------------------------
+    taxonomy = load_labels_taxonomy(labels_csv)
+    term_to_group = {t.term: t.group for t in taxonomy}
+    all_term_group = [(t.term, t.group) for t in taxonomy]
+
+    # --- Load keyword positives ------------------------------------------
+    kw_rows = load_csv(Path(keyword_csv))
+    case_pos_terms: dict[str, set[str]] = {}
+    for row in kw_rows:
+        term = row["matched_term"].strip()
+        if term:
+            case_pos_terms.setdefault(row["case_id"], set()).add(term)
+
+    # --- Build output rows -----------------------------------------------
+    out_rows: list[dict] = []
+
+    # Positives (optionally capped per group to reduce training imbalance)
+    group_pos_count: dict[str, int] = {}
+    for cid, terms in case_pos_terms.items():
+        text = case_to_text.get(cid, "")
+        if not text:
+            continue
+        for term in terms:
+            group = term_to_group.get(term, "")
+            if max_pos_per_group > 0:
+                if group_pos_count.get(group, 0) >= max_pos_per_group:
+                    continue
+                group_pos_count[group] = group_pos_count.get(group, 0) + 1
+            out_rows.append({
+                "case_id": cid,
+                "merged_text": text,
+                "label_term": term,
+                "label_group": group,
+                "target": 1,
+                "source": "positive",
+            })
+
+    # Hard negatives — false positive predictions from evaluation
+    eval_rows = load_csv(Path(evaluation_csv))
+
+    # CO negatives — completely-off predictions (case has keyword labels but wrong group)
+    # These are the specific (case, wrong-label) pairs that fool the cosine similarity step.
+    # Capped per case to avoid one prolific case dominating the training set.
+    # Optionally merged from a second historical evaluation CSV to reduce cycle-to-cycle
+    # oscillation caused by using only the most recent cycle's predictions.
+    # When a rolling bank is provided, use it as the sole CO source.
+    # This avoids double-counting: the bank already includes the previous cycle's
+    # completely-off rows, which are also present in evaluation.csv.
+    if co_neg_bank_csv and Path(co_neg_bank_csv).exists():
+        co_eval_sources = [load_csv(Path(co_neg_bank_csv))]
+        print(f"  Using CO bank ({co_neg_bank_csv})")
+    else:
+        co_eval_sources = [eval_rows]
+        if co_neg_extra_csv:
+            extra_path = Path(co_neg_extra_csv)
+            if extra_path.exists():
+                co_eval_sources.append(load_csv(extra_path))
+                print(f"  Loaded extra CO negatives from {co_neg_extra_csv}")
+            else:
+                print(f"  Warning: --co-neg-extra-csv path not found: {co_neg_extra_csv}")
+
+    co_case_count: dict[str, int] = {}
+    for co_rows in co_eval_sources:
+        for row in co_rows:
+            if row["verdict"] != "completely_off":
+                continue
+            text = case_to_text.get(row["case_id"], "")
+            if not text:
+                continue
+            if co_neg_per_case > 0:
+                if co_case_count.get(row["case_id"], 0) >= co_neg_per_case:
+                    continue
+                co_case_count[row["case_id"]] = co_case_count.get(row["case_id"], 0) + 1
+            out_rows.append({
+                "case_id": row["case_id"],
+                "merged_text": text,
+                "label_term": row["predicted_term"],
+                "label_group": row["predicted_group"],
+                "target": 0,
+                "source": "co_negative",
+            })
+
+    fp_case_covered: dict[str, set[str]] = {}  # case_id -> terms already added
+    for row in eval_rows:
+        if row["verdict"] != "false_positive":
+            continue
+        text = case_to_text.get(row["case_id"], "")
+        if not text:
+            continue
+        out_rows.append({
+            "case_id": row["case_id"],
+            "merged_text": text,
+            "label_term": row["predicted_term"],
+            "label_group": row["predicted_group"],
+            "target": 0,
+            "source": "hard_negative",
+        })
+        fp_case_covered.setdefault(row["case_id"], set()).add(row["predicted_term"])
+
+    # FP extra negatives — additional random labels for each unique FP case
+    # The hard negatives above only cover labels the pipeline already predicted.
+    # Sampling extra labels teaches the classifier that FP cases have NO valid
+    # label anywhere in the taxonomy, not just for the labels already seen.
+    for cid, covered_terms in fp_case_covered.items():
+        text = case_to_text.get(cid, "")
+        if not text:
+            continue
+        candidates = [(term, group) for term, group in all_term_group if term not in covered_terms]
+        sample = random.sample(candidates, min(fp_neg_per_case, len(candidates)))
+        for term, group in sample:
+            out_rows.append({
+                "case_id": cid,
+                "merged_text": text,
+                "label_term": term,
+                "label_group": group,
+                "target": 0,
+                "source": "fp_extra_negative",
+            })
+
+    # Easy negatives — random wrong labels for labeled cases
+    for cid, pos_terms in case_pos_terms.items():
+        text = case_to_text.get(cid, "")
+        if not text:
+            continue
+        candidates = [(term, group) for term, group in all_term_group if term not in pos_terms]
+        sample = random.sample(candidates, min(easy_neg_per_pos, len(candidates)))
+        for term, group in sample:
+            out_rows.append({
+                "case_id": cid,
+                "merged_text": text,
+                "label_term": term,
+                "label_group": group,
+                "target": 0,
+                "source": "easy_negative",
+            })
+
+    # --- Write -----------------------------------------------------------
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["case_id", "merged_text", "label_term", "label_group", "target", "source"]
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(out_rows)
+
+    n_pos = sum(1 for r in out_rows if r["target"] == 1)
+    n_hard = sum(1 for r in out_rows if r["source"] == "hard_negative")
+    n_fp_extra = sum(1 for r in out_rows if r["source"] == "fp_extra_negative")
+    n_co = sum(1 for r in out_rows if r["source"] == "co_negative")
+    n_easy = sum(1 for r in out_rows if r["source"] == "easy_negative")
+    print(f"Wrote {len(out_rows)} training pairs to {out_path}")
+    print(f"  Positives:          {n_pos}")
+    print(f"  Hard negatives:     {n_hard}")
+    print(f"  FP extra negatives: {n_fp_extra}")
+    print(f"  CO negatives:       {n_co}")
+    print(f"  Easy negatives:     {n_easy}")
 
 
 def main() -> int:
@@ -95,178 +280,20 @@ def main() -> int:
              "from dominating classifier training. Recommended: 80.",
     )
     args = parser.parse_args()
-
-    random.seed(args.seed)
-
-    # --- Load report text ------------------------------------------------
-    df = pd.read_csv(args.report_csv, encoding="latin-1")
-    df.columns = [col.lstrip("\ufeff").lstrip("ï»¿") for col in df.columns]
-    available_cols = [c for c in _TEXT_COLS if c in df.columns]
-    if not available_cols:
-        print(f"Warning: none of {_TEXT_COLS} found in report CSV. Found: {df.columns.tolist()}")
-    df["_merged"] = df.apply(lambda row: merge_report_columns(row, available_cols), axis=1)
-    case_to_text: dict[str, str] = {
-        clean_text(row["case_id"]): row["_merged"]
-        for _, row in df.iterrows()
-        if clean_text(row.get("case_id", ""))
-    }
-
-    # --- Load taxonomy labels --------------------------------------------
-    taxonomy = load_labels_taxonomy(args.labels_csv)
-    term_to_group = {t.term: t.group for t in taxonomy}
-    all_term_group = [(t.term, t.group) for t in taxonomy]
-
-    # --- Load keyword positives ------------------------------------------
-    kw_rows = load_csv(Path(args.keyword_csv))
-    case_pos_terms: dict[str, set[str]] = {}
-    for row in kw_rows:
-        term = row["matched_term"].strip()
-        if term:
-            case_pos_terms.setdefault(row["case_id"], set()).add(term)
-
-    # --- Build output rows -----------------------------------------------
-    out_rows: list[dict] = []
-
-    # Positives (optionally capped per group to reduce training imbalance)
-    group_pos_count: dict[str, int] = {}
-    for cid, terms in case_pos_terms.items():
-        text = case_to_text.get(cid, "")
-        if not text:
-            continue
-        for term in terms:
-            group = term_to_group.get(term, "")
-            if args.max_pos_per_group > 0:
-                if group_pos_count.get(group, 0) >= args.max_pos_per_group:
-                    continue
-                group_pos_count[group] = group_pos_count.get(group, 0) + 1
-            out_rows.append({
-                "case_id": cid,
-                "merged_text": text,
-                "label_term": term,
-                "label_group": group,
-                "target": 1,
-                "source": "positive",
-            })
-
-    # Hard negatives — false positive predictions from evaluation
-    eval_rows = load_csv(Path(args.evaluation_csv))
-
-    # CO negatives — completely-off predictions (case has keyword labels but wrong group)
-    # These are the specific (case, wrong-label) pairs that fool the cosine similarity step.
-    # Capped per case to avoid one prolific case dominating the training set.
-    # Optionally merged from a second historical evaluation CSV to reduce cycle-to-cycle
-    # oscillation caused by using only the most recent cycle's predictions.
-    # When a rolling bank is provided, use it as the sole CO source.
-    # This avoids double-counting: the bank already includes the previous cycle's
-    # completely-off rows, which are also present in evaluation.csv.
-    if args.co_neg_bank_csv and Path(args.co_neg_bank_csv).exists():
-        co_eval_sources = [load_csv(Path(args.co_neg_bank_csv))]
-        print(f"  Using CO bank ({args.co_neg_bank_csv})")
-    else:
-        co_eval_sources = [eval_rows]
-        if args.co_neg_extra_csv:
-            extra_path = Path(args.co_neg_extra_csv)
-            if extra_path.exists():
-                co_eval_sources.append(load_csv(extra_path))
-                print(f"  Loaded extra CO negatives from {args.co_neg_extra_csv}")
-            else:
-                print(f"  Warning: --co-neg-extra-csv path not found: {args.co_neg_extra_csv}")
-
-    co_case_count: dict[str, int] = {}
-    for co_rows in co_eval_sources:
-        for row in co_rows:
-            if row["verdict"] != "completely_off":
-                continue
-            text = case_to_text.get(row["case_id"], "")
-            if not text:
-                continue
-            if args.co_neg_per_case > 0:
-                if co_case_count.get(row["case_id"], 0) >= args.co_neg_per_case:
-                    continue
-                co_case_count[row["case_id"]] = co_case_count.get(row["case_id"], 0) + 1
-            out_rows.append({
-                "case_id": row["case_id"],
-                "merged_text": text,
-                "label_term": row["predicted_term"],
-                "label_group": row["predicted_group"],
-                "target": 0,
-                "source": "co_negative",
-            })
-
-    fp_case_covered: dict[str, set[str]] = {}  # case_id -> terms already added
-    for row in eval_rows:
-        if row["verdict"] != "false_positive":
-            continue
-        text = case_to_text.get(row["case_id"], "")
-        if not text:
-            continue
-        out_rows.append({
-            "case_id": row["case_id"],
-            "merged_text": text,
-            "label_term": row["predicted_term"],
-            "label_group": row["predicted_group"],
-            "target": 0,
-            "source": "hard_negative",
-        })
-        fp_case_covered.setdefault(row["case_id"], set()).add(row["predicted_term"])
-
-    # FP extra negatives — additional random labels for each unique FP case
-    # The hard negatives above only cover labels the pipeline already predicted.
-    # Sampling extra labels teaches the classifier that FP cases have NO valid
-    # label anywhere in the taxonomy, not just for the labels already seen.
-    for cid, covered_terms in fp_case_covered.items():
-        text = case_to_text.get(cid, "")
-        if not text:
-            continue
-        candidates = [(term, group) for term, group in all_term_group if term not in covered_terms]
-        sample = random.sample(candidates, min(args.fp_neg_per_case, len(candidates)))
-        for term, group in sample:
-            out_rows.append({
-                "case_id": cid,
-                "merged_text": text,
-                "label_term": term,
-                "label_group": group,
-                "target": 0,
-                "source": "fp_extra_negative",
-            })
-
-    # Easy negatives — random wrong labels for labeled cases
-    for cid, pos_terms in case_pos_terms.items():
-        text = case_to_text.get(cid, "")
-        if not text:
-            continue
-        candidates = [(term, group) for term, group in all_term_group if term not in pos_terms]
-        sample = random.sample(candidates, min(args.easy_neg_per_pos, len(candidates)))
-        for term, group in sample:
-            out_rows.append({
-                "case_id": cid,
-                "merged_text": text,
-                "label_term": term,
-                "label_group": group,
-                "target": 0,
-                "source": "easy_negative",
-            })
-
-    # --- Write -----------------------------------------------------------
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["case_id", "merged_text", "label_term", "label_group", "target", "source"]
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(out_rows)
-
-    n_pos = sum(1 for r in out_rows if r["target"] == 1)
-    n_hard = sum(1 for r in out_rows if r["source"] == "hard_negative")
-    n_fp_extra = sum(1 for r in out_rows if r["source"] == "fp_extra_negative")
-    n_co = sum(1 for r in out_rows if r["source"] == "co_negative")
-    n_easy = sum(1 for r in out_rows if r["source"] == "easy_negative")
-    print(f"Wrote {len(out_rows)} training pairs to {out_path}")
-    print(f"  Positives:          {n_pos}")
-    print(f"  Hard negatives:     {n_hard}")
-    print(f"  FP extra negatives: {n_fp_extra}")
-    print(f"  CO negatives:       {n_co}")
-    print(f"  Easy negatives:     {n_easy}")
+    build_pairs(
+        report_csv=args.report_csv,
+        keyword_csv=args.keyword_csv,
+        evaluation_csv=args.evaluation_csv,
+        labels_csv=args.labels_csv,
+        out=args.out,
+        easy_neg_per_pos=args.easy_neg_per_pos,
+        fp_neg_per_case=args.fp_neg_per_case,
+        co_neg_per_case=args.co_neg_per_case,
+        co_neg_extra_csv=args.co_neg_extra_csv,
+        co_neg_bank_csv=args.co_neg_bank_csv,
+        seed=args.seed,
+        max_pos_per_group=args.max_pos_per_group,
+    )
     return 0
 
 

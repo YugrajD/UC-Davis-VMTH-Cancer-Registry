@@ -5,9 +5,9 @@ The history is written to ml/output/evaluation/evaluation_history.csv and
 a formatted trend table is printed to the console.
 
 Usage:
-  python ml/scripts/utils/log_evaluation.py
-  python ml/scripts/utils/log_evaluation.py --label "after training v1"
-  python ml/scripts/utils/log_evaluation.py --show          # print history without recording
+  python ml/training/log_evaluation.py
+  python ml/training/log_evaluation.py --label "after training v1"
+  python ml/training/log_evaluation.py --show          # print history without recording
 """
 
 import argparse
@@ -87,17 +87,17 @@ def _print_history(rows: list[dict]) -> None:
 
     prev: dict | None = None
     for i, row in enumerate(rows, start=1):
-        g   = float(row["good_pct"])
-        sl  = float(row["slightly_off_pct"])
-        off = float(row["completely_off_pct"])
-        fp  = float(row["false_positive_pct"])
+        g   = float(row.get("good_pct")            or 0)
+        sl  = float(row.get("slightly_off_pct")   or 0)
+        off = float(row.get("completely_off_pct") or 0)
+        fp  = float(row.get("false_positive_pct") or 0)
         fn  = float(row.get("false_negative_pct") or 0)
 
-        pg   = float(prev["good_pct"])                      if prev else None
-        psl  = float(prev["slightly_off_pct"])              if prev else None
-        poff = float(prev["completely_off_pct"])            if prev else None
-        pfp  = float(prev["false_positive_pct"])            if prev else None
-        pfn  = float(prev.get("false_negative_pct") or 0)  if prev else None
+        pg   = float(prev.get("good_pct")            or 0) if prev else None
+        psl  = float(prev.get("slightly_off_pct")   or 0) if prev else None
+        poff = float(prev.get("completely_off_pct") or 0) if prev else None
+        pfp  = float(prev.get("false_positive_pct") or 0) if prev else None
+        pfn  = float(prev.get("false_negative_pct") or 0) if prev else None
 
         label = row["label"] or ""
         ts    = row["timestamp"][:19]  # trim microseconds
@@ -116,33 +116,22 @@ def _print_history(rows: list[dict]) -> None:
     print()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Log evaluation results to history.")
-    parser.add_argument("--summary", default=_SUMMARY_DEFAULT,
-                        help="Path to evaluation_summary.csv")
-    parser.add_argument("--history", default=_HISTORY_DEFAULT,
-                        help="Path to the persistent history CSV")
-    parser.add_argument("--label", default="",
-                        help="Short description for this run (e.g. 'after training v1')")
-    parser.add_argument("--show", action="store_true",
-                        help="Print history without recording a new entry")
-    args = parser.parse_args()
-
-    summary_path = Path(args.summary)
-    history_path = Path(args.history)
-
-    if args.show:
-        _print_history(_read_history(history_path))
-        return 0
+def log_evaluation(
+    summary: str = _SUMMARY_DEFAULT,
+    history: str = _HISTORY_DEFAULT,
+    label: str = "",
+) -> int:
+    summary_path = Path(summary)
+    history_path = Path(history)
 
     if not summary_path.exists():
-        print(f"Error: {summary_path} not found. Run evaluate_predictions.py first.")
+        print(f"Error: {summary_path} not found. Run evaluate.py first.")
         return 1
 
     overall = _read_overall(summary_path)
     entry = {
         "timestamp": datetime.now().isoformat(sep=" ", timespec="seconds"),
-        "label":     args.label,
+        "label":     label,
         "total":               overall["total"],
         "good":                overall["good"],
         "good_pct":            overall["good_pct"],
@@ -159,10 +148,29 @@ def main() -> int:
     history_path.parent.mkdir(parents=True, exist_ok=True)
     _append_history(history_path, entry)
 
-    history = _read_history(history_path)
-    _print_history(history)
+    history_rows = _read_history(history_path)
+    _print_history(history_rows)
     print(f"Recorded to {history_path}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Log evaluation results to history.")
+    parser.add_argument("--summary", default=_SUMMARY_DEFAULT,
+                        help="Path to evaluation_summary.csv")
+    parser.add_argument("--history", default=_HISTORY_DEFAULT,
+                        help="Path to the persistent history CSV")
+    parser.add_argument("--label", default="",
+                        help="Short description for this run (e.g. 'after training v1')")
+    parser.add_argument("--show", action="store_true",
+                        help="Print history without recording a new entry")
+    args = parser.parse_args()
+
+    if args.show:
+        _print_history(_read_history(Path(args.history)))
+        return 0
+
+    return log_evaluation(summary=args.summary, history=args.history, label=args.label)
 
 
 if __name__ == "__main__":

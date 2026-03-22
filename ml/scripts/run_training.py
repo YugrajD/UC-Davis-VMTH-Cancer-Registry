@@ -54,6 +54,8 @@ def main() -> int:
                         help="Min embedding similarity threshold (binary mode, default: 0.05)")
     parser.add_argument("--local-only", action="store_true",
                         help="Use only locally cached PetBERT model files")
+    parser.add_argument("--hidden-dim", type=int, default=256,
+                        help="MLP hidden layer size (binary mode, default: 256). Try 512 or 768.")
     args = parser.parse_args()
 
     # Step 1: Keyword scan (generate ground truth labels)
@@ -82,6 +84,7 @@ def main() -> int:
             "--co-neg-per-case", str(args.co_neg_per_case),
             "--fp-neg-per-case", str(args.fp_neg_per_case),
             "--embedding-min-sim", str(args.embedding_min_sim),
+            "--hidden-dim", str(args.hidden_dim),
         ] + (["--local-only"] if args.local_only else [])
         try:
             run_binary_cycle()

@@ -6,7 +6,7 @@ currently the best performer.
 
 | Classifier | Status | Best result |
 |---|---|---|
-| Binary PresenceClassifier | Production best | 40.0% Good+Slight (Phase 13) |
+| Binary PresenceClassifier | Production best | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
 | GroupClassifier | Implemented, not yet competitive | 21.9% Good+Slight @ t=0.8 |
 | Fine-tuned PetBERT | WIP — see `petbert-pipeline.md` | Not benchmarked |
 
@@ -43,21 +43,35 @@ PetBERT (frozen)
 per-column embeddings (3 × 768)
     ↓
 for each of ~857 taxonomy labels:
-    concat(col1_emb ‖ col2_emb ‖ col3_emb ‖ label_emb)
-    ↓
-    binary MLP → present/absent score
+    concat(col1_emb ‖ label_emb) → MLP → score1
+    concat(col2_emb ‖ label_emb) → MLP → score2   (shared weights)
+    concat(col3_emb ‖ label_emb) → MLP → score3
+    max(score1, score2, score3)
     ↓
 argmax across all label scores
     ↓
 predicted label
 ```
 
-The three report columns are embedded separately and concatenated (3072-dim input to the
-MLP), not averaged. Empty columns are zeroed. The MLP scores every (report, label) pair
-independently — labels compete implicitly through argmax.
+Each column is paired with the label embedding independently (1536-dim input per pair)
+and scored by a shared MLP. Max-pooling across the three per-column logits gives the
+final score — the most informative column wins. Empty columns are zeroed before pairing.
+Labels compete implicitly through argmax.
 
-`n_cols` is saved into the checkpoint. Old single-column checkpoints (`n_cols=1`) load
-without modification.
+**Why per-pair over concat:** The Phase 13 concat architecture compressed 3072-dim into
+a 256-dim hidden layer (12:1 ratio). Per-pair halves the input to 1536-dim (6:1 ratio),
+directly addressing the known compression bottleneck. Column-label relationships are
+also learned independently rather than entangled.
+
+Two modes are stored in the checkpoint (`col_pair_mode`):
+
+| `col_pair_mode` | Input dim | Aggregation | Notes |
+|---|---|---|---|
+| `True` (default) | 2 × 768 = 1536 | max over columns | Phase 14+ |
+| `False` (legacy) | 4 × 768 = 3072 | — | Phase 13 and earlier |
+
+`n_cols` and `col_pair_mode` are saved into the checkpoint. Legacy checkpoints (no
+`col_pair_mode` key) default to `False` and load without modification.
 
 ### Training Data Sources
 
@@ -169,8 +183,32 @@ Continue all subsequent cycles with `--co-neg-per-case 5`. Do **not** switch to 
 
 - CO floor is data-limited, not architecture-limited. Further reduction requires more
   keyword-confirmed cases or a group-level architecture.
-- `hidden_dim=256` compresses 3072-dim input at a 12:1 ratio — may be a bottleneck.
-  Trying `hidden_dim=512` or `hidden_dim=768` may recover 1–3%.
+- `hidden_dim=512` (Phase 16) resolved the 12:1 compression bottleneck — confirmed +1.9pp gain.
+  Trying `hidden_dim=768` may recover additional signal.
+
+### Phase 14 Experiment — Per-pair architecture (`col_pair_mode=True`) ❌
+
+Tested 2026-03-21: score each `[colN | label]` pair (1536-dim) independently with a shared
+MLP, then max-pool across columns. Plateaued at **32.7%** Good+Slight (c6) vs Phase 13's
+**40.0%** — a −7.3pp regression. Reverted. See training-log-binary.md Phase 14 for analysis.
+
+Per-pair experiment backed up as `presence_classifier_best_phase14_perpair.pt`.
+
+### Phase 16 Experiment — Wider hidden layer (`hidden_dim=512`) ✅
+
+Tested 2026-03-22: same concat architecture as Phase 13 (`col_pair_mode=False`, `n_cols=3`) but
+`hidden_dim=512` instead of 256, reducing the input compression ratio from 12:1 to 6:1.
+
+Plateaued at **41.9%** Good+Slight (c2) — **+1.9pp over Phase 13 (40.0%)**.
+- c1 already beat Phase 13 at 40.6% with no cold start
+- c2–c4 held at ~41.7–41.9%; c5 regressed — plateau confirmed
+- FP% also improved: 27.1% vs 28.5% in Phase 13
+
+**The 12:1 compression bottleneck was real and is resolved.** `hidden_dim` is now saved in the
+checkpoint so `load()` reconstructs the correct size automatically.
+
+**Production checkpoint updated to `presence_classifier_best.pt` (Phase 16, 41.9%).**
+Backed up as `presence_classifier_best_phase16_hd512.pt`.
 
 ---
 

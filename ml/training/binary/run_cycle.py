@@ -136,6 +136,10 @@ def main() -> int:
         help="Path to keyword_predictions.csv for label embedding enrichment. "
              "(default: disabled)",
     )
+    parser.add_argument(
+        "--hidden-dim", type=int, default=256,
+        help="MLP hidden layer size (default: 256). Try 512 or 768 to reduce compression.",
+    )
     args = parser.parse_args()
 
     label = args.label or f"classifier {datetime.now().strftime('%Y-%m-%d %H:%M')}"
@@ -165,6 +169,7 @@ def main() -> int:
         pos_weight=args.pos_weight,
         recall_weight=args.recall_weight,
         embedding_cache=args.embedding_cache or None,
+        hidden_dim=args.hidden_dim,
     )
 
     # 3 ── Re-run pipeline with trained classifier ─────────────────────────────

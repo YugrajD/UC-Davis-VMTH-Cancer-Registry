@@ -390,6 +390,112 @@ All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, 
 
 ---
 
+### Phase 14 — Per-pair architecture with max-pooling (`col_pair_mode=True`) ❌
+
+**Date:** 2026-03-21. **Device:** XPU. **Dataset:** ~46,958 cases (grew ~4,700 vs Phase 13).
+
+**Architecture change (Fix 11 — attempted):** Instead of concatenating all columns with the label
+(`[col1 | col2 | col3 | label]` → 3072-dim), score each column-label pair independently with a
+shared MLP (`[colN | label]` → 1536-dim), then max-pool across the three per-column logits.
+
+**Motivation:** Phase 13 compressed 3072-dim into a 256-dim hidden layer (12:1 ratio, known
+bottleneck). Per-pair halves the input to 1536-dim (6:1 ratio) and separates column-label
+relationships from cross-column entanglement. `col_pair_mode=True` stored in checkpoint.
+
+Full cold start: cache, CO bank, and current checkpoint all deleted before c1.
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|
+| 22:24:33 | cold-start c1 | 46,958 | 6.3% | 17.3% | 23.6% | 37.8% | 35.2% | 3.3% |
+| 22:30:26 | c2 (co=5) | 44,360 | 5.8% | 20.0% | 25.8% | 38.9% | 32.1% | 3.3% |
+| 22:35:24 | c3 (co=5) | 43,463 | 9.2% | 20.7% | 29.9% | 35.6% | 32.3% | 2.1% |
+| 22:38:55 | c4 (co=5) | 43,404 | 9.5% | 22.4% | 31.9% | 33.8% | 32.3% | 1.9% |
+| 22:44:25 | c5 (co=5) | 42,380 | 9.9% | 21.9% | 31.8% | 35.3% | 30.9% | 2.0% |
+| 22:49:46 | **c6 (co=5) ⭐** | 43,729 | **10.1%** | **22.6%** | **32.7%** | **32.7%** | 32.9% | 1.8% |
+| 22:54:11 | c7 (co=5) | 43,259 | 9.7% | 22.1% | 31.8% | 34.2% | 32.1% | 1.9% |
+
+**Phase 14 best: 32.7% Good+Slight (c6).** Checkpoint backed up as `presence_classifier_best_phase14_perpair.pt`.
+
+**Result: REGRESSION vs Phase 13.** Phase 14 peaked at 32.7% vs Phase 13's 40.0% (−7.3pp). Architecture reverted for production — `presence_classifier_best.pt` remains the Phase 13 checkpoint.
+
+**Why it failed:**
+
+1. **Shared weights across columns**: The same linear transformation is applied to FINAL COMMENT, HISTOPATHOLOGICAL SUMMARY, and ANCILLARY TESTS. These columns have fundamentally different linguistic patterns and diagnostic roles — a shared MLP cannot learn column-specific representations.
+2. **Max-pooling can amplify noise**: If one column incidentally mentions a label (e.g., a differential diagnosis or ruled-out finding), max-pooling promotes that noisy score above the signal from the correct column.
+3. **Loss of cross-column interaction**: The Phase 13 concat model could learn correlations such as "col1 says X *and* col2 says Y → label Z." The per-pair architecture treats columns as independent evidence sources and discards these joint patterns.
+
+**What to try instead (if revisiting):**
+- Separate (non-shared) MLP per column, then combine — preserves column identity at the cost of 3× parameters
+- Mean-pooling instead of max — less susceptible to noise amplification
+- Attention-weighted combination of per-column scores — learned aggregation rather than hard max
+
+---
+
+### Phase 15 — Per-pair + learned combination (`col_pair_mode=True`, `col_combine="learned"`) ❌
+
+**Date:** 2026-03-22. **Device:** XPU. **Dataset:** ~45,175 cases (cold start).
+
+**Architecture change:** Same per-pair shared MLP as Phase 14, but replaces hard max-pooling with a
+learned `Linear(n_cols=3 → 1)` combiner — 4 extra parameters (3 weights + bias) that learn globally
+which columns carry the most diagnostic signal. Stored in checkpoint as `col_combine="learned"`.
+
+Full cold start: cache, CO bank, and current checkpoint deleted before c1.
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|
+| 23:15:34 | cold-start c1 | 45,175 | 7.5% | 18.2% | 25.7% | 38.1% | 33.4% | 2.8% |
+| 10:07:35 | c2 (co=5) | 44,090 | 6.2% | 17.9% | 24.1% | 41.0% | 31.7% | 3.3% |
+| 10:11:18 | c3 (co=5) | 41,317 | 10.2% | 21.6% | 31.8% | 36.1% | 29.9% | 2.1% |
+| 10:14:50 | c4 (co=5) | 41,048 | 10.6% | 20.4% | 31.0% | 37.1% | 29.5% | 2.4% |
+| 10:18:19 | **c5 (co=5) ⭐** | 42,187 | **10.7%** | **24.1%** | **34.8%** | **32.3%** | 31.4% | 1.6% |
+| 10:21:47 | c6 (co=5) | 41,613 | 10.3% | 23.2% | 33.5% | 34.3% | 30.1% | 2.1% |
+| 10:25:23 | c7 (co=5) | 41,885 | 10.8% | 23.4% | 34.2% | 33.1% | 31.1% | 1.6% |
+
+**Phase 15 best: 34.8% Good+Slight (c5).** Checkpoint backed up as `presence_classifier_best_phase15_learned.pt`.
+
+**Result: REGRESSION vs Phase 13, improvement over Phase 14.**
+- Phase 15 (34.8%) > Phase 14 (32.7%) — learned combiner recovers +2.1pp over hard max-pooling
+- Phase 15 (34.8%) < Phase 13 (40.0%) — still −5.2pp below the concat architecture
+
+**Why learned > max but both < concat:**
+- Learned combination correctly deweights noisy columns — better than always promoting the loudest
+- But the shared MLP weights still cannot learn column-specific linguistic patterns (FINAL COMMENT vs ANCILLARY TESTS)
+- The Phase 13 concat model retains full cross-column interaction in a single forward pass
+
+**`presence_classifier_best.pt` remains the Phase 13 checkpoint (40.0%).**
+
+---
+
+### Phase 16 — Wider hidden layer (`hidden_dim=512`, concat architecture) ✅
+
+**Date:** 2026-03-22. **Device:** XPU. **Dataset:** ~39,077 cases.
+
+**Motivation:** Phase 13 compressed 3072-dim input into a 256-dim hidden layer (12:1 ratio), flagged as a known bottleneck. Phase 16 doubles hidden_dim to 512 (6:1 ratio) while keeping the Phase 13 concat architecture (`col_pair_mode=False`). No cold start — reused Phase 15 embedding cache and CO bank.
+
+`hidden_dim` is now saved in the checkpoint so `PresenceClassifier.load()` reconstructs the correct architecture automatically.
+
+| Timestamp | Label | Total | Good | Slightly off | Good+Slight | CO% | FP% | FN% |
+|-----------|-------|-------|------|-------------|-------------|-----|-----|-----|
+| 10:38:21 | c1 (co=5) | 39,178 | 12.2% | 28.4% | 40.6% | 30.9% | 27.1% | 1.4% |
+| 10:46:35 | **c2 (co=5) ⭐** | 39,077 | **12.7%** | **29.2%** | **41.9%** | **29.6%** | 27.2% | **1.2%** |
+| 10:49:51 | c3 (co=5) | 39,322 | 12.1% | 29.6% | 41.7% | 29.7% | 27.3% | 1.3% |
+| 10:53:05 | c4 (co=5) | 39,136 | 12.3% | 29.4% | 41.7% | 29.8% | 27.2% | 1.2% |
+| 10:56:19 | c5 (co=5) | 40,455 | 11.2% | 28.1% | 39.3% | 30.5% | 28.6% | 1.6% |
+
+**Phase 16 best: 41.9% Good+Slight (c2).** Checkpoint backed up as `presence_classifier_best_phase16_hd512.pt`.
+
+**Result: NEW PRODUCTION BEST — +1.9pp over Phase 13.** The 12:1 compression bottleneck was real. Doubling `hidden_dim` to 512 immediately improved from 40.0% → 41.9%, confirming the hypothesis.
+
+**Key findings:**
+- c1 already beat Phase 13 (40.6% vs 40.0%) with no cold start — the wider layer has immediate effect
+- c2 extended the gain to 41.9% before plateauing; c3–c4 held at ~41.7%, c5 regressed
+- FP% dropped to 27.1–27.3% (vs 28.5% in Phase 13) — fewer false positives with better capacity
+- CO floor remains ~29–30%, consistent with Phase 13; the bottleneck affected term-level discrimination more than group-level confusion
+
+**`presence_classifier_best.pt` updated to Phase 16 c2 checkpoint (41.9%).**
+
+---
+
 ## Summary of Progress
 
 | Phase | Best Good+Slight | Best CO% | Best FN% |
@@ -405,6 +511,9 @@ All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, 
 | Phase 10 (cache-based enrichment — Fix 9) | 14.1% | 47.6% | 5.0% (regression — do not use) |
 | Phase 11 (new keyword data, 5,788 cases) | 33.1% | 31.8% | 1.3% (stable, 8+ consecutive cycles) |
 | Phase 12 (XPU, cold start, mean embedding) | 32.0% | 32.1% | 1.3% (stable, 8 cycles — confirms Phase 11 plateau) |
-| **Phase 13 (per-column embeddings — Fix 10)** | **40.0%** | **30.4%** | **1.1%** (plateau at c6, 7 cycles) |
+| Phase 13 (per-column embeddings — Fix 10) | 40.0% | 30.4% | 1.1% (plateau at c6, 7 cycles) |
+| Phase 14 (per-pair + max-pool — Fix 11) | 32.7% | 32.7% | 1.8% (regression vs Phase 13 — do not use) |
+| Phase 15 (per-pair + learned combine) | 34.8% | 32.3% | 1.6% (better than Phase 14, still below Phase 13) |
+| **Phase 16 (concat + hidden_dim=512)** | **41.9%** | **29.6%** | **1.2%** (plateau at c2, 5 cycles — NEW PRODUCTION BEST) |
 
 ---

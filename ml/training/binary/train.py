@@ -153,6 +153,7 @@ def train(
     recall_weight: float = 0.5,
     skip_prerequisites: bool = False,
     local_only: bool = False,
+    col_combine: str = "learned",
 ) -> int:
     # Auto-build prerequisites if missing (i.e., run_cycle Steps 0–1)
     if not skip_prerequisites:
@@ -288,7 +289,8 @@ def train(
 
     # --- Model, loss, optimiser ------------------------------------------
     classifier = PresenceClassifier(
-        emb_dim=PETBERT_EMB_DIM, hidden_dim=hidden_dim, dropout=dropout, n_cols=n_cols,
+        emb_dim=PETBERT_EMB_DIM, hidden_dim=hidden_dim, dropout=dropout,
+        n_cols=n_cols, col_pair_mode=False,
     ).to(dev)
 
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)
@@ -376,6 +378,13 @@ def main() -> int:
     parser.add_argument("--local-only", action="store_true",
                         help="Use only locally cached PetBERT model files (no network calls). "
                              "Only relevant when the embedding cache needs to be built.")
+    parser.add_argument("--col-combine", default="learned",
+                        choices=["max", "mean", "learned"],
+                        help="How to combine per-column logits in col_pair_mode. "
+                             "'max': most informative column wins. "
+                             "'mean': average. "
+                             "'learned': Linear(n_cols→1) learns column weights globally. "
+                             "Default: learned.")
     args = parser.parse_args()
     return train(
         pairs_csv=args.pairs_csv,
@@ -395,6 +404,7 @@ def main() -> int:
         recall_weight=args.recall_weight,
         skip_prerequisites=args.skip_prerequisites,
         local_only=args.local_only,
+        col_combine=args.col_combine,
     )
 
 

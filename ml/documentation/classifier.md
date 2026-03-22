@@ -557,4 +557,10 @@ All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, 
 - **co=10 regression with per-column architecture**: flooding training with CO negatives at 10/case causes the per-column classifier to over-correct. Always use co=5 with the current architecture.
 - **hidden_dim bottleneck (untested)**: `hidden_dim=256` compresses 3072-dim input at a 12:1 ratio; trying 512 or 768 may recover 1–3%. See [presence-classifier-optimizations.md](../../planning/presence-classifier-optimizations.md) for the full list of potential improvements.
 
+- **Keyword ground truth is sparse**: only 18.6% of diagnosis rows are keyword-matched. Many true cancer cases are invisible to the evaluator, inflating false negative counts.
+- **Classifier trained on report-level embeddings**: the mean embedding across 3 text columns may lose fine-grained term-level signal present in individual sections.
+- **Label text is minimal**: taxonomy labels are embedded as `"{term} {group}"` — richer descriptions (synonyms, ICD-O codes, clinical context) could improve embedding discrimination and reduce the completely-off rate upstream.
+- **Completely-off floor (~42%)**: the presence classifier can only accept/reject individual (case, label) pairs — it cannot redirect a wrong-group cosine match to the correct group. Breaking below ~40% likely requires group-level re-ranking or better label embeddings.
+=======
 The planned multi-class group classifier (see [multiclass-classifier-plan.md](multiclass-classifier-plan.md)) directly addresses the CO floor by replacing pair-wise binary scoring with a single global group decision per report.
+

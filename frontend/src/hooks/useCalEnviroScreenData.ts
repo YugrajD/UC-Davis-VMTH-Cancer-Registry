@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CalEnviroScreenData } from '../types';
-import { fetchCalEnviroScreen } from '../api/client';
+import { MOCK_CALENVIROSCREEN_DATA } from '../data/mockData';
 
 export function useCalEnviroScreenData() {
   const [data, setData] = useState<CalEnviroScreenData[]>([]);
@@ -8,23 +8,10 @@ export function useCalEnviroScreenData() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await fetchCalEnviroScreen();
-        if (!cancelled) setData(result);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load CalEnviroScreen data');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    load();
-    return () => { cancelled = true; };
+    setLoading(true);
+    setError(null);
+    setData(MOCK_CALENVIROSCREEN_DATA);
+    setLoading(false);
   }, []);
 
   return { data, loading, error };

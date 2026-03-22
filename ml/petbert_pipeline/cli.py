@@ -83,6 +83,38 @@ def build_parser() -> argparse.ArgumentParser:
             "If it doesn't exist yet, embeddings are computed and saved here for future runs."
         ),
     )
+    parser.add_argument(
+        "--enrich-labels-csv",
+        default=None,
+        help=(
+            "Path to keyword_predictions.csv. When provided, each taxonomy label embedding "
+            "is averaged 50/50 with the mean cached report embedding of its keyword-confirmed "
+            "cases, pulling label representations toward the clinical language in real reports. "
+            "Requires --embedding-cache. Enriched embeddings are stored in the cache so "
+            "subsequent runs reuse them without recomputing."
+        ),
+    )
+    parser.add_argument(
+        "--group-classifier",
+        default=None,
+        help=(
+            "Path to a trained GroupClassifier checkpoint (.pt). "
+            "When set, uses two-stage categorization: GroupClassifier predicts cancer group(s), "
+            "then cosine similarity selects the best term within each group. "
+            "Replaces --presence-classifier and eliminates the completely-off floor. "
+            "Train with: python ml/training/train_group_classifier.py"
+        ),
+    )
+    parser.add_argument(
+        "--group-classifier-threshold",
+        type=float,
+        default=0.3,
+        help=(
+            "Probability threshold for GroupClassifier group selection (default: 0.3). "
+            "Lower = more predictions (higher recall, lower precision). "
+            "Only used when --group-classifier is set."
+        ),
+    )
     return parser
 
 
@@ -124,6 +156,9 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         labels_csv_path=args.labels_csv,
         presence_classifier_path=args.presence_classifier,
         embedding_cache_path=args.embedding_cache,
+        enrich_labels_csv_path=args.enrich_labels_csv,
+        group_classifier_path=args.group_classifier,
+        group_classifier_threshold=args.group_classifier_threshold,
     )
 
 

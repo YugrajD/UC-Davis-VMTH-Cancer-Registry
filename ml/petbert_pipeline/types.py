@@ -29,6 +29,7 @@ class ScanConfig:
     enrich_labels_csv_path: str | None = None
     group_classifier_path: str | None = None
     group_classifier_threshold: float = 0.3
+    finetuned_model_path: str | None = None
 
 
 @dataclass(frozen=True)

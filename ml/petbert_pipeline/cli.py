@@ -115,6 +115,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Only used when --group-classifier is set."
         ),
     )
+    parser.add_argument(
+        "--finetuned-model-path",
+        default=None,
+        help=(
+            "Path to a fine-tuned PetBERT sequence classification model checkpoint. "
+            "When set, the pipeline skips independent column embedding and instead "
+            "passes the concatenated report text directly to the fine-tuned model "
+            "to predict cancer groups. Within the predicted group, cosine similarity "
+            "is still used to select the best specific ICD term."
+        ),
+    )
     return parser
 
 
@@ -159,6 +170,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         enrich_labels_csv_path=args.enrich_labels_csv,
         group_classifier_path=args.group_classifier,
         group_classifier_threshold=args.group_classifier_threshold,
+        finetuned_model_path=args.finetuned_model_path,
     )
 
 

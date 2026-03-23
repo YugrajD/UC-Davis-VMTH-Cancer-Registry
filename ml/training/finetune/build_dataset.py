@@ -14,7 +14,7 @@ import torch
 from datasets import Dataset, DatasetDict
 from transformers import AutoTokenizer
 
-from labels.taxonomy import load_labels_taxonomy
+from ICD_labels.taxonomy import load_labels_taxonomy
 
 def build_group_map(labels_csv: str) -> dict[str, int]:
     """Map Vet-ICD-O group name -> class index (1 to N)."""
@@ -28,7 +28,7 @@ def build_dataset(
     *,
     reports_csv: str = "database/data/output/report.csv",
     predictions_csv: str = "ml/output/diagnoses/keyword_annotation.csv",
-    labels_csv: str = "ml/labels/labels.csv",
+    labels_csv: str = "ml/ICD_labels/labels.csv",
     out_dir: str = "ml/data/finetune_dataset",
     model_name: str = "SAVSNET/PetBERT",
     text_cols: tuple[str, ...] = ("FINAL COMMENT", "HISTOPATHOLOGICAL SUMMARY", "ANCILLARY TESTS"),
@@ -183,7 +183,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--reports-csv", default="database/data/output/report.csv")
     parser.add_argument("--predictions-csv", default="ml/output/diagnoses/keyword_annotation.csv")
-    parser.add_argument("--labels-csv", default="ml/labels/labels.csv")
+    parser.add_argument("--labels-csv", default="ml/ICD_labels/labels.csv")
     parser.add_argument("--out-dir", default="ml/data/finetune_dataset")
     parser.add_argument("--model", default="SAVSNET/PetBERT")
     args = parser.parse_args()

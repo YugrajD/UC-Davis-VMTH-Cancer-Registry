@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--labels-csv",
-        default="ml/labels/labels.csv",
+        default="ml/ICD_labels/labels.csv",
         help="Path to labels taxonomy CSV.",
     )
     parser.add_argument(

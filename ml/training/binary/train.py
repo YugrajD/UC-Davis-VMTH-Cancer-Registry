@@ -68,7 +68,7 @@ def _ensure_embedding_cache(
         task="categorize",
         embedding_min_sim=embedding_min_sim,
         device=device,
-        labels_csv_path="ml/labels/labels.csv",
+        labels_csv_path="ml/ICD_labels/labels.csv",
         presence_classifier_path=None,
         embedding_cache_path=cache_path,
     ))
@@ -137,7 +137,7 @@ def train(
     pairs_csv: str = "ml/data/training_pairs.csv",
     embedding_cache: str | None = None,
     report_csv: str = "ml/data/report.csv",
-    labels_csv: str = "ml/labels/labels.csv",
+    labels_csv: str = "ml/ICD_labels/labels.csv",
     out_dir: str = "ml/model/checkpoints",
     epochs: int = 20,
     batch_size: int = 256,
@@ -367,7 +367,7 @@ def main() -> int:
                              "the cache using case_id, fixing the train/inference mismatch.")
     parser.add_argument("--report-csv", default="ml/data/report.csv",
                         help="Path to report CSV (used only for cache validation).")
-    parser.add_argument("--labels-csv", default="ml/labels/labels.csv",
+    parser.add_argument("--labels-csv", default="ml/ICD_labels/labels.csv",
                         help="Path to labels CSV (used only for cache validation).")
     parser.add_argument("--skip-prerequisites", action="store_true",
                         help="Skip auto-building embedding cache and training pairs. "

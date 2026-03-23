@@ -56,7 +56,7 @@ ml/
 ├── scripts/                Top-level entry points (no PYTHONPATH needed)
 │   ├── run_production.py   Production inference entry point
 │   ├── run_evaluation.py   Standalone evaluation entry point
-│   └── run_training.py     Full training cycle entry point (binary or group)
+│   └── run_training.py     Training entry point (modes: binary, group, contrastive-finetuning, knn)
 ├── requirements.txt        Pinned Python dependencies
 └── .venv/                  Python virtual environment
 ```
@@ -158,12 +158,14 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 | `build_training_data.py` | Builds multi-hot targets for `GroupClassifier` from cached embeddings |
 | `train.py` | Trains `GroupClassifier` (one-shot, not iterative) |
 
-### `training/finetune/` — PetBERT fine-tuning (WIP)
+### `training/finetune/` — PetBERT fine-tuning
 
 | File | Role |
 |---|---|
-| `build_dataset.py` | Build HuggingFace `DatasetDict` from report text + keyword labels; compute class weights |
-| `train.py` | Fine-tune `AutoModelForSequenceClassification` on top of PetBERT |
+| `build_contrastive_dataset.py` | Build `(report_text, label_text)` pairs from keyword annotations + report CSV |
+| `train_contrastive.py` | InfoNCE contrastive fine-tuning; saves `AutoModelForMaskedLM` checkpoint |
+| `build_dataset.py` | Build HuggingFace `DatasetDict` for end-to-end group classification (WIP, blocked) |
+| `train.py` | Fine-tune `AutoModelForSequenceClassification` as group classifier (WIP, blocked) |
 
 ---
 
@@ -281,6 +283,18 @@ PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method keyword
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode group --device xpu
 ```
 
+**Contrastive PetBERT fine-tuning:**
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode contrastive-finetuning \
+  --epochs 3 --device xpu --local-only
+```
+
+**KNN group selector build:**
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode knn
+```
+
 ---
 
 ## Documentation
@@ -294,4 +308,4 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode group --device xpu
 | `training-guide.md` | Practical how-to: cold start steps, run commands, parameters, what triggers a cold start |
 | `training-log/training-log-binary.md` | Binary PresenceClassifier — phase-by-phase history, Phases 1–16 |
 | `training-log/training-log-group.md` | GroupClassifier — experiments and results |
-| `training-log/training-log-finetune.md` | Fine-tuned PetBERT — prerequisite checklist, no runs yet |
+| `training-log/training-log-finetune.md` | Fine-tuned PetBERT — contrastive (InfoNCE) approach documented; end-to-end approach bug list |

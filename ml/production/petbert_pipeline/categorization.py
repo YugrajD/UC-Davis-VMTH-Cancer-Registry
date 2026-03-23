@@ -25,7 +25,7 @@ import numpy as np
 from .embedding import cosine_similarity_matrix
 
 if TYPE_CHECKING:
-    from labels.taxonomy import TaxonomyLabel
+    from ICD_labels.taxonomy import TaxonomyLabel
 
 
 @dataclass(frozen=True)

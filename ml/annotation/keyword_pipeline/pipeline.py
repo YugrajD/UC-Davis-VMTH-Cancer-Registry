@@ -5,7 +5,7 @@ using word-boundary regex patterns. The longest matching term wins.
 
 Flow:
   1. Load diagnoses CSV (case_id, diagnosis_number, diagnosis).
-  2. Load Vet-ICD-O taxonomy from labels.csv.
+  2. Load Vet-ICD-O taxonomy from ICD_labels.csv.
   3. Build a keyword index: normalized term strings → (pattern, taxonomy index).
   4. For each diagnosis row, find the first (longest) keyword match.
   5. Write keyword_annotation.csv and keyword_summary.json.
@@ -21,7 +21,7 @@ from itertools import permutations as _permutations
 
 import pandas as pd
 
-from labels.taxonomy import TaxonomyLabel, load_labels_taxonomy
+from ICD_labels.taxonomy import TaxonomyLabel, load_labels_taxonomy
 
 # Trailing qualifiers in taxonomy terms that are stripped when building the
 # core keyword (e.g. "Hemangioma, NOS" → core keyword "hemangioma").

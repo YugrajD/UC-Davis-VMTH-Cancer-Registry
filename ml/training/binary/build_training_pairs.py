@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from labels.taxonomy import load_labels_taxonomy
+from ICD_labels.taxonomy import load_labels_taxonomy
 from production.petbert_pipeline.utils import clean_text, merge_report_columns
 
 _TEXT_COLS = [
@@ -44,7 +44,7 @@ def build_pairs(
     report_csv: str = "ml/data/report.csv",
     expectation_csv: str = "ml/output/annotation/keyword/keyword_annotation.csv",
     evaluation_csv: str = "ml/output/evaluation/binary/evaluation.csv",
-    labels_csv: str = "ml/labels/labels.csv",
+    labels_csv: str = "ml/ICD_labels/labels.csv",
     out: str = "ml/data/training_pairs.csv",
     easy_neg_per_pos: int = 3,
     fp_neg_per_case: int = 10,
@@ -232,7 +232,7 @@ def main() -> int:
     parser.add_argument("--report-csv", default="ml/data/report.csv")
     parser.add_argument("--expectation-csv", default="ml/output/annotation/keyword/keyword_annotation.csv")
     parser.add_argument("--evaluation-csv", default="ml/output/evaluation/binary/evaluation.csv")
-    parser.add_argument("--labels-csv", default="ml/labels/labels.csv")
+    parser.add_argument("--labels-csv", default="ml/ICD_labels/labels.csv")
     parser.add_argument("--out", default="ml/data/training_pairs.csv")
     parser.add_argument(
         "--easy-neg-per-pos",

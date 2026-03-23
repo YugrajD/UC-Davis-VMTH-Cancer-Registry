@@ -55,7 +55,7 @@ def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> S
         id_col="case_id",
         text_cols=DEFAULT_TEXT_COLS,
         col_weights={},
-        model_name="SAVSNET/PetBERT",
+        model_name=args.model,
         local_only=args.local_only,
         out_dir="ml/output/production/binary",
         max_rows=None,
@@ -65,7 +65,7 @@ def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> S
         task="categorize",
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
-        labels_csv_path="ml/labels/labels.csv",
+        labels_csv_path="ml/ICD_labels/labels.csv",
         presence_classifier_path=presence_classifier_path,
         embedding_cache_path=args.embedding_cache or None,
         enrich_labels_csv_path=args.enrich_labels_csv or None,
@@ -94,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--local-only", action="store_true",
         help="Use only locally cached PetBERT model files (no network calls)",
+    )
+    parser.add_argument(
+        "--model", default="SAVSNET/PetBERT",
+        help="HuggingFace model name or local path for PetBERT embeddings "
+             "(default: SAVSNET/PetBERT). Pass a contrastive checkpoint here "
+             "after running --mode contrastive.",
     )
     parser.add_argument(
         "--pos-weight", type=float, default=1.0,

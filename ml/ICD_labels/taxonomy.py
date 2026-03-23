@@ -1,6 +1,6 @@
 """Reads and normalizes the Vet-ICD-O taxonomy CSV into typed label records.
 
-The taxonomy file (ml/labels/labels.csv) uses the Vet-ICD-O-canine-1 coding
+The taxonomy file (ml/ICD_labels/labels.csv) uses the Vet-ICD-O-canine-1 coding
 system.  Each row defines one diagnosis term with:
   - code:  ICD-O morphology code (e.g. "9120/3")
   - group: Tumor category (e.g. "Blood vessel tumors")

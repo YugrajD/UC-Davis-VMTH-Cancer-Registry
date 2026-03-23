@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id-col", default="case_id", help="Case ID column name.")
     parser.add_argument("--diag-num-col", default="diagnosis_number", help="Diagnosis number column name.")
     parser.add_argument("--text-col", default="diagnosis", help="Diagnosis text column name.")
-    parser.add_argument("--labels-csv", default="ml/labels/labels.csv", help="Path to Vet-ICD-O taxonomy CSV.")
+    parser.add_argument("--labels-csv", default="ml/ICD_labels/labels.csv", help="Path to Vet-ICD-O taxonomy CSV.")
     parser.add_argument("--out-dir", default="ml/output/annotation/llm", help="Output directory.")
     parser.add_argument("--max-rows", type=int, default=None, help="Cap on input rows (for testing).")
     parser.add_argument("--llm-timeout", type=int, default=60, help="Seconds to wait for each LLM call.")

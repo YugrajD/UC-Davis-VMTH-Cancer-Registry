@@ -6,8 +6,9 @@ cancer labels (term, group, ICD code). Three classifier approaches have been exp
 | Approach | Status | Best result |
 |---|---|---|
 | Binary PresenceClassifier | Production best | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
-| GroupClassifier | Implemented, not yet competitive | 21.9% Good+Slight |
-| Fine-tuned PetBERT | Work in progress | Not benchmarked |
+| GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end |
+| Contrastive fine-tuning (InfoNCE) | Ready to run — not yet benchmarked | — |
+| End-to-end fine-tuned PetBERT | WIP, blocked on data volume | — |
 
 ---
 
@@ -151,23 +152,30 @@ on cached embeddings, evaluate. Re-run whenever keyword coverage improves.
 
 ### Evaluation Results
 
+Early results (768-dim mean embedding, incorrect pipeline input — archived for reference):
+
 | Data | Metric | Binary | GroupClassifier @ 0.3 | GroupClassifier @ 0.8 |
 |---|---|---|---|---|
 | 1,273 cases | Good+Slight | 20.4% | 14.3% | 23.4% |
-| 1,273 cases | CO% | 42.7% | 55.9% | 50.7% |
-| 1,273 cases | FP% | ~30% | 28.0% | 8.4% |
-| 1,273 cases | FN% | 4.2% | 1.8% | 17.6% |
-| **5,788 cases** | **Good+Slight** | **33.1%** | 13.9% | 21.9% |
-| **5,788 cases** | **CO%** | **31.8%** | 57.5% | 54.5% |
-| **5,788 cases** | **FN%** | **1.3%** | — | 15.6% |
+| 5,788 cases | Good+Slight | 33.1% | 13.9% | 21.9% |
 
-The GroupClassifier overfits at current data volumes (~132 cases/group average).
-Binary wins at 5,788 cases. Expected crossover at ~10,000 confirmed cases.
+End-to-end results after fixing the pipeline to use 2304-dim `col_emb_concat`:
+
+| Metric | Binary (Phase 16) | GroupClassifier (best, t=0.3) |
+|---|---|---|
+| **Good+Slight** | **41.9%** | 9.3% |
+| CO% | 29.6% | ~37% |
+| FP% | 27.2% | 33.3% |
+| FN% | 1.2% | 16.8% |
+
+The GroupClassifier overfits at current data volumes. Only 17 of 43 groups have ≥100
+training cases; the other 26 are unreachable at inference. Binary wins by a large
+margin. Expected crossover at ~15,000 confirmed cases.
 
 | Confirmed cases | Expected outcome |
 |---|---|
-| ~5,788 (current) | Overfits — binary wins |
-| ~10,000 | GroupClassifier starts generalising — may match binary |
+| ~5,788 (current) | Overfits — binary wins by large margin (41.9% vs 9.3%) |
+| ~10,000 | More groups cross 100-case threshold; GroupClassifier starts generalizing |
 | ~15,000+ | Meaningful CO reduction expected — GroupClassifier should pull ahead |
 
 ### Advantages
@@ -226,57 +234,98 @@ within-group term selection step.
 
 ---
 
-## Approach 3 — Fine-tuned PetBERT
+## Approach 3 — Contrastive Fine-tuning (InfoNCE)
+
+### Motivation
+
+The binary classifier's ~30% CO floor comes from labels competing implicitly via
+arg max over an embedding space that was never optimized for this task. PetBERT was
+pre-trained with masked-language-modeling — its weights have no signal pulling report
+embeddings toward their correct label embeddings and away from wrong ones.
+
+Contrastive fine-tuning directly optimizes this geometry. For each (report, label)
+positive pair, the report embedding is pulled toward the correct label embedding and
+pushed away from all other labels in the batch. The fine-tuned backbone then produces
+better per-column embeddings, which the PresenceClassifier (retrained from scratch
+after a cold start) uses as input.
+
+Unlike Approach 4 (end-to-end group classification), this does not require group-level
+generalization and works at current data volumes.
 
 ### Architecture
 
-Fine-tunes PetBERT end-to-end as a group classifier, removing the frozen-embedding
-bottleneck. The keyword pipeline still generates training labels from diagnosis text;
-at inference, the fine-tuned model predicts the group directly from report text.
-
 ```
-Training:
-    (report text, group label from keyword pipeline)
-        ↓
-    fine-tune PetBERT (AutoModelForSequenceClassification)
+Fine-tuning:
+    for each batch of N (report_text, label_text) pairs:
+        report_emb = PetBERT.base_model(report_text) → mean pool → 768-dim → L2-norm
+        label_emb  = PetBERT.base_model(label_text)  → mean pool → 768-dim → L2-norm
+        sim_matrix = report_emb @ label_emb.T / temperature    # (N, N)
+        loss = symmetric cross-entropy (diagonal = positives)   # InfoNCE
+        backprop through PetBERT base transformer only
 
-Inference:
-    report text
-        ↓
-    fine-tuned PetBERT → softmax over 45 groups
-        ↓
-    predicted group probabilities
-        ↓
-    cosine similarity within predicted group
-    (using base, unfinetuned PetBERT for label embeddings)
-        ↓
-    best term + ICD code
+    save full AutoModelForMaskedLM checkpoint
+
+Inference (after cold start + PresenceClassifier retraining):
+    identical to current pipeline — pass --model <checkpoint> --local-only
 ```
 
-### Relationship to Approach 2
+Training data: keyword-confirmed `(case_id, matched_term, matched_group)` pairs from
+`keyword_annotation.csv` joined with report text from `report.csv`.
 
-Approach 3 is architecturally the same two-stage design as Approach 2 (group
-prediction → within-group term selection). The only difference is that the MLP head
-operating on frozen embeddings is replaced by a full transformer fine-tuned end-to-end.
-The two are not complementary — Approach 3 is an upgrade of the group prediction
-stage, not an addition to it.
+Label text format: `"{term} {group}"` — exactly what the pipeline uses for label embeddings.
 
 ### Advantages
 
-- **No frozen-embedding bottleneck**: the transformer weights adapt to veterinary
-  diagnostic language, potentially capturing nuances that frozen embeddings miss
-- More expressive capacity than an MLP on fixed embeddings
-- Mirrors the GroupClassifier training strategy — same supervision signal, stronger model
+- Works at current data volumes (~5,788 pairs) — no group-level generalization needed
+- Directly optimizes the embedding geometry the PresenceClassifier operates on
+- No new inference code — fine-tuned checkpoint is a drop-in replacement for `SAVSNET/PetBERT`
+- MLM head weights are unchanged (never called during contrastive forward pass)
+- Potentially reduces CO floor by making wrong-group labels harder to confuse
 
 ### Disadvantages
 
-- **Computationally expensive**: full transformer fine-tuning requires significantly
-  more GPU time and memory than training an MLP on cached embeddings
-- **Risk of catastrophic forgetting**: PetBERT's pretrained veterinary language
-  representations may degrade if the learning rate or epoch count is not managed carefully
-- Cached embeddings cannot be reused — every run requires a full forward pass
-- Still shares the group-level ceiling: term selection within the predicted group
-  remains cosine-based (unless discriminating keywords are used)
+- Requires a full cold start after fine-tuning (embedding space changes)
+- False negatives in-batch: if the same label appears twice in a batch, the off-diagonal
+  entry is wrongly treated as a negative (~4% collision rate at batch_size=32 — acceptable)
+- Improvement is not guaranteed — the CO floor may be driven by label overlap, not
+  embedding quality
+
+### How to Run
+
+```bash
+# Step 1: Fine-tune PetBERT
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode contrastive-finetuning \
+  --epochs 3 --batch-size 32 --lr 2e-5 --temperature 0.07 \
+  --device xpu --local-only
+
+# Step 2: Cold start
+rm -f ml/data/embedding_cache.npz
+rm -f ml/output/training/binary/evaluation_co_bank.csv
+rm -f ml/model/checkpoints/presence_classifier_current.pt
+
+# Step 3: Retrain PresenceClassifier with the new backbone
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode binary \
+  --model ml/model/checkpoints/petbert_contrastive \
+  --label "contrastive cold-start c1" \
+  --co-neg-per-case 5 --fp-neg-per-case 10 \
+  --embedding-min-sim 0.05 --epochs 25 \
+  --recall-weight 0.25 --hidden-dim 512 \
+  --device xpu --local-only
+```
+
+---
+
+## Approach 4 — End-to-end Fine-tuned PetBERT (WIP)
+
+Fine-tunes PetBERT as a group sequence classifier — architecturally the same two-stage
+design as the GroupClassifier (group prediction → within-group cosine term selection),
+but replaces the frozen-embedding MLP with a full transformer fine-tuned end-to-end.
+
+This approach shares the GroupClassifier's data ceiling: it needs ~10,000+ confirmed
+cases before it can generalize across the 44 groups. It is not recommended until the
+GroupClassifier proves competitive.
 
 > **Known code issues** must be resolved before running. See [petbert-pipeline.md](petbert-pipeline.md#wip-fine-tuned-petbert-mode) for the full list.
 
@@ -284,23 +333,23 @@ stage, not an addition to it.
 
 ## Comparison
 
-| | Binary PresenceClassifier | GroupClassifier | Fine-tuned PetBERT |
-|---|---|---|---|
-| **Status** | Production best | Implemented, not competitive | Work in progress |
-| **Best result** | 41.9% Good+Slight (Phase 16) | 21.9% Good+Slight | Not benchmarked |
-| **PetBERT** | Frozen | Frozen | Fine-tuned end-to-end |
-| **Training style** | Iterative (CO feedback) | One-shot | One-shot |
-| **Data requirement** | Works from ~1,273 cases | Needs ~10,000+ cases | Needs ~10,000+ cases |
-| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow (full transformer) |
-| **Inference speed** | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) | Fast (~45 group scores + cosine) |
-| **CO floor** | ~30% | Designed to eliminate it | Designed to eliminate it |
-| **Main constraint** | CO floor, keyword data ceiling | Overfits at current data volume | Compute cost |
+| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning | End-to-end fine-tuning |
+|---|---|---|---|---|
+| **Status** | Production best | Not competitive | Ready to benchmark | WIP, blocked |
+| **Best result** | 41.9% Good+Slight | 9.3% Good+Slight | Not yet benchmarked | Not yet benchmarked |
+| **PetBERT** | Frozen | Frozen | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
+| **Training style** | Iterative (CO feedback) | One-shot | One-shot | One-shot |
+| **Data requirement** | Works from ~1,273 cases | Needs ~15,000+ cases | Works at ~5,788 cases | Needs ~10,000+ cases |
+| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow (full transformer, once) | Slow (full transformer) |
+| **Inference speed** | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) |
+| **CO floor** | ~30% | Designed to eliminate it | Potentially lower | Designed to eliminate it |
+| **Main constraint** | CO floor, keyword data ceiling | Overfits at current volume | Not yet measured | Compute cost, data volume |
 
 ### Roadmap
 
-- **Now**: Binary PresenceClassifier — best results at current data volume
-- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier and benchmark against binary; implement discriminating-keyword term selection
-- **After GroupClassifier proves competitive**: Consider fine-tuning PetBERT for additional gains
+- **Now**: Run contrastive fine-tuning (Approach 3) and benchmark against Phase 16 binary
+- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier; implement discriminating-keyword term selection
+- **After GroupClassifier proves competitive (~15,000 cases)**: Consider end-to-end fine-tuning (Approach 4)
 
 ---
 

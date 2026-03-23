@@ -122,45 +122,79 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 
 ---
 
-## Fine-tuned PetBERT (WIP)
+## Contrastive Fine-tuning (InfoNCE)
 
-Fine-tunes PetBERT end-to-end as a group classifier. Not yet benchmarked — resolve the
-known code issues in `petbert-pipeline.md` before running.
+Fine-tunes PetBERT's base transformer so that report embeddings are pulled toward their
+correct label embeddings and pushed away from wrong ones (InfoNCE loss). The fine-tuned
+backbone is then used as a drop-in replacement for `SAVSNET/PetBERT` in the binary
+training pipeline. A cold start is required after fine-tuning.
 
-### Step 1 — Build dataset
-
-```bash
-ml/.venv/Scripts/python.exe ml/training/finetune/build_dataset.py \
-  --reports-csv ml/data/report.csv \
-  --predictions-csv ml/output/annotation/keyword/keyword_annotation.csv \
-  --labels-csv ml/labels/labels.csv \
-  --out-dir ml/data/finetune_dataset
-```
-
-Reads report text and keyword labels, tokenizes with the PetBERT tokenizer, saves a
-HuggingFace `DatasetDict` with computed class weights to `ml/data/finetune_dataset/`.
-
-### Step 2 — Fine-tune
+### Step 1 — Fine-tune
 
 ```bash
-ml/.venv/Scripts/python.exe ml/training/finetune/train.py \
-  --dataset ml/data/finetune_dataset \
-  --out-dir ml/model/checkpoints/petbert_finetuned \
-  --epochs 5 \
-  --batch-size 16 \
-  --lr 2e-5
-```
-
-Saves the full model + tokenizer to `ml/model/checkpoints/petbert_finetuned/` in
-HuggingFace format (loadable with `--finetuned-model-path` in the production pipeline).
-
-### Step 3 — Run pipeline
-
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --finetuned-model-path ml/model/checkpoints/petbert_finetuned \
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode contrastive-finetuning \
+  --epochs 3 \
+  --batch-size 32 \
+  --lr 2e-5 \
+  --temperature 0.07 \
+  --device xpu \
   --local-only
 ```
+
+Builds `(report_text, label_text)` pairs from `keyword_annotation.csv` + `report.csv`,
+then fine-tunes PetBERT with symmetric InfoNCE loss. Saves a full
+`AutoModelForMaskedLM` checkpoint to `ml/model/checkpoints/petbert_contrastive/`.
+
+Use `--skip-dataset-build` to reuse an existing `ml/data/contrastive_pairs.csv`.
+
+### Step 2 — Cold start
+
+The embedding space has changed. Delete the stale cache, CO bank, and checkpoint:
+
+```bash
+rm -f ml/data/embedding_cache.npz
+rm -f ml/output/training/binary/evaluation_co_bank.csv
+rm -f ml/model/checkpoints/presence_classifier_current.pt
+```
+
+### Step 3 — Retrain PresenceClassifier with the new backbone
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode binary \
+  --model ml/model/checkpoints/petbert_contrastive \
+  --label "contrastive cold-start c1" \
+  --co-neg-per-case 5 \
+  --fp-neg-per-case 10 \
+  --embedding-min-sim 0.05 \
+  --epochs 25 \
+  --recall-weight 0.25 \
+  --hidden-dim 512 \
+  --device xpu \
+  --local-only
+```
+
+Step 0 of the binary cycle will rebuild the embedding cache using the fine-tuned model.
+Continue with subsequent cycles (update `--label` each time) as normal.
+
+### Key parameters
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `--epochs` | 3 | Keep low — 110M params, ~5,788 pairs |
+| `--batch-size` | 32 | Larger = more in-batch negatives; try 64 if memory allows |
+| `--lr` | 2e-5 | Standard BERT fine-tuning rate |
+| `--temperature` | 0.07 | InfoNCE temperature; lower = harder negatives |
+
+---
+
+## End-to-end Fine-tuned PetBERT (WIP, blocked)
+
+Fine-tunes PetBERT as a group sequence classifier. Architecturally the same as the
+GroupClassifier but replaces the frozen-embedding MLP with a full transformer.
+Not recommended until the GroupClassifier proves competitive (~10,000 confirmed cases).
+Known code issues must be resolved before running — see `petbert-pipeline.md`.
 
 ---
 
@@ -192,5 +226,6 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
 |--------|-------------|-------------|-------------------|
 | New keyword data | No | No | No — full cold start |
 | Architecture change (e.g. `n_cols`) | No | No | No — full cold start |
+| Contrastive fine-tuning completed | No | No | No — full cold start |
 | Hyperparameter change (`--hidden-dim`, `--epochs`) | Yes | Yes | No — retrain only |
 | New training cycle (same architecture) | Yes | Yes | Overwritten each cycle |

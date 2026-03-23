@@ -496,6 +496,46 @@ Full cold start: cache, CO bank, and current checkpoint deleted before c1.
 
 ---
 
+---
+
+### Hybrid Experiment — KNN group gating + binary classifier term selection ❌
+
+**Date:** 2026-03-23. **Dataset:** ~12,620 cases. Ground truth: LLM predictions.
+
+**Motivation:** Phase 16 leaves ~30% CO errors. The hypothesis: KNN identifies which cancer group a case belongs to (restricting the label search space), then the binary classifier picks the best term within those groups. KNN-gated cases with no group above threshold → Uncategorized (FP reduction). Both checkpoints already exist; no training required.
+
+**Architecture:**
+- `presence_classifier_best.pt` (Phase 16, hd512) produces (N, M) binary scores
+- `knn_group_selector.npz` (k=10, built from LLM predictions, 2304-dim) produces (N, G) vote fractions
+- Per case: groups with vote fraction ≥ threshold are allowed; argmax binary score within those groups wins
+
+**Results against LLM ground truth (binary-only baseline: 37.8% Good+Slight):**
+
+| Mode | Total | Good+Slight | CO% | FP% | FN% |
+|------|-------|-------------|-----|-----|-----|
+| Binary only (Phase 16 c2) | 40,524 | **37.8%** | 30.1% | 30.3% | 1.8% |
+| Hybrid t=0.1 | 63,595 | 5.6% | 37.6% | 53.0% | 3.8% |
+| Hybrid t=0.2 | 27,959 | 7.5% | 31.9% | 47.7% | 13.0% |
+| Hybrid t=0.3 | 17,885 | ~6.1%* | ~28% | ~39% | 26.6% |
+
+*measured against keyword GT
+
+**Why it failed:**
+
+1. **"Slightly off" collapse** — binary-only's 27.5% Slight rate comes from the argmax binary score naturally landing in the right group most of the time. The KNN gate removes this by restricting which groups are even eligible. If KNN votes for the wrong groups, the correct group is fully excluded → CO or FN. Slight rate dropped from 27.5% to 1.9–2.5%.
+
+2. **KNN FP floor is not from non-cancer cases** — even at the most permissive threshold (t=0.1, ≥1 neighbor), FP rose to 53%. Non-cancer cases find cancer neighbors in embedding space regardless; the KNN cannot gate them out.
+
+3. **KNN sparsity causes FN** — reference set built from LLM predictions (~30% cancer prevalence). Many true cancer cases don't have enough same-group neighbors to pass any threshold, causing FN to jump from 1.8% → 3.8–26.6%.
+
+4. **Mismatch between KNN reference and evaluation GT** — KNN built from LLM predictions; evaluation uses keyword GT (stricter). LLM-confirmed cancer cases may differ from keyword-confirmed cases, compounding both FP and FN.
+
+**Conclusion:** Hybrid is a regression at all tested thresholds. The KNN cannot act as a reliable group gate at current database size (~12,620 cases, ~150/group). The architecture code (`run_categorization_hybrid()` in `categorization.py`, wired in `pipeline.py`) is preserved for future experimentation.
+
+**Fallback:** Phase 16 binary (41.9% keyword GT / 37.8% LLM GT) remains the production ceiling. Revisit hybrid when database grows past ~15k cases.
+
+---
+
 ## Summary of Progress
 
 | Phase | Best Good+Slight | Best CO% | Best FN% |

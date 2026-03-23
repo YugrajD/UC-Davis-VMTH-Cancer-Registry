@@ -15,7 +15,7 @@ from pathlib import Path
 
 def update_co_bank(
     evaluation_csv: str = "ml/output/evaluation/evaluation.csv",
-    bank_csv: str = "ml/output/evaluation/evaluation_co_bank.csv",
+    bank_csv: str = "ml/output/training/binary/evaluation_co_bank.csv",
 ) -> int:
     bank_path = Path(bank_csv)
     existing: dict[tuple, dict] = {}
@@ -67,8 +67,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--bank-csv",
-        default="ml/output/evaluation/evaluation_co_bank.csv",
-        help="Path to the rolling CO-negative bank (default: ml/output/evaluation/evaluation_co_bank.csv)",
+        default="ml/output/training/binary/evaluation_co_bank.csv",
+        help="Path to the rolling CO-negative bank (default: ml/output/training/binary/evaluation_co_bank.csv)",
     )
     args = parser.parse_args()
     return update_co_bank(

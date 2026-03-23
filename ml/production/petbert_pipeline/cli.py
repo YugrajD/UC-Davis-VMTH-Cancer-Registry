@@ -127,6 +127,16 @@ def build_parser() -> argparse.ArgumentParser:
             "is still used to select the best specific ICD term."
         ),
     )
+    parser.add_argument(
+        "--knn-group-selector",
+        default=None,
+        help=(
+            "Path to a KnnGroupSelector npz built by ml/scripts/build_knn_selector.py. "
+            "Uses K-nearest-neighbour retrieval on per-column embeddings to predict "
+            "cancer group(s), then cosine similarity selects the best term within each "
+            "group. No training required. Mutually exclusive with --group-classifier."
+        ),
+    )
     return parser
 
 
@@ -172,6 +182,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         group_classifier_path=args.group_classifier,
         group_classifier_threshold=args.group_classifier_threshold,
         finetuned_model_path=args.finetuned_model_path,
+        knn_group_selector_path=args.knn_group_selector,
     )
 
 

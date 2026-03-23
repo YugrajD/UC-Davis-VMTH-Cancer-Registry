@@ -121,8 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--co-neg-bank-csv",
-        default="ml/output/evaluation/evaluation_co_bank.csv",
-        help="Path to the rolling CO-negative bank (default: ml/output/evaluation/evaluation_co_bank.csv). "
+        default="ml/output/training/binary/evaluation_co_bank.csv",
+        help="Path to the rolling CO-negative bank (default: ml/output/training/binary/evaluation_co_bank.csv). "
              "Pass empty string to disable.",
     )
     parser.add_argument(

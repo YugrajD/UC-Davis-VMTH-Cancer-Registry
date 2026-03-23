@@ -15,6 +15,7 @@ tokenizers==0.20.3
 tqdm==4.67.3
 requests>=2.32.0
 python-dotenv>=1.0.0
+anthropic>=0.40.0
 
 # Install torch from the XPU index for Intel GPU support:
 # pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/xpu

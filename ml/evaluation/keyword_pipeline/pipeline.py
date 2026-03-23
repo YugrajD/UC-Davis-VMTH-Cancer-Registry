@@ -31,7 +31,8 @@ _QUALIFIER_RE = re.compile(
     r",?\s*\b("
     r"nos|nec|conventional|well differentiated|spindle cell|kaposiform|"
     r"epithelioid|inflammatory lobular capillary|mixed capillary cavernous|"
-    r"retiform|malignant|benign|presumptive|adult type|juvenile type|atypical"
+    r"retiform|malignant|benign|presumptive|adult type|juvenile type|atypical|"
+    r"gist"  # parenthetical acronym in "Gastrointestinal stromal tumor (GIST)"
     r")\b.*$",
     re.IGNORECASE,
 )

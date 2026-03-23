@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from sklearn.decomposition import PCA
 
-from .categorization import run_categorization, run_categorization_group
+from .categorization import run_categorization, run_categorization_group, run_categorization_hybrid
 from .embedding import cosine_similarity_matrix, embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from model.presence_classifier import PresenceClassifier
 from model.group_classifier import GroupClassifier
@@ -215,13 +215,62 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     col_emb_list = [col_embeddings[col] for col in cols]
     col_has_content_list = [col_has_content[col] for col in cols]
 
-    # Optional: two-stage categorization via GroupClassifier (recommended).
-    # The GroupClassifier predicts which cancer group(s) each report belongs to,
-    # then cosine similarity selects the best term within each predicted group.
-    # This eliminates the ~42% completely-off floor of the binary PresenceClassifier.
-    if config.group_classifier_path is not None or config.finetuned_model_path is not None:
-        if config.finetuned_model_path is None:
-            # Use external GroupClassifier on frozen embeddings
+    # Build per-column concat embedding (used by both PresenceClassifier and KnnGroupSelector).
+    col_emb_concat = np.concatenate(
+        [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
+         for col in cols],
+        axis=1,
+    ).astype(np.float32)
+
+    # --- Step 4 (cont): Choose categorization strategy ----------------------
+    # Hybrid mode: binary PresenceClassifier scores + KNN group gating.
+    # Both paths must be set; KNN restricts which groups are candidates and the
+    # binary score selects the best term within those groups.
+    if (
+        config.presence_classifier_path is not None
+        and config.knn_group_selector_path is not None
+    ):
+        print(f"Loading presence classifier from {config.presence_classifier_path}...")
+        classifier = PresenceClassifier.load(config.presence_classifier_path)
+        classifier.to(torch_device)
+        presence_score_matrix = classifier.score_matrix(
+            torch.from_numpy(col_emb_concat),
+            torch.from_numpy(active_label_embeddings),
+        ).numpy()
+        classifier.cpu()
+        del classifier
+
+        from model.knn_group_selector import KnnGroupSelector
+        print(f"Loading KNN group selector from {config.knn_group_selector_path}...")
+        knn = KnnGroupSelector.load(config.knn_group_selector_path)
+        group_probs = knn.predict_proba(col_emb_concat)
+        group_names = knn.group_names
+
+        categorization = run_categorization_hybrid(
+            texts=texts,
+            score_matrix=presence_score_matrix,
+            group_probs=group_probs,
+            group_names=group_names,
+            taxonomy_labels=label_catalog.taxonomy_labels,
+            labels=label_catalog.labels,
+            group_threshold=config.group_classifier_threshold,
+            max_predictions=5,
+        )
+
+    # Group-only mode: KNN selector, GroupClassifier MLP, or fine-tuned model.
+    elif (
+        config.knn_group_selector_path is not None
+        or config.group_classifier_path is not None
+        or config.finetuned_model_path is not None
+    ):
+        if config.knn_group_selector_path is not None:
+            from model.knn_group_selector import KnnGroupSelector
+            print(f"Loading KNN group selector from {config.knn_group_selector_path}...")
+            knn = KnnGroupSelector.load(config.knn_group_selector_path)
+            group_probs = knn.predict_proba(col_emb_concat)
+            group_names = knn.group_names
+        elif config.finetuned_model_path is None:
+            # Use external GroupClassifier on frozen mean embeddings
             print(f"Loading group classifier from {config.group_classifier_path}...")
             group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
             group_clf.to(torch_device)
@@ -229,7 +278,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             group_clf.cpu()
             del group_clf
         else:
-            # We already have group_probs and group_names from the fine-tuned PetBERT model
+            # group_probs and group_names already set by fine-tuned model above
             print("Using group probabilities mapped from the fine-tuned sequence classifier.")
 
         categorization = run_categorization_group(
@@ -245,21 +294,13 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         )
 
     else:
+        # Binary-only or cosine-baseline mode.
         # Optional: use the binary PresenceClassifier to replace cosine similarity scores.
-        # The classifier takes the mean case embedding and each label embedding and returns
-        # a presence probability for every (case, label) pair.
         presence_score_matrix = None
         if config.presence_classifier_path is not None:
             print(f"Loading presence classifier from {config.presence_classifier_path}...")
             classifier = PresenceClassifier.load(config.presence_classifier_path)
             classifier.to(torch_device)
-            # Build (N, n_cols * 768) input matching what the classifier was trained on:
-            # each column embedded independently, empty columns zeroed.
-            col_emb_concat = np.concatenate(
-                [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
-                 for col in cols],
-                axis=1,
-            ).astype(np.float32)
             presence_score_matrix = classifier.score_matrix(
                 torch.from_numpy(col_emb_concat),
                 torch.from_numpy(active_label_embeddings),

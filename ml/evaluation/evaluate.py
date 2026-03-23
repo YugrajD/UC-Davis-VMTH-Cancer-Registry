@@ -175,7 +175,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--keyword-csv",
-        default="ml/output/evaluation/keyword_predictions.csv",
+        default="ml/output/evaluation/keyword_pipeline/keyword_predictions.csv",
         help="Path to keyword_predictions.csv",
     )
     parser.add_argument(

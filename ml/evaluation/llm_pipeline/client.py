@@ -1,4 +1,4 @@
-"""Jan local API client for LLM-based evaluation."""
+"""Ollama local API client for LLM-based evaluation."""
 
 import os
 from pathlib import Path
@@ -8,29 +8,20 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
-_IP = os.getenv("JAN_TAILSCALE_IP")
-_API_KEY = os.getenv("JAN_API_KEY")
-_HOSTNAME = os.getenv("JAN_HOSTNAME")
-_MODEL = os.getenv("JAN_MODEL")
+_IP = os.getenv("TAILSCALE_IP")
+_PORT = os.getenv("API_PORT", "11434")
+_MODEL = os.getenv("OLLAMA_MODEL")
 
 
 def _base_url() -> str:
-    return f"http://{_IP}:1337/v1"
-
-
-def _headers() -> dict:
-    return {
-        "Authorization": f"Bearer {_API_KEY}",
-        "Host": _HOSTNAME,
-        "Content-Type": "application/json",
-    }
+    return f"http://{_IP}:{_PORT}"
 
 
 def list_models() -> list[dict]:
-    """Return available models from the Jan server."""
-    response = requests.get(f"{_base_url()}/models", headers=_headers(), timeout=10)
+    """Return available models from the Ollama server."""
+    response = requests.get(f"{_base_url()}/api/tags", timeout=10)
     response.raise_for_status()
-    return response.json()["data"]
+    return response.json()["models"]
 
 
 def chat(prompt: str, model: str | None = None, timeout: int = 60) -> str:
@@ -38,21 +29,21 @@ def chat(prompt: str, model: str | None = None, timeout: int = 60) -> str:
     payload = {
         "model": model or _MODEL,
         "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
     }
     response = requests.post(
-        f"{_base_url()}/chat/completions",
-        headers=_headers(),
+        f"{_base_url()}/api/chat",
         json=payload,
         timeout=timeout,
     )
     response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+    return response.json()["message"]["content"]
 
 
 if __name__ == "__main__":
     print("Available models:")
     for m in list_models():
-        print(f"  {m['id']}")
+        print(f"  {m['name']}")
 
     print("\nTest message:")
     print(chat("Hello, respond in one sentence."))

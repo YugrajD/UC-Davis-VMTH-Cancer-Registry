@@ -169,12 +169,12 @@ def evaluate(petbert_csv: Path, keyword_csv: Path, out_dir: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate PetBERT predictions against keyword ground truth.")
     parser.add_argument(
-        "--petbert-csv",
+        "--production-csv",
         default="ml/output/production/petbert_predictions.csv",
         help="Path to petbert_predictions.csv",
     )
     parser.add_argument(
-        "--keyword-csv",
+        "--evaluration-csv",
         default="ml/output/evaluation/keyword_pipeline/keyword_predictions.csv",
         help="Path to keyword_predictions.csv",
     )

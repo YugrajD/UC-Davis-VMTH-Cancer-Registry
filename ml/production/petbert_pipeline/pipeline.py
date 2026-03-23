@@ -270,11 +270,11 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             group_probs = knn.predict_proba(col_emb_concat)
             group_names = knn.group_names
         elif config.finetuned_model_path is None:
-            # Use external GroupClassifier on frozen mean embeddings
+            # Use external GroupClassifier on per-column concat embeddings (2304-dim)
             print(f"Loading group classifier from {config.group_classifier_path}...")
             group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
             group_clf.to(torch_device)
-            group_probs = group_clf.predict_proba(torch.from_numpy(embeddings)).numpy()
+            group_probs = group_clf.predict_proba(torch.from_numpy(col_emb_concat)).numpy()
             group_clf.cpu()
             del group_clf
         else:

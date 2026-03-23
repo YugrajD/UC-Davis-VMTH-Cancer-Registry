@@ -7,7 +7,7 @@ currently the best performer.
 | Classifier | Status | Best result |
 |---|---|---|
 | Binary PresenceClassifier | Production best | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
-| GroupClassifier | Implemented, not yet competitive | 21.9% Good+Slight @ t=0.8 |
+| GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end (MLP macro F1=0.4975 on 17 groups) |
 | Fine-tuned PetBERT | WIP — see `petbert-pipeline.md` | Not benchmarked |
 
 > **Training ground truth:** All three approaches derive training labels from the keyword
@@ -217,11 +217,11 @@ report text
     ↓
 PetBERT (frozen)
     ↓
-mean_embedding (768-dim)
+per-column embeddings (3 × 768) → concat → 2304-dim
     ↓
 GroupClassifier MLP
     ↓
-sigmoid score per group (45 outputs)
+sigmoid score per group (17 outputs — groups with ≥100 training cases)
     ↓
 threshold → predicted group(s)
     ↓
@@ -241,24 +241,30 @@ implicitly through argmax after independent scoring. The GroupClassifier directl
 penalizes wrong-group assignments in the loss, eliminating the CO problem at the
 group level (once it generalises).
 
+**Important:** The GroupClassifier uses `col_emb_concat` (2304-dim), the same
+per-column concatenated embeddings used by the binary PresenceClassifier — not
+`mean_embedding` (768-dim). Groups with fewer than `--min-group-cases` training
+samples are excluded from training and are unreachable at inference.
+
 ### Model Architecture
 
 ```
 GroupClassifier(
-    input_dim   = 768,     # PetBERT mean_embedding
-    hidden_dim  = 256,
-    num_classes = 45,      # 44 cancer groups + 1 Uncategorized
-    dropout     = 0.3
+    input_dim   = 2304,    # per-column concat (3 × 768)
+    hidden_dim  = 512,
+    num_classes = 17,      # groups with ≥100 keyword-confirmed cases
+    dropout     = 0.05
 )
 
 forward(x):
-    x = ReLU(Linear(768 → 256))
-    x = Dropout(0.3)
-    x = Sigmoid(Linear(256 → 45))   # independent probability per class
+    x = ReLU(Linear(2304 → 512))
+    x = Dropout(0.05)
+    x = Sigmoid(Linear(512 → 17))   # independent probability per class
 ```
 
 Sigmoid (not softmax) because a report can belong to multiple groups simultaneously.
-Loss: binary cross-entropy per class with inverse-frequency class weights.
+Loss: `BCEWithLogitsLoss` with per-class inverse-frequency weights, capped at
+`--max-class-weight` to prevent extreme weights from collapsing recall.
 
 ### Training Data
 
@@ -273,21 +279,32 @@ evaluate. Re-run whenever keyword coverage improves — no architectural changes
 
 ### How to Train
 
+> Run from the `ml/` directory so relative paths resolve correctly.
+
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode group --device xpu
+cd ml
+ml/.venv/Scripts/python.exe -m training.group.train \
+  --epochs 1700 \
+  --lr 5e-5 \
+  --hidden-dim 512 \
+  --dropout 0.05 \
+  --max-class-weight 12 \
+  --min-group-cases 100 \
+  --device xpu
 ```
 
-Re-train by running this command whenever `keyword_predictions.csv` is updated.
+Re-train whenever `keyword_predictions.csv` is updated. The best checkpoint is saved to
+`model/checkpoints/group_classifier_best.pt` and metadata to `group_classifier_best.meta.json`.
 
 ### Inference Flow
 
-1. Load cached `mean_embedding` for the report
-2. Forward pass → 45 group probabilities
-3. Apply threshold (e.g. 0.3) → predicted group(s); if none → Uncategorized
+1. Load cached `col_emb_concat` (2304-dim) for the report
+2. Forward pass → 17 group probabilities
+3. Apply threshold → predicted group(s); if none → Uncategorized
 4. For each predicted group: cosine similarity against terms in that group only → top term + code
 5. Output: up to k predictions, one per predicted group above threshold
 
-### Evaluation Results
+### Evaluation Results (Early — 768-dim mean, 2026-03-21)
 
 | Data | Metric | Binary (Phase 11) | GroupClassifier @ 0.3 | GroupClassifier @ 0.8 |
 |------|--------|-------------------|-----------------------|-----------------------|
@@ -299,8 +316,83 @@ Re-train by running this command whenever `keyword_predictions.csv` is updated.
 | **5,788 cases** | **CO%** | **31.8%** | 57.5% | 54.5% |
 | **5,788 cases** | **FN%** | **1.3%** | — | 15.6% |
 
-Binary PresenceClassifier is the clear winner at current data volumes. GroupClassifier
-overfits (val loss >> train loss) at 5,788 cases across 44 groups (~132 cases/group avg).
+*These results used 768-dim mean_embedding — incorrect; a pipeline bug fed the wrong
+tensor to the model. See bug fix documentation below.*
+
+### End-to-End Evaluation (2304-dim col_emb_concat, 2026-03-23)
+
+After fixing the pipeline embedding dimension bug and using the best trained checkpoint
+(macro F1=0.4975, epoch 1672), end-to-end pipeline evaluation showed:
+
+| Metric | Binary (Phase 16) | GroupClassifier (best, t=0.3) |
+|--------|-------------------|-------------------------------|
+| Good+Slight | **41.9%** | 9.3% |
+| CO% | 29.6% | ~37% |
+| FP% | 27.2% | 33.3% |
+| FN% | 1.2% | 16.8% |
+
+The GroupClassifier is a large regression vs binary at current data volumes:
+- Only 17 of 43 groups have ≥100 training cases — the other 26 are unreachable at inference
+- High FP% (33.3%): the model fires positively on non-cancer cases
+- High FN% (16.8%): cases in untrained groups are missed entirely
+- Within-group cosine term selection is still weak even when the group is correct
+
+Binary PresenceClassifier remains the clear winner.
+
+### Hyperparameter Tuning Experiment (2026-03-23) ❌ End-to-end regression
+
+**Motivation:** With natural class weights the model predicted everything positive (recall→1.0,
+precision→0). The imbalance was severe: Adenoma group had 1,040 positives out of ~12,620 cases
+— a 11:1 ratio, other groups as extreme as 119:1. The hypothesis was that (1) capping training
+samples per group at 100 and (2) filtering groups with <100 samples would reduce overfitting.
+
+**Per-group cap (--max-group-cases) — REGRESSION:**
+
+Capping positives at 100 per group (row-removal approach, keeping all non-cancer rows) dropped
+macro F1. The cap threw away valid training signal without enough regularization benefit. Removing
+the cap and using only `--max-class-weight` to control BCE weight magnitude worked better:
+
+| max-group-cases | max-class-weight | Best F1 |
+|----------------|-----------------|---------|
+| 100 (capped) | auto (up to 119x) | ~0.0 (all positive) |
+| 100 (capped) | 20 | 0.245 |
+| 0 (no cap) | 20 | 0.358 |
+| 0 (no cap) | 12 | 0.409 (best at this LR) |
+
+**Key finding:** `--max-group-cases` removes valid training data. Do not use it. Use
+`--max-class-weight` alone to prevent weight explosion.
+
+**Note:** When `--max-group-cases` is applied, class weights must be recalculated from
+the capped dataset (not the full dataset) to avoid stale weights. This is implemented in
+`train.py` but the approach itself is not recommended.
+
+**Hyperparameter sweep — best config reached through iterative tuning:**
+
+| Parameter | Values tested | Best |
+|-----------|--------------|------|
+| `--dropout` | 0.4, 0.3, 0.2, 0.1, 0.05, 0.02, 0.0 | **0.05** |
+| `--max-class-weight` | 5, 10, 15, 20, 40, 12, 11, 13 | **12** |
+| `--lr` | 1e-3, 5e-4, 3e-4, 2e-4, 1e-4, 7e-5, 5e-5, 3e-5 | **5e-5** |
+| `--epochs` | 50, 100, 200, 300, 500, 1000, 1700, 2000 | **1700** |
+| `--hidden-dim` | 256, 512 | **512** |
+
+Key insights from the sweep:
+- Reducing dropout from 0.3–0.4 to 0.05 gave the largest single gain (~+0.18 F1)
+- Lower LR consistently helped; each halving added ~0.01–0.03 F1
+- 2-layer architecture (512→256→17) regressed vs single hidden layer (reverted)
+- More epochs always helped at LR=5e-5 until epoch ~1672; stopped at 1700
+
+**Best training result:** macro F1 = 0.4975 on 17 groups at epoch 1672.
+
+**End-to-end result:** 9.3% Good+Slight — large regression vs binary 41.9%.
+The training F1 does not translate to good end-to-end performance because:
+1. Only 17 of 43 groups are trained; the other 26 are unreachable
+2. High FP (33.3%): model fires positively on non-cancer reports
+3. FN (16.8%): cases in untrained groups are entirely missed
+4. Within-group cosine term selection remains weak regardless of group accuracy
+
+**Conclusion:** GroupClassifier MLP requires significantly more labeled data before it
+can compete with binary. Do not retry until ~15,000 keyword-confirmed cases exist.
 
 ### Embedding Experiments (What Was Tried)
 
@@ -325,15 +417,52 @@ back to a different column, making the input distribution inconsistent.
 **Conclusion:** Embedding selection is not a lever for the GroupClassifier at current data
 volumes. The overfitting ceiling can only be broken by more keyword-confirmed cases.
 
+### Bugs Discovered and Fixed (2026-03-23)
+
+#### 1. Wrong embedding dimension in pipeline ❌ → ✅ Fixed
+
+**Symptom:** Early evaluation results (the "21.9% Good+Slight @ 0.8" row) were measured
+with the wrong embeddings. `pipeline.py` passed `embeddings` (768-dim mean_embedding) to
+`group_clf.predict_proba()` but the model was trained on 2304-dim `col_emb_concat`.
+The shapes were silently mismatched — PyTorch raised a dimension error at runtime.
+
+**Fix:** Changed line in `pipeline.py` to pass `col_emb_concat` instead of `embeddings`.
+
+#### 2. Double-nesting path bug in train.py ❌ → ✅ Fixed
+
+**Symptom:** Running `python -m training.group.train` from the `ml/` directory with
+the default `--out` path `"ml/model/checkpoints/group_classifier_current.pt"` resolved
+to `ml/ml/model/checkpoints/...` (double-nested). Similarly for `--training-data`.
+
+**Fix:** Changed both defaults to relative paths without the `ml/` prefix:
+- `--out`: `"ml/model/checkpoints/..."` → `"model/checkpoints/..."`
+- `--training-data`: `"ml/output/..."` → `"output/..."`
+
+The misplaced checkpoint files were manually moved from `ml/ml/model/checkpoints/` to
+`ml/model/checkpoints/` and `ml/ml/` was deleted.
+
+#### 3. Stale class weights after per-group cap ❌ → ✅ Fixed
+
+**Symptom:** When `--max-group-cases=100` was applied, the BCE weights were still
+computed from the full (uncapped) dataset. After capping Adenoma from 1,040 → 100
+positives, the true neg:pos ratio jumped from 11:1 to 92:1 but the weight stayed at 11,
+causing the model to under-penalize false negatives for capped groups.
+
+**Fix:** Class weights are now recalculated from `targets` after the cap is applied in
+`train.py`. (The cap itself is not recommended — see tuning section above.)
+
 ---
 
 ### Expected Trajectory as Keyword Coverage Grows
 
 | Confirmed cases | Expected outcome |
 |----------------|-----------------|
-| ~5,788 (current) | Overfits — binary wins |
-| ~10,000 | GroupClassifier starts generalising — may match binary |
+| ~5,788 (current) | Overfits — binary wins by large margin (41.9% vs 9.3%) |
+| ~10,000 | More groups cross 100-case threshold; GroupClassifier starts generalising |
 | ~15,000+ | Meaningful CO reduction expected — GroupClassifier should pull ahead |
+
+**Do not retry GroupClassifier in production until ~15,000 keyword-confirmed cases.**
+Hyperparameter tuning has been exhausted at current volume (best F1=0.4975, epoch 1672).
 
 ### Implementation Status
 
@@ -405,8 +534,9 @@ the same within-group term selection step.
 ### Disadvantages
 
 - Overfits at current data volume (5,788 cases / 44 groups)
-- Uses mean embedding — column-specific signal is lost
+- Only 17 of 43 groups have enough data (≥100 cases) — 26 groups are unreachable
 - A mis-predicted group guarantees a wrong term (no recovery path)
+- High FP% (33.3%) and FN% (16.8%) at current data volume — large regression vs binary
 
 ---
 
@@ -482,7 +612,7 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
 | | Binary PresenceClassifier | GroupClassifier | Fine-tuned PetBERT |
 |---|---|---|---|
 | **Status** | Production best | Implemented, not competitive | WIP |
-| **Best result** | 41.9% Good+Slight (Phase 16) | 21.9% Good+Slight | Not benchmarked |
+| **Best result** | 41.9% Good+Slight (Phase 16) | 9.3% Good+Slight end-to-end (MLP F1=0.4975 on 17 groups) | Not benchmarked |
 | **PetBERT** | Frozen | Frozen | Fine-tuned end-to-end |
 | **Training style** | Iterative (CO feedback) | One-shot | One-shot |
 | **Data requirement** | Works from ~1,273 cases | Needs ~10,000+ cases | Needs ~10,000+ cases |

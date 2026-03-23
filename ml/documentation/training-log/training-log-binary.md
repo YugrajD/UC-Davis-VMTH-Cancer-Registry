@@ -556,4 +556,4 @@ Full cold start: cache, CO bank, and current checkpoint deleted before c1.
 | Phase 15 (per-pair + learned combine) | 34.8% | 32.3% | 1.6% (better than Phase 14, still below Phase 13) |
 | **Phase 16 (concat + hidden_dim=512)** | **41.9%** | **29.6%** | **1.2%** (plateau at c2, 5 cycles — NEW PRODUCTION BEST) |
 
----
+

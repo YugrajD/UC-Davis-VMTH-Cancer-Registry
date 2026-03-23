@@ -276,13 +276,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Train the GroupClassifier.")
     parser.add_argument(
         "--training-data",
-        default="ml/output/group_training_data.npz",
+        default="output/group_training_data.npz",
         help="Path to training data npz from build_group_training_data.py",
     )
     parser.add_argument(
         "--out",
-        default="ml/model/checkpoints/group_classifier_current.pt",
-        help="Output checkpoint path (default: ml/model/checkpoints/group_classifier_current.pt)",
+        default="model/checkpoints/group_classifier_current.pt",
+        help="Output checkpoint path (default: model/checkpoints/group_classifier_current.pt)",
     )
     parser.add_argument("--epochs", type=int, default=50, help="Training epochs (default: 50)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate (default: 1e-3)")

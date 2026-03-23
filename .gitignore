@@ -56,9 +56,14 @@ ml_backup/
 
 # ML model weights
 ml/model/weights/
+ml/model/checkpoints/binary/
+ml/model/checkpoints/contrastive/
+ml/model/checkpoints/group/
+ml/model/checkpoints/knn/
 *.pt
 *.bin
 *.onnx
+*.safetensors
 ml/output/
 
 # ML datasets (local)

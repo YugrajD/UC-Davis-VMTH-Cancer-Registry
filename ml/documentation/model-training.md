@@ -5,9 +5,9 @@ cancer labels (term, group, ICD code). Three classifier approaches have been exp
 
 | Approach | Status | Best result |
 |---|---|---|
-| Binary PresenceClassifier | Production best | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
+| Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
 | GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end |
-| Contrastive fine-tuning (InfoNCE) | Ready to run — not yet benchmarked | — |
+| Contrastive fine-tuning (InfoNCE) | **Production best** | **69.0% Good+Slight (Phase 17, c8)** |
 | End-to-end fine-tuned PetBERT | WIP, blocked on data volume | — |
 
 ---
@@ -274,40 +274,69 @@ Training data: keyword-confirmed `(case_id, matched_term, matched_group)` pairs 
 
 Label text format: `"{term} {group}"` — exactly what the pipeline uses for label embeddings.
 
+### Results (Phase 17, 2026-03-23)
+
+Fine-tuning config: 3 epochs, batch=32, lr=2e-5, temperature=0.07, 7,398 pairs.
+InfoNCE loss: 1.90 → 1.36 → 1.22 (converged normally).
+
+| Metric | Phase 16 (frozen PetBERT) | Phase 17 (contrastive) | Δ |
+|--------|--------------------------|------------------------|---|
+| **Good+Slight** | 41.9% | **69.0%** | **+27.1pp** |
+| CO% | 29.6% | **6.9%** | **−22.7pp** |
+| FP% | 27.2% | 23.7% | −3.5pp |
+| FN% | 1.2% | 0.3% | −0.9pp |
+
+The CO floor — the core failure mode for the frozen-backbone approach — was shattered.
+Contrastive training directly fixed the wrong-group problem: labels that had nearly
+identical cosine similarity under the frozen backbone became separable after fine-tuning.
+
+PresenceClassifier cycle trajectory (cold start, hd=512, co=5):
+
+| Cycle | Good+Slight | CO% | Notes |
+|-------|-------------|-----|-------|
+| c1 | 49.6% | 22.3 | Already above Phase 16 best |
+| c2 | 54.5% | 22.1 | |
+| c3 | 64.5% | 8.8 | Large jump — CO bank kicking in |
+| c4 | 68.0% | 7.9 | |
+| c8 | **69.0%** | **6.9** | **Best checkpoint** — plateau confirmed |
+| c10 | 68.8% | 7.0 | Plateau oscillation — stopped here |
+
+Best checkpoint: `ml/model/checkpoints/binary/presence_classifier_best.pt`
+Backbone: `ml/model/checkpoints/contrastive/`
+
 ### Advantages
 
-- Works at current data volumes (~5,788 pairs) — no group-level generalization needed
+- Works at current data volumes (~7,398 pairs) — no group-level generalization needed
 - Directly optimizes the embedding geometry the PresenceClassifier operates on
 - No new inference code — fine-tuned checkpoint is a drop-in replacement for `SAVSNET/PetBERT`
 - MLM head weights are unchanged (never called during contrastive forward pass)
-- Potentially reduces CO floor by making wrong-group labels harder to confuse
+- **Proven**: reduced CO floor from ~30% to ~7% in Phase 17
 
 ### Disadvantages
 
 - Requires a full cold start after fine-tuning (embedding space changes)
 - False negatives in-batch: if the same label appears twice in a batch, the off-diagonal
   entry is wrongly treated as a negative (~4% collision rate at batch_size=32 — acceptable)
-- Improvement is not guaranteed — the CO floor may be driven by label overlap, not
-  embedding quality
+- FP floor (~24%) remains — driven by non-cancer cases with similar vocabulary to cancer reports
 
 ### How to Run
 
 ```bash
 # Step 1: Fine-tune PetBERT
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode contrastive-finetuning \
+  --mode contrastive-finetuning --skip-keyword-scan \
   --epochs 3 --batch-size 32 --lr 2e-5 --temperature 0.07 \
   --device xpu --local-only
 
 # Step 2: Cold start
 rm -f ml/data/embedding_cache.npz
-rm -f ml/output/training/binary/evaluation_co_bank.csv
-rm -f ml/model/checkpoints/presence_classifier_current.pt
+rm -f ml/output/training/contrastive/evaluation_co_bank.csv
+rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt
 
 # Step 3: Retrain PresenceClassifier with the new backbone
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode binary \
-  --model ml/model/checkpoints/petbert_contrastive \
+  --mode binary --skip-keyword-scan \
+  --model ml/model/checkpoints/contrastive \
   --label "contrastive cold-start c1" \
   --co-neg-per-case 5 --fp-neg-per-case 10 \
   --embedding-min-sim 0.05 --epochs 25 \
@@ -335,20 +364,20 @@ GroupClassifier proves competitive.
 
 | | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning | End-to-end fine-tuning |
 |---|---|---|---|---|
-| **Status** | Production best | Not competitive | Ready to benchmark | WIP, blocked |
-| **Best result** | 41.9% Good+Slight | 9.3% Good+Slight | Not yet benchmarked | Not yet benchmarked |
+| **Status** | Superseded by Approach 3 | Not competitive | **Production best** | WIP, blocked |
+| **Best result** | 41.9% Good+Slight | 9.3% Good+Slight | **69.0% Good+Slight (Phase 17, c8)** | Not yet benchmarked |
 | **PetBERT** | Frozen | Frozen | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
-| **Training style** | Iterative (CO feedback) | One-shot | One-shot | One-shot |
+| **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier | One-shot |
 | **Data requirement** | Works from ~1,273 cases | Needs ~15,000+ cases | Works at ~5,788 cases | Needs ~10,000+ cases |
-| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow (full transformer, once) | Slow (full transformer) |
+| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative | Slow (full transformer) |
 | **Inference speed** | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) |
-| **CO floor** | ~30% | Designed to eliminate it | Potentially lower | Designed to eliminate it |
-| **Main constraint** | CO floor, keyword data ceiling | Overfits at current volume | Not yet measured | Compute cost, data volume |
+| **CO floor** | ~30% | Designed to eliminate it | **~7%** — dramatically reduced | Designed to eliminate it |
+| **Main constraint** | CO floor eliminated by Approach 3 | Overfits at current volume | Keyword data ceiling | Compute cost, data volume |
 
 ### Roadmap
 
-- **Now**: Run contrastive fine-tuning (Approach 3) and benchmark against Phase 16 binary
-- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier; implement discriminating-keyword term selection
+- **Now**: Use Phase 17 contrastive checkpoint as production best (69.0%)
+- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier; implement discriminating-keyword term selection; re-run contrastive fine-tuning
 - **After GroupClassifier proves competitive (~15,000 cases)**: Consider end-to-end fine-tuning (Approach 4)
 
 ---

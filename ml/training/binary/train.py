@@ -151,6 +151,7 @@ def train(
     recall_weight: float = 0.5,
     skip_prerequisites: bool = False,
     local_only: bool = False,
+    model_name: str = "SAVSNET/PetBERT",
 ) -> int:
     # Auto-build prerequisites if missing (i.e., run_cycle Steps 0–1)
     if not skip_prerequisites:
@@ -192,7 +193,7 @@ def train(
         from production.petbert_pipeline.embedding_cache import load_cache
         cache = load_cache(
             embedding_cache,
-            model_name="SAVSNET/PetBERT",
+            model_name=model_name,
             report_csv_path=report_csv,
             labels_csv_path=labels_csv,
         )

@@ -164,10 +164,17 @@ def main() -> int:
                         help="Short description for this run (e.g. 'after training v1')")
     parser.add_argument("--show", action="store_true",
                         help="Print history without recording a new entry")
+    parser.add_argument("--latest", action="store_true",
+                        help="Print only the most recent history entry")
     args = parser.parse_args()
 
     if args.show:
         _print_history(_read_history(Path(args.history)))
+        return 0
+
+    if args.latest:
+        rows = _read_history(Path(args.history))
+        _print_history(rows[-1:] if rows else [])
         return 0
 
     return log_evaluation(summary=args.summary, history=args.history, label=args.label)

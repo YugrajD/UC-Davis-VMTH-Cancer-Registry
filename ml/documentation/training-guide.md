@@ -22,8 +22,8 @@ embedding cache exists. Deletes the stale cache, bank, and checkpoint:
 
 ```bash
 rm -f ml/data/embedding_cache.npz
-rm -f ml/output/training/binary/evaluation_co_bank.csv
-rm -f ml/model/checkpoints/presence_classifier_current.pt
+rm -f ml/output/training/contrastive/evaluation_co_bank.csv
+rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt
 ```
 
 Then run c1 — Step 0 will rebuild the embedding cache automatically (takes several minutes):
@@ -31,6 +31,8 @@ Then run c1 — Step 0 will rebuild the embedding cache automatically (takes sev
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode binary \
+  --skip-keyword-scan \
+  --model ml/model/checkpoints/contrastive \
   --label "cold-start c1" \
   --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
@@ -49,6 +51,8 @@ Continue with the same command, updating `--label` each time:
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode binary \
+  --skip-keyword-scan \
+  --model ml/model/checkpoints/contrastive \
   --label "c2" \
   --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
@@ -72,14 +76,26 @@ Do **not** raise `--co-neg-per-case` to 10 — causes regression with the per-co
 6. Update CO bank with this cycle's completely-off predictions
 7. Log results to `evaluation_history.csv`; auto-promote if new best
 
-### Expected trajectory (5,788 cancer cases)
+### Expected trajectory
+
+**With contrastive backbone** (`--model ml/model/checkpoints/contrastive`, Phase 17 results):
 
 | Cycle | Expected Good+Slight | Notes |
 |-------|---------------------|-------|
-| c1 (cold start) | ~28–30% | Cache rebuilt; bank ~15k |
+| c1 (cold start) | ~49–50% | Cache rebuilt with fine-tuned backbone |
+| c2 | ~54% | Steady climb |
+| c3–c4 | ~64–68% | Large jump as CO bank fills |
+| c5–c8 | ~68–69% | Plateau with oscillation |
+| c9+ | oscillates ~67–69% | Stop when no new best for 2–3 cycles |
+
+**With frozen PetBERT** (no `--model` flag, Phase 16 baseline):
+
+| Cycle | Expected Good+Slight | Notes |
+|-------|---------------------|-------|
+| c1 (cold start) | ~28–30% | Cache rebuilt |
 | c2 | ~26% | May dip — continue |
 | c3–c4 | ~38–39% | Large jump |
-| c5–c6 | ~39–40% | Plateau |
+| c5–c6 | ~39–42% | Plateau |
 | c7+ | may regress | Stop here |
 
 ### Key parameters
@@ -104,9 +120,9 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode group --device xpu
 ```
 
 This builds training data from the embedding cache and `keyword_annotation.csv`, trains
-for the configured number of epochs, and saves to `ml/model/checkpoints/group_classifier_best.pt`.
+for the configured number of epochs, and saves to `ml/model/checkpoints/group/group_classifier_best.pt`.
 
-> **Note:** GroupClassifier is not yet competitive at 5,788 cases (21.9% vs binary 41.9%).
+> **Note:** GroupClassifier is not yet competitive at 5,788 cases (9.3% vs binary 69.0% with contrastive backbone).
 > Re-train when keyword coverage reaches ~10,000 confirmed cases.
 
 ### Options
@@ -134,6 +150,7 @@ training pipeline. A cold start is required after fine-tuning.
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode contrastive-finetuning \
+  --skip-keyword-scan \
   --epochs 3 \
   --batch-size 32 \
   --lr 2e-5 \
@@ -144,7 +161,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 
 Builds `(report_text, label_text)` pairs from `keyword_annotation.csv` + `report.csv`,
 then fine-tunes PetBERT with symmetric InfoNCE loss. Saves a full
-`AutoModelForMaskedLM` checkpoint to `ml/model/checkpoints/petbert_contrastive/`.
+`AutoModelForMaskedLM` checkpoint to `ml/model/checkpoints/contrastive/`.
 
 Use `--skip-dataset-build` to reuse an existing `ml/data/contrastive_pairs.csv`.
 
@@ -154,8 +171,8 @@ The embedding space has changed. Delete the stale cache, CO bank, and checkpoint
 
 ```bash
 rm -f ml/data/embedding_cache.npz
-rm -f ml/output/training/binary/evaluation_co_bank.csv
-rm -f ml/model/checkpoints/presence_classifier_current.pt
+rm -f ml/output/training/contrastive/evaluation_co_bank.csv
+rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt
 ```
 
 ### Step 3 — Retrain PresenceClassifier with the new backbone
@@ -163,7 +180,7 @@ rm -f ml/model/checkpoints/presence_classifier_current.pt
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode binary \
-  --model ml/model/checkpoints/petbert_contrastive \
+  --model ml/model/checkpoints/contrastive \
   --label "contrastive cold-start c1" \
   --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
@@ -205,14 +222,14 @@ After training, run inference with the best checkpoint:
 ```bash
 # With binary PresenceClassifier (current best)
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --presence-classifier ml/model/checkpoints/presence_classifier_best.pt \
+  --presence-classifier ml/model/checkpoints/binary/presence_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
   --local-only
 
 # With GroupClassifier
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --group-classifier ml/model/checkpoints/group_classifier_best.pt \
+  --group-classifier ml/model/checkpoints/group/group_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
   --local-only

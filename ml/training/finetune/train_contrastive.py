@@ -143,7 +143,7 @@ def _make_collator(tokenizer: AutoTokenizer, max_length: int):
 def train(
     *,
     pairs_csv: str = "ml/data/contrastive_pairs.csv",
-    out_dir: str = "ml/model/checkpoints/petbert_contrastive",
+    out_dir: str = "ml/model/checkpoints/contrastive",
     model_name: str = "SAVSNET/PetBERT",
     epochs: int = 3,
     batch_size: int = 32,
@@ -264,8 +264,8 @@ def train(
     print("\nDone.")
     print("Next steps (cold start required — embedding space has changed):")
     print("  1. rm -f ml/data/embedding_cache.npz")
-    print("  2. rm -f ml/output/training/binary/evaluation_co_bank.csv")
-    print("  3. rm -f ml/model/checkpoints/presence_classifier_current.pt")
+    print("  2. rm -f ml/output/training/contrastive/evaluation_co_bank.csv")
+    print("  3. rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt")
     print(f"  4. Add --model {out_dir} --local-only to all pipeline/training calls.")
 
 
@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--pairs-csv", default="ml/data/contrastive_pairs.csv",
                         help="Path to CSV from build_contrastive_dataset.py")
-    parser.add_argument("--out-dir", default="ml/model/checkpoints/petbert_contrastive",
+    parser.add_argument("--out-dir", default="ml/model/checkpoints/contrastive",
                         help="Directory to save the fine-tuned HuggingFace checkpoint")
     parser.add_argument("--model", default="SAVSNET/PetBERT",
                         help="Base model name or local path (default: SAVSNET/PetBERT)")

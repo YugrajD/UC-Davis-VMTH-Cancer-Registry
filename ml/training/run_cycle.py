@@ -31,9 +31,9 @@ from evaluation.log_evaluation import log_evaluation
 from training.binary.train import train
 from training.binary.update_co_bank import update_co_bank
 
-_CHECKPOINT            = "ml/model/checkpoints/presence_classifier_current.pt"
-_CHECKPOINT_PRODUCTION = "ml/model/checkpoints/presence_classifier_best.pt"
-_HISTORY_CSV           = "ml/output/evaluation/binary/evaluation_history.csv"
+def _subdir(model: str) -> str:
+    """Return the output subdirectory name based on the model used."""
+    return "contrastive" if "contrastive" in model else "binary"
 
 
 def _print_banner(title: str) -> None:
@@ -48,7 +48,7 @@ def _scan(title: str, config: ScanConfig) -> None:
     run_scan(config)
 
 
-def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> ScanConfig:
+def _make_scan_config(args, *, out_dir: str, presence_classifier_path: str | None = None) -> ScanConfig:
     """Build a ScanConfig from cycle CLI args."""
     return ScanConfig(
         csv_path="ml/data/report.csv",
@@ -57,7 +57,7 @@ def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> S
         col_weights={},
         model_name=args.model,
         local_only=args.local_only,
-        out_dir="ml/output/production/binary",
+        out_dir=out_dir,
         max_rows=None,
         batch_size=16,
         max_length=512,
@@ -127,8 +127,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--co-neg-bank-csv",
-        default="ml/output/training/binary/evaluation_co_bank.csv",
-        help="Path to the rolling CO-negative bank (default: ml/output/training/binary/evaluation_co_bank.csv). "
+        default=None,
+        help="Path to the rolling CO-negative bank (default: auto-derived from --model). "
              "Pass empty string to disable.",
     )
     parser.add_argument(
@@ -147,13 +147,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    subdir          = _subdir(args.model)
+    checkpoint      = f"ml/model/checkpoints/{subdir}/presence_classifier_current.pt"
+    checkpoint_best = f"ml/model/checkpoints/{subdir}/presence_classifier_best.pt"
+    production_out  = f"ml/output/production/{subdir}"
+    evaluation_out  = f"ml/output/evaluation/{subdir}"
+    history_csv     = f"ml/output/evaluation/{subdir}/evaluation_history.csv"
+
+    if args.co_neg_bank_csv is None:
+        args.co_neg_bank_csv = f"ml/output/training/{subdir}/evaluation_co_bank.csv"
+
     label = args.label or f"classifier {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
     # 0 ── Build embedding cache (first run only) ──────────────────────────────
     if args.embedding_cache and not Path(args.embedding_cache).exists():
         _scan(
             "Step 0/5 — Build embedding cache (first run only)",
-            _make_scan_config(args),
+            _make_scan_config(args, out_dir=production_out),
         )
 
     # 1 ── Build training pairs ────────────────────────────────────────────────
@@ -175,38 +185,43 @@ def main(argv: list[str] | None = None) -> int:
         recall_weight=args.recall_weight,
         embedding_cache=args.embedding_cache or None,
         hidden_dim=args.hidden_dim,
+        model_name=args.model,
     )
 
     # 3 ── Re-run pipeline with trained classifier ─────────────────────────────
     _scan(
         "Step 3/5 — Re-run pipeline with trained classifier",
-        _make_scan_config(args, presence_classifier_path=_CHECKPOINT),
+        _make_scan_config(args, out_dir=production_out, presence_classifier_path=checkpoint),
     )
 
     # 4 ── Evaluate ────────────────────────────────────────────────────────────
     _print_banner("Step 4/5 — Evaluate predictions")
     evaluate(
-        prediction_csv=Path("ml/output/production/binary/petbert_predictions.csv"),
+        prediction_csv=Path(f"{production_out}/petbert_predictions.csv"),
         expectation_csv=Path("ml/output/annotation/keyword/keyword_annotation.csv"),
-        out_dir=Path("ml/output/evaluation/binary"),
+        out_dir=Path(evaluation_out),
     )
 
     # 4.5 ── Update rolling CO-negative bank ──────────────────────────────────
     if args.co_neg_bank_csv:
         _print_banner("Step 4.5/5 — Update rolling CO-negative bank")
         update_co_bank(
-            evaluation_csv="ml/output/evaluation/binary/evaluation.csv",
+            evaluation_csv=f"{evaluation_out}/evaluation.csv",
             bank_csv=args.co_neg_bank_csv,
         )
 
     # 5 ── Log ─────────────────────────────────────────────────────────────────
     _print_banner("Step 5/5 — Log evaluation results")
-    log_evaluation(label=label)
+    log_evaluation(
+        summary=f"{evaluation_out}/evaluation_summary.csv",
+        history=history_csv,
+        label=label,
+    )
 
     # 5.5 ── Save best checkpoint ──────────────────────────────────────────────
-    history_path = Path(_HISTORY_CSV)
-    checkpoint_path = Path(_CHECKPOINT)
-    production_path = Path(_CHECKPOINT_PRODUCTION)
+    history_path    = Path(history_csv)
+    checkpoint_path = Path(checkpoint)
+    production_path = Path(checkpoint_best)
 
     if history_path.exists() and checkpoint_path.exists():
         with open(history_path, encoding="utf-8") as f:
@@ -221,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
                 + float(rows[-1].get("slightly_off_pct", 0) or 0)
             )
             if current_gs >= best_gs:
-                shutil.copy2(_CHECKPOINT, _CHECKPOINT_PRODUCTION)
+                shutil.copy2(checkpoint, checkpoint_best)
                 print(
                     f"\n* New best Good+Slight: {current_gs:.1f}% -- "
                     f"checkpoint saved to {_CHECKPOINT_PRODUCTION}"

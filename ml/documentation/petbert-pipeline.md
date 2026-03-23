@@ -225,7 +225,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py --local-only
 **With presence classifier and embedding cache:**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --presence-classifier ml/model/checkpoints/presence_classifier_best.pt \
+  --presence-classifier ml/model/checkpoints/binary/presence_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
   --local-only
@@ -234,7 +234,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
 **With group classifier:**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --group-classifier ml/model/checkpoints/group_classifier_best.pt \
+  --group-classifier ml/model/checkpoints/group/group_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
   --local-only

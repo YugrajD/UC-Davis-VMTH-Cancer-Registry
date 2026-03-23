@@ -100,7 +100,7 @@ def main() -> int:
     parser.add_argument("--pairs-csv", default="ml/data/contrastive_pairs.csv",
                         help="[contrastive] Output/input path for (report, label) pairs CSV")
     parser.add_argument("--contrastive-out-dir",
-                        default="ml/model/checkpoints/petbert_contrastive",
+                        default="ml/model/checkpoints/contrastive",
                         help="[contrastive] Directory for the fine-tuned HuggingFace checkpoint")
     parser.add_argument("--model", default="SAVSNET/PetBERT",
                         help="HuggingFace model name or local path. "
@@ -126,7 +126,7 @@ def main() -> int:
     parser.add_argument("--knn-labels-csv",
                         default="ml/output/annotation/llm/llm_annotation.csv",
                         help="[knn] Predictions CSV with case_id and matched_group columns")
-    parser.add_argument("--knn-out", default="ml/model/checkpoints/knn_group_selector.npz",
+    parser.add_argument("--knn-out", default="ml/model/checkpoints/knn/knn_group_selector.npz",
                         help="[knn] Output path for the KnnGroupSelector")
     parser.add_argument("--knn-k", type=int, default=10,
                         help="[knn] Number of nearest neighbours to vote with (default: 10)")
@@ -181,7 +181,7 @@ def main() -> int:
         print("\n=== Step 2b: Train group classifier ===")
         train_group(
             training_data_path="ml/output/training/group/group_training_data.npz",
-            out_path="ml/model/checkpoints/group_classifier_current.pt",
+            out_path="ml/model/checkpoints/group/group_classifier_current.pt",
             epochs=args.epochs,
             lr=1e-3,
             hidden_dim=256,
@@ -223,8 +223,8 @@ def main() -> int:
         print("\n=== Cold-start reminder ===")
         print("The embedding space has changed. Before retraining the PresenceClassifier:")
         print("  rm -f ml/data/embedding_cache.npz")
-        print("  rm -f ml/output/training/binary/evaluation_co_bank.csv")
-        print("  rm -f ml/model/checkpoints/presence_classifier_current.pt")
+        print("  rm -f ml/output/training/contrastive/evaluation_co_bank.csv")
+        print("  rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt")
         print(f"Then re-run in binary mode with --model {args.contrastive_out_dir} --local-only")
 
     elif args.mode == "knn":

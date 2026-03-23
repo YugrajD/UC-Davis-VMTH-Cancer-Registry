@@ -115,8 +115,8 @@ new keyword data). Old bank pairs are anchored to the old cosine space and will 
 **Files to delete:**
 ```bash
 rm -f ml/data/embedding_cache.npz
-rm -f ml/output/training/binary/evaluation_co_bank.csv
-rm -f ml/model/checkpoints/presence_classifier_current.pt
+rm -f ml/output/training/contrastive/evaluation_co_bank.csv
+rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt
 ```
 
 **Cold-start c1 command** (same as standard, label it clearly):
@@ -294,7 +294,7 @@ ml/.venv/Scripts/python.exe -m training.group.train \
 ```
 
 Re-train whenever `keyword_annotation.csv` is updated. The best checkpoint is saved to
-`model/checkpoints/group_classifier_best.pt` and metadata to `group_classifier_best.meta.json`.
+`ml/model/checkpoints/group/group_classifier_best.pt` and metadata to `group_classifier_best.meta.json`.
 
 ### Inference Flow
 

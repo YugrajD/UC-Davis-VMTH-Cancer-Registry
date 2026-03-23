@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 def update_co_bank(
-    evaluation_csv: str = "ml/output/evaluation/evaluation.csv",
+    evaluation_csv: str = "ml/output/evaluation/binary/evaluation.csv",
     bank_csv: str = "ml/output/training/binary/evaluation_co_bank.csv",
 ) -> int:
     bank_path = Path(bank_csv)
@@ -62,8 +62,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--evaluation-csv",
-        default="ml/output/evaluation/evaluation.csv",
-        help="Evaluation CSV produced by evaluate.py (default: ml/output/evaluation/evaluation.csv)",
+        default="ml/output/evaluation/binary/evaluation.csv",
+        help="Evaluation CSV produced by evaluate.py (default: ml/output/evaluation/binary/evaluation.csv)",
     )
     parser.add_argument(
         "--bank-csv",

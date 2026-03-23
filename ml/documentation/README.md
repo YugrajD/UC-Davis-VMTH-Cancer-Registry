@@ -10,13 +10,14 @@ Three pipelines with distinct roles:
 | Pipeline | Purpose | When it runs |
 |---|---|---|
 | **`production/`** | Embed report text, predict cancer labels | Inference and each training cycle |
-| **`evaluation/`** | Generate ground-truth labels, score predictions | Before training and after each cycle |
+| **`annotation/`** | Generate annotation labels from diagnosis text | Before training; user picks keyword or LLM method |
+| **`evaluation/`** | Score predictions against annotation labels | After each training cycle |
 | **`training/`** | Train and retrain classifiers | On demand |
 
-The evaluation pipeline produces ground-truth labels (`llm_predictions.csv`) which
-become the training ground truth. It does not run in production — in production, only
+The annotation pipeline produces labels (`keyword_annotation.csv` or `llm_annotation.csv`)
+which become the training annotation. It does not run in production — in production, only
 report text is available, not the diagnosis field. The keyword pipeline is a fast
-fallback for testing when the Ollama server is unavailable, but the LLM pipeline is
+option for testing when the Ollama server is unavailable, but the LLM pipeline is
 the authoritative source: it handles negation, hedged language, and abbreviations that
 the keyword pipeline cannot.
 
@@ -32,15 +33,20 @@ ml/
 ├── model/                  Neural network architectures and shared constants
 │   └── checkpoints/        Saved model weights (.pt files)
 ├── output/                 All generated outputs (predictions, evaluation, etc.)
-│   ├── evaluation/         LLM pipeline results (ground truth) + cycle evaluation
+│   ├── annotation/         Annotation pipeline outputs
+│   │   ├── keyword/        keyword_annotation.csv + keyword_summary.json
+│   │   └── llm/            llm_annotation.csv + llm_summary.json/md
+│   ├── evaluation/         Cycle evaluation results
 │   ├── production/         petbert_pipeline predictions and supporting files
 │   └── training/           Training-specific artifacts (e.g. group_training_data.npz)
+├── annotation/             Annotation pipeline — maps diagnosis text to ICD-O labels
+│   ├── cli.py              Unified entry: --method keyword|llm
+│   ├── keyword_pipeline/   Keyword-based annotation
+│   └── llm_pipeline/       LLM-based annotation (authoritative)
 ├── production/             Production inference pipeline
 │   └── petbert_pipeline/   PetBERT embedding + classifier scoring
-├── evaluation/             Ground-truth generation + model assessment
-│   ├── keyword_pipeline/   Keyword-based ground-truth labeling
-│   ├── llm_pipeline/       LLM-based ground-truth labeling (authoritative)
-│   ├── evaluate.py         Score predictions against ground truth → verdicts
+├── evaluation/             Model assessment
+│   ├── evaluate.py         Score predictions against annotation labels → verdicts
 │   └── log_evaluation.py   Append cycle results to evaluation_history.csv
 ├── training/               Training scripts, organized by mode
 │   ├── run_cycle.py        Orchestrates a full binary training cycle
@@ -74,22 +80,22 @@ Invoked via `run_production.py`. Takes clinical report text, produces cancer pre
 | `cli.py` | `argparse` CLI; `build_config()` maps args → `ScanConfig` |
 | `utils.py` | Text cleaning, device selection, column merging |
 
-### `evaluation/keyword_pipeline/` — Keyword ground-truth labeling
+### `annotation/keyword_pipeline/` — Keyword annotation
 
-Keyword-based matching against a curated dictionary. Not part of production inference.
+Keyword-based matching against a curated dictionary. Fast, no model required.
 
 | File | Role |
 |---|---|
 | `pipeline.py` | Scan diagnosis text against keyword dictionary |
-| `cli.py` | CLI entry point |
+| `cli.py` | CLI entry point (`python -m annotation --method keyword`) |
 
-### `evaluation/llm_pipeline/` — LLM ground-truth labeling (authoritative)
+### `annotation/llm_pipeline/` — LLM annotation (authoritative)
 
-Replaces the keyword pipeline as the authoritative ground-truth source. Uses a four-tier
-cascade (Exact → Fuzzy → Ollama LLM → Claude API) to generate ground-truth labels. The
-Ollama LLM is called only for rows that contain a cancer signal term (~15% of rows); the
-optional Claude tier handles the small remainder that Ollama cannot resolve. Handles
-negation, hedged language, and abbreviations that the keyword pipeline cannot.
+The authoritative annotation source. Uses a four-tier cascade (Exact → Fuzzy → Ollama
+LLM → Claude API) to generate labels. The Ollama LLM is called only for rows that
+contain a cancer signal term (~15% of rows); the optional Claude tier handles the small
+remainder Ollama cannot resolve. Handles negation, hedged language, and abbreviations
+that the keyword pipeline cannot.
 
 | File | Role |
 |---|---|
@@ -99,11 +105,19 @@ negation, hedged language, and abbreviations that the keyword pipeline cannot.
 | `cli.py` | CLI with `--list-models`, `--compare-models`, `--model`, `--use-claude` |
 | `.env` | `TAILSCALE_IP`, `API_PORT`, `OLLAMA_MODEL`, `CLAUDE_MODEL` |
 
+### `annotation/cli.py` — Unified annotation entry point
+
+```bash
+python -m annotation --method keyword [options...]
+python -m annotation --method llm     [options...]
+```
+
 ### `evaluation/evaluate.py` — Verdict scoring
 
-Scores production predictions against ground-truth labels (good / slightly_off /
-completely_off / false_positive / false_negative). Used by both the training cycle
-and standalone evaluation runs.
+Scores production predictions against annotation labels (good / slightly_off /
+completely_off / false_positive / false_negative). Accepts `--actual-csv` pointing
+to either keyword or LLM pipeline output. Used by both the training cycle and
+standalone evaluation runs.
 
 ### `evaluation/log_evaluation.py` — Evaluation history
 
@@ -158,16 +172,16 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 ```
 ml/data/diagnoses.csv  (diagnosis text from database)
     │
-    ▼ evaluation/llm_pipeline  (authoritative; keyword_pipeline is fast fallback only)
-output/evaluation/llm_predictions.csv      (ground truth labels)
-output/evaluation/keyword_predictions.csv  (fallback — no negation handling)
+    ▼ annotation/llm_pipeline  (authoritative; keyword_pipeline is fast fallback only)
+output/annotation/llm/llm_annotation.csv      (annotation labels — LLM method)
+output/annotation/keyword/keyword_annotation.csv  (fallback — no negation handling)
     │
 ml/data/report.csv  (clinical reports, 12,620 cases)
     │
     ▼ production/petbert_pipeline (Step 0 — first run only)
 ml/data/embedding_cache.npz  (768-dim PetBERT embeddings, cached)
     │
-    ├──► [Step 1] build_training_pairs  ◄── output/evaluation/llm_predictions.csv
+    ├──► [Step 1] build_training_pairs  ◄── output/annotation/llm/llm_annotation.csv
     │         └── data/training_pairs.csv  ◄── output/evaluation/evaluation_co_bank.csv
     │
     ├──► [Step 2] train
@@ -203,12 +217,11 @@ ml/data/embedding_cache.npz  (768-dim PetBERT embeddings, cached)
 | `output/production/petbert_visualization.csv` | PCA 2-D coordinates per case |
 | `output/production/petbert_embeddings.npz` | Raw 768-dim report embedding vectors |
 | `output/production/petbert_summary.json` | Run metadata and aggregate prediction counts |
-| `output/evaluation/keyword_predictions.csv` | Ground-truth labels from keyword_pipeline |
-| `output/evaluation/keyword_summary.json` | Keyword pipeline run statistics (coverage, imbalance, group distribution) |
-| `output/evaluation/keyword_summary.md` | Human-readable version of keyword_summary.json |
-| `output/evaluation/llm_predictions.csv` | Ground-truth labels from llm_pipeline |
-| `output/evaluation/llm_summary.json` | LLM pipeline run statistics (coverage, imbalance, group distribution) |
-| `output/evaluation/llm_summary.md` | Human-readable version of llm_summary.json |
+| `output/annotation/keyword/keyword_annotation.csv` | Annotation labels from keyword_pipeline |
+| `output/annotation/keyword/keyword_summary.json` | Keyword pipeline run statistics (coverage, imbalance, group distribution) |
+| `output/annotation/llm/llm_annotation.csv` | Annotation labels from llm_pipeline |
+| `output/annotation/llm/llm_summary.json` | LLM pipeline run statistics (coverage, imbalance, group distribution) |
+| `output/annotation/llm/llm_summary.md` | Human-readable version of llm_summary.json |
 | `output/evaluation/evaluation.csv` | Predictions + verdicts for the latest cycle |
 | `output/evaluation/evaluation_summary.csv` | Aggregate counts and percentages |
 | `output/evaluation/evaluation_history.csv` | One row per training cycle |
@@ -243,19 +256,24 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --label "manual check"
 ```
 
-**LLM pipeline (full run):**
+**Annotation — LLM pipeline (full run):**
 ```bash
-PYTHONPATH=ml ml/.venv/Scripts/python.exe -m evaluation.llm_pipeline
+PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method llm
 ```
 
-**LLM pipeline (quick test, 100 rows):**
+**Annotation — LLM pipeline (quick test, 100 rows):**
 ```bash
-PYTHONPATH=ml ml/.venv/Scripts/python.exe -m evaluation.llm_pipeline --max-rows 100
+PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method llm --max-rows 100
 ```
 
-**LLM pipeline (list available models):**
+**Annotation — LLM pipeline (list available models):**
 ```bash
-PYTHONPATH=ml ml/.venv/Scripts/python.exe -m evaluation.llm_pipeline --list-models
+PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method llm --list-models
+```
+
+**Annotation — keyword pipeline (fast, no model):**
+```bash
+PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method keyword
 ```
 
 **GroupClassifier training (one-shot):**
@@ -271,11 +289,9 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode group --device xpu
 |---|---|
 | `README.md` | This file — project overview, structure, quick start |
 | `petbert-pipeline.md` | Production pipeline: how it works, CLI reference, output formats, WIP fine-tuning mode |
-| `keyword-pipeline.md` | Keyword pipeline: how it works, CLI reference, output formats, known limitations |
-| `llm-pipeline.md` | LLM pipeline: four-tier cascade, Ollama setup, CLI reference, output formats, comparison with keyword pipeline |
-| `classifiers.md` | All three approaches: architecture, flowcharts, advantages/disadvantages, constraints, evaluation results, comparison |
+| `label-annotation.md` | Both annotation pipelines: keyword and LLM — how they work, CLI reference, output formats, coverage comparison, known limitations |
+| `model-training.md` | All three approaches: architecture, advantages/disadvantages, constraints, evaluation results, comparison, explored ideas |
 | `training-guide.md` | Practical how-to: cold start steps, run commands, parameters, what triggers a cold start |
-| `training-log.md` | Index — links to per-method training logs |
 | `training-log/training-log-binary.md` | Binary PresenceClassifier — phase-by-phase history, Phases 1–16 |
 | `training-log/training-log-group.md` | GroupClassifier — experiments and results |
 | `training-log/training-log-finetune.md` | Fine-tuned PetBERT — prerequisite checklist, no runs yet |

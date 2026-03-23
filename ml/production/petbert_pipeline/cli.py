@@ -88,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--enrich-labels-csv",
         default=None,
         help=(
-            "Path to keyword_predictions.csv. When provided, each taxonomy label embedding "
+            "Path to keyword_annotation.csv. When provided, each taxonomy label embedding "
             "is averaged 50/50 with the mean cached report embedding of its keyword-confirmed "
             "cases, pulling label representations toward the clinical language in real reports. "
             "Requires --embedding-cache. Enriched embeddings are stored in the cache so "

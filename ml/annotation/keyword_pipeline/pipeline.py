@@ -8,7 +8,7 @@ Flow:
   2. Load Vet-ICD-O taxonomy from labels.csv.
   3. Build a keyword index: normalized term strings → (pattern, taxonomy index).
   4. For each diagnosis row, find the first (longest) keyword match.
-  5. Write keyword_predictions.csv and keyword_summary.json.
+  5. Write keyword_annotation.csv and keyword_summary.json.
 """
 
 from __future__ import annotations
@@ -222,7 +222,7 @@ def run_keyword_scan(config: KeywordConfig) -> KeywordOutputs:
     """Execute the keyword-only diagnosis categorization pipeline."""
     os.makedirs(config.out_dir, exist_ok=True)
     outputs = KeywordOutputs(
-        predictions_csv=os.path.join(config.out_dir, "keyword_predictions.csv"),
+        predictions_csv=os.path.join(config.out_dir, "keyword_annotation.csv"),
         summary_json=os.path.join(config.out_dir, "keyword_summary.json"),
     )
 

@@ -197,7 +197,7 @@ All three pass the 0.6 threshold → 3 rows in `predictions.csv`.
 | `--text-cols` | `HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS` | Columns to embed independently |
 | `--model` | `SAVSNET/PetBERT` | HuggingFace model name or local path |
 | `--local-only` | off | Use only locally cached model files |
-| `--out-dir` | `ml/output/production` | Output directory |
+| `--out-dir` | `ml/output/production/binary` | Output directory |
 | `--max-rows` | all | Optional cap on rows to process |
 | `--batch-size` | 16 | Texts per embedding batch |
 | `--max-length` | 512 | Maximum token length (texts truncated beyond this) |
@@ -210,7 +210,7 @@ All three pass the 0.6 threshold → 3 rows in `predictions.csv`.
 | `--group-classifier` | none | Path to trained `GroupClassifier` checkpoint (`.pt`) |
 | `--group-classifier-threshold` | 0.3 | Confidence threshold for group predictions |
 | `--embedding-cache` | none | Path to embedding cache `.npz` |
-| `--enrich-labels-csv` | none | Path to `keyword_predictions.csv` for label enrichment |
+| `--enrich-labels-csv` | none | Path to `keyword_annotation.csv` for label enrichment |
 | `--finetuned-model-path` | none | Path to a fine-tuned PetBERT sequence classification checkpoint (WIP) |
 
 ---
@@ -387,7 +387,7 @@ report text.
 # Step 1 — build dataset
 ml/.venv/Scripts/python.exe ml/training/finetune/build_dataset.py \
   --reports-csv ml/data/report.csv \
-  --predictions-csv ml/output/evaluation/keyword_predictions.csv \
+  --predictions-csv ml/output/annotation/keyword/keyword_annotation.csv \
   --labels-csv ml/labels/labels.csv \
   --out-dir ml/data/finetune_dataset
 

@@ -4,7 +4,7 @@ Produces ml/data/training_pairs.csv — one row per (case, taxonomy label) pair
 with a binary target: 1 if the label is a confirmed diagnosis, 0 otherwise.
 
 Five sources of examples:
-  Positives      — rows in keyword_predictions.csv where matched_term is non-blank
+  Positives      — rows in keyword_annotation.csv where matched_term is non-blank
   Hard negatives — rows in evaluation.csv with verdict="false_positive"
                    (high cosine similarity but the case has no keyword label at all;
                    these are the most valuable training signal)
@@ -42,8 +42,8 @@ def load_csv(path: Path) -> list[dict]:
 def build_pairs(
     *,
     report_csv: str = "ml/data/report.csv",
-    keyword_csv: str = "ml/output/evaluation/keyword_predictions.csv",
-    evaluation_csv: str = "ml/output/evaluation/evaluation.csv",
+    expectation_csv: str = "ml/output/annotation/keyword/keyword_annotation.csv",
+    evaluation_csv: str = "ml/output/evaluation/binary/evaluation.csv",
     labels_csv: str = "ml/labels/labels.csv",
     out: str = "ml/data/training_pairs.csv",
     easy_neg_per_pos: int = 3,
@@ -75,7 +75,7 @@ def build_pairs(
     all_term_group = [(t.term, t.group) for t in taxonomy]
 
     # --- Load keyword positives ------------------------------------------
-    kw_rows = load_csv(Path(keyword_csv))
+    kw_rows = load_csv(Path(expectation_csv))
     case_pos_terms: dict[str, set[str]] = {}
     for row in kw_rows:
         term = row["matched_term"].strip()
@@ -230,8 +230,8 @@ def build_pairs(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build training pairs for the presence classifier.")
     parser.add_argument("--report-csv", default="ml/data/report.csv")
-    parser.add_argument("--keyword-csv", default="ml/output/evaluation/keyword_predictions.csv")
-    parser.add_argument("--evaluation-csv", default="ml/output/evaluation/evaluation.csv")
+    parser.add_argument("--expectation-csv", default="ml/output/annotation/keyword/keyword_annotation.csv")
+    parser.add_argument("--evaluation-csv", default="ml/output/evaluation/binary/evaluation.csv")
     parser.add_argument("--labels-csv", default="ml/labels/labels.csv")
     parser.add_argument("--out", default="ml/data/training_pairs.csv")
     parser.add_argument(
@@ -282,7 +282,7 @@ def main() -> int:
     args = parser.parse_args()
     build_pairs(
         report_csv=args.report_csv,
-        keyword_csv=args.keyword_csv,
+        expectation_csv=args.expectation_csv,
         evaluation_csv=args.evaluation_csv,
         labels_csv=args.labels_csv,
         out=args.out,

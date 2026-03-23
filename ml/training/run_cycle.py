@@ -33,7 +33,7 @@ from training.binary.update_co_bank import update_co_bank
 
 _CHECKPOINT            = "ml/model/checkpoints/presence_classifier_current.pt"
 _CHECKPOINT_PRODUCTION = "ml/model/checkpoints/presence_classifier_best.pt"
-_HISTORY_CSV           = "ml/output/evaluation/evaluation_history.csv"
+_HISTORY_CSV           = "ml/output/evaluation/binary/evaluation_history.csv"
 
 
 def _print_banner(title: str) -> None:
@@ -57,7 +57,7 @@ def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> S
         col_weights={},
         model_name="SAVSNET/PetBERT",
         local_only=args.local_only,
-        out_dir="ml/output/production",
+        out_dir="ml/output/production/binary",
         max_rows=None,
         batch_size=16,
         max_length=512,
@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--enrich-labels-csv", default="",
-        help="Path to keyword_predictions.csv for label embedding enrichment. "
+        help="Path to keyword_annotation.csv for label embedding enrichment. "
              "(default: disabled)",
     )
     parser.add_argument(
@@ -180,16 +180,16 @@ def main(argv: list[str] | None = None) -> int:
     # 4 ── Evaluate ────────────────────────────────────────────────────────────
     _print_banner("Step 4/5 — Evaluate predictions")
     evaluate(
-        petbert_csv=Path("ml/output/production/petbert_predictions.csv"),
-        keyword_csv=Path("ml/output/evaluation/keyword_predictions.csv"),
-        out_dir=Path("ml/output/evaluation"),
+        prediction_csv=Path("ml/output/production/binary/petbert_predictions.csv"),
+        expectation_csv=Path("ml/output/annotation/keyword/keyword_annotation.csv"),
+        out_dir=Path("ml/output/evaluation/binary"),
     )
 
     # 4.5 ── Update rolling CO-negative bank ──────────────────────────────────
     if args.co_neg_bank_csv:
         _print_banner("Step 4.5/5 — Update rolling CO-negative bank")
         update_co_bank(
-            evaluation_csv="ml/output/evaluation/evaluation.csv",
+            evaluation_csv="ml/output/evaluation/binary/evaluation.csv",
             bank_csv=args.co_neg_bank_csv,
         )
 

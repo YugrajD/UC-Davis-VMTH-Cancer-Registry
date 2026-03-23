@@ -11,7 +11,7 @@ currently the best performer.
 | Fine-tuned PetBERT | WIP — see `petbert-pipeline.md` | Not benchmarked |
 
 > **Training ground truth:** All three approaches derive training labels from the keyword
-> pipeline (`keyword_predictions.csv`). The keyword pipeline maps diagnosis field text to
+> pipeline (`keyword_annotation.csv`). The keyword pipeline maps diagnosis field text to
 > Vet-ICD-O labels. Cases with no keyword match are treated as non-cancer (Uncategorized).
 > In production, no diagnosis text is available — classifiers predict from report text alone.
 
@@ -109,13 +109,13 @@ Required any time the embedding space changes (PetBERT update, architecture chan
 new keyword data). Old bank pairs are anchored to the old cosine space and will add noise.
 
 **Prerequisites:**
-1. `ml/output/evaluation/keyword_predictions.csv` must exist. If not, run the keyword pipeline (see `keyword-pipeline.md`).
+1. `ml/output/annotation/keyword/keyword_annotation.csv` must exist. If not, run the keyword pipeline first.
 2. `ml/data/report.csv` must exist.
 
 **Files to delete:**
 ```bash
 rm -f ml/data/embedding_cache.npz
-rm -f ml/output/evaluation/evaluation_co_bank.csv
+rm -f ml/output/training/binary/evaluation_co_bank.csv
 rm -f ml/model/checkpoints/presence_classifier_current.pt
 ```
 
@@ -293,7 +293,7 @@ ml/.venv/Scripts/python.exe -m training.group.train \
   --device xpu
 ```
 
-Re-train whenever `keyword_predictions.csv` is updated. The best checkpoint is saved to
+Re-train whenever `keyword_annotation.csv` is updated. The best checkpoint is saved to
 `model/checkpoints/group_classifier_best.pt` and metadata to `group_classifier_best.meta.json`.
 
 ### Inference Flow

@@ -19,14 +19,14 @@ from itertools import permutations as _permutations
 import pandas as pd
 
 from labels.taxonomy import TaxonomyLabel, load_labels_taxonomy
-from evaluation.keyword_pipeline.pipeline import (
+from annotation.keyword_pipeline.pipeline import (
     _normalize,
     _build_keyword_index,
     _build_oma_index,
     _OMA_RE,
     _QUALIFIER_RE,
 )
-from evaluation.llm_pipeline.client import chat
+from annotation.llm_pipeline.client import chat
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -375,7 +375,7 @@ def _tier4_claude(
 ) -> _MatchResult | None:
     """Tier 4: call Claude with the full taxonomy for free-form synonym reasoning."""
     try:
-        from evaluation.llm_pipeline.client_claude import claude_classify
+        from annotation.llm_pipeline.client_claude import claude_classify
     except Exception:
         return None
 
@@ -528,10 +528,10 @@ def _write_summary_md(summary: dict, path: str) -> None:
 
 
 def run_llm_scan(config: LLMConfig) -> LLMOutputs:
-    """Execute the LLM-assisted diagnosis categorization pipeline."""
+    """Execute the LLM-assisted diagnosis annotation pipeline."""
     os.makedirs(config.out_dir, exist_ok=True)
     outputs = LLMOutputs(
-        predictions_csv=os.path.join(config.out_dir, "llm_predictions.csv"),
+        predictions_csv=os.path.join(config.out_dir, "llm_annotation.csv"),
         summary_json=os.path.join(config.out_dir, "llm_summary.json"),
         summary_md=os.path.join(config.out_dir, "llm_summary.md"),
     )

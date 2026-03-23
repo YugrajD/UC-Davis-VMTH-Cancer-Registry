@@ -2,10 +2,10 @@
 
 Reads:
   - ml/data/embedding_cache.npz                         -- embeddings and case_ids
-  - ml/output/evaluation/llm_pipeline/llm_predictions.csv  -- ground-truth (case_id, matched_group)
+  - ml/output/annotation/llm/llm_annotation.csv  -- ground-truth (case_id, matched_group)
 
 Produces:
-  - ml/output/group_training_data.npz with:
+  - ml/output/training/group/group_training_data.npz with:
       embeddings    (N, D)  float32  -- report embedding per case (D=2304 per-column, or 768 mean)
       targets       (N, G)  float32  -- multi-hot group labels (0.0 = non-cancer, 1.0 = present)
       case_ids      (N,)    object   -- case_id strings
@@ -20,8 +20,8 @@ Usage:
   python ml/training/group/build_training_data.py
   python ml/training/group/build_training_data.py \\
       --embedding-cache ml/data/embedding_cache.npz \\
-      --keyword-csv ml/output/evaluation/llm_pipeline/llm_predictions.csv \\
-      --out ml/output/group_training_data.npz
+      --expectation-csv ml/output/annotation/llm/llm_annotation.csv \\
+      --out ml/output/training/group/group_training_data.npz
 """
 
 import argparse
@@ -34,7 +34,7 @@ import pandas as pd
 
 def build_training_data(
     cache_path: str,
-    keyword_csv_path: str,
+    expectation_csv_path: str,
     out_path: str,
     per_column: bool = True,
 ) -> None:
@@ -60,14 +60,14 @@ def build_training_data(
         print(f"Using mean embeddings: {embeddings.shape[1]}-dim")
 
     # --- Load keyword predictions --------------------------------------------
-    print(f"Loading keyword predictions: {keyword_csv_path}")
-    if not Path(keyword_csv_path).exists():
-        print(f"ERROR: keyword predictions not found at {keyword_csv_path}")
+    print(f"Loading keyword predictions: {expectation_csv_path}")
+    if not Path(expectation_csv_path).exists():
+        print(f"ERROR: keyword predictions not found at {expectation_csv_path}")
         print("Run the keyword scan first:")
         print("  ml/.venv/bin/python3 -m keyword_scan")
         sys.exit(1)
 
-    kw = pd.read_csv(keyword_csv_path)
+    kw = pd.read_csv(expectation_csv_path)
     kw = kw[kw["matched_group"].notna()].copy()
 
     # --- Build sorted group list (deterministic ordering) --------------------
@@ -139,15 +139,15 @@ def main() -> int:
         help="Path to embedding cache npz (default: ml/data/embedding_cache.npz)",
     )
     parser.add_argument(
-        "--keyword-csv",
-        default="ml/output/evaluation/llm_pipeline/llm_predictions.csv",
+        "--expectation-csv",
+        default="ml/output/annotation/llm/llm_annotation.csv",
         help="Path to predictions CSV with case_id and matched_group columns "
-             "(default: ml/output/evaluation/llm_pipeline/llm_predictions.csv)",
+             "(default: ml/output/annotation/llm/llm_annotation.csv)",
     )
     parser.add_argument(
         "--out",
-        default="ml/output/group_training_data.npz",
-        help="Output npz path (default: ml/output/group_training_data.npz)",
+        default="ml/output/training/group/group_training_data.npz",
+        help="Output npz path (default: ml/output/training/group/group_training_data.npz)",
     )
     parser.add_argument(
         "--mean-only",
@@ -155,7 +155,7 @@ def main() -> int:
         help="Use mean embeddings (768-dim) instead of per-column concat (2304-dim).",
     )
     args = parser.parse_args()
-    build_training_data(args.embedding_cache, args.keyword_csv, args.out, per_column=not args.mean_only)
+    build_training_data(args.embedding_cache, args.expectation_csv, args.out, per_column=not args.mean_only)
     return 0
 
 

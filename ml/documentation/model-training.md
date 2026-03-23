@@ -301,3 +301,50 @@ stage, not an addition to it.
 - **Now**: Binary PresenceClassifier — best results at current data volume
 - **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier and benchmark against binary; implement discriminating-keyword term selection
 - **After GroupClassifier proves competitive**: Consider fine-tuning PetBERT for additional gains
+
+---
+
+## Explored Ideas
+
+### Hybrid Binary + KNN Group Selector (2026-03-23) — Abandoned
+
+**Motivation:** The binary classifier's ~30% CO floor comes from labels competing implicitly
+via argmax — a wrong-group prediction cannot be redirected. The idea was to use a KNN group
+selector to constrain which groups the binary classifier's scores can be chosen from.
+
+**Architecture:**
+```
+Per-column embeddings (2304-dim)
+          │
+          ├──► Binary Classifier ──► (N, M) presence score matrix
+          │                           (845 labels scored per case)
+          │
+          └──► KNN Group Selector ──► (N, G) group vote fractions
+                                       (top-K confirmed neighbours vote)
+                           │
+                           ▼
+              For each case, restrict label candidates
+              to groups with vote fraction ≥ threshold
+                           │
+                           ▼
+              Pick highest binary score within those groups
+```
+
+**Evaluation results** (LLM ground truth, baseline binary-only = 37.8% Good+Slight):
+
+| Run | Config | Good+Slight | CO% | FP% | FN% |
+|---|---|---|---|---|---|
+| Baseline | Binary only | **37.8%** | 30.1% | 30.3% | 1.8% |
+| KNN only | threshold=0.1 | 5.6% | — | — | 25.8% |
+| Hybrid | threshold=0.1 | 5.6% | 37.6% | 53.0% | 3.8% |
+| Hybrid | threshold=0.2 | 7.5% | 31.9% | 47.7% | 13.0% |
+| Hybrid | threshold=0.3 | ~6.1% | ~28% | ~39% | 26.6% |
+
+**Root causes of failure:**
+1. "Slightly off" collapses when KNN excludes the correct group.
+2. KNN FP floor (53% at threshold=0.1) is not reduced by the binary gate — non-cancer cases still find cancer neighbours in embedding space.
+3. KNN sparsity (~150 confirmed cases/group) misses correct groups → FN spikes.
+
+**Conclusion:** Approach abandoned. Revisit when the database grows past ~15,000 confirmed cases.
+Code is preserved: `run_categorization_hybrid()` in `categorization.py`, wired in `pipeline.py`.
+Full root-cause analysis in [training-log/training-log-binary.md](training-log/training-log-binary.md).

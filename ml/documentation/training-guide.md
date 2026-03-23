@@ -4,7 +4,7 @@ How to run each training approach, from prerequisites through to a trained check
 For architectural details, approach comparisons, and pros/cons see [model-training.md](model-training.md).
 
 > **Prerequisites for all approaches:**
-> - `ml/output/evaluation/keyword_predictions.csv` must exist (run `ml/scripts/run_evaluation.py` first if not)
+> - `ml/output/annotation/keyword/keyword_annotation.csv` must exist (run the keyword pipeline first if not)
 > - `ml/data/report.csv` must exist
 > - Use `ml/.venv/Scripts/python.exe` (Windows) or `ml/.venv/bin/python3` (macOS/Linux)
 
@@ -22,7 +22,7 @@ embedding cache exists. Deletes the stale cache, bank, and checkpoint:
 
 ```bash
 rm -f ml/data/embedding_cache.npz
-rm -f ml/output/evaluation/evaluation_co_bank.csv
+rm -f ml/output/training/binary/evaluation_co_bank.csv
 rm -f ml/model/checkpoints/presence_classifier_current.pt
 ```
 
@@ -103,7 +103,7 @@ no iterative cycles. Re-run whenever keyword coverage improves.
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode group --device xpu
 ```
 
-This builds training data from the embedding cache and `keyword_predictions.csv`, trains
+This builds training data from the embedding cache and `keyword_annotation.csv`, trains
 for the configured number of epochs, and saves to `ml/model/checkpoints/group_classifier_best.pt`.
 
 > **Note:** GroupClassifier is not yet competitive at 5,788 cases (21.9% vs binary 41.9%).
@@ -132,7 +132,7 @@ known code issues in `petbert-pipeline.md` before running.
 ```bash
 ml/.venv/Scripts/python.exe ml/training/finetune/build_dataset.py \
   --reports-csv ml/data/report.csv \
-  --predictions-csv ml/output/evaluation/keyword_predictions.csv \
+  --predictions-csv ml/output/annotation/keyword/keyword_annotation.csv \
   --labels-csv ml/labels/labels.csv \
   --out-dir ml/data/finetune_dataset
 ```

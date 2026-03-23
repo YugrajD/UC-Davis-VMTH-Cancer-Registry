@@ -21,7 +21,7 @@ from pathlib import Path
 # Add ml/ to the path so all packages are importable without env PYTHONPATH=ml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from evaluation.keyword_pipeline.pipeline import KeywordConfig, run_keyword_scan
+from annotation.keyword_pipeline.pipeline import KeywordConfig, run_keyword_scan
 from training.run_cycle import main as run_binary_cycle
 from training.group.build_training_data import build_training_data
 from training.group.train import train as train_group
@@ -34,7 +34,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=["binary", "group"], default="binary",
                         help="Training mode: binary PresenceClassifier (default) or group GroupClassifier")
     parser.add_argument("--skip-keyword-scan", action="store_true",
-                        help="Skip keyword pipeline step (reuse existing ml/output/evaluation/keyword_predictions.csv)")
+                        help="Skip keyword pipeline step (reuse existing ml/output/annotation/keyword/keyword_annotation.csv)")
     # Binary training args forwarded to run_binary_cycle:
     parser.add_argument("--label", default="",
                         help="Label for evaluation history (binary mode only)")
@@ -66,7 +66,7 @@ def main() -> int:
             diag_num_col="diagnosis_number",
             text_col="diagnosis",
             labels_csv_path="ml/labels/labels.csv",
-            out_dir="ml/output/evaluation",
+            out_dir="ml/output/annotation/keyword",
             max_rows=None,
         ))
 
@@ -89,12 +89,12 @@ def main() -> int:
         print("\n=== Step 2a: Build group training data ===")
         build_training_data(
             cache_path="ml/data/embedding_cache.npz",
-            keyword_csv_path="ml/output/evaluation/keyword_predictions.csv",
-            out_path="ml/output/training/group_training_data.npz",
+            expectation_csv_path="ml/output/annotation/llm/llm_annotation.csv",
+            out_path="ml/output/training/group/group_training_data.npz",
         )
         print("\n=== Step 2b: Train group classifier ===")
         train_group(
-            training_data_path="ml/output/training/group_training_data.npz",
+            training_data_path="ml/output/training/group/group_training_data.npz",
             out_path="ml/model/checkpoints/group_classifier_current.pt",
             epochs=args.epochs,
             lr=1e-3,

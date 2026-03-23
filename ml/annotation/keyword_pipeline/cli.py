@@ -1,4 +1,4 @@
-"""Command-line interface for the keyword-only diagnosis categorization pipeline."""
+"""Command-line interface for the keyword-only diagnosis annotation pipeline."""
 
 import argparse
 
@@ -23,12 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text-col", default="diagnosis", help="Diagnosis text column name.")
     parser.add_argument(
         "--labels-csv",
-        default="ml/labels/labels.csv",
+        default="ml/ICD-labels/labels.csv",
         help="Path to Vet-ICD-O taxonomy CSV.",
     )
     parser.add_argument(
         "--out-dir",
-        default="ml/output/evaluation/keyword_pipeline",
+        default="ml/output/annotation/keyword",
         help="Output directory.",
     )
     parser.add_argument(

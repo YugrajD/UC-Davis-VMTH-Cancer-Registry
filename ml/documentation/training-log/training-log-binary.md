@@ -97,7 +97,7 @@ The dual-source attempt (`--co-neg-extra-csv`) failed — both files were from a
 
 **Problem:** Single-cycle CO feedback oscillates because a good cycle depletes its own training signal.
 
-**Fix:** After each evaluate step (step 4.5), `update_co_bank.py` appends the current cycle's `completely_off` rows to a persistent bank file (`ml/output/evaluation/evaluation_co_bank.csv`), deduplicating on `(case_id, predicted_term)`. Step 1 of every cycle reads CO negatives from the bank instead of `evaluation.csv`, so the signal always includes all previous cycles.
+**Fix:** After each evaluate step (step 4.5), `update_co_bank.py` appends the current cycle's `completely_off` rows to a persistent bank file (`ml/output/training/binary/evaluation_co_bank.csv`), deduplicating on `(case_id, predicted_term)`. Step 1 of every cycle reads CO negatives from the bank instead of `evaluation.csv`, so the signal always includes all previous cycles.
 
 New scripts/changes:
 - `ml/scripts/utils/update_co_bank.py` — appends CO rows to bank, deduplicates
@@ -137,12 +137,12 @@ Cycle 7 → 8: all metrics improved again with no regression. The oscillation is
 **Motivation:** Label text is minimal (`"{term} {group}"`), which limits how well PetBERT can match report language to taxonomy labels. The keyword scan already provides confirmed (case, label) pairs. The idea was to blend each label's embedding with the mean embedding of its keyword-matched diagnosis strings to add clinical vocabulary.
 
 **Original implementation (diagnosis-text-based — had minimal impact):**
-- `ml/labels/enrichment.py` — for each label term in `keyword_predictions.csv`, embedded all keyword-matched diagnosis strings, took the mean, and averaged 50/50 with the original label embedding.
+- `ml/labels/enrichment.py` — for each label term in `keyword_annotation.csv`, embedded all keyword-matched diagnosis strings, took the mean, and averaged 50/50 with the original label embedding.
 - Enriched embeddings stored in the cache under `enriched_label_embeddings`. Both `petbert_scan` and `train_classifier.py` use enriched embeddings when present.
-- CLI: `--enrich-labels-csv <path_to_keyword_predictions.csv>` on `petbert_scan` and `run_training_cycle.py`.
+- CLI: `--enrich-labels-csv <path_to_keyword_annotation.csv>` on `petbert_scan` and `run_training_cycle.py`.
 - Cache invalidation: passing `--enrich-labels-csv` sets `require_enriched=True` in `load_cache`; cache is rebuilt automatically if enriched embeddings are missing.
 
-**Why it had minimal impact:** The `diagnosis` column in `keyword_predictions.csv` contains short anatomic phrases (e.g. `"SKIN DORSUM: SQUAMOUS CELL CARCINOMA"`), which live in nearly the same region of PetBERT's embedding space as the label texts (`"Squamous cell carcinoma NOS Squamous cell neoplasms"`). Blending two vectors that are already close together barely moves the label embedding. Meanwhile the classifier matches against `mean_embeddings` — mean PetBERT embeddings of full clinical report columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) — which are in a very different part of the embedding space. The enrichment never bridged that gap.
+**Why it had minimal impact:** The `diagnosis` column in `keyword_annotation.csv` contains short anatomic phrases (e.g. `"SKIN DORSUM: SQUAMOUS CELL CARCINOMA"`), which live in nearly the same region of PetBERT's embedding space as the label texts (`"Squamous cell carcinoma NOS Squamous cell neoplasms"`). Blending two vectors that are already close together barely moves the label embedding. Meanwhile the classifier matches against `mean_embeddings` — mean PetBERT embeddings of full clinical report columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) — which are in a very different part of the embedding space. The enrichment never bridged that gap.
 
 **Bug found and fixed (2026-03-03):** In the first enriched cycle, `score_matrix()` was still receiving the original `label_embeddings` instead of `active_label_embeddings`. The classifier trained on enriched embeddings but scored with original ones — garbage presence probabilities. Fixed by passing `active_label_embeddings` consistently to both `run_categorization` and `classifier.score_matrix`.
 
@@ -222,7 +222,7 @@ Oscillation persists but amplitude is narrowing (±7pp vs ±15pp before reset). 
 
 **Problem:** Fix 6's diagnosis-text enrichment barely moved label embeddings because diagnosis strings and label strings already occupy the same compact region of PetBERT's space. The domain gap to full clinical report embeddings remained.
 
-**Fix:** Replace diagnosis-text embedding with cached report embeddings. For each keyword-confirmed `(case_id, label_term)` pair in `keyword_predictions.csv`, look up that case's `mean_embedding` from the embedding cache, average them per label term, and blend 50/50 with the original label embedding.
+**Fix:** Replace diagnosis-text embedding with cached report embeddings. For each keyword-confirmed `(case_id, label_term)` pair in `keyword_annotation.csv`, look up that case's `mean_embedding` from the embedding cache, average them per label term, and blend 50/50 with the original label embedding.
 
 ```python
 # old: re-embed short diagnosis strings through PetBERT
@@ -280,7 +280,7 @@ All runs on 2026-03-04, device: mps. Cold start performed (cache, bank, checkpoi
 
 ### Phase 11 — New keyword data (5,788 confirmed cases, 44 groups)
 
-All runs on 2026-03-04, device: mps. New `keyword_predictions.csv` and `report.csv` delivered with 5,788 keyword-confirmed cancer cases (up from 1,273) across 44 groups (up from 39) and 12,620 total reports. Full cold start performed (cache, bank, checkpoint deleted).
+All runs on 2026-03-04, device: mps. New `keyword_annotation.csv` and `report.csv` delivered with 5,788 keyword-confirmed cancer cases (up from 1,273) across 44 groups (up from 39) and 12,620 total reports. Full cold start performed (cache, bank, checkpoint deleted).
 
 **Context:** Cache rebuild covers all 12,620 reports. CO bank hit ~20k rows after c1 alone (54k predictions × 36.7% CO rate), allowing co=10 from c2 onward. No warm-up phase needed.
 
@@ -311,7 +311,7 @@ When running on Windows (cp1252 console), `print()` calls containing `→` (U+21
 
 ### Phase 12 — XPU, cold start, same dataset (2026-03-05)
 
-All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, checkpoint deleted). Same `report.csv` and `keyword_predictions.csv` as Phase 11 (12,620 reports, 5,788 confirmed cancer cases, 44 groups).
+All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, checkpoint deleted). Same `report.csv` and `keyword_annotation.csv` as Phase 11 (12,620 reports, 5,788 confirmed cancer cases, 44 groups).
 
 **Note on c1 bank anomaly:** c1's step 4.5 shows `39,104 -> 50,823` unique pairs, implying the bank already held 39,104 rows at the start of c1's update step. This is because two prior aborted runs (during Windows Unicode debugging) each wrote CO rows to the bank before failing on the print statement — the bank file was written *before* the failing `print()` call. This pre-seeded the bank with CO pairs from those evaluation runs, which used the same embedding cache and therefore the same cosine space. The pairs are valid; this explains why c1's training pairs included CO negatives despite the cold start, and why c1 started unusually high.
 
@@ -357,7 +357,7 @@ All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, 
 
 ### Phase 13 — Per-column embeddings (2026-03-05)
 
-All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, `presence_classifier_current.pt` deleted). Same `report.csv` and `keyword_predictions.csv` as Phase 12.
+All runs on 2026-03-05, device: xpu (Intel). Cold start performed (cache, bank, `presence_classifier_current.pt` deleted). Same `report.csv` and `keyword_annotation.csv` as Phase 12.
 
 **Key finding:** `--co-neg-per-case 10` caused a severe regression in c2 (30.4% → 26.6% Good+Slight, CO +3.0%). Reverting to co=5 in c3 produced a large jump to 38.3% — and the system stayed on co=5 for the remainder. With the per-column architecture, flooding training with CO negatives (all 15k+ bank pairs at 10/case) over-corrects the classifier. Use co=5 consistently.
 

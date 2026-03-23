@@ -29,9 +29,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--labels-csv",
-        default="ml/output/evaluation/llm_pipeline/llm_predictions.csv",
+        default="ml/output/annotation/llm/llm_annotation.csv",
         help="Path to predictions CSV with case_id and matched_group columns "
-             "(default: ml/output/evaluation/llm_pipeline/llm_predictions.csv)",
+             "(default: ml/output/annotation/llm/llm_annotation.csv)",
     )
     parser.add_argument(
         "--out",

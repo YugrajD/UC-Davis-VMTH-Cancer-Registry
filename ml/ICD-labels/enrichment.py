@@ -1,7 +1,7 @@
 """Enrich taxonomy label embeddings with the mean report embeddings of keyword-confirmed cases.
 
 For each label term that has at least one keyword-confirmed case in
-keyword_predictions.csv, the label embedding is blended toward the centroid of
+keyword_annotation.csv, the label embedding is blended toward the centroid of
 confirmed-case report embeddings with a weight proportional to confirmation count:
   alpha = n / (n + smoothing)   (default smoothing=5)
 Labels with few confirmed cases stay close to the original label embedding;
@@ -26,7 +26,7 @@ import pandas as pd
 def compute_enriched_label_embeddings(
     label_embeddings: np.ndarray,        # (M, 768) original label embeddings
     label_names: list[str],              # M term strings (e.g. "Hemangiosarcoma, NOS")
-    keyword_predictions_csv: str,
+    keyword_annotation_csv: str,
     case_ids: list[str],                 # N case IDs in cache row order
     mean_report_embeddings: np.ndarray,  # (N, 768) cached mean report embeddings
     smoothing: float = 5.0,             # prior sample count; alpha = n / (n + smoothing)
@@ -34,7 +34,7 @@ def compute_enriched_label_embeddings(
     """Return enriched (M, 768) label embeddings.
 
     For each label term that appears as ``matched_term`` in
-    keyword_predictions.csv, the returned embedding is a weighted blend:
+    keyword_annotation.csv, the returned embedding is a weighted blend:
 
         alpha = n / (n + smoothing)
         enriched = (1 - alpha) * original_label_embedding
@@ -45,7 +45,7 @@ def compute_enriched_label_embeddings(
 
     Labels with no keyword matches are unchanged.  The result is float32.
     """
-    df = pd.read_csv(keyword_predictions_csv)
+    df = pd.read_csv(keyword_annotation_csv)
     matched = df[df["matched_term"].notna() & (df["matched_term"] != "")]
 
     # Build case_id → row index for fast lookup.

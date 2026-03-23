@@ -1,4 +1,4 @@
-"""Compare petbert_scan_predictions.csv against keyword_predictions.csv.
+"""Compare petbert_scan_predictions.csv against keyword_annotation.csv.
 
 For every row in petbert_scan_predictions, assign one of four verdicts:
   good           — predicted_term exactly matches a matched_term for this case
@@ -37,9 +37,9 @@ def score_prediction(predicted_term: str, predicted_group: str,
     return "completely_off"
 
 
-def evaluate(petbert_csv: Path, keyword_csv: Path, out_dir: Path) -> None:
-    pb_rows = load_csv(petbert_csv)
-    kw_rows = load_csv(keyword_csv)
+def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path) -> None:
+    pb_rows = load_csv(prediction_csv)
+    kw_rows = load_csv(expectation_csv)
 
     # Build per-case label sets from keyword predictions
     case_terms: dict[str, set[str]] = defaultdict(set)
@@ -169,22 +169,22 @@ def evaluate(petbert_csv: Path, keyword_csv: Path, out_dir: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate PetBERT predictions against keyword ground truth.")
     parser.add_argument(
-        "--production-csv",
-        default="ml/output/production/petbert_predictions.csv",
+        "--prediction-csv",
+        default="ml/output/production/binary/petbert_predictions.csv",
         help="Path to petbert_predictions.csv",
     )
     parser.add_argument(
-        "--evaluration-csv",
-        default="ml/output/evaluation/keyword_pipeline/keyword_predictions.csv",
-        help="Path to keyword_predictions.csv",
+        "--expectation-csv",
+        default="ml/output/annotation/keyword/keyword_annotation.csv",
+        help="Path to annotation predictions CSV (keyword or llm).",
     )
     parser.add_argument(
         "--out-dir",
-        default="ml/output/evaluation",
-        help="Directory to write evaluation.csv (default: ml/output/evaluation)",
+        default="ml/output/evaluation/binary",
+        help="Directory to write evaluation.csv (default: ml/output/evaluation/binary)",
     )
     args = parser.parse_args()
-    evaluate(Path(args.petbert_csv), Path(args.keyword_csv), Path(args.out_dir))
+    evaluate(Path(args.prediction_csv), Path(args.expectation_csv), Path(args.out_dir))
     return 0
 
 

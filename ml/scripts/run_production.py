@@ -31,7 +31,7 @@ def main() -> int:
     parser.set_defaults(
         embedding_cache="ml/data/embedding_cache.npz",
         presence_classifier=_best_classifier(),
-        out_dir="ml/output/production",
+        out_dir="ml/output/production/binary",
         local_only=True,
     )
     run_scan(build_config(parser.parse_args()))

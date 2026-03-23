@@ -60,7 +60,7 @@ def _ensure_embedding_cache(
         col_weights={},
         model_name="SAVSNET/PetBERT",
         local_only=local_only,
-        out_dir="ml/output/production",
+        out_dir="ml/output/production/binary",
         max_rows=None,
         batch_size=16,
         max_length=512,

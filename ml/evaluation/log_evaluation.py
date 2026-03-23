@@ -1,7 +1,7 @@
 """Append the current evaluation results to a persistent history log.
 
 Run this after every evaluate_predictions.py call to record a snapshot.
-The history is written to ml/output/evaluation/evaluation_history.csv and
+The history is written to ml/output/evaluation/binary/evaluation_history.csv and
 a formatted trend table is printed to the console.
 
 Usage:
@@ -16,8 +16,8 @@ from datetime import datetime
 from pathlib import Path
 
 
-_SUMMARY_DEFAULT = "ml/output/evaluation/evaluation_summary.csv"
-_HISTORY_DEFAULT = "ml/output/evaluation/evaluation_history.csv"
+_SUMMARY_DEFAULT = "ml/output/evaluation/binary/evaluation_summary.csv"
+_HISTORY_DEFAULT = "ml/output/evaluation/binary/evaluation_history.csv"
 
 _HISTORY_FIELDS = [
     "timestamp",

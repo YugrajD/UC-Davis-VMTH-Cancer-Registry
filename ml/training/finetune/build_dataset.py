@@ -1,6 +1,6 @@
 """Build PyTorch Dataset for PetBERT Finetuning
 
-Extracts ground truth labels from keyword_predictions.csv and pairs them
+Extracts ground truth labels from keyword_annotation.csv and pairs them
 with report text (FINAL COMMENT, etc.) from report.csv. Unmatched cases
 are treated as uncategorized (Class 0).
 """
@@ -27,7 +27,7 @@ def build_group_map(labels_csv: str) -> dict[str, int]:
 def build_dataset(
     *,
     reports_csv: str = "database/data/output/report.csv",
-    predictions_csv: str = "ml/output/diagnoses/keyword_predictions.csv",
+    predictions_csv: str = "ml/output/diagnoses/keyword_annotation.csv",
     labels_csv: str = "ml/labels/labels.csv",
     out_dir: str = "ml/data/finetune_dataset",
     model_name: str = "SAVSNET/PetBERT",
@@ -182,7 +182,7 @@ def build_dataset(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--reports-csv", default="database/data/output/report.csv")
-    parser.add_argument("--predictions-csv", default="ml/output/diagnoses/keyword_predictions.csv")
+    parser.add_argument("--predictions-csv", default="ml/output/diagnoses/keyword_annotation.csv")
     parser.add_argument("--labels-csv", default="ml/labels/labels.csv")
     parser.add_argument("--out-dir", default="ml/data/finetune_dataset")
     parser.add_argument("--model", default="SAVSNET/PetBERT")

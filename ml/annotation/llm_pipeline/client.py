@@ -1,4 +1,4 @@
-"""Ollama local API client for LLM-based evaluation."""
+"""Ollama local API client for LLM-based annotation."""
 
 import os
 from pathlib import Path

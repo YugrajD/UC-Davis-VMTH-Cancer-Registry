@@ -23,13 +23,13 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Evaluate production predictions against ground truth.")
-    parser.add_argument("--petbert-csv", default="ml/output/production/petbert_predictions.csv")
-    parser.add_argument("--keyword-csv", default="ml/output/evaluation/keyword_predictions.csv")
-    parser.add_argument("--out-dir", default="ml/output/evaluation")
+    parser.add_argument("--prediction-csv", default="ml/output/production/binary/petbert_predictions.csv")
+    parser.add_argument("--expectation-csv", default="ml/output/annotation/keyword/keyword_annotation.csv")
+    parser.add_argument("--out-dir", default="ml/output/evaluation/binary")
     parser.add_argument("--label", default="", help="Label for evaluation history entry")
     args = parser.parse_args()
 
-    evaluate(Path(args.petbert_csv), Path(args.keyword_csv), Path(args.out_dir))
+    evaluate(Path(args.prediction_csv), Path(args.expectation_csv), Path(args.out_dir))
     log_evaluation(label=args.label)
     return 0
 

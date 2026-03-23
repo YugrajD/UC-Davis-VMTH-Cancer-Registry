@@ -1,4 +1,4 @@
-"""Command-line interface for the LLM-assisted diagnosis categorization pipeline."""
+"""Command-line interface for the LLM-assisted diagnosis annotation pipeline."""
 
 import argparse
 
@@ -17,7 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--diag-num-col", default="diagnosis_number", help="Diagnosis number column name.")
     parser.add_argument("--text-col", default="diagnosis", help="Diagnosis text column name.")
     parser.add_argument("--labels-csv", default="ml/labels/labels.csv", help="Path to Vet-ICD-O taxonomy CSV.")
-    parser.add_argument("--out-dir", default="ml/output/evaluation/llm_pipeline", help="Output directory.")
+    parser.add_argument("--out-dir", default="ml/output/annotation/llm", help="Output directory.")
     parser.add_argument("--max-rows", type=int, default=None, help="Cap on input rows (for testing).")
     parser.add_argument("--llm-timeout", type=int, default=60, help="Seconds to wait for each LLM call.")
     parser.add_argument("--model", default=None, help="Ollama model name to use (overrides OLLAMA_MODEL in .env).")

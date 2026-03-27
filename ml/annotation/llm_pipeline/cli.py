@@ -1,23 +1,26 @@
-"""Command-line interface for the LLM-assisted diagnosis annotation pipeline."""
+"""Command-line interface for LLM-assisted label annotation (authoritative method)."""
 
 import argparse
 
+import config
 from .client import list_models
 from .pipeline import LLMConfig, LLMOutputs, run_llm_scan
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Map diagnosis text to Vet-ICD-O taxonomy labels using keyword + LLM matching."
+        description="Annotate diagnosis text with Vet-ICD-O cancer labels using a tiered cascade "
+                    "(keyword → fuzzy → Ollama LLM → Claude API). Handles negation, hedged language, "
+                    "and abbreviations. This is the authoritative annotation source."
     )
     parser.add_argument("--list-models", action="store_true", help="List available Ollama models and exit.")
     parser.add_argument("--compare-models", action="store_true", help="Run all available models on --max-rows rows and print a comparison.")
-    parser.add_argument("--csv", default="ml/data/diagnoses.csv", help="Path to input diagnoses CSV.")
+    parser.add_argument("--csv", default=config.DIAGNOSES_CSV, help="Path to input diagnoses CSV.")
     parser.add_argument("--id-col", default="case_id", help="Case ID column name.")
     parser.add_argument("--diag-num-col", default="diagnosis_number", help="Diagnosis number column name.")
     parser.add_argument("--text-col", default="diagnosis", help="Diagnosis text column name.")
-    parser.add_argument("--labels-csv", default="ml/ICD_labels/labels.csv", help="Path to Vet-ICD-O taxonomy CSV.")
-    parser.add_argument("--out-dir", default="ml/output/annotation/llm", help="Output directory.")
+    parser.add_argument("--labels-csv", default=config.LABELS_CSV, help="Path to Vet-ICD-O taxonomy CSV.")
+    parser.add_argument("--out-dir", default=config.LLM_ANNOTATION_DIR, help="Output directory.")
     parser.add_argument("--max-rows", type=int, default=None, help="Cap on input rows (for testing).")
     parser.add_argument("--llm-timeout", type=int, default=60, help="Seconds to wait for each LLM call.")
     parser.add_argument("--model", default=None, help="Ollama model name to use (overrides OLLAMA_MODEL in .env).")

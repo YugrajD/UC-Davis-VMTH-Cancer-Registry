@@ -16,19 +16,15 @@ from pathlib import Path
 # Allow running as a script from any directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-
-DEFAULT_TEXT_COLS = (
-    "FINAL COMMENT",
-    "HISTOPATHOLOGICAL SUMMARY",
-    "ANCILLARY TESTS",
-)
+import config
+from model.constants import DEFAULT_TEXT_COLS
 
 
 def build_contrastive_pairs(
     *,
-    reports_csv: str = "ml/data/report.csv",
-    annotation_csv: str = "ml/output/annotation/keyword/keyword_annotation.csv",
-    out_csv: str = "ml/data/contrastive_pairs.csv",
+    reports_csv: str = config.REPORTS_CSV,
+    annotation_csv: str = config.KEYWORD_ANNOTATION_CSV,
+    out_csv: str = config.CONTRASTIVE_PAIRS_CSV,
     text_cols: tuple[str, ...] = DEFAULT_TEXT_COLS,
     min_report_chars: int = 10,
 ) -> int:
@@ -121,13 +117,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Build contrastive (report_text, label_text) pairs for PetBERT fine-tuning."
     )
-    parser.add_argument("--reports-csv", default="ml/data/report.csv",
-                        help="Path to report text CSV (default: ml/data/report.csv)")
-    parser.add_argument("--annotation-csv",
-                        default="ml/output/annotation/keyword/keyword_annotation.csv",
+    parser.add_argument("--reports-csv", default=config.REPORTS_CSV,
+                        help=f"Path to report text CSV (default: {config.REPORTS_CSV})")
+    parser.add_argument("--annotation-csv", default=config.KEYWORD_ANNOTATION_CSV,
                         help="Path to keyword annotation CSV")
-    parser.add_argument("--out-csv", default="ml/data/contrastive_pairs.csv",
-                        help="Output CSV path (default: ml/data/contrastive_pairs.csv)")
+    parser.add_argument("--out-csv", default=config.CONTRASTIVE_PAIRS_CSV,
+                        help=f"Output CSV path (default: {config.CONTRASTIVE_PAIRS_CSV})")
     args = parser.parse_args(argv)
 
     n = build_contrastive_pairs(

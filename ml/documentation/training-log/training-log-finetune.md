@@ -47,16 +47,15 @@ Report text: non-empty columns concatenated as `"[COL NAME] text"`.
 
 | Script | Role |
 |--------|------|
-| `ml/training/finetune/build_contrastive_dataset.py` | Build `(report_text, label_text)` CSV from keyword annotations |
-| `ml/training/finetune/train_contrastive.py` | InfoNCE training loop, saves HF checkpoint |
-| `ml/scripts/run_training.py --mode contrastive-finetuning` | Orchestrates both steps |
+| `ml/training/contrastive/build_contrastive_dataset.py` | Build `(report_text, label_text)` CSV from keyword annotations |
+| `ml/training/contrastive/train_contrastive.py` | InfoNCE training loop, saves HF checkpoint |
+| `ml/scripts/run_training.py --mode adapt-backbone` | Orchestrates both steps |
 
 ### Standard Run Command
 
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode contrastive-finetuning \
-  --skip-keyword-scan \
+  --mode adapt-backbone \
   --epochs 3 \
   --batch-size 32 \
   --lr 2e-5 \
@@ -65,7 +64,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --local-only
 ```
 
-> **Note:** Always pass `--skip-keyword-scan` — the keyword scan step is broken due to the `ICD_labels` package rename. Annotation already exists at `ml/output/annotation/keyword/keyword_annotation.csv`.
+> **Note:** Annotation is skipped automatically if `keyword_annotation.csv` already exists — no flag needed.
 
 ### After Fine-tuning: Cold Start + Retrain
 
@@ -75,23 +74,22 @@ are anchored to the old space and will add noise — delete them:
 ```bash
 rm -f ml/data/embedding_cache.npz
 rm -f ml/output/training/contrastive/evaluation_co_bank.csv
-rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt
+rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 ```
 
-Then retrain the PresenceClassifier with the fine-tuned backbone:
+Then retrain the label classifier with the adapted backbone:
 
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode binary \
-  --skip-keyword-scan \
-  --label "contrastive cold-start c1" \
+  --mode train-classifier \
+  --label "adapted backbone c1" \
   --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
   --embedding-min-sim 0.05 \
   --epochs 25 \
   --recall-weight 0.25 \
   --hidden-dim 512 \
-  --model ml/model/checkpoints/contrastive \
+  --model ml/output/checkpoints/contrastive \
   --device xpu \
   --local-only
 ```
@@ -126,9 +124,9 @@ group, wrong term) can be added later if improvement plateaus.
 
 ### Prerequisite Checklist
 
-- [x] `build_contrastive_dataset.py` — reads annotation + report CSVs, writes pairs CSV
-- [x] `train_contrastive.py` — InfoNCE loop, saves checkpoint
-- [x] `run_finetune_contrastive.py` — orchestration runner
+- [x] `ml/training/contrastive/build_contrastive_dataset.py` — reads annotation + report CSVs, writes pairs CSV
+- [x] `ml/training/contrastive/train_contrastive.py` — InfoNCE loop, saves checkpoint
+- [x] `ml/scripts/run_training.py --mode adapt-backbone` — orchestration runner
 - [x] Run it and record results here
 
 ---
@@ -146,7 +144,7 @@ group, wrong term) can be added later if improvement plateaus.
 | 3 | 1.2222 |
 
 Loss decreased steadily — fine-tuning converged normally.
-Checkpoint saved to `ml/model/checkpoints/contrastive/`.
+Checkpoint saved to `ml/output/checkpoints/contrastive/`.
 
 **PresenceClassifier retraining (cold start, hd=512, co=5, fp=10, epochs=25):**
 
@@ -176,8 +174,8 @@ Checkpoint saved to `ml/model/checkpoints/contrastive/`.
 - All `ml/labels/labels.csv` and `ml/ICD-labels/labels.csv` data paths updated to `ml/ICD_labels/labels.csv`
 - `train.py` had `model_name` hardcoded to `"SAVSNET/PetBERT"` in `load_cache()` call — caused cache invalidation when using contrastive backbone; fixed by threading `model_name` through `train()` and `run_cycle.py`
 
-**Best checkpoint:** `ml/model/checkpoints/binary/presence_classifier_best.pt` (69.0%, c8)
-**Phase 17 backup:** `ml/model/checkpoints/contrastive/presence_classifier_best_phase17_contrastive.pt`
+**Best checkpoint:** `ml/output/checkpoints/binary/presence_classifier_best.pt` (69.0%, c8)
+**Phase 17 backup:** `ml/output/checkpoints/contrastive/presence_classifier_best_phase17_contrastive.pt`
 
 ---
 

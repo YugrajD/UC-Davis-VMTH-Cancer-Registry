@@ -1,23 +1,26 @@
-"""Compare petbert_scan_predictions.csv against keyword_annotation.csv.
+"""Score cancer label predictions against verified annotations.
 
-For every row in petbert_scan_predictions, assign one of four verdicts:
-  good           — predicted_term exactly matches a matched_term for this case
-  slightly_off   — no exact term match, but predicted_group matches a matched_group
-  completely_off — neither term nor group matches any keyword label for this case
-  false_positive — the case has no keyword labels at all (should have been Uncategorized)
+Each predicted label receives one of five verdicts:
 
-Additionally, confirmed cancer cases that received no good or slightly_off prediction are
-counted as false negatives and included in evaluation.csv with verdict="false_negative".
+  good           — predicted term exactly matches a verified label for this case
+  slightly_off   — correct cancer group, wrong specific term
+  completely_off — neither term nor group matches any verified label for this case
+  false_positive — case has no verified labels (should have been left uncategorized)
+  false_negative — case has verified labels but no good/slightly_off prediction was made
 
-Output (written to --out-dir):
-  evaluation.csv         — petbert_scan_predictions columns + verdict (sorted by case_id)
+Output files (written to --out-dir):
+  evaluation.csv         — all predictions + verdicts, sorted by case_id
   evaluation_summary.csv — overall + per predicted-group counts and percentages
 """
 
 import argparse
 import csv
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config
 
 
 def load_csv(path: Path) -> list[dict]:
@@ -167,21 +170,23 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path) -> None
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Evaluate PetBERT predictions against keyword ground truth.")
+    parser = argparse.ArgumentParser(
+        description="Score cancer label predictions against verified annotations."
+    )
     parser.add_argument(
         "--prediction-csv",
-        default="ml/output/production/binary/petbert_predictions.csv",
-        help="Path to petbert_predictions.csv",
+        default=f"{config.OUTPUT_PRODUCTION_DIR}/binary/petbert_predictions.csv",
+        help="Path to the predictions CSV to evaluate.",
     )
     parser.add_argument(
         "--expectation-csv",
-        default="ml/output/annotation/keyword/keyword_annotation.csv",
-        help="Path to annotation predictions CSV (keyword or llm).",
+        default=config.KEYWORD_ANNOTATION_CSV,
+        help="Path to the verified annotation CSV (keyword or llm).",
     )
     parser.add_argument(
         "--out-dir",
-        default="ml/output/evaluation/binary",
-        help="Directory to write evaluation.csv (default: ml/output/evaluation/binary)",
+        default=f"{config.OUTPUT_EVALUATION_DIR}/binary",
+        help="Directory to write evaluation results.",
     )
     args = parser.parse_args()
     evaluate(Path(args.prediction_csv), Path(args.expectation_csv), Path(args.out_dir))

@@ -1,14 +1,15 @@
 # Classifiers
 
-The classifier layer sits on top of frozen PetBERT embeddings and decides which cancer
-label(s) a report belongs to. Three approaches exist; the binary PresenceClassifier is
-currently the best performer.
+The classifier layer sits on top of PetBERT embeddings and decides which cancer
+label(s) a report belongs to. Four approaches exist; contrastive fine-tuning +
+PresenceClassifier (Approach 3) is currently the production best.
 
 | Classifier | Status | Best result |
 |---|---|---|
-| Binary PresenceClassifier | Production best | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
+| Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
 | GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end (MLP macro F1=0.4975 on 17 groups) |
-| Fine-tuned PetBERT | WIP — see `petbert-pipeline.md` | Not benchmarked |
+| Contrastive fine-tuned PetBERT + PresenceClassifier | **Production best** | **69.0% Good+Slight (Phase 17, c8)** |
+| End-to-end fine-tuned PetBERT | WIP — see `petbert-pipeline.md` | Not benchmarked |
 
 > **Training ground truth:** All three approaches derive training labels from the keyword
 > pipeline (`keyword_annotation.csv`). The keyword pipeline maps diagnosis field text to
@@ -88,10 +89,11 @@ that fool cosine similarity, accumulated across all previous cycles.
 
 > **Windows:** use `ml/.venv/Scripts/python.exe`. Adjust `--device` to your hardware (`xpu`, `cuda`, `mps`, `cpu`).
 
-**Continuing from an existing bank (standard):**
+**Continuing from an existing bank (standard — adapted backbone):**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode binary \
+  --mode train-classifier \
+  --model ml/output/checkpoints/contrastive \
   --label "cycle N" \
   --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
@@ -109,20 +111,21 @@ Required any time the embedding space changes (PetBERT update, architecture chan
 new keyword data). Old bank pairs are anchored to the old cosine space and will add noise.
 
 **Prerequisites:**
-1. `ml/output/annotation/keyword/keyword_annotation.csv` must exist. If not, run the keyword pipeline first.
+1. `ml/output/annotation/keyword/keyword_annotation.csv` must exist. If not, run annotation first.
 2. `ml/data/report.csv` must exist.
 
 **Files to delete:**
 ```bash
 rm -f ml/data/embedding_cache.npz
 rm -f ml/output/training/contrastive/evaluation_co_bank.csv
-rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt
+rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 ```
 
 **Cold-start c1 command** (same as standard, label it clearly):
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode binary \
+  --mode train-classifier \
+  --model ml/output/checkpoints/contrastive \
   --label "cold-start c1" \
   --co-neg-per-case 5 \
   --fp-neg-per-case 10 \
@@ -203,8 +206,7 @@ Plateaued at **41.9%** Good+Slight (c2) — **+1.9pp over Phase 13 (40.0%)**.
 **The 12:1 compression bottleneck was real and is resolved.** `hidden_dim` is now saved in the
 checkpoint so `load()` reconstructs the correct size automatically.
 
-**Production checkpoint updated to `presence_classifier_best.pt` (Phase 16, 41.9%).**
-Backed up as `presence_classifier_best_phase16_hd512.pt`.
+**Phase 16 best: `presence_classifier_best_phase16_hd512.pt` (41.9%). Superseded by Phase 17 contrastive fine-tuning (69.0%).**
 
 ---
 
@@ -294,7 +296,7 @@ ml/.venv/Scripts/python.exe -m training.group.train \
 ```
 
 Re-train whenever `keyword_annotation.csv` is updated. The best checkpoint is saved to
-`ml/model/checkpoints/group/group_classifier_best.pt` and metadata to `group_classifier_best.meta.json`.
+`ml/output/checkpoints/group/group_classifier_best.pt` and metadata to `group_classifier_best.meta.json`.
 
 ### Inference Flow
 
@@ -540,7 +542,22 @@ the same within-group term selection step.
 
 ---
 
-## Approach 3 — Fine-tuned PetBERT
+## Approach 3 — Contrastive Fine-tuned PetBERT (Production Best)
+
+InfoNCE fine-tuning of PetBERT on `(report_text, label_text)` pairs, then retraining
+the PresenceClassifier from scratch on the improved embedding space.
+
+- **Result:** 69.0% Good+Slight (Phase 17, c8) — up from 41.9% with frozen PetBERT
+- **CO floor shattered:** ~30% → ~7% — contrastive training directly fixed wrong-group assignments
+- **Scripts:** `ml/training/contrastive/` — see [training-log-finetune.md](training-log/training-log-finetune.md) for full details
+- **Backbone checkpoint:** `ml/output/checkpoints/contrastive/`
+- **Presence classifier checkpoint:** `ml/output/checkpoints/contrastive/presence_classifier_best.pt`
+
+See [model-training.md](model-training.md#approach-3--contrastive-fine-tuning-infonce) for architecture and run commands.
+
+---
+
+## Approach 4 — End-to-end Fine-tuned PetBERT (WIP)
 
 Fine-tunes PetBERT end-to-end as a sequence classifier, removing the frozen-embedding
 bottleneck. See `petbert-pipeline.md` for scripts, usage, and known code issues.
@@ -609,27 +626,27 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
 
 ## Comparison
 
-| | Binary PresenceClassifier | GroupClassifier | Fine-tuned PetBERT |
-|---|---|---|---|
-| **Status** | Production best | Implemented, not competitive | WIP |
-| **Best result** | 41.9% Good+Slight (Phase 16) | 9.3% Good+Slight end-to-end (MLP F1=0.4975 on 17 groups) | Not benchmarked |
-| **PetBERT** | Frozen | Frozen | Fine-tuned end-to-end |
-| **Training style** | Iterative (CO feedback) | One-shot | One-shot |
-| **Data requirement** | Works from ~1,273 cases | Needs ~10,000+ cases | Needs ~10,000+ cases |
-| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow (full transformer) |
-| **Inference speed** | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) | Fast (~45 group scores + cosine) |
-| **CO floor** | ~30% | Designed to eliminate it | Designed to eliminate it |
-| **Main constraint** | CO floor, keyword data ceiling | Overfits at current data volume | Compute cost, known code issues |
+| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning | End-to-end fine-tuning |
+|---|---|---|---|---|
+| **Status** | Superseded by Approach 3 | Not competitive | **Production best** | WIP, blocked |
+| **Best result** | 41.9% Good+Slight (Phase 16) | 9.3% Good+Slight (MLP F1=0.4975 on 17 groups) | **69.0% Good+Slight (Phase 17, c8)** | Not benchmarked |
+| **PetBERT** | Frozen | Frozen | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
+| **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier | One-shot |
+| **Data requirement** | Works from ~1,273 cases | Needs ~15,000+ cases | Works at ~5,788 cases | Needs ~10,000+ cases |
+| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative | Slow (full transformer) |
+| **Inference speed** | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) |
+| **CO floor** | ~30% | Designed to eliminate it | **~7%** — dramatically reduced | Designed to eliminate it |
+| **Main constraint** | CO floor eliminated by Approach 3 | Overfits at current volume | Keyword data ceiling | Compute cost, data volume |
 
 ### When to Use Each
 
-- **Now**: Binary PresenceClassifier — best results at current data volume
-- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier and benchmark against binary
-- **After GroupClassifier proves competitive**: Consider fine-tuning PetBERT, after resolving known issues
+- **Now**: Use Phase 17 contrastive checkpoint (69.0%) as production best
+- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier; re-run contrastive fine-tuning
+- **After GroupClassifier proves competitive (~15,000 cases)**: Consider end-to-end fine-tuning (Approach 4)
 
 ---
 
 ## Training History
 
 Phase-by-phase results, fix descriptions, and cycle-by-cycle tables are in
-[training-log.md](training-log.md).
+[training-log-binary.md](training-log/training-log-binary.md).

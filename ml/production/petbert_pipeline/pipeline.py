@@ -99,10 +99,14 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
 
     if cache is not None:
         print(f"Loaded embeddings from cache: {config.embedding_cache_path}")
-        col_embeddings  = cache["col_embeddings"]
-        col_has_content = cache["col_has_content"]
-        embeddings      = cache["mean_embeddings"]
-        token_counts    = cache["token_counts"]
+        # Build an index so we can slice the cache to exactly the rows in the
+        # dataframe (handles --max-rows and any CSV row-order differences).
+        cache_id_to_idx = {cid: i for i, cid in enumerate(cache["case_ids"])}
+        sel = [cache_id_to_idx[cid] for cid in ids if cid in cache_id_to_idx]
+        col_embeddings  = {col: arr[sel] for col, arr in cache["col_embeddings"].items()}
+        col_has_content = {col: arr[sel] for col, arr in cache["col_has_content"].items()}
+        embeddings      = cache["mean_embeddings"][sel]
+        token_counts    = cache["token_counts"][sel]
         label_catalog   = label_catalog_for_config(config.labels_csv_path)
         label_embeddings = cache["label_embeddings"]
         enriched_label_embeddings = cache.get("enriched_label_embeddings")

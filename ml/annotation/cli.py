@@ -1,8 +1,11 @@
-"""Unified annotation pipeline — choose between keyword or LLM matching.
+"""Annotate diagnosis text with Vet-ICD-O cancer labels.
+
+Prefer run_annotation.py in ml/scripts/ for top-level usage (no PYTHONPATH needed).
+This module entry point requires PYTHONPATH=ml.
 
 Usage:
-  python -m annotation --method keyword [keyword options...]
-  python -m annotation --method llm     [llm options...]
+  python -m annotation --method keyword [options...]
+  python -m annotation --method llm     [options...]
 
 Run with --method keyword --help or --method llm --help for per-method options.
 """
@@ -10,17 +13,17 @@ Run with --method keyword --help or --method llm --help for per-method options.
 import argparse
 import sys
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run the annotation pipeline.",
+        description="Annotate diagnosis text with Vet-ICD-O cancer labels.",
         add_help=False,
     )
     parser.add_argument(
         "--method",
         choices=["keyword", "llm"],
         required=True,
-        help="Annotation method: keyword (fast, no model) or llm (keyword + LLM tiers).",
+        help="keyword: fast rule-based matching (no model). "
+             "llm: LLM-assisted matching (authoritative, handles negation).",
     )
     args, remaining = parser.parse_known_args()
     sys.argv = [sys.argv[0]] + remaining

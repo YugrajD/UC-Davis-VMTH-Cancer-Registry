@@ -1,65 +1,72 @@
-"""End-to-end training pipeline: keyword scan → train → evaluate.
+"""Train and retrain classifiers against verified cancer labels.
 
 No env PYTHONPATH needed — this script adds ml/ to sys.path automatically.
 
-Usage:
-  python ml/scripts/run_training.py --mode binary --label "v12"
-  python ml/scripts/run_training.py --mode group  --epochs 50
-  python ml/scripts/run_training.py --mode contrastive-finetuning --device xpu --local-only
-  python ml/scripts/run_training.py --mode knn
-  python ml/scripts/run_training.py --skip-keyword-scan --mode binary
+Modes
+-----
+  train-classifier   Iterative cycle: embed reports → build training data → train
+                     label presence classifier → score reports → evaluate → repeat.
+                     Run 6–8 cycles; each takes ~10 minutes after the first.
 
-Modes:
-  binary       Run the full binary PresenceClassifier training cycle (default)
-               Steps: keyword_pipeline → build_pairs → train → petbert_pipeline → evaluate → log
+  train-groups       One-shot: train a multi-label group classifier.
+                     Not yet competitive at current data volume (~5,800 cases);
+                     re-run when confirmed cases reach ~15,000.
 
-  group        Build GroupClassifier training data and train
-               Steps: keyword_pipeline → build_group_data → train_group
+  adapt-backbone     Fine-tune the embedding model (PetBERT) so that report text
+                     and cancer label text land closer together in vector space.
+                     Run once; then cold-start and retrain with train-classifier.
 
-  contrastive-finetuning  Contrastive InfoNCE fine-tuning of PetBERT backbone
-               Steps: [keyword_pipeline →] build_contrastive_pairs → train_contrastive
-               After this completes, cold-start and re-run in binary mode with
-               --model <contrastive-out-dir> --local-only.
+  build-knn          Build a K-nearest-neighbour lookup structure from the
+                     embedding cache for group-based gating.
 
-  knn          Build a KnnGroupSelector from the embedding cache
-               Steps: KnnGroupSelector.build → save
+Usage
+-----
+  python ml/scripts/run_training.py --mode train-classifier --label "c1"
+  python ml/scripts/run_training.py --mode adapt-backbone --device xpu --local-only
+  python ml/scripts/run_training.py --mode train-groups --device xpu
+  python ml/scripts/run_training.py --mode build-knn
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-# Add ml/ to the path so all packages are importable without env PYTHONPATH=ml
+# Add ml/ to sys.path so all packages are importable without setting PYTHONPATH
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from annotation.keyword_pipeline.pipeline import KeywordConfig, run_keyword_scan
-from training.run_cycle import main as run_binary_cycle
+import config
+from model.constants import DEFAULT_HIDDEN_DIM
+from annotation import annotate_keyword
+from training.binary.run_cycle import main as run_classifier_cycle
 from training.group.build_training_data import build_training_data
 from training.group.train import train as train_group
-from training.finetune.build_contrastive_dataset import build_contrastive_pairs
-from training.finetune.train_contrastive import train as train_contrastive
+from training.contrastive.build_contrastive_dataset import build_contrastive_pairs
+from training.contrastive.train_contrastive import train as train_contrastive
 from model.knn_group_selector import KnnGroupSelector
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="End-to-end training pipeline (keyword scan → train → evaluate)."
+        description="Train classifiers to predict cancer labels from veterinary pathology reports.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--mode",
-        choices=["binary", "group", "contrastive-finetuning", "knn"],
-        default="binary",
+        choices=["train-classifier", "train-groups", "adapt-backbone", "build-knn"],
+        default="train-classifier",
         help=(
-            "Training mode: binary PresenceClassifier (default), "
-            "group GroupClassifier, contrastive-finetuning InfoNCE PetBERT fine-tuning, "
-            "or knn KnnGroupSelector build."
+            "What to train: "
+            "train-classifier (label presence model, iterative — default), "
+            "train-groups (group classifier, one-shot), "
+            "adapt-backbone (fine-tune embedding model), "
+            "build-knn (K-nearest-neighbour lookup)."
         ),
     )
     parser.add_argument(
-        "--skip-keyword-scan",
+        "--force-reannotate",
         action="store_true",
-        help="Skip keyword pipeline step (reuse existing keyword_annotation.csv). "
-             "Applies to binary, group, and contrastive modes.",
+        help="Re-run label annotation even if the annotation file already exists. "
+             "Only applies when using the default keyword annotation file.",
     )
 
     # ------------------------------------------------------------------
@@ -70,97 +77,113 @@ def main() -> int:
                         help="Compute device (default: auto)")
     parser.add_argument("--local-only", action="store_true",
                         help="Use only locally cached model files (no HuggingFace download)")
-    parser.add_argument("--epochs", type=int, default=25,
-                        help="Training epochs (binary default: 25; contrastive default: 3)")
+    parser.add_argument(
+        "--epochs", type=int, default=None,
+        help="Training epochs. "
+             "Defaults: train-classifier=25, adapt-backbone=3, train-groups=50.",
+    )
+    parser.add_argument(
+        "--annotation-csv", default=config.KEYWORD_ANNOTATION_CSV,
+        help="Verified label annotations used as training supervision and evaluation "
+             "ground truth. Accepts keyword_annotation.csv (default) or "
+             "llm_annotation.csv — both share the same format. "
+             f"(default: {config.KEYWORD_ANNOTATION_CSV})",
+    )
 
     # ------------------------------------------------------------------
-    # Binary mode args
+    # train-classifier args
     # ------------------------------------------------------------------
     parser.add_argument("--label", default="",
-                        help="[binary] Label for evaluation history row")
+                        help="[train-classifier] Label for the evaluation history row")
     parser.add_argument("--recall-weight", type=float, default=0.25,
-                        help="[binary] Recall weight for checkpoint selection (default: 0.25)")
-    parser.add_argument("--co-neg-per-case", type=int, default=10,
-                        help="[binary] CO negatives per case (default: 10; use 5 for per-column arch)")
+                        help="[train-classifier] Recall weight for checkpoint selection (default: 0.25)")
+    parser.add_argument("--co-neg-per-case", type=int, default=5,
+                        help="[train-classifier] Wrong-group negatives per case (default: 5)")
     parser.add_argument("--fp-neg-per-case", type=int, default=10,
-                        help="[binary] FP extra negatives per case (default: 10)")
+                        help="[train-classifier] Extra negatives per false-positive case (default: 10)")
     parser.add_argument("--embedding-min-sim", type=float, default=0.05,
-                        help="[binary] Min embedding similarity threshold (default: 0.05)")
-    parser.add_argument("--hidden-dim", type=int, default=256,
-                        help="[binary] MLP hidden layer size (default: 256; Phase 16 uses 512)")
+                        help="[train-classifier] Minimum score threshold for predictions (default: 0.05)")
+    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM,
+                        help=f"[train-classifier] MLP hidden layer size (default: {DEFAULT_HIDDEN_DIM})")
 
     # ------------------------------------------------------------------
-    # Contrastive mode args
+    # adapt-backbone args
     # ------------------------------------------------------------------
-    parser.add_argument("--reports-csv", default="ml/data/report.csv",
-                        help="[contrastive] Report text CSV (default: ml/data/report.csv)")
-    parser.add_argument("--annotation-csv",
-                        default="ml/output/annotation/keyword/keyword_annotation.csv",
-                        help="[contrastive] Keyword annotation CSV")
-    parser.add_argument("--pairs-csv", default="ml/data/contrastive_pairs.csv",
-                        help="[contrastive] Output/input path for (report, label) pairs CSV")
-    parser.add_argument("--contrastive-out-dir",
-                        default="ml/model/checkpoints/contrastive",
-                        help="[contrastive] Directory for the fine-tuned HuggingFace checkpoint")
-    parser.add_argument("--model", default="SAVSNET/PetBERT",
-                        help="HuggingFace model name or local path. "
-                             "[binary] model used for embeddings; "
-                             "[contrastive-finetuning] starting weights. "
-                             "Default: SAVSNET/PetBERT")
+    parser.add_argument("--reports-csv", default=config.REPORTS_CSV,
+                        help=f"[adapt-backbone] Report text CSV (default: {config.REPORTS_CSV})")
+    parser.add_argument("--pairs-csv", default=config.CONTRASTIVE_PAIRS_CSV,
+                        help="[adapt-backbone] Output/input path for (report, label) training pairs CSV")
+    parser.add_argument("--backbone-out-dir", default=config.CHECKPOINT_CONTRASTIVE_DIR,
+                        help="[adapt-backbone] Directory for the adapted model checkpoint")
+    parser.add_argument(
+        "--model", default="SAVSNET/PetBERT",
+        help="HuggingFace model name or local checkpoint path. "
+             "[train-classifier] embedding model; "
+             "[adapt-backbone] starting weights. "
+             "Default: SAVSNET/PetBERT",
+    )
     parser.add_argument("--batch-size", type=int, default=32,
-                        help="[contrastive] Batch size / number of in-batch negatives (default: 32)")
-    parser.add_argument("--lr", type=float, default=2e-5,
-                        help="[contrastive] Peak learning rate (default: 2e-5)")
+                        help="[adapt-backbone] Batch size / number of in-batch negatives (default: 32)")
+    parser.add_argument("--lr", type=float, default=None,
+                        help="Peak learning rate. "
+                             "[adapt-backbone] default: 2e-5; [train-groups] default: 5e-5")
     parser.add_argument("--temperature", type=float, default=0.07,
-                        help="[contrastive] InfoNCE temperature (default: 0.07)")
+                        help="[adapt-backbone] Contrastive loss temperature (default: 0.07)")
     parser.add_argument("--max-length", type=int, default=256,
-                        help="[contrastive] Max BERT token length (default: 256)")
-    parser.add_argument("--skip-dataset-build", action="store_true",
-                        help="[contrastive] Skip pair-building step (reuse existing pairs CSV)")
+                        help="[adapt-backbone] Max BERT token length (default: 256)")
+    parser.add_argument("--skip-pair-build", action="store_true",
+                        help="[adapt-backbone] Skip building training pairs (reuse existing pairs CSV)")
 
     # ------------------------------------------------------------------
-    # KNN mode args
+    # build-knn args
     # ------------------------------------------------------------------
-    parser.add_argument("--knn-cache", default="ml/data/embedding_cache.npz",
-                        help="[knn] Embedding cache npz (default: ml/data/embedding_cache.npz)")
-    parser.add_argument("--knn-labels-csv",
-                        default="ml/output/annotation/llm/llm_annotation.csv",
-                        help="[knn] Predictions CSV with case_id and matched_group columns")
-    parser.add_argument("--knn-out", default="ml/model/checkpoints/knn/knn_group_selector.npz",
-                        help="[knn] Output path for the KnnGroupSelector")
+    parser.add_argument("--knn-cache", default=config.EMBEDDING_CACHE_NPZ,
+                        help=f"[build-knn] Embedding cache file (default: {config.EMBEDDING_CACHE_NPZ})")
+    parser.add_argument("--knn-out", default=config.KNN_SELECTOR_NPZ,
+                        help="[build-knn] Output path for the KNN lookup structure")
     parser.add_argument("--knn-k", type=int, default=10,
-                        help="[knn] Number of nearest neighbours to vote with (default: 10)")
+                        help="[build-knn] Nearest neighbours to vote with (default: 10)")
     parser.add_argument("--knn-min-cases", type=int, default=10,
-                        help="[knn] Drop groups with fewer confirmed cases (default: 10)")
+                        help="[build-knn] Drop groups with fewer confirmed cases (default: 10)")
     parser.add_argument("--knn-mean-only", action="store_true",
-                        help="[knn] Use mean embeddings (768-dim) instead of per-column concat (2304-dim)")
+                        help="[build-knn] Use mean embeddings (768-dim) instead of per-column (2304-dim)")
 
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
-    # Step 1: Keyword scan (binary, group, contrastive modes)
+    # Step 1: Ensure verified labels are available
     # ------------------------------------------------------------------
-    if args.mode in ("binary", "group", "contrastive-finetuning") and not args.skip_keyword_scan:
-        print("\n=== Step 1: Keyword pipeline ===")
-        run_keyword_scan(KeywordConfig(
-            csv_path="ml/data/diagnoses.csv",
-            id_col="case_id",
-            diag_num_col="diagnosis_number",
-            text_col="diagnosis",
-            labels_csv_path="ml/ICD_labels/labels.csv",
-            out_dir="ml/output/annotation/keyword",
-            max_rows=None,
-        ))
+    # Three cases:
+    #   1. Annotation file already exists → skip (unless --force-reannotate).
+    #   2. Default keyword annotation file is missing → auto-run keyword annotation.
+    #   3. A custom annotation file is missing → error (user must annotate first).
+    if args.mode in ("train-classifier", "train-groups", "adapt-backbone"):
+        annotation_path = Path(args.annotation_csv)
+        is_default_keyword_file = (
+            annotation_path.resolve() == Path(config.KEYWORD_ANNOTATION_CSV).resolve()
+        )
+
+        if annotation_path.exists() and not args.force_reannotate:
+            print(f"\n=== Step 1: Verified labels found — skipping annotation ({args.annotation_csv}) ===")
+        elif is_default_keyword_file:
+            print("\n=== Step 1: Annotating diagnoses with labels (keyword method) ===")
+            annotate_keyword()
+        else:
+            print(f"\nError: annotation file not found: {args.annotation_csv}")
+            print("Run annotation first, e.g.:")
+            print("  python ml/scripts/run_annotation.py --method llm")
+            return 1
 
     # ------------------------------------------------------------------
     # Step 2: Mode-specific training
     # ------------------------------------------------------------------
 
-    if args.mode == "binary":
-        print("\n=== Step 2: Binary training cycle ===")
+    if args.mode == "train-classifier":
+        print("\n=== Step 2: Train label presence classifier ===")
+        epochs = args.epochs if args.epochs is not None else 25
         cycle_argv = [
             "--label", args.label,
-            "--epochs", str(args.epochs),
+            "--epochs", str(epochs),
             "--device", args.device,
             "--recall-weight", str(args.recall_weight),
             "--co-neg-per-case", str(args.co_neg_per_case),
@@ -168,76 +191,83 @@ def main() -> int:
             "--embedding-min-sim", str(args.embedding_min_sim),
             "--hidden-dim", str(args.hidden_dim),
             "--model", args.model,
+            "--annotation-csv", args.annotation_csv,
         ] + (["--local-only"] if args.local_only else [])
-        run_binary_cycle(argv=cycle_argv)
+        run_classifier_cycle(argv=cycle_argv)
 
-    elif args.mode == "group":
-        print("\n=== Step 2a: Build group training data ===")
+    elif args.mode == "train-groups":
+        epochs = args.epochs if args.epochs is not None else 50
+        group_lr = args.lr if args.lr is not None else 5e-5
+
+        print("\n=== Step 2a: Build group classifier training data ===")
         build_training_data(
-            cache_path="ml/data/embedding_cache.npz",
-            expectation_csv_path="ml/output/annotation/llm/llm_annotation.csv",
-            out_path="ml/output/training/group/group_training_data.npz",
+            cache_path=config.EMBEDDING_CACHE_NPZ,
+            expectation_csv_path=args.annotation_csv,
+            out_path=config.GROUP_TRAINING_DATA_NPZ,
         )
         print("\n=== Step 2b: Train group classifier ===")
         train_group(
-            training_data_path="ml/output/training/group/group_training_data.npz",
-            out_path="ml/model/checkpoints/group/group_classifier_current.pt",
-            epochs=args.epochs,
-            lr=1e-3,
-            hidden_dim=256,
+            training_data_path=config.GROUP_TRAINING_DATA_NPZ,
+            out_path=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_current.pt",
+            epochs=epochs,
+            lr=group_lr,
+            hidden_dim=DEFAULT_HIDDEN_DIM,
             val_frac=0.2,
             threshold=0.3,
             device_arg=args.device,
             weight_decay=0.0,
             max_class_weight=0.0,
+            min_group_cases=10,
+            max_group_cases=0,
+            dropout=0.3,
         )
 
-    elif args.mode == "contrastive-finetuning":
-        if not args.skip_dataset_build:
-            print("\n=== Step 2a: Build contrastive pairs ===")
+    elif args.mode == "adapt-backbone":
+        epochs = args.epochs if args.epochs is not None else 3
+        backbone_lr = args.lr if args.lr is not None else 2e-5
+
+        if not args.skip_pair_build:
+            print("\n=== Step 2a: Build (report, label) training pairs ===")
             build_contrastive_pairs(
                 reports_csv=args.reports_csv,
                 annotation_csv=args.annotation_csv,
                 out_csv=args.pairs_csv,
             )
         else:
-            print("\n=== Step 2a: Skipped (--skip-dataset-build) ===")
+            print("\n=== Step 2a: Skipped — reusing existing pairs CSV ===")
 
-        # Default epochs to 3 for contrastive if the user didn't override
-        epochs = args.epochs if args.epochs != 25 else 3
-
-        print("\n=== Step 2b: Contrastive InfoNCE fine-tuning ===")
+        print("\n=== Step 2b: Adapt embedding backbone ===")
         train_contrastive(
             pairs_csv=args.pairs_csv,
-            out_dir=args.contrastive_out_dir,
+            out_dir=args.backbone_out_dir,
             model_name=args.model,
             epochs=epochs,
             batch_size=args.batch_size,
-            lr=args.lr,
+            lr=backbone_lr,
             temperature=args.temperature,
             max_length=args.max_length,
             device_arg=args.device,
             local_only=args.local_only,
         )
 
-        print("\n=== Cold-start reminder ===")
-        print("The embedding space has changed. Before retraining the PresenceClassifier:")
-        print("  rm -f ml/data/embedding_cache.npz")
-        print("  rm -f ml/output/training/contrastive/evaluation_co_bank.csv")
-        print("  rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt")
-        print(f"Then re-run in binary mode with --model {args.contrastive_out_dir} --local-only")
+        print("\n=== Cold-start required ===")
+        print("The embedding space has changed. Before retraining the label classifier:")
+        print(f"  rm -f {config.EMBEDDING_CACHE_NPZ}")
+        print(f"  rm -f {config.OUTPUT_TRAINING_DIR}/contrastive/evaluation_co_bank.csv")
+        print(f"  rm -f {args.backbone_out_dir}/presence_classifier_current.pt")
+        print(f"Then retrain with: --mode train-classifier --model {args.backbone_out_dir} --local-only")
 
-    elif args.mode == "knn":
-        print("\n=== Build KnnGroupSelector ===")
+    elif args.mode == "build-knn":
+        print("\n=== Build KNN group lookup ===")
         selector = KnnGroupSelector.build(
             cache_path=args.knn_cache,
-            labels_csv_path=args.knn_labels_csv,
+            labels_csv_path=args.annotation_csv,
             k=args.knn_k,
             per_column=not args.knn_mean_only,
             min_group_cases=args.knn_min_cases,
         )
         selector.save(args.knn_out)
-        print(f"Saved KnnGroupSelector to {args.knn_out}")
+        print(f"Saved KNN lookup to {args.knn_out}")
 
     return 0
 

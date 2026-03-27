@@ -1,13 +1,15 @@
-"""Command-line interface for the keyword-only diagnosis annotation pipeline."""
+"""Command-line interface for rule-based label annotation (keyword method)."""
 
 import argparse
 
+import config
 from .pipeline import KeywordConfig, KeywordOutputs, run_keyword_scan
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Map diagnosis text to Vet-ICD-O taxonomy labels using keyword matching."
+        description="Annotate diagnosis text with Vet-ICD-O cancer labels using keyword matching. "
+                    "Fast, no model required. Does not handle negation or abbreviations."
     )
     parser.add_argument(
         "--csv",
@@ -23,12 +25,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text-col", default="diagnosis", help="Diagnosis text column name.")
     parser.add_argument(
         "--labels-csv",
-        default="ml/ICD_labels/labels.csv",
+        default=config.LABELS_CSV,
         help="Path to Vet-ICD-O taxonomy CSV.",
     )
     parser.add_argument(
         "--out-dir",
-        default="ml/output/annotation/keyword",
+        default=config.KEYWORD_ANNOTATION_DIR,
         help="Output directory.",
     )
     parser.add_argument(

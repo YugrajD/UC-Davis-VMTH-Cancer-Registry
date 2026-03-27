@@ -9,7 +9,7 @@ Steps:
   5. Train PresenceClassifier with BCEWithLogitsLoss, using a weighted sampler
      and pos_weight to handle class imbalance.
   6. Evaluate precision / recall / F1 on a held-out validation split after each epoch.
-  7. Save the best checkpoint (by validation F1) to ml/model/checkpoints/.
+  7. Save the best checkpoint (by validation F1) to ml/output/checkpoints/.
 
 Usage:
   python ml/training/binary/train.py --embedding-cache ml/data/embedding_cache.npz
@@ -28,11 +28,10 @@ from sklearn.metrics import precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-from model.constants import DEFAULT_TEXT_COLS, PETBERT_EMB_DIM
+import config
+from model.constants import DEFAULT_HIDDEN_DIM, DEFAULT_TEXT_COLS, PETBERT_EMB_DIM
 from model.presence_classifier import PresenceClassifier
-from production.petbert_pipeline.pipeline import run_scan
-from production.petbert_pipeline.types import ScanConfig
-from production.petbert_pipeline.utils import device_from_arg
+from production.petbert_pipeline import run_scan, ScanConfig, device_from_arg
 from training.binary.build_training_pairs import build_pairs as build_training_pairs
 
 
@@ -54,13 +53,13 @@ def _ensure_embedding_cache(
         return
     _print_banner("Prerequisite — Build embedding cache (first run only)")
     run_scan(ScanConfig(
-        csv_path="ml/data/report.csv",
+        csv_path=config.REPORTS_CSV,
         id_col="case_id",
         text_cols=DEFAULT_TEXT_COLS,
         col_weights={},
         model_name="SAVSNET/PetBERT",
         local_only=local_only,
-        out_dir="ml/output/production/binary",
+        out_dir=f"{config.OUTPUT_PRODUCTION_DIR}/binary",
         max_rows=None,
         batch_size=16,
         max_length=512,
@@ -68,7 +67,7 @@ def _ensure_embedding_cache(
         task="categorize",
         embedding_min_sim=embedding_min_sim,
         device=device,
-        labels_csv_path="ml/ICD_labels/labels.csv",
+        labels_csv_path=config.LABELS_CSV,
         presence_classifier_path=None,
         embedding_cache_path=cache_path,
     ))
@@ -134,15 +133,15 @@ def evaluate(
 
 def train(
     *,
-    pairs_csv: str = "ml/data/training_pairs.csv",
+    pairs_csv: str = config.TRAINING_PAIRS_CSV,
     embedding_cache: str | None = None,
-    report_csv: str = "ml/data/report.csv",
-    labels_csv: str = "ml/ICD_labels/labels.csv",
-    out_dir: str = "ml/model/checkpoints",
+    report_csv: str = config.REPORTS_CSV,
+    labels_csv: str = config.LABELS_CSV,
+    out_dir: str = config.CHECKPOINT_BINARY_DIR,
     epochs: int = 20,
     batch_size: int = 256,
     lr: float = 1e-3,
-    hidden_dim: int = 256,
+    hidden_dim: int = DEFAULT_HIDDEN_DIM,
     dropout: float = 0.3,
     val_split: float = 0.15,
     device: str = "auto",
@@ -155,7 +154,7 @@ def train(
 ) -> int:
     # Auto-build prerequisites if missing (i.e., run_cycle Steps 0–1)
     if not skip_prerequisites:
-        cache_path = embedding_cache or "ml/data/embedding_cache.npz"
+        cache_path = embedding_cache or config.EMBEDDING_CACHE_NPZ
         _ensure_embedding_cache(
             cache_path,
             local_only=local_only,
@@ -248,7 +247,7 @@ def train(
         targets     = np.array(targets_list,      dtype=np.float32)
         print(f"  Using {len(targets)} pairs after cache lookup")
     else:
-        cache_path = embedding_cache or "ml/data/embedding_cache.npz"
+        cache_path = embedding_cache or config.EMBEDDING_CACHE_NPZ
         print(
             f"\nError: embedding cache not found or stale.\n"
             f"Build it first by running petbert_pipeline once:\n\n"
@@ -341,15 +340,15 @@ def train(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Train the binary presence classifier.")
-    parser.add_argument("--pairs-csv", default="ml/data/training_pairs.csv",
+    parser.add_argument("--pairs-csv", default=config.TRAINING_PAIRS_CSV,
                         help="Output of build_training_pairs.py")
-    parser.add_argument("--out-dir", default="ml/model/checkpoints",
+    parser.add_argument("--out-dir", default=config.CHECKPOINT_BINARY_DIR,
                         help="Directory to save the best checkpoint")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=256,
                         help="Batch size for classifier training")
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--hidden-dim", type=int, default=256)
+    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM)
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--val-split", type=float, default=0.15,
                         help="Fraction of data to hold out for validation")
@@ -366,9 +365,9 @@ def main() -> int:
                         help="Path to embedding cache npz (from petbert_pipeline --embedding-cache). "
                              "When provided, PetBERT is not loaded — embeddings are read from "
                              "the cache using case_id, fixing the train/inference mismatch.")
-    parser.add_argument("--report-csv", default="ml/data/report.csv",
+    parser.add_argument("--report-csv", default=config.REPORTS_CSV,
                         help="Path to report CSV (used only for cache validation).")
-    parser.add_argument("--labels-csv", default="ml/ICD_labels/labels.csv",
+    parser.add_argument("--labels-csv", default=config.LABELS_CSV,
                         help="Path to labels CSV (used only for cache validation).")
     parser.add_argument("--skip-prerequisites", action="store_true",
                         help="Skip auto-building embedding cache and training pairs. "

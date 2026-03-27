@@ -2,6 +2,7 @@
 
 import argparse
 
+import config
 from model.constants import DEFAULT_TEXT_COLS
 from .pipeline import run_scan
 from .types import ScanConfig
@@ -14,7 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Scan a reportText CSV with PetBERT and produce categorizations (and optional nearest neighbors)."
     )
-    parser.add_argument("--csv", default="ml/data/report.csv", help="Path to input CSV")
+    parser.add_argument("--csv", default=config.REPORTS_CSV, help="Path to input CSV")
     parser.add_argument("--id-col", default="case_id", help="ID column name")
     parser.add_argument(
         "--text-cols",
@@ -39,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use only local cached model files (no network calls).",
     )
-    parser.add_argument("--out-dir", default="ml/output/report", help="Output directory")
+    parser.add_argument("--out-dir", default=config.PETBERT_SCAN_OUTPUT_DIR, help="Output directory")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap on rows")
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size")
     parser.add_argument("--max-length", type=int, default=512, help="Tokenizer max_length")
@@ -64,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--labels-csv",
-        default="ml/ICD_labels/labels.csv",
+        default=config.LABELS_CSV,
         help="Path to labels taxonomy CSV.",
     )
     parser.add_argument(

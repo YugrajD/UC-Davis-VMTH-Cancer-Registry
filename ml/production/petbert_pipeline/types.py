@@ -12,7 +12,7 @@ class ScanConfig:
     csv_path: str
     id_col: str
     text_cols: tuple[str, ...]  # columns to embed independently; best-match label wins
-    col_weights: dict[str, float]  # reserved; no longer used for scoring
+    col_weights: dict[str, float]  # per-column weight multipliers; not yet used for scoring
     model_name: str
     local_only: bool
     out_dir: str

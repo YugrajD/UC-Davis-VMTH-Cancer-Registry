@@ -1,23 +1,25 @@
-"""Append the current evaluation results to a persistent history log.
+"""Record evaluation results to a persistent history log.
 
-Run this after every evaluate_predictions.py call to record a snapshot.
-The history is written to ml/output/evaluation/binary/evaluation_history.csv and
-a formatted trend table is printed to the console.
+Appends the latest evaluation summary to evaluation_history.csv and prints
+a formatted trend table showing how metrics have changed across cycles.
 
 Usage:
-  python ml/training/log_evaluation.py
-  python ml/training/log_evaluation.py --label "after training v1"
-  python ml/training/log_evaluation.py --show          # print history without recording
+  python ml/evaluation/log_evaluation.py
+  python ml/evaluation/log_evaluation.py --label "after cycle 3"
+  python ml/evaluation/log_evaluation.py --show    # print history without recording
 """
 
 import argparse
 import csv
+import sys
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config
 
-_SUMMARY_DEFAULT = "ml/output/evaluation/binary/evaluation_summary.csv"
-_HISTORY_DEFAULT = "ml/output/evaluation/binary/evaluation_history.csv"
+_SUMMARY_DEFAULT = f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation_summary.csv"
+_HISTORY_DEFAULT = f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation_history.csv"
 
 _HISTORY_FIELDS = [
     "timestamp",

@@ -31,6 +31,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+import config
+
 
 def build_training_data(
     cache_path: str,
@@ -135,19 +138,18 @@ def main() -> int:
     )
     parser.add_argument(
         "--embedding-cache",
-        default="ml/data/embedding_cache.npz",
-        help="Path to embedding cache npz (default: ml/data/embedding_cache.npz)",
+        default=config.EMBEDDING_CACHE_NPZ,
+        help=f"Path to embedding cache npz (default: {config.EMBEDDING_CACHE_NPZ})",
     )
     parser.add_argument(
         "--expectation-csv",
-        default="ml/output/annotation/llm/llm_annotation.csv",
-        help="Path to predictions CSV with case_id and matched_group columns "
-             "(default: ml/output/annotation/llm/llm_annotation.csv)",
+        default=config.LLM_ANNOTATION_CSV,
+        help="Path to predictions CSV with case_id and matched_group columns",
     )
     parser.add_argument(
         "--out",
-        default="ml/output/training/group/group_training_data.npz",
-        help="Output npz path (default: ml/output/training/group/group_training_data.npz)",
+        default=config.GROUP_TRAINING_DATA_NPZ,
+        help=f"Output npz path (default: {config.GROUP_TRAINING_DATA_NPZ})",
     )
     parser.add_argument(
         "--mean-only",

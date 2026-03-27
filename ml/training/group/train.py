@@ -13,7 +13,7 @@ Usage:
 
 After training, run the PetBERT pipeline with:
   ml/.venv/bin/python3 -m petbert_pipeline \\
-      --group-classifier ml/model/checkpoints/group/group_classifier_best.pt \\
+      --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \\
       --embedding-cache ml/data/embedding_cache.npz \\
       --local-only
 
@@ -32,6 +32,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+import config
+from model.constants import DEFAULT_HIDDEN_DIM
 from model.group_classifier import GroupClassifier
 
 
@@ -276,17 +279,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Train the GroupClassifier.")
     parser.add_argument(
         "--training-data",
-        default="output/group_training_data.npz",
+        default=config.GROUP_TRAINING_DATA_NPZ,
         help="Path to training data npz from build_group_training_data.py",
     )
     parser.add_argument(
         "--out",
-        default="ml/model/checkpoints/group/group_classifier_current.pt",
-        help="Output checkpoint path (default: ml/model/checkpoints/group/group_classifier_current.pt)",
+        default=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_current.pt",
+        help="Output checkpoint path",
     )
     parser.add_argument("--epochs", type=int, default=50, help="Training epochs (default: 50)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate (default: 1e-3)")
-    parser.add_argument("--hidden-dim", type=int, default=256, help="Hidden layer size (default: 256)")
+    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM,
+                        help=f"Hidden layer size (default: {DEFAULT_HIDDEN_DIM})")
     parser.add_argument("--val-frac", type=float, default=0.2, help="Validation fraction (default: 0.2)")
     parser.add_argument(
         "--threshold",

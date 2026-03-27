@@ -7,6 +7,7 @@ are treated as uncategorized (Class 0).
 
 import argparse
 import csv
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +15,9 @@ import torch
 from datasets import Dataset, DatasetDict
 from transformers import AutoTokenizer
 
-from ICD_labels.taxonomy import load_labels_taxonomy
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+import config
+from ICD_labels import load_labels_taxonomy
 
 def build_group_map(labels_csv: str) -> dict[str, int]:
     """Map Vet-ICD-O group name -> class index (1 to N)."""
@@ -26,10 +29,10 @@ def build_group_map(labels_csv: str) -> dict[str, int]:
 
 def build_dataset(
     *,
-    reports_csv: str = "database/data/output/report.csv",
-    predictions_csv: str = "ml/output/diagnoses/keyword_annotation.csv",
-    labels_csv: str = "ml/ICD_labels/labels.csv",
-    out_dir: str = "ml/data/finetune_dataset",
+    reports_csv: str = config.REPORTS_CSV,
+    predictions_csv: str = config.KEYWORD_ANNOTATION_CSV,
+    labels_csv: str = config.LABELS_CSV,
+    out_dir: str = config.FINETUNE_DATASET_DIR,
     model_name: str = "SAVSNET/PetBERT",
     text_cols: tuple[str, ...] = ("FINAL COMMENT", "HISTOPATHOLOGICAL SUMMARY", "ANCILLARY TESTS"),
     max_length: int = 512,
@@ -182,9 +185,9 @@ def build_dataset(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--reports-csv", default="database/data/output/report.csv")
-    parser.add_argument("--predictions-csv", default="ml/output/diagnoses/keyword_annotation.csv")
-    parser.add_argument("--labels-csv", default="ml/ICD_labels/labels.csv")
-    parser.add_argument("--out-dir", default="ml/data/finetune_dataset")
+    parser.add_argument("--predictions-csv", default=config.KEYWORD_ANNOTATION_CSV)
+    parser.add_argument("--labels-csv", default=config.LABELS_CSV)
+    parser.add_argument("--out-dir", default=config.FINETUNE_DATASET_DIR)
     parser.add_argument("--model", default="SAVSNET/PetBERT")
     args = parser.parse_args()
     

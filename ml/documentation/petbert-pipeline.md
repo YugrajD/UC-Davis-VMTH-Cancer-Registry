@@ -3,10 +3,10 @@
 The production system that maps full veterinary pathology report text to standardized
 Vet-ICD-O-canine-1 cancer labels (term, group, ICD code).
 
-> **Role in the three-pipeline architecture:**
+> **Role in the four-pipeline architecture:**
 > This pipeline runs in production (`production/petbert_pipeline/`). It takes report text
 > columns as input — the diagnosis field is not available at inference time. The
-> **keyword pipeline** (`evaluation/keyword_pipeline/`) runs separately to generate
+> **keyword pipeline** (`annotation/keyword_pipeline/`) runs separately to generate
 > ground-truth training labels from the diagnosis field.
 
 ---
@@ -46,7 +46,7 @@ The pipeline reads `ml/data/report.csv` — one row per case:
 
 ## Pipeline Flow
 
-The entry point is `run_scan()` in `ml/production/petbert_pipeline/pipeline.py`.
+The entry point is `run_scan()`, exported from `ml/production/petbert_pipeline/` (implemented in `pipeline.py`).
 
 ### Step 1: Load Input Data
 
@@ -155,7 +155,7 @@ Labels sorted by score descending. Confidence threshold (default `0.6`) applied:
 
 ### Step 6: Map Label Index to ICD Code
 
-`labels/projection.py` resolves each index to term, group, and code.
+`ICD_labels/projection.py` resolves each index to term, group, and code.
 
 ### Step 7: Compute Per-Column Scores
 
@@ -203,7 +203,7 @@ All three pass the 0.6 threshold → 3 rows in `predictions.csv`.
 | `--max-length` | 512 | Maximum token length (texts truncated beyond this) |
 | `--embedding-min-sim` | 0.6 | Confidence threshold (use `0.05` when presence classifier is active) |
 | `--device` | auto | `auto`, `cpu`, `cuda`, or `mps` |
-| `--labels-csv` | `ml/labels/labels.csv` | Taxonomy CSV path |
+| `--labels-csv` | `ml/ICD_labels/labels.csv` | Taxonomy CSV path |
 | `--task` | `categorize` | `categorize`, `neighbors`, or `both` |
 | `--neighbors-k` | 3 | Nearest neighbors per row |
 | `--presence-classifier` | none | Path to trained `PresenceClassifier` checkpoint (`.pt`) |
@@ -225,7 +225,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py --local-only
 **With presence classifier and embedding cache:**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --presence-classifier ml/model/checkpoints/binary/presence_classifier_best.pt \
+  --presence-classifier ml/output/checkpoints/binary/presence_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
   --local-only
@@ -234,7 +234,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
 **With group classifier:**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --group-classifier ml/model/checkpoints/group/group_classifier_best.pt \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
   --embedding-cache ml/data/embedding_cache.npz \
   --embedding-min-sim 0.05 \
   --local-only
@@ -318,18 +318,20 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py --max-rows 50 --local-o
 
 | File | Role |
 |------|------|
+| `ml/production/petbert_pipeline/__init__.py` | Package public API — import `run_scan`, `ScanConfig`, `build_config`, `build_parser` from here |
 | `ml/production/petbert_pipeline/pipeline.py` | Top-level orchestration (`run_scan`) |
 | `ml/production/petbert_pipeline/embedding.py` | PetBERT loading, per-column embedding, fine-tuned classifier support |
 | `ml/production/petbert_pipeline/embedding_cache.py` | Save/load the embedding cache |
 | `ml/production/petbert_pipeline/categorization.py` | Top-k matching, confidence thresholding, group-based categorization |
-| `ml/production/petbert_pipeline/types.py` | `ScanConfig` and `ScanOutputs` dataclasses |
+| `ml/production/petbert_pipeline/types.py` | `ScanConfig` and `ScanOutputs` dataclasses (internal) |
 | `ml/production/petbert_pipeline/utils.py` | Text cleaning, device selection |
 | `ml/production/petbert_pipeline/io.py` | CSV/NPZ/JSON output writers |
 | `ml/production/petbert_pipeline/cli.py` | CLI argument parsing |
-| `ml/labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser |
-| `ml/labels/catalog.py` | Label catalog builder |
-| `ml/labels/projection.py` | Maps label index → term/group/code |
-| `ml/labels/enrichment.py` | Optional label enrichment |
+| `ml/ICD_labels/__init__.py` | Re-exports `load_labels_taxonomy`, `TaxonomyLabel` — import from here |
+| `ml/ICD_labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser (internal) |
+| `ml/ICD_labels/catalog.py` | Label catalog builder |
+| `ml/ICD_labels/projection.py` | Maps label index → term/group/code |
+| `ml/ICD_labels/enrichment.py` | Optional label enrichment |
 | `ml/model/presence_classifier.py` | `PresenceClassifier` MLP, `score_matrix()`, save/load |
 
 ---
@@ -381,6 +383,8 @@ report text.
 | `ml/training/finetune/build_dataset.py` | Build HuggingFace `DatasetDict`; compute inverse-frequency class weights |
 | `ml/training/finetune/train.py` | Fine-tune with `WeightedTrainer` (class-weighted CrossEntropyLoss) |
 
+> **Note:** Contrastive fine-tuning (Approach 3) lives in `ml/training/contrastive/`.
+
 ### Usage
 
 ```bash
@@ -388,18 +392,18 @@ report text.
 ml/.venv/Scripts/python.exe ml/training/finetune/build_dataset.py \
   --reports-csv ml/data/report.csv \
   --predictions-csv ml/output/annotation/keyword/keyword_annotation.csv \
-  --labels-csv ml/labels/labels.csv \
+  --labels-csv ml/ICD_labels/labels.csv \
   --out-dir ml/data/finetune_dataset
 
 # Step 2 — fine-tune
 ml/.venv/Scripts/python.exe ml/training/finetune/train.py \
   --dataset ml/data/finetune_dataset \
-  --out-dir ml/model/checkpoints/petbert_finetuned \
+  --out-dir ml/output/checkpoints/finetune \
   --epochs 5
 
 # Step 3 — run pipeline with fine-tuned model
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --finetuned-model-path ml/model/checkpoints/petbert_finetuned \
+  --finetuned-model-path ml/output/checkpoints/finetune \
   --local-only
 ```
 

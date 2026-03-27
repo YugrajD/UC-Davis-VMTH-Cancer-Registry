@@ -301,8 +301,8 @@ PresenceClassifier cycle trajectory (cold start, hd=512, co=5):
 | c8 | **69.0%** | **6.9** | **Best checkpoint** — plateau confirmed |
 | c10 | 68.8% | 7.0 | Plateau oscillation — stopped here |
 
-Best checkpoint: `ml/model/checkpoints/binary/presence_classifier_best.pt`
-Backbone: `ml/model/checkpoints/contrastive/`
+Best checkpoint: `ml/output/checkpoints/binary/presence_classifier_best.pt`
+Backbone: `ml/output/checkpoints/contrastive/`
 
 ### Advantages
 
@@ -322,22 +322,22 @@ Backbone: `ml/model/checkpoints/contrastive/`
 ### How to Run
 
 ```bash
-# Step 1: Fine-tune PetBERT
+# Step 1: Adapt the embedding backbone
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode contrastive-finetuning --skip-keyword-scan \
+  --mode adapt-backbone \
   --epochs 3 --batch-size 32 --lr 2e-5 --temperature 0.07 \
   --device xpu --local-only
 
 # Step 2: Cold start
 rm -f ml/data/embedding_cache.npz
 rm -f ml/output/training/contrastive/evaluation_co_bank.csv
-rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt
+rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 
-# Step 3: Retrain PresenceClassifier with the new backbone
+# Step 3: Retrain label classifier with the adapted backbone
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode binary --skip-keyword-scan \
-  --model ml/model/checkpoints/contrastive \
-  --label "contrastive cold-start c1" \
+  --mode train-classifier \
+  --model ml/output/checkpoints/contrastive \
+  --label "adapted backbone c1" \
   --co-neg-per-case 5 --fp-neg-per-case 10 \
   --embedding-min-sim 0.05 --epochs 25 \
   --recall-weight 0.25 --hidden-dim 512 \

@@ -32,6 +32,8 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+import config
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -142,8 +144,8 @@ def _make_collator(tokenizer: AutoTokenizer, max_length: int):
 
 def train(
     *,
-    pairs_csv: str = "ml/data/contrastive_pairs.csv",
-    out_dir: str = "ml/model/checkpoints/contrastive",
+    pairs_csv: str = config.CONTRASTIVE_PAIRS_CSV,
+    out_dir: str = config.CHECKPOINT_CONTRASTIVE_DIR,
     model_name: str = "SAVSNET/PetBERT",
     epochs: int = 3,
     batch_size: int = 32,
@@ -265,7 +267,7 @@ def train(
     print("Next steps (cold start required — embedding space has changed):")
     print("  1. rm -f ml/data/embedding_cache.npz")
     print("  2. rm -f ml/output/training/contrastive/evaluation_co_bank.csv")
-    print("  3. rm -f ml/model/checkpoints/contrastive/presence_classifier_current.pt")
+    print("  3. rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt")
     print(f"  4. Add --model {out_dir} --local-only to all pipeline/training calls.")
 
 
@@ -277,9 +279,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Contrastive InfoNCE fine-tuning of PetBERT on (report, label) pairs."
     )
-    parser.add_argument("--pairs-csv", default="ml/data/contrastive_pairs.csv",
+    parser.add_argument("--pairs-csv", default=config.CONTRASTIVE_PAIRS_CSV,
                         help="Path to CSV from build_contrastive_dataset.py")
-    parser.add_argument("--out-dir", default="ml/model/checkpoints/contrastive",
+    parser.add_argument("--out-dir", default=config.CHECKPOINT_CONTRASTIVE_DIR,
                         help="Directory to save the fine-tuned HuggingFace checkpoint")
     parser.add_argument("--model", default="SAVSNET/PetBERT",
                         help="Base model name or local path (default: SAVSNET/PetBERT)")

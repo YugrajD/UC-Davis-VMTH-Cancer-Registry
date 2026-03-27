@@ -1,13 +1,14 @@
-"""Run the evaluation pipeline standalone.
-
-Scores existing production predictions against ground-truth labels
-and logs results to evaluation history.
+"""Score the latest predictions and record results to evaluation history.
 
 No env PYTHONPATH needed — this script adds ml/ to sys.path automatically.
 
+Auto-detects which prediction file to evaluate (contrastive-backbone predictions
+preferred; falls back to binary-backbone predictions).
+
 Usage:
   python ml/scripts/run_evaluation.py
-  python ml/scripts/run_evaluation.py --label "manual check"
+  python ml/scripts/run_evaluation.py --label "after cycle 3"
+  python ml/scripts/run_evaluation.py --prediction-csv ml/output/production/binary/petbert_predictions.csv
 """
 
 import sys
@@ -15,22 +16,46 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import argparse
+import config
 from evaluation.evaluate import evaluate
 from evaluation.log_evaluation import log_evaluation
 
 
 def main() -> int:
-    import argparse
+    subdir = config.best_predictions_subdir()
 
-    parser = argparse.ArgumentParser(description="Evaluate production predictions against ground truth.")
-    parser.add_argument("--prediction-csv", default="ml/output/production/binary/petbert_predictions.csv")
-    parser.add_argument("--expectation-csv", default="ml/output/annotation/keyword/keyword_annotation.csv")
-    parser.add_argument("--out-dir", default="ml/output/evaluation/binary")
-    parser.add_argument("--label", default="", help="Label for evaluation history entry")
+    parser = argparse.ArgumentParser(
+        description="Score predictions against verified labels and record results to history."
+    )
+    parser.add_argument(
+        "--prediction-csv",
+        default=f"{config.OUTPUT_PRODUCTION_DIR}/{subdir}/petbert_predictions.csv",
+        help="Predictions file to evaluate.",
+    )
+    parser.add_argument(
+        "--annotation-csv",
+        default=config.KEYWORD_ANNOTATION_CSV,
+        help="Verified label annotations to score against.",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default=f"{config.OUTPUT_EVALUATION_DIR}/{subdir}",
+        help="Directory to write evaluation results.",
+    )
+    parser.add_argument(
+        "--label", default="",
+        help="Short description for this evaluation entry (e.g. 'manual check').",
+    )
     args = parser.parse_args()
 
-    evaluate(Path(args.prediction_csv), Path(args.expectation_csv), Path(args.out_dir))
-    log_evaluation(label=args.label)
+    out_dir = Path(args.out_dir)
+    evaluate(Path(args.prediction_csv), Path(args.annotation_csv), out_dir)
+    log_evaluation(
+        summary=str(out_dir / "evaluation_summary.csv"),
+        history=str(out_dir / "evaluation_history.csv"),
+        label=args.label,
+    )
     return 0
 
 

@@ -24,14 +24,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from ICD_labels.taxonomy import load_labels_taxonomy
+import config
+from ICD_labels import load_labels_taxonomy
+from model.constants import DEFAULT_TEXT_COLS
 from production.petbert_pipeline.utils import clean_text, merge_report_columns
-
-_TEXT_COLS = [
-    "HISTOPATHOLOGICAL SUMMARY",
-    "FINAL COMMENT",
-    "ANCILLARY TESTS",
-]
 
 
 def load_csv(path: Path) -> list[dict]:
@@ -41,11 +37,11 @@ def load_csv(path: Path) -> list[dict]:
 
 def build_pairs(
     *,
-    report_csv: str = "ml/data/report.csv",
-    expectation_csv: str = "ml/output/annotation/keyword/keyword_annotation.csv",
-    evaluation_csv: str = "ml/output/evaluation/binary/evaluation.csv",
-    labels_csv: str = "ml/ICD_labels/labels.csv",
-    out: str = "ml/data/training_pairs.csv",
+    report_csv: str = config.REPORTS_CSV,
+    expectation_csv: str = config.KEYWORD_ANNOTATION_CSV,
+    evaluation_csv: str = f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation.csv",
+    labels_csv: str = config.LABELS_CSV,
+    out: str = config.TRAINING_PAIRS_CSV,
     easy_neg_per_pos: int = 3,
     fp_neg_per_case: int = 10,
     co_neg_per_case: int = 3,
@@ -59,9 +55,9 @@ def build_pairs(
     # --- Load report text ------------------------------------------------
     df = pd.read_csv(report_csv, encoding="latin-1")
     df.columns = [col.lstrip("\ufeff").lstrip("ï»¿") for col in df.columns]
-    available_cols = [c for c in _TEXT_COLS if c in df.columns]
+    available_cols = [c for c in DEFAULT_TEXT_COLS if c in df.columns]
     if not available_cols:
-        print(f"Warning: none of {_TEXT_COLS} found in report CSV. Found: {df.columns.tolist()}")
+        print(f"Warning: none of {DEFAULT_TEXT_COLS} found in report CSV. Found: {df.columns.tolist()}")
     df["_merged"] = df.apply(lambda row: merge_report_columns(row, available_cols), axis=1)
     case_to_text: dict[str, str] = {
         clean_text(row["case_id"]): row["_merged"]
@@ -229,11 +225,12 @@ def build_pairs(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build training pairs for the presence classifier.")
-    parser.add_argument("--report-csv", default="ml/data/report.csv")
-    parser.add_argument("--expectation-csv", default="ml/output/annotation/keyword/keyword_annotation.csv")
-    parser.add_argument("--evaluation-csv", default="ml/output/evaluation/binary/evaluation.csv")
-    parser.add_argument("--labels-csv", default="ml/ICD_labels/labels.csv")
-    parser.add_argument("--out", default="ml/data/training_pairs.csv")
+    parser.add_argument("--report-csv", default=config.REPORTS_CSV)
+    parser.add_argument("--expectation-csv", default=config.KEYWORD_ANNOTATION_CSV)
+    parser.add_argument("--evaluation-csv",
+                        default=f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation.csv")
+    parser.add_argument("--labels-csv", default=config.LABELS_CSV)
+    parser.add_argument("--out", default=config.TRAINING_PAIRS_CSV)
     parser.add_argument(
         "--easy-neg-per-pos",
         type=int,

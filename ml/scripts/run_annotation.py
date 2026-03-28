@@ -13,11 +13,10 @@ Two methods are available:
             abbreviations. Use for quick testing or when the Ollama server
             is unavailable.
 
-  llm       LLM-assisted matching using a four-tier cascade:
+  llm       LLM-assisted matching using a three-tier cascade:
               1. Exact keyword match
               2. Fuzzy token overlap
               3. Ollama LLM (for rows containing a cancer signal term)
-              4. Claude API fallback (opt-in with --use-claude)
             Handles negation, hedged language, and abbreviations (e.g. HSA,
             MCT). This is the authoritative annotation source.
 
@@ -25,7 +24,6 @@ Usage:
   python ml/scripts/run_annotation.py --method keyword
   python ml/scripts/run_annotation.py --method llm
   python ml/scripts/run_annotation.py --method llm --max-rows 100
-  python ml/scripts/run_annotation.py --method llm --use-claude
   python ml/scripts/run_annotation.py --method llm --list-models
 """
 

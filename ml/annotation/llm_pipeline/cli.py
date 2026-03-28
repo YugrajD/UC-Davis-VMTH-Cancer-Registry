@@ -10,7 +10,7 @@ from .pipeline import LLMConfig, LLMOutputs, run_llm_scan
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Annotate diagnosis text with Vet-ICD-O cancer labels using a tiered cascade "
-                    "(keyword → fuzzy → Ollama LLM → Claude API). Handles negation, hedged language, "
+                    "(keyword → fuzzy → Ollama LLM). Handles negation, hedged language, "
                     "and abbreviations. This is the authoritative annotation source."
     )
     parser.add_argument("--list-models", action="store_true", help="List available Ollama models and exit.")
@@ -24,8 +24,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-rows", type=int, default=None, help="Cap on input rows (for testing).")
     parser.add_argument("--llm-timeout", type=int, default=60, help="Seconds to wait for each LLM call.")
     parser.add_argument("--model", default=None, help="Ollama model name to use (overrides OLLAMA_MODEL in .env).")
-    parser.add_argument("--use-claude", action="store_true", help="Enable Tier 4: call Claude API for cases Tier 3 (Ollama) could not match.")
-    parser.add_argument("--claude-timeout", type=int, default=30, help="Seconds to wait for each Claude API call (Tier 4).")
     return parser
 
 
@@ -93,8 +91,6 @@ def main() -> int:
         max_rows=args.max_rows,
         llm_timeout=args.llm_timeout,
         llm_model=args.model,
-        use_claude=args.use_claude,
-        claude_timeout=args.claude_timeout,
     )
     outputs: LLMOutputs = run_llm_scan(config)
     print("Wrote:")

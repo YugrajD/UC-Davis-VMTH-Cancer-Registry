@@ -5,7 +5,7 @@ Flow:
   Tier 1   : exact match  (keyword index: full term, core term, permutations, plurals)
   Tier 2   : fuzzy match  (token-overlap on core terms)
   Tier 3   : signal fallback + LLM  (diagnoses that contain cancer-indicating terms)
-  Tier 4   : no match
+  No match : row labeled non-cancer
 """
 
 from __future__ import annotations
@@ -87,8 +87,6 @@ class LLMConfig:
     max_rows: int | None
     llm_timeout: int = 60
     llm_model: str | None = None  # None uses the default from .env
-    use_claude: bool = False       # Enable Tier 4 Claude reasoning fallback
-    claude_timeout: int = 30
 
 
 @dataclass(frozen=True)
@@ -329,75 +327,6 @@ def _tier3_llm(
 
 
 # ---------------------------------------------------------------------------
-# Tier 4: Claude free-form reasoning (full taxonomy, no pre-filtering)
-# ---------------------------------------------------------------------------
-
-def _build_tier4_prompt(original_text: str, taxonomy_labels: list[TaxonomyLabel]) -> str:
-    """Build a prompt showing the full taxonomy grouped by cancer category."""
-    from collections import defaultdict
-    groups: dict[str, list[str]] = defaultdict(list)
-    for label in taxonomy_labels:
-        groups[label.group].append(label.term)
-
-    taxonomy_block = "\n".join(
-        f"[{group}]\n" + "\n".join(f"  - {term}" for term in terms)
-        for group, terms in sorted(groups.items())
-    )
-    return (
-        "You are a veterinary oncology ICD classifier with expert knowledge of "
-        "veterinary pathology synonyms.\n\n"
-        f'Diagnosis: "{original_text}"\n\n'
-        "Map this diagnosis to the single best matching Vet-ICD-O-canine-1 term "
-        "from the full taxonomy below.\n\n"
-        "Apply these veterinary synonyms when matching:\n"
-        "- angiosarcoma = hemangiosarcoma\n"
-        "- perivascular wall tumor = canine perivascular wall tumor\n"
-        "- GIST = gastrointestinal stromal tumor\n"
-        "- acanthomatous epulis = acanthomatous ameloblastoma\n\n"
-        f"{taxonomy_block}\n\n"
-        "Rules:\n"
-        "- Reply with ONLY the exact term text, copied character-for-character "
-        "from the list above.\n"
-        "- If the diagnosis is negated (no evidence of, rule out, negative for, "
-        "not observed) → reply: no match\n"
-        "- If uncertain or hedged (presumed, suspect, possible, likely, versus, "
-        "consistent with, compatible with) → reply: uncertain\n"
-        "- If no term fits → reply: no match\n\n"
-        "Your answer:"
-    )
-
-
-def _tier4_claude(
-    original_text: str,
-    taxonomy_labels: list[TaxonomyLabel],
-    timeout: int,
-    counters: dict,
-) -> _MatchResult | None:
-    """Tier 4: call Claude with the full taxonomy for free-form synonym reasoning."""
-    try:
-        from annotation.llm_pipeline.client_claude import claude_classify
-    except Exception:
-        return None
-
-    prompt = _build_tier4_prompt(original_text, taxonomy_labels)
-    counters["tier4_calls"] += 1
-    try:
-        response = claude_classify(prompt, timeout=timeout)
-    except Exception:
-        counters["tier4_no_match"] += 1
-        return None
-
-    result = _parse_llm_response(response, taxonomy_labels, method="Claude")
-    if result is None:
-        counters["tier4_no_match"] += 1
-    elif result.method == "Uncertain":
-        counters["tier4_uncertain"] += 1
-    else:
-        counters["tier4_matched"] += 1
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Per-row matching
 # ---------------------------------------------------------------------------
 
@@ -409,8 +338,6 @@ def _match_diagnosis(
     group_index: list[tuple[str, re.Pattern, str]],
     llm_timeout: int,
     llm_model: str | None,
-    use_claude: bool = False,
-    claude_timeout: int = 30,
     counters: dict | None = None,
 ) -> _MatchResult:
     if counters is None:
@@ -430,11 +357,6 @@ def _match_diagnosis(
         result = _tier3_llm(original_text, norm_text, group_index, taxonomy_labels, oma_index, llm_timeout, llm_model, counters)
         if result:
             return result
-
-        if use_claude:
-            result = _tier4_claude(original_text, taxonomy_labels, claude_timeout, counters)
-            if result:
-                return result
 
     return _NO_MATCH
 
@@ -473,7 +395,6 @@ def _write_summary_md(summary: dict, path: str) -> None:
 
     ts = summary.get("tier_stats", {})
     if ts:
-        claude_enabled = ts.get("claude_enabled", False)
         lines += [
             "",
             "## Tier Statistics",
@@ -484,11 +405,6 @@ def _write_summary_md(summary: dict, path: str) -> None:
             f"| Ollama matched | {ts.get('tier3_matched', 0):,} |",
             f"| Ollama uncertain | {ts.get('tier3_uncertain', 0):,} |",
             f"| Ollama no match | {ts.get('tier3_no_match', 0):,} |",
-            f"| Claude enabled | {'Yes' if claude_enabled else 'No'} |",
-            f"| Claude calls made | {ts.get('tier4_calls', 0):,} |",
-            f"| Claude matched | {ts.get('tier4_matched', 0):,} |",
-            f"| Claude uncertain | {ts.get('tier4_uncertain', 0):,} |",
-            f"| Claude no match | {ts.get('tier4_no_match', 0):,} |",
         ]
 
     lines += [
@@ -553,10 +469,6 @@ def run_llm_scan(config: LLMConfig) -> LLMOutputs:
         "tier3_matched": 0,
         "tier3_uncertain": 0,
         "tier3_no_match": 0,
-        "tier4_calls": 0,
-        "tier4_matched": 0,
-        "tier4_uncertain": 0,
-        "tier4_no_match": 0,
     }
     results = []
     for i, (_, row) in enumerate(df.iterrows(), 1):
@@ -564,11 +476,10 @@ def run_llm_scan(config: LLMConfig) -> LLMOutputs:
         match = _match_diagnosis(
             text, keyword_index, taxonomy_labels, oma_index, group_index,
             config.llm_timeout, config.llm_model,
-            use_claude=config.use_claude, claude_timeout=config.claude_timeout,
             counters=counters,
         )
 
-        if match.method in ("LLM", "Claude"):
+        if match.method == "LLM":
             tier_label = match.method
             print(f"[{i}/{total}] {tier_label:<6}: {text[:60]!r}  ->  {match.term!r}")
         elif i % 500 == 0:
@@ -613,10 +524,7 @@ def run_llm_scan(config: LLMConfig) -> LLMOutputs:
         "match_rate_pct": round(100 * len(confirmed_df) / max(total, 1), 1),
         "method_counts": method_counts,
         # Tier-level call stats
-        "tier_stats": {
-            "claude_enabled": config.use_claude,
-            **counters,
-        },
+        "tier_stats": counters,
         # Case-level
         "total_cases": total_cases,
         "cases_with_confirmed_match": confirmed_cases,

@@ -16,6 +16,7 @@ text to standardized Vet-ICD-O-canine-1 labels: the **keyword pipeline** and the
 
 **Use the LLM pipeline** (`--method llm`) as the sole ground-truth source when running a full
 scan. It handles negation, abbreviations, and rare subtypes that the keyword pipeline misses.
+Runs entirely on local Ollama — no external API calls.
 
 **Use the keyword pipeline** (`--method keyword`) as a fast, no-LLM fallback for quick testing
 or when the Ollama server is unavailable. It has no negation handling, so phrases like
@@ -135,10 +136,9 @@ Every word in every taxonomy term ending in `-oma` or `-emia` (e.g. `hemangiosar
 
 ## LLM Pipeline
 
-The LLM pipeline is a four-tier cascade (five with the optional Claude tier). Tiers 1 and 2 are
-rule-based and fast; Tier 3 calls a local Ollama LLM only when there is a clear cancer signal in
-the text; Tier 4 optionally calls the Claude API for free-form reasoning on cases Tier 3 could
-not resolve. This keeps LLM calls to ~15% of rows, making a full 43k-row run feasible.
+The LLM pipeline is a three-tier cascade. Tiers 1 and 2 are rule-based and fast; Tier 3 calls
+a local Ollama LLM only when there is a clear cancer signal in the text. This keeps LLM calls
+to ~15% of rows, making a full 43k-row run feasible.
 
 Entry point: `run_llm_scan()` in `ml/annotation/llm_pipeline/pipeline.py`.
 
@@ -206,20 +206,6 @@ Rules:
 **Response parsing:** exact candidate → `LLM` (confidence 1.0); difflib ≥0.80 near-match →
 `LLM` (confidence 0.9); `"no match"` → `No Match`; `"uncertain"` → `Uncertain`.
 
-### Tier 4: Claude API Reasoning Fallback *(opt-in)*
-
-Only triggered when Tiers 1–3 all fail **and** `--use-claude` is passed.
-Calls `claude_classify()` in `client_claude.py` via the Anthropic SDK.
-
-Unlike Tier 3, Tier 4 presents the **full taxonomy** (~846 terms, grouped) so Claude can reason
-across the entire label space. Same response-parsing rules as Tier 3.
-Returns method `Claude`, confidence `1.0`.
-
-**Configuration:**
-- Model: `CLAUDE_MODEL` in `.env` (default: `claude-haiku-4-5-20251001`)
-- API key: `ANTHROPIC_API_KEY` environment variable
-- Timeout: `--claude-timeout` CLI flag (default: 30s)
-
 ### LLM Pipeline Coverage (as of 2026-03-22)
 
 | Method | Count | % of total |
@@ -266,7 +252,6 @@ Connection settings live in `ml/annotation/llm_pipeline/.env`:
 TAILSCALE_IP=<your tailscale IP>
 API_PORT=11434
 OLLAMA_MODEL=gemma2:27b        # current recommended model
-CLAUDE_MODEL=claude-haiku-4-5-20251001  # optional; used only with --use-claude
 ```
 
 The `--model` CLI flag overrides `OLLAMA_MODEL` at runtime.
@@ -303,8 +288,6 @@ Both pipelines share common options. Run via `python -m annotation --method <key
 | `--model` | `.env` value | Ollama model name (overrides `.env`) |
 | `--list-models` | — | Print available Ollama models and exit |
 | `--compare-models` | — | Run all available models on `--max-rows` rows and print a comparison table |
-| `--use-claude` | off | Enable Tier 4: call Claude API for cases Tier 3 could not match |
-| `--claude-timeout` | 30 | Seconds to wait per Claude API call |
 
 ---
 
@@ -343,11 +326,6 @@ PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method llm --list-mode
 **LLM pipeline — compare all models on 500 rows:**
 ```bash
 PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method llm --compare-models --max-rows 500
-```
-
-**LLM pipeline — full run with Claude Tier 4 fallback:**
-```bash
-PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method llm --use-claude
 ```
 
 ---
@@ -393,7 +371,7 @@ PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method llm --use-claud
 | `matched_group` | Taxonomy group for the matched term |
 | `matched_code` | Vet-ICD-O-canine-1 morphology code |
 | `matched_keyword` | The keyword/token string that triggered the match |
-| `method` | `Exact`, `Fuzzy`, `LLM`, `Claude`, `Uncertain`, or `No Match` |
+| `method` | `Exact`, `Fuzzy`, `LLM`, `Uncertain`, or `No Match` |
 | `confidence` | Match confidence: 1.0 (Exact/LLM), 0.85–1.0 (Fuzzy), 0.0 (No Match) |
 
 **`llm_summary.json`** — aggregate statistics:
@@ -405,7 +383,7 @@ PYTHONPATH=ml ml/.venv/Scripts/python.exe -m annotation --method llm --use-claud
 | `matched_rows` | Rows with a confirmed ICD match (excludes Uncertain) |
 | `uncertain_rows` | Rows marked Uncertain by the LLM |
 | `match_rate_pct` | Percentage of rows with a confirmed match |
-| `method_counts` | Counts per method (Exact, Fuzzy, LLM, Claude, Uncertain, No Match) |
+| `method_counts` | Counts per method (Exact, Fuzzy, LLM, Uncertain, No Match) |
 | `tier_stats` | Per-tier call counts (see below) |
 | `total_cases` | Unique case IDs in the input |
 | `cases_with_confirmed_match` | Cases with ≥1 confirmed ICD match |
@@ -423,16 +401,11 @@ The `tier_stats` object:
 
 | Field | Description |
 |-------|-------------|
-| `claude_enabled` | Whether `--use-claude` was passed |
 | `signal_rows` | Rows where a cancer signal was detected (Tier 3 eligible) |
 | `tier3_calls` | Actual Ollama API calls made |
 | `tier3_matched` | Ollama returned a confirmed match |
 | `tier3_uncertain` | Ollama returned "uncertain" |
 | `tier3_no_match` | Ollama returned no match or errored |
-| `tier4_calls` | Actual Claude API calls made |
-| `tier4_matched` | Claude returned a confirmed match |
-| `tier4_uncertain` | Claude returned "uncertain" |
-| `tier4_no_match` | Claude returned no match or errored |
 
 **`llm_summary.md`** — human-readable version of `llm_summary.json` with tables for overview,
 cases, method breakdown, tier statistics, taxonomy coverage, imbalance, full group distribution,
@@ -456,10 +429,9 @@ and top 20 terms.
 |------|------|
 | `ml/annotation/llm_pipeline/pipeline.py` | Core logic: tiers 1–4, prompt builders, summary writer, `run_llm_scan` |
 | `ml/annotation/llm_pipeline/client.py` | Ollama HTTP client: `chat()`, `list_models()` |
-| `ml/annotation/llm_pipeline/client_claude.py` | Claude API client: `claude_classify()` (Tier 4) |
-| `ml/annotation/llm_pipeline/cli.py` | CLI argument parsing, `--list-models`, `--compare-models`, `--use-claude` |
+| `ml/annotation/llm_pipeline/cli.py` | CLI argument parsing, `--list-models`, `--compare-models` |
 | `ml/annotation/llm_pipeline/__main__.py` | `python -m annotation.llm_pipeline` entry point |
-| `ml/annotation/llm_pipeline/.env` | Connection settings (`TAILSCALE_IP`, `API_PORT`, `OLLAMA_MODEL`, `CLAUDE_MODEL`) |
+| `ml/annotation/llm_pipeline/.env` | Connection settings (`TAILSCALE_IP`, `API_PORT`, `OLLAMA_MODEL`) |
 
 ### Shared
 

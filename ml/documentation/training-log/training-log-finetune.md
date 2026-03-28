@@ -376,6 +376,55 @@ contribution is halved, but the raw penalty can be larger).
 
 ---
 
+### Calibration Experiment — 2026-03-28 (does not help — do not use)
+
+**Context:** Per-label score calibration (`--mode calibrate`) was implemented to correct
+systematic score-variance differences between labels after mean-centering. The idea: labels
+with low score variance lose argmax to higher-variance labels even when they are correct.
+A scalar offset per label, grid-searched on the annotation set, should fix this.
+
+Three objective functions were tried, all on top of the Phase 18 best checkpoint (70.4%):
+
+**V1 — Exact-match objective** (maximize argmax exact-term hits for label L's own GT cases):
+- In-sample: 58.7% → 70.5% exact match (+11.89pp) — looks good
+- Production: Good+Slight 69.4% → 59.7% (−9.7pp) — **regression**
+- 100 labels calibrated, offsets 0.01–0.30 (mean 0.16)
+- Problem: offsets large enough to steal wins from other groups; Slight% collapsed −13.1pp
+
+**V2 — Group-level objective** (maximize group wins for label L's own GT cases):
+- In-sample: 93.7% → 89.2% Good+Slight (−4.50pp) — immediately shows as harmful
+- Discarded without full production run
+- Problem: groups already win 93.7% of annotation cases; the greedy per-label search
+  still doesn't see cross-label interference, producing net-harmful offsets
+
+**V3 — Net-gain objective** (optimize net Good+Slight gain across ALL annotated cases):
+- In-sample: 93.7% → 94.0% (+0.31pp)
+- Production: Good+Slight 69.4% → 63.9% (−5.5pp) — **regression**
+- 26 labels calibrated, offsets 0.01–0.04 (mean 0.017) — much more conservative
+- Off% improved (6.1% → 6.9%, vs v1's 11.9%), but Slight% still fell (47.3% → 41.3%)
+- Total predictions dropped ~5k (~29k → ~24k); calibration changes argmax scores in a way
+  that interacts with the embedding_min_sim threshold, converting Slight predictions to FN
+
+**Summary:**
+
+| | Pre-cal | v1 (exact match) | v3 (net-gain) |
+|---|---|---|---|
+| Good% | 22.1% | 25.5% | 22.6% |
+| Slight% | 47.3% | 34.2% | 41.3% |
+| **Good+Slight** | **69.4%** | 59.7% | 63.9% |
+| Off% | 6.1% | 11.9% | 6.9% |
+
+**Conclusion:** Score calibration does not help this model. The score-variance bias it was
+designed to fix is not the binding constraint. The real ceiling is data — calibration cannot
+resolve borderline Slight cases without more labelled examples. **Do not use `--calibration-offsets`
+in production.** Phase 18 `presence_classifier_best.pt` (70.4%) without calibration remains the
+production best.
+
+**Code:** `ml/training/binary/calibrate.py` — kept for reference (uses net-gain objective, v3).
+Offsets file `ml/output/calibration/label_offsets.json` is empty (`{}`).
+
+---
+
 ## Approach B — End-to-end Group Classification (WIP, blocked)
 
 Fine-tunes PetBERT as a sequence classifier directly predicting Vet-ICD-O groups.

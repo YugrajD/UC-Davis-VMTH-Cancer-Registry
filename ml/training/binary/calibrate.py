@@ -5,7 +5,8 @@ variances. A label the model is uncertain about (low variance, scores clustered 
 loses argmax to higher-variance labels even when it is the correct answer.
 
 Calibration adds a learned scalar offset b_l per label, optimized on the evaluation
-set to maximize the number of exact-term matches for cases whose ground truth is label l:
+set to maximize Good+Slight accuracy: the offset is chosen so that at least one label
+in label l's ICD group wins argmax for cases whose ground truth is label l.
 
     calibrated_score_l = (score_l - mean_l) + b_l
 
@@ -147,30 +148,47 @@ def calibrate(
     centered = score_matrix - label_means[np.newaxis, :]  # (N, M)
     del score_matrix
 
-    # ── Precompute argmax competitors ─────────────────────────────────────────
-    # For each row: the max score and the second-highest score.
-    # When label l is currently the argmax, its competitor is the second-highest.
-    # When label l is not the argmax, its competitor is the highest.
-    row_max = centered.max(axis=1)                              # (N,)
-    row_max2 = np.partition(centered, -2, axis=1)[:, -2]       # (N,) second-highest
+    # ── Build group/term maps ─────────────────────────────────────────────────
+    label_to_group: list[str] = [tl.group for tl in label_catalog.taxonomy_labels]
+    term_to_group: dict[str, str] = {tl.term: tl.group for tl in label_catalog.taxonomy_labels}
 
     # ── Build case index and ground truth mappings ────────────────────────────
     case_id_to_idx: dict[str, int] = {cid: i for i, cid in enumerate(case_ids)}
     print(f"Loading ground truth from {annotation_csv}...")
     case_terms = _load_ground_truth(annotation_csv)
 
-    # label_index → list of cache row indices where that label is a GT term
+    # Per-annotated-row GT groups and label_to_gt_rows index.
+    gt_groups_by_row: dict[int, set[str]] = {}
     label_to_gt_rows: dict[int, list[int]] = defaultdict(list)
     for cid, terms in case_terms.items():
         row_idx = case_id_to_idx.get(cid)
         if row_idx is None:
             continue
+        gt_groups_by_row[row_idx] = {term_to_group[t] for t in terms if t in term_to_group}
         for term in terms:
             l_idx = label_index.get(term)
             if l_idx is not None:
                 label_to_gt_rows[l_idx].append(row_idx)
 
-    # ── Grid-search per-label offsets ─────────────────────────────────────────
+    annotated_rows_arr = np.array(sorted(gt_groups_by_row), dtype=np.int32)  # (n_ann,)
+
+    # ── Precompute global baseline state ──────────────────────────────────────
+    row_max = centered.max(axis=1)            # (N,)
+    current_argmax = centered.argmax(axis=1)  # (N,)
+
+    # Is the current winner's group the GT group for each annotated row?
+    currently_correct_arr = np.array(
+        [label_to_group[current_argmax[r]] in gt_groups_by_row[r]
+         for r in annotated_rows_arr],
+        dtype=bool,
+    )
+
+    # ── Grid-search per-label offsets — net Good+Slight gain across ALL cases ─
+    # For each candidate offset b applied to label L:
+    #   - Only rows where 0 < margin < b are affected (L steals the argmax win).
+    #   - gain: affected row was wrong-group, L's group is the GT group.
+    #   - loss: affected row was right-group, L's group is not the GT group.
+    # Keep offset b only if (gains - losses) > 0, ensuring the label is net helpful.
     print(
         f"Optimizing offsets for {len(label_to_gt_rows)} labels "
         f"(min {min_cases} cases each)..."
@@ -184,48 +202,56 @@ def calibrate(
             n_skipped_rare += 1
             continue
 
-        gt_arr = np.array(gt_rows, dtype=np.int32)
-        label_scores = centered[gt_arr, l_idx]  # (n_gt,)
+        l_group = label_to_group[l_idx]
 
-        # Competitor score for each GT case:
-        #   If label l is currently the argmax → competitor is second-highest score.
-        #   Otherwise → competitor is the highest score.
-        is_winner = label_scores == row_max[gt_arr]
-        max_competitor = np.where(is_winner, row_max2[gt_arr], row_max[gt_arr])
+        # Is L's group the GT group for each annotated row?
+        l_correct_arr = np.array(
+            [l_group in gt_groups_by_row[r] for r in annotated_rows_arr],
+            dtype=bool,
+        )
 
-        # label l wins for case i when: label_scores[i] + b > max_competitor[i]
+        # margin[i] = how far L's score is below the current winner (0 if L already wins).
+        margin_ann = row_max[annotated_rows_arr] - centered[annotated_rows_arr, l_idx]
+        not_already_winner = margin_ann > 0
+
+        # Gain: adding b converts a wrong-group prediction to L's (correct) group.
+        # Loss: adding b converts a right-group prediction to L's (wrong) group.
+        gain_arr = not_already_winner & (~currently_correct_arr) & l_correct_arr
+        loss_arr = not_already_winner & currently_correct_arr & (~l_correct_arr)
+
         best_b = 0.0
-        best_hits = int((label_scores > max_competitor).sum())
+        best_net = 0  # offset only applied if strictly net-positive
         for b in _OFFSET_GRID:
-            hits = int(((label_scores + b) > max_competitor).sum())
-            if hits > best_hits:
-                best_hits = hits
+            if b <= 0.0:
+                continue
+            wins = not_already_winner & (margin_ann < b)
+            net = int(gain_arr[wins].sum()) - int(loss_arr[wins].sum())
+            if net > best_net:
+                best_net = net
                 best_b = float(b)
 
         if best_b != 0.0:
             offsets[labels[l_idx]] = best_b
             n_calibrated += 1
 
-    # ── Project accuracy change on GT cases ───────────────────────────────────
+    # ── Project Good+Slight accuracy change on annotation set ─────────────────
     offset_arr = np.zeros(len(labels), dtype=np.float32)
     for term, b in offsets.items():
         offset_arr[label_index[term]] = b
     calibrated = centered + offset_arr[np.newaxis, :]
 
-    baseline_argmax = centered.argmax(axis=1)   # (N,)
+    baseline_argmax = centered.argmax(axis=1)
     calibrated_argmax = calibrated.argmax(axis=1)
 
     baseline_correct = 0
     calibrated_correct = 0
-    n_gt_cases = 0
-    for cid, terms in case_terms.items():
-        row_idx = case_id_to_idx.get(cid)
-        if row_idx is None:
-            continue
-        n_gt_cases += 1
-        if labels[baseline_argmax[row_idx]] in terms:
+    n_gt_cases = len(gt_groups_by_row)
+    for row_idx, gt_groups in gt_groups_by_row.items():
+        base_label = labels[baseline_argmax[row_idx]]
+        if term_to_group.get(base_label, "") in gt_groups:
             baseline_correct += 1
-        if labels[calibrated_argmax[row_idx]] in terms:
+        cal_label = labels[calibrated_argmax[row_idx]]
+        if term_to_group.get(cal_label, "") in gt_groups:
             calibrated_correct += 1
 
     print(f"\n=== Calibration Results ===")
@@ -233,15 +259,15 @@ def calibrate(
     print(f"  Labels skipped    : {n_skipped_rare} (fewer than {min_cases} GT cases)")
     if n_gt_cases > 0:
         print(
-            f"  Baseline  correct : {baseline_correct}/{n_gt_cases} "
+            f"  Baseline  Good+Slight: {baseline_correct}/{n_gt_cases} "
             f"({100 * baseline_correct / n_gt_cases:.1f}%)"
         )
         print(
-            f"  Calibrated correct: {calibrated_correct}/{n_gt_cases} "
+            f"  Calibrated Good+Slight: {calibrated_correct}/{n_gt_cases} "
             f"({100 * calibrated_correct / n_gt_cases:.1f}%)"
         )
         delta = calibrated_correct - baseline_correct
-        print(f"  Net change        : {delta:+d} cases ({100 * delta / n_gt_cases:+.2f}pp)")
+        print(f"  Net change           : {delta:+d} cases ({100 * delta / n_gt_cases:+.2f}pp)")
 
     if offsets:
         vals = list(offsets.values())
@@ -256,5 +282,5 @@ def calibrate(
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(offsets, f, indent=2, sort_keys=True)
-    print(f"\nSaved {len(offsets)} non-zero label offsets → {out_path}")
+    print(f"\nSaved {len(offsets)} non-zero label offsets -> {out_path}")
     print("Apply at inference time with --calibration-offsets in run_production.py")

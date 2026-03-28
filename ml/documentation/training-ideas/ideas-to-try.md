@@ -1,26 +1,6 @@
-# Ideas to Explore
+# Ideas to Try
 
-This document records improvement ideas that were brainstormed but not yet implemented (or partially implemented). Each entry includes motivation, approach, effort/risk, and the current status.
-
----
-
-## #4 — Per-Label Score Calibration
-
-**Status:** Implemented (`--mode calibrate` in `run_training.py`)
-
-**Problem:** After mean-centering the score matrix, different labels still have different score variances. A label the model is uncertain about (low variance, scores clustered near 0) will lose argmax to higher-variance labels even when it is the correct answer.
-
-**Approach:** For each label `l` with ≥10 labeled cases, find a scalar offset `b_l` (via grid search over [-0.3, 0.3]) that maximizes the number of correct predictions for cases whose ground truth is label `l`:
-
-    calibrated_score_l = (score_l - mean_l) + b_l
-
-Offsets are saved to `ml/output/calibration/label_offsets.json` and applied at inference time by passing `--calibration-offsets` to the production pipeline.
-
-**Notes:**
-- Labels with <10 GT examples default to `b_l = 0` (no offset) to avoid overfitting.
-- Optimization is greedy (one label at a time) — a reasonable first-order approximation.
-- Only applies to the binary `run_categorization()` path (not group/hybrid modes).
-- Potential ceiling: with no held-out test set, the projected improvement is measured on training data. Real improvement may be smaller.
+Ideas brainstormed but not yet implemented. Each entry includes motivation, approach, effort/risk, and when to attempt it.
 
 ---
 
@@ -38,7 +18,7 @@ Training data already exists: `training_pairs.csv` has (report_emb, label_emb, p
 
 **Risk:** Medium — cross-encoders reliably outperform bi-encoders in retrieval literature, but the improvement may be modest at the current data scale. Main risk is that the top-15 bi-encoder candidates miss the correct label too often (in which case re-ranking can't help).
 
-**When to try:** After accumulating ~8,000+ labeled cases; also more useful if per-label threshold calibration (#4) doesn't move the needle enough.
+**When to try:** After accumulating ~8,000+ labeled cases. Calibration (#4) has been tried and doesn't help at the current scale, so cross-encoder re-ranking is the next architectural lever worth exploring.
 
 ---
 

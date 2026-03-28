@@ -143,6 +143,8 @@ closer together. The adapted backbone is then used as the starting point for
 
 ### Step 1 — Adapt the backbone
 
+**Round 1 (base PetBERT → adapted, no hard negatives):**
+
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode adapt-backbone \
@@ -153,6 +155,57 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --device xpu \
   --local-only
 ```
+
+**Round 2 (warm-start from existing adapted backbone, lower LR):**
+
+Backup the current backbone first, then continue fine-tuning from it:
+
+```bash
+# Backup Phase 18 backbone before overwriting
+cp ml/output/checkpoints/contrastive/model.safetensors \
+   ml/output/checkpoints/contrastive/model_phase18_backup.safetensors
+
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode adapt-backbone \
+  --model ml/output/checkpoints/contrastive \
+  --epochs 2 \
+  --batch-size 32 \
+  --lr 1e-5 \
+  --temperature 0.07 \
+  --device xpu \
+  --local-only \
+  --skip-pair-build
+```
+
+**Round 3 (warm-start + hard-negative loss from CO bank):**
+
+First build the hard-negative triplets from the CO bank, then fine-tune:
+
+```bash
+# Step 1: Build hard-negative triplets
+ml/.venv/Scripts/python.exe ml/training/contrastive/build_contrastive_dataset.py \
+  --mode build-hard-neg \
+  --co-bank-csv ml/output/training/binary/evaluation_co_bank.csv
+
+# Step 2: Fine-tune with both InfoNCE and hard-neg margin loss
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode adapt-backbone \
+  --model ml/output/checkpoints/contrastive \
+  --epochs 2 \
+  --batch-size 32 \
+  --lr 1e-5 \
+  --temperature 0.07 \
+  --device xpu \
+  --local-only \
+  --skip-pair-build \
+  --hard-neg-csv ml/data/hard_neg_pairs.csv \
+  --hard-neg-weight 0.5 \
+  --hard-neg-margin 0.3
+```
+
+The hard-neg loss adds a per-triplet margin penalty: for each (report, correct_label,
+wrong_label) from the CO bank, it fires when `sim(report, wrong) > sim(report, correct) - margin`.
+This directly targets the residual CO cases the InfoNCE alone couldn't resolve.
 
 This builds `(report_text, label_text)` pairs from the annotation file + report CSV,
 then adapts PetBERT using contrastive loss. Saves a full checkpoint to

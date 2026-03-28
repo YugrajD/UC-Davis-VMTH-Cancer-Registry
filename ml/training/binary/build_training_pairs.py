@@ -103,7 +103,12 @@ def build_pairs(
             })
 
     # Hard negatives — false positive predictions from evaluation
-    eval_rows = load_csv(Path(evaluation_csv))
+    eval_path = Path(evaluation_csv)
+    if eval_path.exists():
+        eval_rows = load_csv(eval_path)
+    else:
+        print(f"  No evaluation file found at {evaluation_csv} — skipping FP/CO negatives (first cycle?)")
+        eval_rows = []
 
     # CO negatives — completely-off predictions (case has keyword labels but wrong group)
     # These are the specific (case, wrong-label) pairs that fool the cosine similarity step.

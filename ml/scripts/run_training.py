@@ -105,6 +105,9 @@ def main() -> int:
                         help="[train-classifier] Minimum score threshold for predictions (default: 0.05)")
     parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM,
                         help=f"[train-classifier] MLP hidden layer size (default: {DEFAULT_HIDDEN_DIM})")
+    parser.add_argument("--co-neg-bank-csv", default=None,
+                        help="[train-classifier] Path to rolling wrong-label feedback bank "
+                             "(default: auto-derived from --model). Pass empty string to disable.")
 
     # ------------------------------------------------------------------
     # adapt-backbone args
@@ -133,6 +136,15 @@ def main() -> int:
                         help="[adapt-backbone] Max BERT token length (default: 256)")
     parser.add_argument("--skip-pair-build", action="store_true",
                         help="[adapt-backbone] Skip building training pairs (reuse existing pairs CSV)")
+    parser.add_argument("--hard-neg-csv", default=None,
+                        help="[adapt-backbone] Path to hard-negative triplets CSV. "
+                             "If omitted, only InfoNCE loss is used. "
+                             f"Build with: build_contrastive_dataset.py --mode build-hard-neg "
+                             f"(default: {config.HARD_NEG_PAIRS_CSV})")
+    parser.add_argument("--hard-neg-weight", type=float, default=0.5,
+                        help="[adapt-backbone] Weight for the hard-negative margin loss (default: 0.5)")
+    parser.add_argument("--hard-neg-margin", type=float, default=0.3,
+                        help="[adapt-backbone] Margin for hard-negative loss (default: 0.3)")
 
     # ------------------------------------------------------------------
     # build-knn args
@@ -192,7 +204,8 @@ def main() -> int:
             "--hidden-dim", str(args.hidden_dim),
             "--model", args.model,
             "--annotation-csv", args.annotation_csv,
-        ] + (["--local-only"] if args.local_only else [])
+        ] + (["--local-only"] if args.local_only else []) \
+          + (["--co-neg-bank-csv", args.co_neg_bank_csv] if args.co_neg_bank_csv is not None else [])
         run_classifier_cycle(argv=cycle_argv)
 
     elif args.mode == "train-groups":
@@ -248,6 +261,9 @@ def main() -> int:
             max_length=args.max_length,
             device_arg=args.device,
             local_only=args.local_only,
+            hard_neg_csv=args.hard_neg_csv,
+            hard_neg_weight=args.hard_neg_weight,
+            hard_neg_margin=args.hard_neg_margin,
         )
 
         print("\n=== Cold-start required ===")

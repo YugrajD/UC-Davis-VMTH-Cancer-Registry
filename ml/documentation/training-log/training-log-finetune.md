@@ -174,8 +174,153 @@ Checkpoint saved to `ml/output/checkpoints/contrastive/`.
 - All `ml/labels/labels.csv` and `ml/ICD-labels/labels.csv` data paths updated to `ml/ICD_labels/labels.csv`
 - `train.py` had `model_name` hardcoded to `"SAVSNET/PetBERT"` in `load_cache()` call — caused cache invalidation when using contrastive backbone; fixed by threading `model_name` through `train()` and `run_cycle.py`
 
-**Best checkpoint:** `ml/output/checkpoints/binary/presence_classifier_best.pt` (69.0%, c8)
+**Best checkpoint:** `ml/output/checkpoints/contrastive/presence_classifier_best.pt` (69.0%, c8)
 **Phase 17 backup:** `ml/output/checkpoints/contrastive/presence_classifier_best_phase17_contrastive.pt`
+
+---
+
+### Run 2 — 2026-03-27 (Phase 18 — continued cycling after refactor)
+
+**Context:** Continued cycling from Phase 17's contrastive backbone after a codebase
+refactor. No new fine-tuning — same backbone, same embedding cache. Key refactor changes:
+- CLI mode renamed: `--mode binary` → `--mode train-classifier`, `--mode contrastive-fine-tuning` → `--mode adapt-backbone`
+- Checkpoint/output dirs moved: `ml/model/checkpoints/` → `ml/output/checkpoints/`
+- `--skip-keyword-scan` flag removed (annotation file existence is checked automatically)
+- `--co-neg-bank-csv` arg added to `run_training.py` (was only in `run_cycle.py`)
+- `build_training_pairs.py` fixed to handle missing `evaluation.csv` gracefully (first cycle)
+- New evaluation history written to `ml/output/evaluation/contrastive/` (previous history was in `binary/`)
+
+**Config:** hd=512, co=5, fp=10, epochs=25, recall-weight=0.25, embedding-min-sim=0.05
+**CO bank:** carried forward from Phase 17 via `--co-neg-bank-csv ml/output/training/binary/evaluation_co_bank.csv`
+
+| Cycle | Good% | Slight% | Good+Slight | CO% | FP% | FN% | Notes |
+|-------|-------|---------|-------------|-----|-----|-----|-------|
+| c11 | 13.0 | 35.2 | 48.2% | 7.2 | 44.5 | 0.2 | First cycle — no eval.csv yet, FP hard negatives = 0 |
+| c12 | 21.5 | 48.0 | **69.5%** | 6.8 | 23.3 | 0.4 | FP hard negatives restored — immediate recovery |
+| c13 | 18.9 | 46.1 | 65.0% | 6.5 | 28.2 | 0.2 | Low cycle (fewer FP hard neg from c12) |
+| c14 | 21.3 | 48.3 | **69.6%** | 7.0 | 23.1 | 0.4 | New best |
+| c15 | 18.5 | 46.0 | 64.5% | 7.0 | 28.3 | 0.2 | Low cycle |
+| c16 | 20.3 | 50.1 | **70.4%** | 6.5 | 22.7 | 0.4 | **Best checkpoint — first time >70%** |
+| c17 | 18.9 | 46.7 | 65.6% | 6.3 | 27.8 | 0.2 | Low cycle |
+| c18 | 20.2 | 49.6 | 69.8% | 6.8 | 23.0 | 0.4 | High cycle, below c16 |
+| c19 | 19.2 | 46.3 | 65.5% | 6.6 | 27.7 | 0.3 | Plateau confirmed |
+
+**Best: c16 — 70.4% Good+Slight, CO=6.5%, FP=22.7%**
+
+**vs Phase 17 best (69.0%):** +1.4pp Good+Slight, −0.4pp CO, −1.0pp FP
+
+**Key observations:**
+- c11 resets to ~48% because there is no evaluation.csv to supply FP hard negatives —
+  unavoidable whenever the output subdir changes (e.g. after a refactor or cold start)
+- After c12, the model enters a stable alternating pattern: "high" cycles (~69–70%, FP~23%)
+  follow "low" cycles (~65%, FP~28%), driven by FP negative count swinging each cycle
+- High-cycle peaks crept up slowly: 69.5 → 69.6 → 70.4 → 69.8 — genuine but slow improvement
+- CO bank additions slowed to ~167 new pairs/cycle by c17–c19, indicating diminishing new signal
+- Plateau reached at ~70.4%; further gains likely require more labelled data or a second
+  round of contrastive fine-tuning
+
+**Best checkpoint:** `ml/output/checkpoints/contrastive/presence_classifier_best.pt` (70.4%, c16)
+**Phase 17 backup still valid:** `ml/output/checkpoints/contrastive/presence_classifier_best_phase17_contrastive.pt`
+
+---
+
+### Run 3 — 2026-03-27 (Phase 19 — Round 2 warm-start fine-tuning)
+
+**Context:** Second InfoNCE fine-tuning pass, warm-starting from the Phase 18 backbone.
+Same 7,398 pairs, lower LR (1e-5 vs 2e-5), 2 epochs, `--skip-pair-build`.
+The goal was to push further with the same data before committing to hard-negative Round 3.
+
+**Fine-tuning config:** epochs=2, batch=32, lr=1e-5, temperature=0.07, device=xpu, pairs=7,398
+
+| Epoch | Avg InfoNCE Loss |
+|-------|-----------------|
+| 1 | 1.2089 |
+| 2 | 1.1474 |
+
+Round 1 had ended at 1.2222 (epoch 3). Round 2 picked up from there and pushed to **1.1474**,
+confirming meaningful additional learning on the same pairs at lower LR.
+
+**PresenceClassifier retraining (cold start, hd=512, co=5, fp=10, epochs=25, CO bank carried forward):**
+
+| Cycle | Good% | Slight% | Good+Slight | CO% | FP% | FN% | Notes |
+|-------|-------|---------|-------------|-----|-----|-----|-------|
+| c1 | 21.3 | 47.7 | **69.0%** | 7.0 | 23.6 | 0.4 | Cold start — no reset penalty (CO bank carried forward) |
+| c2 | 20.0 | 46.8 | 66.8% | **6.0** | 26.8 | 0.3 | Low cycle — new CO low |
+| c3 | 21.3 | 48.4 | **69.7%** | 6.3 | 23.7 | 0.4 | High cycle, climbing |
+| c4 | 20.3 | 45.9 | 66.2% | **5.9** | 27.6 | 0.3 | Low cycle — new CO floor |
+| c5 | 21.0 | 48.9 | **69.9%** | 6.2 | 23.6 | 0.4 | High cycle |
+| c6 | 20.1 | 46.2 | 66.3% | 6.1 | 27.3 | 0.3 | Low cycle |
+| c7 | 21.0 | 48.9 | 69.9% | 6.1 | 23.6 | 0.4 | High cycle — plateau confirmed |
+
+**Best: c5/c7 — 69.9% Good+Slight, CO≈6.1%, FP≈23.6%**
+
+**vs Phase 18 best (70.4%):** −0.5pp Good+Slight — did NOT surpass Phase 18 best checkpoint.
+The Phase 18 `presence_classifier_best.pt` (70.4%, c16) remains the production best.
+
+**Key observations:**
+- No cold-start penalty because CO bank was carried forward — c1 landed at 69.0% immediately
+- CO floor dropped further: low cycles hit 5.9% (vs Phase 18 low of 6.3%) — backbone did improve
+- High cycles plateaued at 69.9%, just below Phase 18's 70.4% ceiling
+- Two consecutive high cycles at 69.9% confirm plateau; more cycling unlikely to help
+- **Conclusion:** Same training data cannot push past ~70% regardless of InfoNCE pass count.
+  Hard-negative signal (Round 3) is the next lever.
+
+**Best checkpoint for Round 2:** not a new best — Phase 18 `presence_classifier_best.pt` (70.4%) retained.
+**Round 2 backbone saved as:** `ml/output/checkpoints/contrastive/` (overwrites Phase 18 backbone)
+**Phase 18 backbone backup:** `ml/output/checkpoints/contrastive/model_phase18_backup.safetensors`
+
+---
+
+### Run 4 — 2026-03-27 (Phase 20 — Round 3 hard-negative fine-tuning)
+
+**Context:** Third InfoNCE fine-tuning pass, warm-starting from the Phase 19 (Round 2) backbone.
+Same positive pairs (7,398), plus 33,196 hard-negative triplets from the CO bank, combined with
+a margin loss (weight=0.5, margin=0.3). Goal: push reports away from their known wrong-group labels
+during backbone training itself.
+
+**Hard-neg triplet build:**
+- Source: `ml/output/training/binary/evaluation_co_bank.csv` (~24.3k wrong-group pairs)
+- 4,664 cases with both a verified correct label and at least one wrong-group prediction
+- 33,196 (report, correct_label, wrong_label) triplets written to `ml/data/hard_neg_pairs.csv`
+
+**Fine-tuning config:** epochs=2, batch=32, lr=1e-5, temp=0.07, hard-neg-weight=0.5, margin=0.3
+
+| Epoch | Avg InfoNCE Loss | Avg Hard-Neg Loss |
+|-------|-----------------|-------------------|
+| 1 | 1.3818 | 0.4712 |
+| 2 | 1.2739 | 0.3246 |
+
+Both losses decreased — model learned from hard negatives. InfoNCE slightly higher than Round 2
+end (1.2739 vs 1.1474), expected given the harder combined objective.
+
+**PresenceClassifier retraining (cold start, hd=512, co=5, fp=10, epochs=25, CO bank carried forward):**
+
+| Cycle | Good% | Slight% | Good+Slight | CO% | FP% | FN% | Notes |
+|-------|-------|---------|-------------|-----|-----|-----|-------|
+| c1 | 20.3 | 45.5 | 65.8% | 6.5 | 27.4 | 0.3 | Low first cycle — CO bank partially stale for new embedding space |
+| c2 | **21.9** | 46.6 | **68.5%** | 6.9 | 24.2 | 0.3 | High cycle — new Good% record |
+| c3 | 20.6 | 45.7 | 66.3% | 6.5 | 26.9 | 0.3 | Low cycle |
+| c4 | 21.7 | 46.8 | 68.5% | 6.9 | 24.2 | 0.4 | High cycle — plateau confirmed |
+
+**Best: c2/c4 — 68.5% Good+Slight, CO=6.9%, FP=24.2%**
+
+**vs Round 2 best (69.9%):** −1.4pp Good+Slight — **REGRESSION**
+**vs Phase 18 best (70.4%):** −1.9pp Good+Slight — **REGRESSION**
+
+**Phase 18 `presence_classifier_best.pt` (70.4%) remains the production best.**
+
+**Key findings:**
+- Hard-neg margin loss had a measurable and consistent effect: Good% rose (~+0.7pp) but Slight% fell (~−2.1pp)
+- Net result: the model became more conservative — it pushes away from wrong groups but also
+  over-shoots and drops some borderline Slight matches
+- CO% on high cycles (6.9%) is not better than Phase 18 (6.5–7.0%) — CO floor didn't improve
+- The hard-neg loss may need tuning: lower weight (0.25?) or lower margin (0.15?) to reduce
+  the over-shooting effect on Slight predictions
+- Alternatively, the CO bank entries may be too noisy as hard negatives (some "completely_off"
+  predictions may have been close calls, not genuine wrong-group errors)
+- Round 3 backbone saved at `ml/output/checkpoints/contrastive/`
+- Round 2 backbone backup: `ml/output/checkpoints/contrastive/model_phase19_round2_backup.safetensors`
+- Phase 18 backbone backup: `ml/output/checkpoints/contrastive/model_phase18_backup.safetensors`
 
 ---
 

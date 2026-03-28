@@ -10,6 +10,60 @@ For architectural details, approach comparisons, and pros/cons see [classifiers.
 
 ---
 
+## Train/Test Split
+
+A case-level holdout is required to get an honest estimate of generalization. All
+labeled data was previously used for both training and evaluation, so metrics were
+in-sample. With no new labeled data expected, the split is the only way to measure
+true held-out performance.
+
+### Generate the split (run once)
+
+```bash
+ml/.venv/Scripts/python.exe ml/training/data/create_split.py
+```
+
+Outputs:
+- `ml/output/splits/train_cases.txt` — 80% of cases (stratified by label group)
+- `ml/output/splits/test_cases.txt` — 20% held out (stratified by label group)
+
+Non-cancer cases are split randomly (20% held out). Do **not** regenerate the split
+between training runs — a new random seed invalidates comparisons with previous results.
+
+### Training with the split active
+
+Pass `--train-cases` to any training command. Training data is automatically restricted
+to train cases only — test cases are excluded from positives, CO negatives, and FP negatives.
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode train-classifier \
+  --model ml/output/checkpoints/contrastive \
+  --label "c1" \
+  --train-cases ml/output/splits/train_cases.txt \
+  --co-neg-per-case 5 --fp-neg-per-case 10 \
+  --embedding-min-sim 0.05 --epochs 25 \
+  --recall-weight 0.25 --hidden-dim 512 \
+  --device xpu --local-only
+```
+
+### Evaluating on held-out test cases
+
+After training, score only the held-out test cases to get the true generalization metric:
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
+  --test-cases ml/output/splits/test_cases.txt \
+  --out-dir ml/output/evaluation/contrastive_test \
+  --label "held-out test"
+```
+
+> **Note:** When `--train-cases` is active, the within-cycle evaluation (Step 4) filters
+> to train cases only. This keeps the CO bank and checkpoint selection entirely within
+> the training set — test cases never influence the training feedback loop.
+
+---
+
 ## Label Presence Classifier (iterative)
 
 The recommended approach. Trains an MLP on cached PetBERT embeddings using a rolling
@@ -70,8 +124,8 @@ Do **not** raise `--co-neg-per-case` above 5 — causes regression with the per-
 2. Assemble `training_pairs.csv` from positives + wrong-group feedback bank + FP negatives
 3. Train `PresenceClassifier` for 25 epochs; save best checkpoint by validation score
 4. Score all reports with the new checkpoint → `petbert_predictions.csv`
-5. Score predictions against verified labels → `evaluation.csv`
-6. Record wrong-group predictions in the feedback bank
+5. Score predictions against verified labels → `evaluation.csv` (train cases only when `--train-cases` is active)
+6. Record wrong-group predictions in the feedback bank (train cases only)
 7. Log results to `evaluation_history.csv`; promote checkpoint if new best
 
 ### Expected trajectory

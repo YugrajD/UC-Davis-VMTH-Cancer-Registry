@@ -525,6 +525,106 @@ ml/.venv/Scripts/python.exe ml/evaluation/evaluate.py \
 
 ---
 
+### Run 6 — 2026-03-28 (Phase 22 — Train/Test Split + First Honest Out-of-Sample Evaluation)
+
+**Context:** All previous phases evaluated on the full dataset including training cases — no
+held-out test set. Phase 22 introduces a proper train/test split (80/20 by case) to get
+an honest out-of-sample performance estimate. This required three bug fixes before results
+were trustworthy.
+
+#### Bug Fixes
+
+**1. `evaluate.py` — test cases leaking into CO bank (main bug)**
+
+`run_cycle.py` called `evaluate()` without a case filter, so the evaluation CSV — which feeds
+the CO bank (Step 4.5) and checkpoint selection — included test cases. With a split active:
+
+| Context | `cases_txt` value | Effect |
+|---------|-------------------|--------|
+| `run_cycle.py` with split | `train_cases.txt` | Cycle eval + CO bank only see train cases ✓ |
+| `run_cycle.py` without split | `""` (empty) | Unchanged — evaluates all cases ✓ |
+| `run_evaluation.py --test-cases` | `test_cases.txt` | Held-out test evaluation ✓ |
+
+Fix: `run_cycle.py` now passes `cases_txt=args.train_cases` to `evaluate()`.
+
+**2. `build_training_pairs.py` and `build_contrastive_dataset.py` — not filtering to train cases**
+
+Both dataset builders were reading from the full annotation set even when `--train-cases` was
+provided. Positive pairs, CO-bank hard negatives, and FP hard negatives could all include
+test cases. Fixed by filtering `case_pos_terms`, CO bank rows, and FP rows to `train_ids` when
+`train_cases_txt` is set.
+
+**3. `evaluate.py:main()` — wrong keyword argument**
+
+The CLI `main()` was calling `evaluate(..., test_cases_txt=args.test_cases)` but the function
+signature uses `cases_txt`. Would have raised `TypeError` when calling `evaluate.py` directly
+from the CLI. Fixed to `cases_txt=args.test_cases`.
+
+#### Split Details
+
+- Generated with `ml/training/data/create_split.py` (80/20 stratified by case)
+- Train: 10,094 cases → `ml/output/splits/train_cases.txt`
+- Test: 2,526 cases → `ml/output/splits/test_cases.txt`
+
+#### Cold Start
+
+Previous split-c1 through split-c6 (in evaluation_history.csv) were run with the leaky code
+and are invalid — test cases contaminated the CO bank. Deleted embedding cache, CO bank, and
+current checkpoint before rerunning.
+
+#### Training Results (train cases only, hd=512, co=5, fp=10, epochs=25, recall-weight=0.25)
+
+| Cycle | Good% | Slight% | Good+Slight | CO% | FP% | FN% | Rows |
+|-------|-------|---------|-------------|-----|-----|-----|------|
+| c1 | 18.5 | 42.5 | 61.0% | 7.6 | 31.3 | 0.2 | 28,037 |
+| c2 | 29.3 | 58.9 | **88.2%** | 9.0 | 2.2 | 0.5 | 17,765 |
+| c3 | 18.7 | 41.8 | 60.5% | 7.5 | 31.8 | 0.2 | 28,004 |
+| c4 | 28.6 | 60.3 | **88.9%** | 8.3 | 2.3 | 0.4 | 18,008 |
+| c5 | 18.5 | 41.8 | 60.3% | 7.4 | 32.1 | 0.2 | 27,998 |
+| c6 | 28.5 | 60.1 | 88.6% | 8.6 | 2.3 | 0.5 | 17,902 |
+| c7 | 18.5 | 42.2 | 60.7% | 7.2 | 31.9 | 0.2 | 27,809 |
+| c8 | 28.5 | 60.0 | 88.5% | 8.6 | 2.4 | 0.4 | 18,058 |
+| c9 | 18.8 | 40.5 | 59.3% | 7.1 | 33.3 | 0.2 | 27,851 |
+| c10 | 29.6 | 59.3 | **88.9%** | 8.2 | 2.3 | 0.5 | 17,516 |
+
+**Best (train): c4/c10 — 88.9% Good+Slight, CO=8.2%, FP=2.3%**
+
+The odd/even alternation pattern is the same as previous phases (odd cycles have fewer FP
+hard negatives → higher FP rate; even cycles benefit from accumulated FP feedback).
+
+#### Held-Out Test Set Evaluation (c10 best checkpoint, 2,526 test cases)
+
+```
+4,514 prediction rows (1,144 true negatives excluded)
+```
+
+| Metric | Train set (c10) | **Test set** |
+|--------|-----------------|-------------|
+| Good% | 29.6% | 23.7% |
+| Slightly off% | 59.3% | 50.4% |
+| **Good+Slight** | **88.9%** | **74.1%** |
+| Completely off% | 8.2% | **16.3%** |
+| False positive% | 2.3% | **6.6%** |
+| False negative% | 0.5% | 3.0% |
+
+**Key findings:**
+
+- **Train/test gap: ~15pp G+S** (88.9% → 74.1%) — first honest out-of-sample estimate.
+- **CO rate doubles on test set** (8.2% → 16.3%) — wrong-group errors generalise poorly.
+  The CO bank has ~24k train-case pairs; the model has not seen test-case CO feedback.
+- **FP rate triples on test set** (2.3% → 6.6%) — FP hard negatives in training are
+  almost entirely from train cases, so FP suppression does not generalise as well.
+- The previous 86.5% (Phase 18, all cases) was inflated by train-case memorisation.
+  74.1% on held-out data is the true baseline for comparing future improvements.
+
+**Best checkpoint:** `ml/output/checkpoints/contrastive/presence_classifier_best.pt` (c4/c10, 88.9% train)
+
+**Production note:** Phase 18 best checkpoint (`presence_classifier_best.pt`) was overwritten
+by Phase 22 c4/c10. The Phase 18 classifier is no longer separately saved — the Phase 18
+backbone backups remain at `model_phase18_backup.safetensors`.
+
+---
+
 ## Approach B — End-to-end Group Classification (WIP, blocked)
 
 Fine-tunes PetBERT as a sequence classifier directly predicting Vet-ICD-O groups.

@@ -42,6 +42,7 @@ ml/
 │   │   └── knn_selector/   KNN group selector .npz
 │   ├── evaluation/         Cycle evaluation results
 │   ├── production/         Scoring pipeline predictions and supporting files
+│   ├── splits/             Train/test case ID lists (generated once by create_split.py)
 │   └── training/           Training-specific artifacts (e.g. group_training_data.npz)
 ├── annotation/             Annotation pipeline — maps diagnosis text to ICD-O labels
 │   ├── __init__.py         Programmatic API: annotate_keyword()
@@ -57,6 +58,7 @@ ml/
 │   ├── binary/             Label presence classifier training + cycle orchestration
 │   ├── group/              Group classifier training (one-shot)
 │   ├── contrastive/        Embedding backbone adaptation (production best)
+│   ├── data/               Data utilities (train/test split generation)
 │   └── finetune/           End-to-end PetBERT fine-tuning (WIP)
 ├── scripts/                Top-level entry points (no PYTHONPATH needed)
 │   ├── run_annotation.py   Annotate diagnoses with cancer labels
@@ -165,6 +167,12 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 | `build_contrastive_dataset.py` | Build `(report_text, label_text)` pairs from annotations + report CSV |
 | `train_contrastive.py` | Adapt PetBERT backbone using contrastive loss; save checkpoint |
 
+### `training/data/` — Data utilities
+
+| File | Role |
+|---|---|
+| `create_split.py` | Generate case-level train/test split files (run once; stratified by label group) |
+
 ### `training/finetune/` — End-to-end PetBERT fine-tuning (WIP)
 
 | File | Role |
@@ -198,10 +206,10 @@ ml/data/embedding_cache.npz
     ├──► [Step 3] score all reports with updated classifier
     │         └── output/production/{contrastive,binary}/petbert_predictions.csv
     │
-    ├──► [Step 4] score predictions against verified labels
+    ├──► [Step 4] score predictions against verified labels (train cases only when split active)
     │         └── output/evaluation/{contrastive,binary}/evaluation.csv
     │
-    ├──► [Step 4.5] record wrong-group predictions in feedback bank
+    ├──► [Step 4.5] record wrong-group predictions in feedback bank (train cases only)
     │         └── output/training/{contrastive,binary}/evaluation_co_bank.csv
     │
     ├──► [Step 5] record cycle results to history
@@ -229,11 +237,15 @@ ml/data/embedding_cache.npz
 | `output/annotation/llm/llm_annotation.csv` | Annotation labels from LLM method |
 | `output/annotation/llm/llm_summary.json` | Run statistics (coverage, group distribution) |
 | `output/annotation/llm/llm_summary.md` | Human-readable version of llm_summary.json |
-| `output/evaluation/{contrastive,binary}/evaluation.csv` | Predictions + verdicts for the latest cycle |
+| `output/evaluation/{contrastive,binary}/evaluation.csv` | Predictions + verdicts for the latest cycle (train cases only when split active) |
 | `output/evaluation/{contrastive,binary}/evaluation_summary.csv` | Aggregate counts and percentages |
 | `output/evaluation/{contrastive,binary}/evaluation_history.csv` | One row per training cycle |
+| `output/evaluation/contrastive_test/evaluation.csv` | Held-out test set verdicts (written by `run_evaluation.py --test-cases`) |
+| `output/evaluation/contrastive_test/evaluation_history.csv` | Test set evaluation history |
 | `output/training/{contrastive,binary}/evaluation_co_bank.csv` | Rolling bank of wrong-group predictions |
 | `output/training/group/group_training_data.npz` | Cached multi-hot training targets for group classifier |
+| `output/splits/train_cases.txt` | Case IDs reserved for training (generated once by `create_split.py`) |
+| `output/splits/test_cases.txt` | Case IDs held out for evaluation (generated once by `create_split.py`) |
 | `data/embedding_cache.npz` | Cached PetBERT embeddings |
 | `data/training_pairs.csv` | Generated (case, label, target) pairs for classifier training |
 
@@ -244,24 +256,33 @@ ml/data/embedding_cache.npz
 > Use `ml/.venv/Scripts/python.exe` (Windows) or `ml/.venv/bin/python3` (macOS/Linux).
 > Scripts in `ml/scripts/` inject `ml/` into `sys.path` automatically — no `PYTHONPATH` needed.
 
+**Generate train/test split (run once before first training run):**
+```bash
+ml/.venv/Scripts/python.exe ml/training/data/create_split.py
+```
+
 **Score all reports with the best available classifier:**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py --local-only
 ```
 
-**Run a label-classifier training cycle:**
+**Run a label-classifier training cycle (with train/test split):**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode train-classifier --label "c1" \
   --model ml/output/checkpoints/contrastive \
+  --train-cases ml/output/splits/train_cases.txt \
   --co-neg-per-case 5 --fp-neg-per-case 10 \
   --embedding-min-sim 0.05 --epochs 25 \
   --recall-weight 0.25 --device xpu --local-only
 ```
 
-**Score predictions and record to history:**
+**Evaluate on held-out test set (after training):**
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --label "after c3"
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
+  --test-cases ml/output/splits/test_cases.txt \
+  --out-dir ml/output/evaluation/contrastive_test \
+  --label "held-out test"
 ```
 
 **Annotate diagnoses — LLM method (authoritative):**

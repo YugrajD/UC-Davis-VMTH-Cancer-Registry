@@ -46,10 +46,17 @@ def main() -> int:
         "--label", default="",
         help="Short description for this evaluation entry (e.g. 'manual check').",
     )
+    parser.add_argument(
+        "--test-cases",
+        default="",
+        help="Path to test_cases.txt. When provided, only held-out test cases are "
+             "evaluated. Generate with ml/training/data/create_split.py.",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
-    evaluate(Path(args.prediction_csv), Path(args.annotation_csv), out_dir)
+    evaluate(Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
+             cases_txt=args.test_cases)
     log_evaluation(
         summary=str(out_dir / "evaluation_summary.csv"),
         history=str(out_dir / "evaluation_history.csv"),

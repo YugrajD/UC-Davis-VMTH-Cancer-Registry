@@ -101,6 +101,10 @@ def main() -> int:
     parser.add_argument("--co-neg-bank-csv", default=None,
                         help="[train-classifier] Path to rolling wrong-label feedback bank "
                              "(default: auto-derived from --model). Pass empty string to disable.")
+    parser.add_argument("--train-cases", default="",
+                        help="[train-classifier, adapt-backbone] Path to train_cases.txt. "
+                             "When provided, only train cases are used during training. "
+                             "Generate with ml/training/data/create_split.py.")
 
     # ------------------------------------------------------------------
     # adapt-backbone args
@@ -184,7 +188,8 @@ def main() -> int:
             "--model", args.model,
             "--annotation-csv", args.annotation_csv,
         ] + (["--local-only"] if args.local_only else []) \
-          + (["--co-neg-bank-csv", args.co_neg_bank_csv] if args.co_neg_bank_csv is not None else [])
+          + (["--co-neg-bank-csv", args.co_neg_bank_csv] if args.co_neg_bank_csv is not None else []) \
+          + (["--train-cases", args.train_cases] if args.train_cases else [])
         run_classifier_cycle(argv=cycle_argv)
 
     elif args.mode == "train-groups":
@@ -224,6 +229,7 @@ def main() -> int:
                 reports_csv=args.reports_csv,
                 annotation_csv=args.annotation_csv,
                 out_csv=args.pairs_csv,
+                train_cases_txt=args.train_cases,
             )
         else:
             print("\n=== Step 2a: Skipped — reusing existing pairs CSV ===")

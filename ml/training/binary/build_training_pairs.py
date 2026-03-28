@@ -49,8 +49,15 @@ def build_pairs(
     co_neg_bank_csv: str = "",
     seed: int = 42,
     max_pos_per_group: int = 0,
+    train_cases_txt: str = "",
 ) -> None:
     random.seed(seed)
+
+    train_ids: set[str] | None = None
+    if train_cases_txt and Path(train_cases_txt).exists():
+        with open(train_cases_txt, encoding="utf-8") as f:
+            train_ids = {line.strip() for line in f if line.strip()}
+        print(f"  Train/test split active — restricting to {len(train_ids)} train cases.")
 
     # --- Load report text ------------------------------------------------
     df = pd.read_csv(report_csv, encoding="latin-1")
@@ -77,6 +84,9 @@ def build_pairs(
         term = row["matched_term"].strip()
         if term:
             case_pos_terms.setdefault(row["case_id"], set()).add(term)
+
+    if train_ids is not None:
+        case_pos_terms = {cid: t for cid, t in case_pos_terms.items() if cid in train_ids}
 
     # --- Build output rows -----------------------------------------------
     out_rows: list[dict] = []
@@ -136,6 +146,8 @@ def build_pairs(
         for row in co_rows:
             if row["verdict"] != "completely_off":
                 continue
+            if train_ids is not None and row["case_id"] not in train_ids:
+                continue
             text = case_to_text.get(row["case_id"], "")
             if not text:
                 continue
@@ -155,6 +167,8 @@ def build_pairs(
     fp_case_covered: dict[str, set[str]] = {}  # case_id -> terms already added
     for row in eval_rows:
         if row["verdict"] != "false_positive":
+            continue
+        if train_ids is not None and row["case_id"] not in train_ids:
             continue
         text = case_to_text.get(row["case_id"], "")
         if not text:
@@ -274,6 +288,12 @@ def main() -> int:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--train-cases",
+        default="",
+        help="Path to train_cases.txt (one case_id per line). When provided, only train "
+             "cases contribute to training pairs. Generate with create_split.py.",
+    )
+    parser.add_argument(
         "--max-pos-per-group",
         type=int,
         default=0,
@@ -295,6 +315,7 @@ def main() -> int:
         co_neg_bank_csv=args.co_neg_bank_csv,
         seed=args.seed,
         max_pos_per_group=args.max_pos_per_group,
+        train_cases_txt=args.train_cases,
     )
     return 0
 

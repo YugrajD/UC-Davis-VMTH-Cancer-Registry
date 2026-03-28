@@ -45,9 +45,17 @@ def score_prediction(predicted_term: str, predicted_group: str,
     return "completely_off"
 
 
-def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path) -> None:
+def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
+             cases_txt: str = "") -> None:
     pb_rows = load_csv(prediction_csv)
     kw_rows = load_csv(expectation_csv)
+
+    if cases_txt and Path(cases_txt).exists():
+        with open(cases_txt, encoding="utf-8") as f:
+            filter_ids = {line.strip() for line in f if line.strip()}
+        pb_rows = [r for r in pb_rows if r["case_id"] in filter_ids]
+        kw_rows = [r for r in kw_rows if r["case_id"] in filter_ids]
+        print(f"  Case filter active — evaluating {len(filter_ids)} cases.")
 
     # Build per-case label sets from keyword predictions
     case_terms: dict[str, set[str]] = defaultdict(set)
@@ -202,8 +210,15 @@ def main() -> int:
         default=f"{config.OUTPUT_EVALUATION_DIR}/binary",
         help="Directory to write evaluation results.",
     )
+    parser.add_argument(
+        "--test-cases",
+        default="",
+        help="Path to test_cases.txt (one case_id per line). When provided, only held-out "
+             "test cases are evaluated. Generate with create_split.py.",
+    )
     args = parser.parse_args()
-    evaluate(Path(args.prediction_csv), Path(args.expectation_csv), Path(args.out_dir))
+    evaluate(Path(args.prediction_csv), Path(args.expectation_csv), Path(args.out_dir),
+             cases_txt=args.test_cases)
     return 0
 
 

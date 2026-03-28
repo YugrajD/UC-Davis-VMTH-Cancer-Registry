@@ -27,10 +27,17 @@ def build_contrastive_pairs(
     out_csv: str = config.CONTRASTIVE_PAIRS_CSV,
     text_cols: tuple[str, ...] = DEFAULT_TEXT_COLS,
     min_report_chars: int = 10,
+    train_cases_txt: str = "",
 ) -> int:
     """Build and save contrastive pairs. Returns number of pairs written."""
 
     # --- Step 1: Load positive (case_id, term, group) pairs -----------------
+    train_ids: set[str] | None = None
+    if train_cases_txt and Path(train_cases_txt).exists():
+        with open(train_cases_txt, encoding="utf-8") as f:
+            train_ids = {line.strip() for line in f if line.strip()}
+        print(f"  Train/test split active — restricting to {len(train_ids)} train cases.")
+
     print(f"Loading keyword annotations from {annotation_csv}...")
     # case_id -> set of (term, group) tuples, deduplicated
     case_to_labels: dict[str, set[tuple[str, str]]] = {}
@@ -40,6 +47,8 @@ def build_contrastive_pairs(
             if row.get("method", "") == "no_match":
                 continue
             case_id = row["case_id"].strip()
+            if train_ids is not None and case_id not in train_ids:
+                continue
             term = row.get("matched_term", "").strip()
             group = row.get("matched_group", "").strip()
             if not case_id or not term or not group:
@@ -121,6 +130,7 @@ def build_hard_neg_pairs(
     out_csv: str = config.HARD_NEG_PAIRS_CSV,
     text_cols: tuple[str, ...] = DEFAULT_TEXT_COLS,
     min_report_chars: int = 10,
+    train_cases_txt: str = "",
 ) -> int:
     """Build hard-negative triplets from the CO (wrong-group) feedback bank.
 
@@ -134,6 +144,12 @@ def build_hard_neg_pairs(
     """
 
     # --- Step 1: Load correct labels from annotation ------------------------
+    train_ids: set[str] | None = None
+    if train_cases_txt and Path(train_cases_txt).exists():
+        with open(train_cases_txt, encoding="utf-8") as f:
+            train_ids = {line.strip() for line in f if line.strip()}
+        print(f"  Train/test split active — restricting to {len(train_ids)} train cases.")
+
     print(f"Loading keyword annotations from {annotation_csv}...")
     case_to_correct: dict[str, set[tuple[str, str]]] = {}
     with open(annotation_csv, encoding="utf-8-sig") as f:
@@ -142,6 +158,8 @@ def build_hard_neg_pairs(
             if row.get("method", "") == "no_match":
                 continue
             case_id = row["case_id"].strip()
+            if train_ids is not None and case_id not in train_ids:
+                continue
             term = row.get("matched_term", "").strip()
             group = row.get("matched_group", "").strip()
             if not case_id or not term or not group:
@@ -260,6 +278,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Output CSV path "
                              f"(default: {config.CONTRASTIVE_PAIRS_CSV} for build-pairs, "
                              f"{config.HARD_NEG_PAIRS_CSV} for build-hard-neg)")
+    parser.add_argument("--train-cases", default="",
+                        help="Path to train_cases.txt. When provided, only train cases are "
+                             "included in the output. Generate with create_split.py.")
     args = parser.parse_args(argv)
 
     if args.mode == "build-pairs":
@@ -268,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
             reports_csv=args.reports_csv,
             annotation_csv=args.annotation_csv,
             out_csv=out,
+            train_cases_txt=args.train_cases,
         )
         print(f"Done — {n} pairs written.")
 
@@ -281,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
             annotation_csv=args.annotation_csv,
             co_bank_csv=args.co_bank_csv,
             out_csv=out,
+            train_cases_txt=args.train_cases,
         )
         print(f"Done — {n} triplets written.")
 

@@ -49,6 +49,11 @@ OUTPUT_EVALUATION_DIR = "ml/output/evaluation"
 OUTPUT_PRODUCTION_DIR = "ml/output/production"
 PETBERT_SCAN_OUTPUT_DIR = "ml/output/report"  # default for standalone petbert_pipeline CLI
 
+# Train/test split files (generated once by ml/training/data/create_split.py)
+SPLITS_DIR      = "ml/output/splits"
+TRAIN_CASES_TXT = "ml/output/splits/train_cases.txt"
+TEST_CASES_TXT  = "ml/output/splits/test_cases.txt"
+
 # Derived structured outputs (build paths programmatically from the dirs above
 # rather than hardcoding every leaf; see run_cycle.py for the pattern)
 GROUP_TRAINING_DATA_NPZ = "ml/output/training/group/group_training_data.npz"

@@ -162,6 +162,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Verified label annotations for training positives and evaluation. "
              f"(default: {config.KEYWORD_ANNOTATION_CSV})",
     )
+    parser.add_argument(
+        "--train-cases", default="",
+        help="Path to train_cases.txt. When provided, only train cases contribute to "
+             "training pairs. Generate with create_split.py.",
+    )
     args = parser.parse_args(argv)
 
     subdir = _subdir(args.model)
@@ -194,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         max_pos_per_group=args.max_pos_per_group,
         co_neg_extra_csv=args.co_neg_extra_csv,
         co_neg_bank_csv=args.co_neg_bank_csv,
+        train_cases_txt=args.train_cases,
     )
 
     # 2 ── Train label presence classifier ────────────────────────────────────
@@ -221,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         prediction_csv=Path(f"{production_out}/petbert_predictions.csv"),
         expectation_csv=Path(args.annotation_csv),
         out_dir=Path(evaluation_out),
+        cases_txt=args.train_cases,
     )
 
     # 4.5 ── Record wrong-group feedback ──────────────────────────────────────

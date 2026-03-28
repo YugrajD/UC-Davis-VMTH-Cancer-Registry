@@ -318,9 +318,61 @@ end (1.2739 vs 1.1474), expected given the harder combined objective.
   the over-shooting effect on Slight predictions
 - Alternatively, the CO bank entries may be too noisy as hard negatives (some "completely_off"
   predictions may have been close calls, not genuine wrong-group errors)
-- Round 3 backbone saved at `ml/output/checkpoints/contrastive/`
+- Round 3 backbone saved at `ml/output/checkpoints/contrastive/model_phase20_round3_backup.safetensors`
 - Round 2 backbone backup: `ml/output/checkpoints/contrastive/model_phase19_round2_backup.safetensors`
 - Phase 18 backbone backup: `ml/output/checkpoints/contrastive/model_phase18_backup.safetensors`
+
+---
+
+### Run 5 — 2026-03-27 (Phase 21 — Round 3b, softer hard-negative weight=0.25)
+
+**Context:** Retry of Round 3 hard-negative fine-tuning with halved weight (0.25 vs 0.5), warm-starting
+from the Round 2 (Phase 19) backbone — not the Round 3 backbone, which had already regressed.
+Same 33,196 hard-neg triplets (reused from Round 3). Goal: soften the push-away signal to preserve
+borderline Slight matches while still correcting residual CO cases.
+
+**Fine-tuning config:** epochs=2, batch=32, lr=1e-5, temp=0.07, hard-neg-weight=0.25, margin=0.3
+**Warm-start from:** `model_phase19_round2_backup.safetensors` (Round 2 backbone)
+
+| Epoch | Avg InfoNCE Loss | Avg Hard-Neg Loss |
+|-------|-----------------|-------------------|
+| 1 | 1.2823 | 0.5249 |
+| 2 | 1.2022 | 0.4150 |
+
+InfoNCE lower than Round 3's endpoint (1.2022 vs 1.2739) — softer hard-neg signal less disruptive
+to positive-pair alignment. Hard-neg loss higher in absolute terms (weight=0.25 means gradient
+contribution is halved, but the raw penalty can be larger).
+
+**PresenceClassifier retraining (cold start, hd=512, co=5, fp=10, epochs=25, CO bank carried forward):**
+
+| Cycle | Good% | Slight% | Good+Slight | CO% | FP% | FN% | Notes |
+|-------|-------|---------|-------------|-----|-----|-----|-------|
+| c1 | 21.7 | 44.5 | 66.2% | 6.2 | 27.3 | 0.3 | Low first cycle |
+| c2 | 22.9 | 45.9 | **68.8%** | 6.3 | 24.6 | 0.4 | High cycle |
+| c3 | 21.4 | 45.0 | 66.4% | 6.3 | 27.0 | 0.3 | Low cycle |
+| c4 | 22.1 | 47.3 | **69.4%** | 6.1 | 24.1 | 0.4 | **Best checkpoint** — new Round 3b peak |
+| c5 | 20.9 | 45.5 | 66.4% | 6.1 | 27.2 | 0.3 | Low cycle |
+| c6 | 22.1 | 46.4 | 68.5% | 6.5 | 24.6 | 0.4 | High cycle — plateau |
+| c7 | 21.3 | 45.0 | 66.3% | 6.3 | 27.1 | 0.3 | Low cycle — plateau confirmed |
+
+**Best: c4 — 69.4% Good+Slight, CO=6.1%, FP=24.1%**
+
+**vs Phase 18 best (70.4%):** −1.0pp Good+Slight — still below Phase 18
+**vs Round 3 best (68.5%):** +0.9pp — improvement over weight=0.5
+**vs Round 2 best (69.9%):** −0.5pp — just below Round 2
+
+**Key findings:**
+- Softer weight (0.25) meaningfully helped vs Round 3 (weight=0.5): +0.9pp Good+Slight, CO floor 6.1% (new low)
+- High cycles oscillate 68.5–69.4% — plateau, not continuing to climb
+- Slight% still suppressed vs Phase 18 (46–47% vs 50.1%) — hard-neg signal, even at 0.25, costs Slight
+- Good% is consistently higher (~22%) vs Phase 18 (~20%) — the trade-off is real and tunable but not eliminable
+- CO floor (6.1%) is marginally better than Phase 18 (6.5%) — hard-neg signal does push the right direction
+- **Conclusion:** Hard-negative fine-tuning at any weight cannot break the ~70% ceiling with current data.
+  The ~70% ceiling is a data ceiling. Slight% is the bottleneck — it represents borderline cases that
+  require more labelled examples to resolve correctly.
+- Round 3b backbone saved at `ml/output/checkpoints/contrastive/` (current `model.safetensors`)
+- Round 3 backbone backup: `ml/output/checkpoints/contrastive/model_phase20_round3_backup.safetensors`
+- **Phase 18 `presence_classifier_best.pt` (70.4%) remains the production best**
 
 ---
 

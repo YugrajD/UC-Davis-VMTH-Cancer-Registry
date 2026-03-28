@@ -1,12 +1,14 @@
 """Score cancer label predictions against verified annotations.
 
-Each predicted label receives one of five verdicts:
+Each predicted label receives one of six verdicts:
 
   good           — predicted term exactly matches a verified label for this case
   slightly_off   — correct cancer group, wrong specific term
   completely_off — neither term nor group matches any verified label for this case
-  false_positive — case has no verified labels (should have been left uncategorized)
+  false_positive — model made a positive prediction for a case with no verified labels
   false_negative — case has verified labels but no good/slightly_off prediction was made
+  true_negative  — model correctly predicted "Uncategorized" for a non-cancer case
+                   (excluded from evaluation.csv and from metrics)
 
 Output files (written to --out-dir):
   evaluation.csv         — all predictions + verdicts, sorted by case_id
@@ -32,6 +34,9 @@ def score_prediction(predicted_term: str, predicted_group: str,
                      matched_terms: set[str], matched_groups: set[str]) -> str:
     """Score one petbert prediction against the case's keyword label sets."""
     if not matched_terms:
+        # Model correctly abstained on a non-cancer case → true negative, not FP.
+        if predicted_term == "Uncategorized":
+            return "true_negative"
         return "false_positive"
     if predicted_term in matched_terms:
         return "good"
@@ -58,6 +63,7 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path) -> None
 
     # Score every petbert prediction row; track which cancer cases got a passing verdict
     out_rows: list[dict] = []
+    true_negative_rows: list[dict] = []
     adequately_predicted: set[str] = set()
     for row in pb_rows:
         cid = row["case_id"]
@@ -65,7 +71,11 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path) -> None
             row["predicted_term"], row["predicted_group"],
             case_terms.get(cid, set()), case_groups.get(cid, set()),
         )
-        out_rows.append({**row, "verdict": verdict})
+        scored_row = {**row, "verdict": verdict}
+        if verdict == "true_negative":
+            true_negative_rows.append(scored_row)
+        else:
+            out_rows.append(scored_row)
         if verdict in ("good", "slightly_off"):
             adequately_predicted.add(cid)
 
@@ -83,6 +93,7 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path) -> None
         {**blank_pred, "case_id": cid, "verdict": "false_negative"}
         for cid in fn_case_ids
     ]
+    # true_negatives are excluded from evaluation.csv (correct abstentions add no signal)
     all_rows = sorted(out_rows + fn_rows, key=lambda r: r["case_id"])
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -91,10 +102,12 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path) -> None
 
     # ── Console summary ───────────────────────────────────────────────────────
     counts = Counter(r["verdict"] for r in out_rows)
-    # Include false negatives in the total so percentages reflect all cancer cases
+    # Include false negatives in the total so percentages reflect all cancer cases.
+    # True negatives (correct abstentions on non-cancer cases) are excluded from total.
     total = len(out_rows) + n_false_negatives
+    n_true_negatives = len(true_negative_rows)
 
-    print(f"\n=== Overall ({total} prediction-cases) ===")
+    print(f"\n=== Overall ({total} prediction-cases, {n_true_negatives} correct abstentions excluded) ===")
     for label, key in [
         ("Good", "good"),
         ("Slightly off", "slightly_off"),
@@ -104,6 +117,7 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path) -> None
     ]:
         n = counts[key] if key != "false_negative" else n_false_negatives
         print(f"  {label:<22} {n:>5}  ({n / total * 100:.1f}%)")
+
 
     # Per-group breakdown (excluding false positives — they have no matched group)
     group_counts: dict[str, Counter] = defaultdict(Counter)

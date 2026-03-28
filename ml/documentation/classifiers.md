@@ -8,7 +8,7 @@ PresenceClassifier (Approach 3) is currently the production best.
 |---|---|---|
 | Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
 | GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end (MLP macro F1=0.4975 on 17 groups) |
-| Contrastive fine-tuned PetBERT + PresenceClassifier | **Production best** | **69.0% Good+Slight (Phase 17, c8)** |
+| Contrastive fine-tuned PetBERT + PresenceClassifier | **Production best** | **86.5% Good+Slight (Phase 18, c16) — 56.5% Good with group-keyword mode** |
 | End-to-end fine-tuned PetBERT | WIP — see `petbert-pipeline.md` | Not benchmarked |
 
 > **Training ground truth:** All three approaches derive training labels from the keyword
@@ -27,8 +27,9 @@ All approaches are evaluated by `ml/evaluation/evaluate.py`:
 | `good` | Predicted term exactly matches a keyword-matched term |
 | `slightly_off` | No exact term match but predicted group matches a keyword group |
 | `completely_off` | Neither term nor group matches any keyword label for this case |
-| `false_positive` | Case has no keyword labels (should be Uncategorized) |
+| `false_positive` | Case has no keyword labels but model made a positive prediction |
 | `false_negative` | Confirmed cancer case with no good/slightly_off prediction |
+| `true_negative` | Model correctly predicted "Uncategorized" for a non-cancer case — excluded from `evaluation.csv` and from all metric totals |
 
 ---
 
@@ -474,57 +475,59 @@ Hyperparameter tuning has been exhausted at current volume (best F1=0.4975, epoc
 - [x] `ml/production/petbert_pipeline/categorization.py` — two-stage group → cosine inference
 - [x] `ml/production/petbert_pipeline/pipeline.py` — `--group-classifier` CLI flag
 
-### Worth Trying: Discriminating-Keyword Term Selection
+### Behavior-Keyword Term Selection — Implemented ✅ (2026-03-28)
 
-Instead of cosine similarity within the predicted group, use the group's own taxonomy
-labels to auto-derive discriminating keywords, then scan report text for those keywords
-to pick the specific term.
+The "group-keyword" categorization mode is now available via `--categorization-mode group-keyword`
+in `run_production.py`. It replaces within-group cosine similarity with ICD-O behavior code
+keyword matching to convert "slightly off" predictions (right group, wrong term) into "good".
 
-**Example — "Neoplasms, NOS" group:**
+**Design:**
 
-| Term | Discriminating words |
-|---|---|
-| Neoplasm, benign | `benign` |
-| Neoplasm, malignant | `malignant` |
-| Neoplasm, NOS | *(fallback)* |
+Stage 1 is identical to the default mode — the PresenceClassifier's top-scoring label
+determines the predicted ICD group, and the same threshold decides whether to predict
+at all. CO, FP, and FN are therefore unchanged.
 
-Report says "...consistent with a **malignant** neoplasm..." → "Neoplasm, malignant"
+Stage 2 only runs when Stage 1 would have made a prediction. Within the predicted group,
+the ICD-O behavior digit (the digit after `/` in the code) directly encodes the key
+disambiguator: `/0`=benign, `/1`=borderline, `/2`=in situ, `/3`=malignant, `/6`=metastatic.
+This is matched to weighted clinical vocabulary in the report text (e.g. `malignant` → `/3`,
+`metastatic` → `/6`). Candidates are filtered to the matched behavior digit, then the
+highest raw PresenceClassifier score within that pool wins. If no keyword signal is found,
+all candidates in the group compete by raw score.
 
-**Example — "Mast cell neoplasms" group:**
+**Keyword module:** `ml/ICD_labels/behavior_keywords.py` — pure Python, no model dependencies.
+Uses pre-compiled whole-word regex patterns. Weights: 1.0 = strong signal, 0.5 = contextual.
 
-| Term | Discriminating words |
-|---|---|
-| Mast cell tumor, grade I | `grade i`, `grade 1` |
-| Mast cell tumor, grade II | `grade ii`, `grade 2` |
-| Mast cell tumor, grade III | `grade iii`, `grade 3` |
-| Mast cell leukemia | `leukemia` |
-| Mast cell tumor, NOS | *(fallback)* |
+**Evaluation results (Phase 18 best checkpoint, corrected evaluation, 2026-03-28):**
 
-**Proposed inference flow:**
+Both modes write up to 5 top-k rows per case — percentages are directly comparable.
+
+| Metric | Default mode (top-k) | **Group-keyword mode (top-k) — PRODUCTION** |
+|---|---|---|
+| Good% | 30.6% | **56.5%** |
+| Slightly off% | 55.9% | **30.0%** |
+| **Good + Slight** | **86.5%** | **86.5%** |
+| Completely off% | 9.4% | 9.3% |
+| False positive% | 1.9% | **1.9%** |
+| False negative% | 2.2% | 2.2% |
+| True negatives (excluded from CSV) | 6,329 | 6,330 |
+
+Stage 2 runs per-row: Good% rose +25.9pp with no change to G+S total, CO, FP, or FN.
+
+**Remaining Slight:** Groups where terms differ by something other than behavior code —
+Meningiomas (80% Slight — topography), Osseous neoplasms (46%), Gliomas (46%) — need
+topographic or histologic keyword discriminators beyond the current behavior-code vocabulary.
+
+**Usage (production):**
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --categorization-mode group-keyword \
+  --out-dir ml/output/production/contrastive_kw \
+  --local-only --device xpu
 ```
-group_classifier → predicted group
-        ↓
-discriminating keyword scan on report text
-        ↓ (match)                    ↓ (no match)
-specific term             cosine similarity within group (fallback)
-```
 
-**Why it's better than pure cosine within-group:**
-- Discriminating words are short qualifiers (`benign`, `malignant`, `grade ii`) — much
-  less susceptible to false matches than scanning for full tumor names
-- Auto-derivable from `labels.csv`: words that appear in *some but not all* terms within
-  a group are discriminating candidates; no manual curation needed for most groups
-- Interpretable — the reason a term was chosen is visible
-
-**Limitations:**
-- Groups whose terms differ substantively (not just by qualifier) still need cosine as
-  fallback — e.g. "Vascular tumors" (Hemangioma vs Hemangiosarcoma) are already separated
-  at the group level so within-group cosine is less critical there
-- Negation is still unhandled, but short qualifiers (`benign`, `grade i`) are less likely
-  to appear in negation context than full tumor names
-
-This idea applies equally to Approach 3 (fine-tuned PetBERT) since both approaches share
-the same within-group term selection step.
+This idea applies equally to Approach 2 (GroupClassifier) since both share the same
+within-group term selection step.
 
 ### Advantages
 
@@ -547,7 +550,7 @@ the same within-group term selection step.
 InfoNCE fine-tuning of PetBERT on `(report_text, label_text)` pairs, then retraining
 the PresenceClassifier from scratch on the improved embedding space.
 
-- **Result:** 69.0% Good+Slight (Phase 17, c8) — up from 41.9% with frozen PetBERT
+- **Result:** 86.5% Good+Slight (Phase 18, c16) — 56.5% Good / 30.0% Slight with `--categorization-mode group-keyword` (production); 30.6% Good / 55.9% Slight with default mode
 - **CO floor shattered:** ~30% → ~7% — contrastive training directly fixed wrong-group assignments
 - **Scripts:** `ml/training/contrastive/` — see [training-log-finetune.md](training-log/training-log-finetune.md) for full details
 - **Backbone checkpoint:** `ml/output/checkpoints/contrastive/`
@@ -629,7 +632,7 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
 | | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning | End-to-end fine-tuning |
 |---|---|---|---|---|
 | **Status** | Superseded by Approach 3 | Not competitive | **Production best** | WIP, blocked |
-| **Best result** | 41.9% Good+Slight (Phase 16) | 9.3% Good+Slight (MLP F1=0.4975 on 17 groups) | **69.0% Good+Slight (Phase 17, c8)** | Not benchmarked |
+| **Best result** | 41.9% Good+Slight (Phase 16) | 9.3% Good+Slight (MLP F1=0.4975 on 17 groups) | **86.5% G+S, 56.5% Good / 30.0% Slight (Phase 18, c16, group-keyword mode)** | Not benchmarked |
 | **PetBERT** | Frozen | Frozen | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
 | **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier | One-shot |
 | **Data requirement** | Works from ~1,273 cases | Needs ~15,000+ cases | Works at ~5,788 cases | Needs ~10,000+ cases |
@@ -640,7 +643,7 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
 
 ### When to Use Each
 
-- **Now**: Use Phase 17 contrastive checkpoint (69.0%) as production best
+- **Now**: Use Phase 18 contrastive checkpoint with `--categorization-mode group-keyword` — **production command** (86.5% G+S, 56.5% Good, 1.9% FP). Output dir: `ml/output/production/contrastive_kw/`
 - **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier; re-run contrastive fine-tuning
 - **After GroupClassifier proves competitive (~15,000 cases)**: Consider end-to-end fine-tuning (Approach 4)
 

@@ -1,6 +1,6 @@
 """Embedding-based categorization: cosine similarity against taxonomy label embeddings.
 
-Three categorization strategies are available:
+Four categorization strategies are available:
 
 1. run_categorization() — original approach: cosine similarity (or binary PresenceClassifier
    scores) across all ~857 labels, argmax selects winner. Suffers from a ~42% completely-off
@@ -13,6 +13,11 @@ Three categorization strategies are available:
 3. run_categorization_hybrid() — hybrid approach: KNN group selector gates which groups are
    allowed (vote fraction ≥ threshold), then binary PresenceClassifier scores select the best
    term within those groups. Combines the calibrated presence signal with KNN group constraints.
+
+4. run_categorization_group_keyword() — two-stage approach requiring only a PresenceClassifier:
+   Stage 1 uses the top-scoring term's group as the predicted group (free — no separate model).
+   Stage 2 uses ICD-O behavior keyword matching to select the specific term within that group,
+   converting "slightly off" (right group, wrong term) predictions into "good" predictions.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ICD_labels.behavior_keywords import best_behavior
 from .embedding import cosine_similarity_matrix
 
 if TYPE_CHECKING:
@@ -427,6 +433,144 @@ def run_categorization_hybrid(
         top_k_indices.append(k_idxs)
         top_k_scores.append(k_scores)
         top_k_methods.append(k_meths)
+
+    embedding_labels = np.array(embedding_labels_list, dtype=object)
+    embedding_scores = np.array(embedding_scores_list, dtype=np.float32)
+
+    return CategorizationResult(
+        final_labels=final_labels,
+        final_indices=final_indices,
+        final_scores=final_scores,
+        methods=methods,
+        embedding_labels=embedding_labels,
+        embedding_scores=embedding_scores,
+        label_scores=sims,
+        labels=labels,
+        top_k_indices=top_k_indices,
+        top_k_scores=top_k_scores,
+        top_k_methods=top_k_methods,
+    )
+
+def run_categorization_group_keyword(
+    *,
+    texts: list[str],
+    score_matrix: np.ndarray,               # (N, M) PresenceClassifier probabilities
+    taxonomy_labels: list["TaxonomyLabel"], # length M
+    labels: list[str],                      # length M — term strings for display
+    embedding_min_sim: float,
+    max_predictions: int = 5,
+) -> CategorizationResult:
+    """Two-stage categorization using PresenceClassifier + behavior keyword matching.
+
+    Stage 1 — Identical to run_categorization(): mean-center scores, find argmax,
+               apply threshold. This determines whether a prediction is made at all
+               (and thus CO, FP, FN are unchanged vs the default mode).
+    Stage 2 — Only runs when Stage 1 would have made a prediction. Within the
+               Stage 1 group, ICD-O behavior keyword matching on the report text
+               selects the specific term. The behavior digit (0=benign, 1=borderline,
+               2=in situ, 3=malignant, 6=metastatic) is inferred from clinical
+               vocabulary; candidates are filtered to that digit before taking the
+               highest raw PresenceClassifier score as the winner.
+               If no keyword signal is found, all candidates in the group compete.
+
+    CO, FP, and FN are identical to default mode — only Good/Slight can change.
+    """
+    # Stage 1: center scores, find top-1, check threshold — exactly as run_categorization().
+    label_means = score_matrix.mean(axis=0)
+    sims = score_matrix - label_means[np.newaxis, :]
+
+    # Build group → [label_indices] mapping (static, from taxonomy).
+    group_to_label_indices: dict[str, list[int]] = {}
+    for j, tl in enumerate(taxonomy_labels):
+        group_to_label_indices.setdefault(tl.group, []).append(j)
+
+    def _behavior_digit(code: str) -> str:
+        # code format: "8000/3" or "8006.1/1" — digit is first char after "/"
+        parts = code.split("/")
+        return parts[-1][0] if len(parts) > 1 and parts[-1] else ""
+
+    final_labels: list[str] = []
+    final_indices: list[int] = []
+    final_scores: list[float] = []
+    methods: list[str] = []
+    top_k_indices: list[list[int]] = []
+    top_k_scores: list[list[float]] = []
+    top_k_methods: list[list[str]] = []
+    embedding_labels_list: list[str] = []
+    embedding_scores_list: list[float] = []
+
+    for i, text in enumerate(texts):
+        if not text:
+            final_labels.append("")
+            final_indices.append(-1)
+            final_scores.append(0.0)
+            methods.append("empty")
+            top_k_indices.append([])
+            top_k_scores.append([])
+            top_k_methods.append([])
+            embedding_labels_list.append("")
+            embedding_scores_list.append(0.0)
+            continue
+
+        # Stage 1: identical decision to default mode.
+        top_global_idx = int(np.argmax(sims[i]))
+        top_global_score = float(sims[i, top_global_idx])
+        embedding_scores_list.append(top_global_score)
+        embedding_labels_list.append(labels[top_global_idx])
+
+        if top_global_score < embedding_min_sim:
+            # Below threshold — same "Uncategorized" decision as default mode.
+            final_labels.append("Uncategorized")
+            final_indices.append(top_global_idx)
+            final_scores.append(top_global_score)
+            methods.append("low_confidence")
+            top_k_indices.append([top_global_idx])
+            top_k_scores.append([top_global_score])
+            top_k_methods.append(["low_confidence"])
+            continue
+
+        # Build the same default top-k as run_categorization(): all labels above
+        # threshold, sorted by centered score descending, up to max_predictions.
+        sorted_idx = np.argsort(-sims[i])
+        default_topk: list[int] = []
+        for rank_idx in sorted_idx:
+            if float(sims[i, rank_idx]) < embedding_min_sim:
+                break
+            default_topk.append(int(rank_idx))
+            if len(default_topk) >= max_predictions:
+                break
+
+        # Stage 2: apply behavior keyword filtering independently to each top-k row.
+        # For each Stage-1 term, find its group, then pick the best keyword-matching
+        # term within that group by raw PresenceClassifier score.
+        # Raw scores are used within-group because centering penalizes common labels.
+        behavior = best_behavior(text)
+        k_idxs: list[int] = []
+        k_scores: list[float] = []
+        for stage1_idx in default_topk:
+            group = taxonomy_labels[stage1_idx].group
+            cands = group_to_label_indices.get(group, [])
+            if not cands:
+                # Degenerate: no labels in this group — keep the Stage 1 term.
+                k_idxs.append(stage1_idx)
+                k_scores.append(float(sims[i, stage1_idx]))
+                continue
+            filtered: list[int] = []
+            if behavior:
+                filtered = [j for j in cands if _behavior_digit(taxonomy_labels[j].code) == behavior]
+            pool = filtered if filtered else cands
+            pool_raw = score_matrix[i, pool]
+            winner = pool[int(np.argmax(pool_raw))]
+            k_idxs.append(winner)
+            k_scores.append(float(sims[i, stage1_idx]))  # preserve Stage 1 score for ordering
+
+        final_labels.append(labels[k_idxs[0]])
+        final_indices.append(k_idxs[0])
+        final_scores.append(top_global_score)  # report Stage 1 centered score as confidence
+        methods.append("embedding")
+        top_k_indices.append(k_idxs)
+        top_k_scores.append(k_scores)
+        top_k_methods.append(["embedding"] * len(k_idxs))
 
     embedding_labels = np.array(embedding_labels_list, dtype=object)
     embedding_scores = np.array(embedding_scores_list, dtype=np.float32)

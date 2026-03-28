@@ -425,6 +425,106 @@ Offsets file `ml/output/calibration/label_offsets.json` is empty (`{}`).
 
 ---
 
+## Group-Keyword Categorization Mode (2026-03-28)
+
+### Motivation
+
+At Phase 18 (70.4% Good+Slight), the remaining Slightly-off cases (42% of rank-1 predictions in
+the default mode) are cases where the PresenceClassifier picks the right ICD group but the wrong
+specific term within that group. Within a group, the main disambiguator is the ICD-O behavior digit
+(the character after `/` in the code: `/0`=benign, `/1`=borderline, `/2`=in situ, `/3`=malignant,
+`/6`=metastatic). This signal maps directly to plain clinical vocabulary and requires no model training.
+
+### Implementation
+
+New categorization mode: `--categorization-mode group-keyword` in `run_production.py`.
+
+**Stage 1** (identical to default): Compute the default top-k — all labels with centered
+PresenceClassifier score ≥ threshold, sorted descending, up to `max_predictions` (default 5).
+CO, FP, and FN are provably unchanged vs default mode.
+
+**Stage 2** (applied per-row): For each of the K top-k rows from Stage 1, identify that row's
+predicted ICD group, apply `best_behavior(text)` from `ml/ICD_labels/behavior_keywords.py` to
+match behavior vocabulary in the report text, filter group candidates to the matching digit, and
+pick by highest raw PresenceClassifier score. Falls back to all group candidates if no keyword
+signal. Rows where the group has no candidates fall back to the Stage 1 term.
+
+This produces the same K rows per case as default mode — Stage 2 cannot change which cases
+get predictions (the Uncategorized decision is Stage 1), only which specific term each row shows.
+
+### evaluate.py Bug Fix (2026-03-28)
+
+`score_prediction()` was returning `"false_positive"` for any case with no verified cancer
+labels — including cases where the model correctly predicted `"Uncategorized"`. A correct
+abstention on a non-cancer case is a **true negative**, not a false positive.
+
+**Fix:** Added `"true_negative"` verdict when `predicted_term == "Uncategorized"` and
+`matched_terms` is empty. True negatives are excluded from `evaluation.csv` and from all
+metric totals. `build_training_pairs.py` requires no changes — it already ignores any
+verdict that isn't `"false_positive"`.
+
+**Impact on reported metrics:** All previous phase percentages (Phases 17–21) were computed
+with true negatives incorrectly counted as false positives in the denominator, making G+S%
+lower than the true rate against cancer cases. The relative ordering of phases is still valid
+since all cycles used the same methodology. The corrected absolute numbers are below.
+
+### Results (Phase 18 checkpoint, corrected evaluation, 2026-03-28)
+
+Both modes write up to 5 top-k rows per case. Percentages are computed over prediction rows.
+
+| Metric | Default mode (top-k) | **Group-keyword mode (top-k) — NEW PRODUCTION** |
+|---|---|---|
+| **Good%** | 30.6% | **56.5%** |
+| **Slightly off%** | 55.9% | **30.0%** |
+| **Good + Slight** | **86.5%** | **86.5%** |
+| Completely off% | 9.4% | 9.3% |
+| **False positive%** | **1.9%** | **1.9%** |
+| False negative% | 2.2% | 2.2% |
+| True negatives (excluded from CSV) | 6,329 | 6,330 |
+| Rows in denominator | 17,860 | 17,838 |
+
+Good+Slight is identical to default (86.5%) — Stage 2 only redistributes Slight → Good, it
+does not change which cases pass or fail. Good% rose +25.9pp (30.6% → 56.5%) and Slightly off%
+fell −25.9pp. FP, CO, and FN are within rounding of default mode.
+
+Selected per-group Good% comparison:
+
+| Group | Default top-k | Group-keyword top-k |
+|---|---|---|
+| Blood vessel tumors | 21% | **70%** |
+| Adenomas and adenocarcinomas | 32% | **71%** |
+| Squamous cell neoplasms | 24% | **79%** |
+| Malignant lymphomas | 79% | **86%** |
+| Osseous and chondromatous | 18% | **52%** |
+
+### Remaining Slight
+
+Groups where terms differ by more than behavior code (topography, histologic subtype):
+- Meningiomas: 80% Slight — terms differ by topography (spinal vs intracranial), not behavior
+- Odontogenic tumors: 82% Slight — subtype vocabulary
+- Osseous neoplasms: 46% Slight — complex subtype vocabulary
+- Gliomas: 46% Slight — complex subtype vocabulary
+
+Future improvement: add topography/grade keyword vocabularies for these groups.
+
+### Usage (production command)
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --categorization-mode group-keyword \
+  --out-dir ml/output/production/contrastive_kw \
+  --device xpu --local-only
+```
+
+Evaluate:
+```bash
+ml/.venv/Scripts/python.exe ml/evaluation/evaluate.py \
+  --prediction-csv ml/output/production/contrastive_kw/petbert_predictions.csv \
+  --out-dir ml/output/evaluation/contrastive_kw
+```
+
+---
+
 ## Approach B — End-to-end Group Classification (WIP, blocked)
 
 Fine-tunes PetBERT as a sequence classifier directly predicting Vet-ICD-O groups.

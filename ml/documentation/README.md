@@ -83,7 +83,7 @@ Invoked via `run_production.py`. Takes clinical report text, produces cancer lab
 | `pipeline.py` | Top-level orchestration: load → embed → score → write |
 | `embedding.py` | PetBERT loading, per-column mean-pooled embedding |
 | `embedding_cache.py` | Save/load cached embeddings — avoids re-running PetBERT every cycle |
-| `categorization.py` | Two strategies: cosine argmax (baseline) and two-stage GroupClassifier |
+| `categorization.py` | Four strategies: cosine argmax (default), two-stage GroupClassifier, KNN hybrid, and group-keyword (behavior keyword term selection) |
 | `io.py` | Write all output files (CSV, NPZ, JSON) |
 | `cli.py` | `argparse` CLI; `build_config()` maps args → `ScanConfig` |
 | `utils.py` | Text cleaning, device selection, column merging |
@@ -132,6 +132,7 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 | `taxonomy.py` | Parse `labels.csv` into `TaxonomyLabel(code, group, term)` records |
 | `catalog.py` | Build a `LabelCatalog` (label strings + embedding texts) |
 | `projection.py` | Map predicted label indices → `(term, group, code)` output fields |
+| `behavior_keywords.py` | ICD-O behavior code keyword lists and scorer — used by `--categorization-mode group-keyword` |
 | `enrichment.py` | Blend label embeddings toward confirmed-case centroids (experimental) |
 | `labels.csv` | Vet-ICD-O-canine-1 taxonomy: ~857 terms across 44 cancer groups |
 

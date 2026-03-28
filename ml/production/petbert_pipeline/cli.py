@@ -149,6 +149,18 @@ def build_parser() -> argparse.ArgumentParser:
             f"(default: {config.CALIBRATION_OFFSETS_JSON})"
         ),
     )
+    parser.add_argument(
+        "--categorization-mode",
+        default="default",
+        choices=["default", "group-keyword"],
+        help=(
+            "Categorization strategy within the binary-classifier path. "
+            "'group-keyword' uses the top-scoring label's group as Stage 1, "
+            "then ICD-O behavior keyword matching selects the specific term "
+            "within that group (Stage 2). Requires --presence-classifier. "
+            "Aims to convert 'slightly off' predictions into 'good' ones."
+        ),
+    )
     return parser
 
 
@@ -196,6 +208,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         finetuned_model_path=args.finetuned_model_path,
         knn_group_selector_path=args.knn_group_selector,
         calibration_offsets_path=args.calibration_offsets,
+        categorization_mode=args.categorization_mode,
     )
 
 

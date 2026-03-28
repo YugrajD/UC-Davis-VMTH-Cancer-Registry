@@ -32,6 +32,7 @@ class ScanConfig:
     finetuned_model_path: str | None = None
     knn_group_selector_path: str | None = None
     calibration_offsets_path: str | None = None
+    categorization_mode: str = "default"  # "default" | "group-keyword"
 
 
 @dataclass(frozen=True)

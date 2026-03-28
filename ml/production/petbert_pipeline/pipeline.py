@@ -20,7 +20,7 @@ import numpy as np
 import torch
 from sklearn.decomposition import PCA
 
-from .categorization import run_categorization, run_categorization_group, run_categorization_hybrid
+from .categorization import run_categorization, run_categorization_group, run_categorization_group_keyword, run_categorization_hybrid
 from .embedding import cosine_similarity_matrix, embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from model.presence_classifier import PresenceClassifier
 from model.group_classifier import GroupClassifier
@@ -325,17 +325,27 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 dtype=np.float32,
             )
 
-        categorization = run_categorization(
-            texts=texts,
-            text_embeddings=col_emb_list,
-            label_embeddings=active_label_embeddings,
-            labels=label_catalog.labels,
-            embedding_min_sim=config.embedding_min_sim,
-            col_has_content=col_has_content_list,
-            max_predictions=5,
-            score_matrix=presence_score_matrix,
-            label_offsets=label_offsets,
-        )
+        if config.categorization_mode == "group-keyword" and presence_score_matrix is not None:
+            categorization = run_categorization_group_keyword(
+                texts=texts,
+                score_matrix=presence_score_matrix,
+                taxonomy_labels=label_catalog.taxonomy_labels,
+                labels=label_catalog.labels,
+                embedding_min_sim=config.embedding_min_sim,
+                max_predictions=5,
+            )
+        else:
+            categorization = run_categorization(
+                texts=texts,
+                text_embeddings=col_emb_list,
+                label_embeddings=active_label_embeddings,
+                labels=label_catalog.labels,
+                embedding_min_sim=config.embedding_min_sim,
+                col_has_content=col_has_content_list,
+                max_predictions=5,
+                score_matrix=presence_score_matrix,
+                label_offsets=label_offsets,
+            )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------
     all_k_terms: list[list[str]] = []

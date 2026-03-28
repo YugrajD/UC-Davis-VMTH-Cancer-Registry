@@ -100,18 +100,16 @@ Keyword matching against a curated dictionary. Fast, no model required.
 
 ### `annotation/llm_pipeline/` — LLM-assisted label annotation (authoritative)
 
-Uses a four-tier cascade (exact match → fuzzy → Ollama LLM → Claude API) to annotate
+Uses a three-tier cascade (exact match → fuzzy → Ollama LLM) to annotate
 diagnoses. The LLM is called only for rows that contain a cancer signal term (~15% of
-rows); the optional Claude tier handles the small remainder Ollama cannot resolve.
-Handles negation, hedged language, and abbreviations.
+rows). Handles negation, hedged language, and abbreviations.
 
 | File | Role |
 |---|---|
-| `pipeline.py` | Tiers 1–4, prompt builders, summary writer |
+| `pipeline.py` | Tiers 1–3, prompt builders, summary writer |
 | `client.py` | Ollama HTTP client |
-| `client_claude.py` | Claude API client (Tier 4, opt-in with `--use-claude`) |
-| `cli.py` | CLI with `--list-models`, `--compare-models`, `--model`, `--use-claude` |
-| `.env` | `TAILSCALE_IP`, `API_PORT`, `OLLAMA_MODEL`, `CLAUDE_MODEL` |
+| `cli.py` | CLI with `--list-models`, `--compare-models`, `--model` |
+| `.env` | `TAILSCALE_IP`, `API_PORT`, `OLLAMA_MODEL` |
 
 ### `evaluation/evaluate.py` — Verdict scoring
 

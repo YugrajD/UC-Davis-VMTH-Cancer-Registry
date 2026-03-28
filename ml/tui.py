@@ -122,15 +122,13 @@ class AnnotateView(Static):
     def compose(self) -> ComposeResult:
         yield Label("Method")
         yield Select(
-            [("keyword — fast rule-based", "keyword"), ("llm — Ollama/Claude", "llm")],
+            [("keyword — fast rule-based", "keyword"), ("llm — Ollama", "llm")],
             value="keyword", id="ann-method",
         )
         yield Label("Ollama model  [dim](llm only)[/]")
         yield Input(placeholder="e.g. mistral", id="ann-llm-model")
         yield Label("LLM timeout (s)  [dim](llm only)[/]")
         yield Input(value="60", id="ann-llm-timeout")
-        yield Label("Use Claude fallback  [dim](llm only)[/]")
-        yield Switch(value=False, id="ann-use-claude")
         yield Button("Run Annotation", id="btn-annotate-run", variant="primary")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -146,8 +144,6 @@ class AnnotateView(Static):
             timeout = self.query_one("#ann-llm-timeout", Input).value.strip()
             if timeout:
                 cmd += ["--llm-timeout", timeout]
-            if self.query_one("#ann-use-claude", Switch).value:
-                cmd.append("--use-claude")
         self.app.run_cmd(cmd)
 
 

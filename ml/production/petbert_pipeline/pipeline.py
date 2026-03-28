@@ -35,8 +35,7 @@ from .io import (
     write_summary_json,
     write_visualization_csv,
 )
-from ICD_labels.catalog import label_catalog_for_config
-from ICD_labels.projection import resolve_taxonomy_matches
+from ICD_labels import label_catalog_for_config, resolve_taxonomy_matches
 from .types import ScanConfig, ScanOutputs
 from .utils import clean_text, device_from_arg, merge_report_columns
 
@@ -183,7 +182,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         # keyword-confirmed cases (pulled from the just-computed mean embeddings).
         enriched_label_embeddings = None
         if config.enrich_labels_csv_path is not None:
-            from ICD_labels.enrichment import compute_enriched_label_embeddings
+            from ICD_labels import compute_enriched_label_embeddings
             enriched_label_embeddings = compute_enriched_label_embeddings(
                 label_embeddings,
                 label_catalog.labels,

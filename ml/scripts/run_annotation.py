@@ -37,6 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
 
+from annotation import keyword_main, llm_main
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -55,11 +57,8 @@ def main() -> int:
     # Delegate to the appropriate pipeline CLI with remaining args
     sys.argv = [sys.argv[0]] + remaining
     if args.method == "keyword":
-        from annotation.keyword_pipeline.cli import main as _main
-    else:
-        from annotation.llm_pipeline.cli import main as _main
-
-    return _main()
+        return keyword_main()
+    return llm_main()
 
 
 if __name__ == "__main__":

@@ -31,9 +31,8 @@ import torch
 
 import config
 from model.presence_classifier import PresenceClassifier
-from production.petbert_pipeline.embedding_cache import load_cache
-from production.petbert_pipeline.utils import device_from_arg
-from ICD_labels.catalog import label_catalog_for_config
+from production.petbert_pipeline import device_from_arg, load_cache
+from ICD_labels import label_catalog_for_config
 
 
 _OFFSET_GRID = np.linspace(-0.3, 0.3, 61, dtype=np.float32)

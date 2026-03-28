@@ -27,11 +27,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ICD_labels.behavior_keywords import best_behavior
+from ICD_labels import best_behavior
 from .embedding import cosine_similarity_matrix
 
 if TYPE_CHECKING:
-    from ICD_labels.taxonomy import TaxonomyLabel
+    from ICD_labels import TaxonomyLabel
 
 
 @dataclass(frozen=True)

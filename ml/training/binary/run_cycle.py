@@ -32,8 +32,7 @@ import config
 from model.constants import DEFAULT_TEXT_COLS
 from production.petbert_pipeline import run_scan, ScanConfig
 from training.binary.build_training_pairs import build_pairs
-from evaluation.evaluate import evaluate
-from evaluation.log_evaluation import log_evaluation
+from evaluation import evaluate, log_evaluation
 from training.binary.train import train
 from training.binary.update_co_bank import update_co_bank
 

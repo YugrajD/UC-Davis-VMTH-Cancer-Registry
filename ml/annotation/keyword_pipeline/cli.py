@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--csv",
-        default="database/data/output/diagnoses.csv",
+        default=config.DIAGNOSES_CSV,
         help="Path to input diagnoses CSV.",
     )
     parser.add_argument("--id-col", default="case_id", help="Case ID column name.")

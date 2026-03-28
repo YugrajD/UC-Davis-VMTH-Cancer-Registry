@@ -10,6 +10,7 @@ scipy==1.17.1
 huggingface_hub==0.36.2
 safetensors==0.7.0
 tokenizers==0.20.3
+datasets>=4.8.4
 
 # Utilities
 tqdm==4.67.3

@@ -18,7 +18,7 @@ from itertools import permutations as _permutations
 
 import pandas as pd
 
-from ICD_labels.taxonomy import TaxonomyLabel, load_labels_taxonomy
+from ICD_labels import TaxonomyLabel, load_labels_taxonomy
 from annotation.keyword_pipeline.pipeline import (
     _normalize,
     _build_keyword_index,

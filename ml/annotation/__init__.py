@@ -19,3 +19,15 @@ def annotate_keyword() -> None:
         labels_csv_path=config.LABELS_CSV,
         out_dir=config.KEYWORD_ANNOTATION_DIR,
     )
+
+
+def keyword_main() -> int:
+    """Entry point for the keyword annotation CLI (deferred import)."""
+    from annotation.keyword_pipeline.cli import main
+    return main()
+
+
+def llm_main() -> int:
+    """Entry point for the LLM annotation CLI (deferred import)."""
+    from annotation.llm_pipeline.cli import main
+    return main()

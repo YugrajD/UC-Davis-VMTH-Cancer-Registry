@@ -33,23 +33,12 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import config
+from production.petbert_pipeline import device_from_arg
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _device_from_arg(device: str) -> torch.device:
-    if device != "auto":
-        return torch.device(device)
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if hasattr(torch, "xpu") and torch.xpu.is_available():
-        return torch.device("xpu")
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
 
 def _mean_pool(last_hidden_state: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
     """Mean-pool over non-padding tokens. Matches embedding.py exactly."""
@@ -231,14 +220,12 @@ def train(
     max_length: int = 256,
     device_arg: str = "auto",
     local_only: bool = False,
-    warmup_ratio: float = 0.06,
-    weight_decay: float = 0.01,
     hard_neg_csv: str | None = None,
     hard_neg_weight: float = 0.5,
     hard_neg_margin: float = 0.3,
 ) -> None:
 
-    device = _device_from_arg(device_arg)
+    device = device_from_arg(device_arg)
     print(f"Device: {device}")
 
     # --- Load tokenizer and model -------------------------------------------
@@ -286,10 +273,10 @@ def train(
             print(f"  Hard-neg weight={hard_neg_weight}, margin={hard_neg_margin}")
 
     # --- Optimiser and scheduler --------------------------------------------
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
 
     total_steps  = len(loader) * epochs
-    warmup_steps = max(1, int(total_steps * warmup_ratio))
+    warmup_steps = max(1, int(total_steps * 0.06))
 
     def _lr_lambda(step: int) -> float:
         if step < warmup_steps:

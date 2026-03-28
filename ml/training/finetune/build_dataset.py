@@ -184,7 +184,7 @@ def build_dataset(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--reports-csv", default="database/data/output/report.csv")
+    parser.add_argument("--reports-csv", default=config.REPORTS_CSV)
     parser.add_argument("--predictions-csv", default=config.KEYWORD_ANNOTATION_CSV)
     parser.add_argument("--labels-csv", default=config.LABELS_CSV)
     parser.add_argument("--out-dir", default=config.FINETUNE_DATASET_DIR)

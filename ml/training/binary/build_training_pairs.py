@@ -27,7 +27,7 @@ import pandas as pd
 import config
 from ICD_labels import load_labels_taxonomy
 from model.constants import DEFAULT_TEXT_COLS
-from production.petbert_pipeline.utils import clean_text, merge_report_columns
+from production.petbert_pipeline import clean_text, merge_report_columns
 
 
 def load_csv(path: Path) -> list[dict]:

@@ -189,7 +189,7 @@ def train(
     # --- Load or compute embeddings --------------------------------------
     cache = None
     if embedding_cache:
-        from production.petbert_pipeline.embedding_cache import load_cache
+        from production.petbert_pipeline import load_cache
         cache = load_cache(
             embedding_cache,
             model_name=model_name,

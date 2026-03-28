@@ -11,6 +11,7 @@ import asyncio
 import csv
 from pathlib import Path
 
+import config
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -21,22 +22,22 @@ from textual.widgets import (
 )
 
 # ---------------------------------------------------------------------------
-# Path constants  (mirrors ml/config.py — local copy avoids heavy imports)
+# Path constants
 # ---------------------------------------------------------------------------
 _ROOT    = Path(__file__).parent.parent
 _PYTHON  = str(Path(__file__).parent / ".venv" / "Scripts" / "python.exe")
 _SCRIPTS = Path(__file__).parent / "scripts"
 
-CHECKPOINT_CONTRASTIVE = "ml/output/checkpoints/contrastive"
-CHECKPOINT_BINARY      = "ml/output/checkpoints/binary"
-KEYWORD_ANNOTATION_CSV = "ml/output/annotation/keyword/keyword_annotation.csv"
-CO_NEG_BANK_CSV        = "ml/output/training/binary/evaluation_co_bank.csv"
-EVAL_HISTORY_CSV       = "ml/output/evaluation/contrastive/evaluation_history.csv"
+CHECKPOINT_CONTRASTIVE = config.CHECKPOINT_CONTRASTIVE_DIR
+CHECKPOINT_BINARY      = config.CHECKPOINT_BINARY_DIR
+KEYWORD_ANNOTATION_CSV = config.KEYWORD_ANNOTATION_CSV
+CO_NEG_BANK_CSV        = f"{config.OUTPUT_TRAINING_DIR}/binary/evaluation_co_bank.csv"
+EVAL_HISTORY_CSV       = f"{config.OUTPUT_EVALUATION_DIR}/contrastive/evaluation_history.csv"
 
 _COLD_START_FILES = [
-    "ml/data/embedding_cache.npz",
-    "ml/output/training/contrastive/evaluation_co_bank.csv",
-    "ml/output/checkpoints/contrastive/presence_classifier_current.pt",
+    config.EMBEDDING_CACHE_NPZ,
+    f"{config.OUTPUT_TRAINING_DIR}/contrastive/evaluation_co_bank.csv",
+    f"{config.CHECKPOINT_CONTRASTIVE_DIR}/presence_classifier_current.pt",
 ]
 
 _DEVICE_OPTIONS: list[tuple[str, str]] = [

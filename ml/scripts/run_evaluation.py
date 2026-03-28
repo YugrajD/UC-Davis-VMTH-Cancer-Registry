@@ -18,8 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
 import config
-from evaluation.evaluate import evaluate
-from evaluation.log_evaluation import log_evaluation
+from evaluation import evaluate, log_evaluation
 
 
 def main() -> int:

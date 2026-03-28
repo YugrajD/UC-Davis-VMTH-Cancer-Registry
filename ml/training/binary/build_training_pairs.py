@@ -1,6 +1,6 @@
 """Build training pairs for the binary presence classifier.
 
-Produces ml/data/training_pairs.csv — one row per (case, taxonomy label) pair
+Produces ml/output/training/binary/training_pairs.csv — one row per (case, taxonomy label) pair
 with a binary target: 1 if the label is a confirmed diagnosis, 0 otherwise.
 
 Five sources of examples:

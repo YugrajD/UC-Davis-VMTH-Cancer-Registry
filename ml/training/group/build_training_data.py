@@ -1,7 +1,7 @@
 """Build training data for the GroupClassifier.
 
 Reads:
-  - ml/data/embedding_cache.npz                         -- embeddings and case_ids
+  - ml/output/training/embedding_cache.npz                         -- embeddings and case_ids
   - ml/output/annotation/llm/llm_annotation.csv  -- ground-truth (case_id, matched_group)
 
 Produces:
@@ -19,7 +19,7 @@ clinic population where ~18% cancer prevalence is expected.
 Usage:
   python ml/training/group/build_training_data.py
   python ml/training/group/build_training_data.py \\
-      --embedding-cache ml/data/embedding_cache.npz \\
+      --embedding-cache ml/output/training/embedding_cache.npz \\
       --expectation-csv ml/output/annotation/llm/llm_annotation.csv \\
       --out ml/output/training/group/group_training_data.npz
 """
@@ -46,7 +46,7 @@ def build_training_data(
     if not Path(cache_path).exists():
         print(f"ERROR: cache not found at {cache_path}")
         print("Run the PetBERT scan first to generate the embedding cache:")
-        print("  ml/.venv/Scripts/python.exe -m petbert_pipeline --embedding-cache ml/data/embedding_cache.npz --local-only")
+        print("  ml/.venv/Scripts/python.exe -m petbert_pipeline --embedding-cache ml/output/training/embedding_cache.npz --local-only")
         sys.exit(1)
 
     cache = np.load(cache_path, allow_pickle=True)

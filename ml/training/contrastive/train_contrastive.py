@@ -372,7 +372,7 @@ def train(
 
     print("\nDone.")
     print("Next steps (cold start required — embedding space has changed):")
-    print("  1. rm -f ml/data/embedding_cache.npz")
+    print("  1. rm -f ml/output/training/embedding_cache.npz")
     print("  2. rm -f ml/output/training/contrastive/evaluation_co_bank.csv")
     print("  3. rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt")
     print(f"  4. Add --model {out_dir} --local-only to all pipeline/training calls.")

@@ -27,11 +27,11 @@ LLM_ANNOTATION_CSV = f"{LLM_ANNOTATION_DIR}/llm_annotation.csv"
 # ---------------------------------------------------------------------------
 # Training intermediates
 # ---------------------------------------------------------------------------
-EMBEDDING_CACHE_NPZ = "ml/data/embedding_cache.npz"
-TRAINING_PAIRS_CSV = "ml/data/training_pairs.csv"
-CONTRASTIVE_PAIRS_CSV = "ml/data/contrastive_pairs.csv"
-HARD_NEG_PAIRS_CSV = "ml/data/hard_neg_pairs.csv"
-FINETUNE_DATASET_DIR = "ml/data/finetune_dataset"
+EMBEDDING_CACHE_NPZ = "ml/output/training/embedding_cache.npz"
+TRAINING_PAIRS_CSV = "ml/output/training/binary/training_pairs.csv"
+CONTRASTIVE_PAIRS_CSV = "ml/output/training/contrastive/contrastive_pairs.csv"
+HARD_NEG_PAIRS_CSV = "ml/output/training/contrastive/hard_neg_pairs.csv"
+FINETUNE_DATASET_DIR = "ml/output/training/finetune/dataset"
 
 # ---------------------------------------------------------------------------
 # Model checkpoints

@@ -14,7 +14,7 @@ Usage:
 After training, run the PetBERT pipeline with:
   ml/.venv/bin/python3 -m petbert_pipeline \\
       --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \\
-      --embedding-cache ml/data/embedding_cache.npz \\
+      --embedding-cache ml/output/training/embedding_cache.npz \\
       --local-only
 
 Note: group_classifier_current.pt is overwritten each run (best epoch within the run).

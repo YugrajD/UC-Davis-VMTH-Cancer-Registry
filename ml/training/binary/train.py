@@ -12,9 +12,9 @@ Steps:
   7. Save the best checkpoint (by validation F1) to ml/output/checkpoints/.
 
 Usage:
-  python ml/training/binary/train.py --embedding-cache ml/data/embedding_cache.npz
-  python ml/training/binary/train.py --embedding-cache ml/data/embedding_cache.npz --epochs 40
-  python ml/training/binary/train.py --skip-prerequisites --embedding-cache ml/data/embedding_cache.npz
+  python ml/training/binary/train.py --embedding-cache ml/output/training/embedding_cache.npz
+  python ml/training/binary/train.py --embedding-cache ml/output/training/embedding_cache.npz --epochs 40
+  python ml/training/binary/train.py --skip-prerequisites --embedding-cache ml/output/training/embedding_cache.npz
 """
 
 import argparse

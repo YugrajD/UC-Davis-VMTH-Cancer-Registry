@@ -201,7 +201,7 @@ class TrainingView(VerticalScroll):
             yield Label("Skip pair build"); yield Switch(value=False, id="bb-skip-pairs")
             yield Label("[dim]── Hard negatives (optional) ──[/]")
             yield Label("Hard-neg CSV  [dim](leave blank to skip)[/]")
-            yield Input(placeholder="ml/data/hard_neg_pairs.csv", id="bb-hard-csv")
+            yield Input(placeholder="ml/output/training/contrastive/hard_neg_pairs.csv", id="bb-hard-csv")
             yield Label("Weight"); yield Input(value="0.5", id="bb-hard-weight")
             yield Label("Margin"); yield Input(value="0.3", id="bb-hard-margin")
             yield Button("Run Fine-tune", id="btn-backbone-run", variant="primary")

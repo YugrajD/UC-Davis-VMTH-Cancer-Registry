@@ -13,6 +13,8 @@ This is the main entry point for the data categorization pipeline. The high-leve
   7.   Write all results to CSV / NPZ / JSON output files.
 """
 
+import json
+
 import pandas as pd
 import numpy as np
 import torch
@@ -312,6 +314,17 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             classifier.cpu()
             del classifier
 
+        # Optional: load per-label calibration offsets.
+        label_offsets = None
+        if config.calibration_offsets_path is not None:
+            print(f"Loading calibration offsets from {config.calibration_offsets_path}...")
+            with open(config.calibration_offsets_path, encoding="utf-8") as f:
+                offset_dict = json.load(f)
+            label_offsets = np.array(
+                [offset_dict.get(lbl, 0.0) for lbl in label_catalog.labels],
+                dtype=np.float32,
+            )
+
         categorization = run_categorization(
             texts=texts,
             text_embeddings=col_emb_list,
@@ -321,6 +334,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             col_has_content=col_has_content_list,
             max_predictions=5,
             score_matrix=presence_score_matrix,
+            label_offsets=label_offsets,
         )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------

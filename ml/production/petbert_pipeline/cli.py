@@ -138,6 +138,17 @@ def build_parser() -> argparse.ArgumentParser:
             "group. No training required. Mutually exclusive with --group-classifier."
         ),
     )
+    parser.add_argument(
+        "--calibration-offsets",
+        default=None,
+        help=(
+            f"Path to label_offsets.json produced by --mode calibrate. "
+            f"When set, per-label score offsets are applied after mean-centering "
+            f"to correct systematic bias in the score distribution. "
+            f"Only affects the binary run_categorization() path. "
+            f"(default: {config.CALIBRATION_OFFSETS_JSON})"
+        ),
+    )
     return parser
 
 
@@ -184,6 +195,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         group_classifier_threshold=args.group_classifier_threshold,
         finetuned_model_path=args.finetuned_model_path,
         knn_group_selector_path=args.knn_group_selector,
+        calibration_offsets_path=args.calibration_offsets,
     )
 
 

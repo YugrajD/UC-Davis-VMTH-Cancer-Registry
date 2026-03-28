@@ -53,6 +53,7 @@ def run_categorization(
     col_has_content: list[np.ndarray] | None = None,
     max_predictions: int = 5,
     score_matrix: np.ndarray | None = None,
+    label_offsets: np.ndarray | None = None,
 ) -> CategorizationResult:
     """Categorize each diagnosis by similarity to taxonomy label embeddings.
 
@@ -64,6 +65,10 @@ def run_categorization(
     If ``score_matrix`` is provided (shape N×M), it is used directly instead of
     computing cosine similarity — e.g. when the presence classifier has already
     produced a pre-scored (N, M) probability matrix.
+
+    If ``label_offsets`` is provided (shape (M,)), each value is added to the
+    corresponding label's centered score before argmax — implements per-label
+    calibration computed by ``training.binary.calibrate``.
     """
     if score_matrix is not None:
         sims = score_matrix
@@ -90,6 +95,9 @@ def run_categorization(
         / np.maximum(finite_mask.sum(axis=0), 1)
     )
     sims = sims - label_means[np.newaxis, :]
+
+    if label_offsets is not None:
+        sims = sims + label_offsets[np.newaxis, :]
 
     top_idx = np.argmax(sims, axis=1)
     top_scores = sims[np.arange(len(top_idx)), top_idx].astype(np.float32, copy=False)

@@ -51,6 +51,11 @@ OUTPUT_EVALUATION_DIR = "ml/output/evaluation"
 OUTPUT_PRODUCTION_DIR = "ml/output/production"
 PETBERT_SCAN_OUTPUT_DIR = "ml/output/report"  # default for standalone petbert_pipeline CLI
 
+# ---------------------------------------------------------------------------
+# Calibration outputs
+# ---------------------------------------------------------------------------
+CALIBRATION_OFFSETS_JSON = "ml/output/calibration/label_offsets.json"
+
 # Derived structured outputs (build paths programmatically from the dirs above
 # rather than hardcoding every leaf; see run_cycle.py for the pattern)
 GROUP_TRAINING_DATA_NPZ = "ml/output/training/group/group_training_data.npz"

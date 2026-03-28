@@ -19,12 +19,18 @@ Modes
   build-knn          Build a K-nearest-neighbour lookup structure from the
                      embedding cache for group-based gating.
 
+  calibrate          One-shot: compute per-label score offsets that correct for
+                     systematic bias in the score distribution after mean-centering.
+                     Saves ml/output/calibration/label_offsets.json; apply at
+                     inference with --calibration-offsets in run_production.py.
+
 Usage
 -----
   python ml/scripts/run_training.py --mode train-classifier --label "c1"
   python ml/scripts/run_training.py --mode adapt-backbone --device xpu --local-only
   python ml/scripts/run_training.py --mode train-groups --device xpu
   python ml/scripts/run_training.py --mode build-knn
+  python ml/scripts/run_training.py --mode calibrate --device xpu
 """
 
 import argparse
@@ -52,14 +58,15 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=["train-classifier", "train-groups", "adapt-backbone", "build-knn"],
+        choices=["train-classifier", "train-groups", "adapt-backbone", "build-knn", "calibrate"],
         default="train-classifier",
         help=(
             "What to train: "
             "train-classifier (label presence model, iterative — default), "
             "train-groups (group classifier, one-shot), "
             "adapt-backbone (fine-tune embedding model), "
-            "build-knn (K-nearest-neighbour lookup)."
+            "build-knn (K-nearest-neighbour lookup), "
+            "calibrate (per-label score offsets, one-shot)."
         ),
     )
     parser.add_argument(
@@ -169,7 +176,7 @@ def main() -> int:
     #   1. Annotation file already exists → skip (unless --force-reannotate).
     #   2. Default keyword annotation file is missing → auto-run keyword annotation.
     #   3. A custom annotation file is missing → error (user must annotate first).
-    if args.mode in ("train-classifier", "train-groups", "adapt-backbone"):
+    if args.mode in ("train-classifier", "train-groups", "adapt-backbone", "calibrate"):
         annotation_path = Path(args.annotation_csv)
         is_default_keyword_file = (
             annotation_path.resolve() == Path(config.KEYWORD_ANNOTATION_CSV).resolve()
@@ -284,6 +291,15 @@ def main() -> int:
         )
         selector.save(args.knn_out)
         print(f"Saved KNN lookup to {args.knn_out}")
+
+    elif args.mode == "calibrate":
+        print("\n=== Calibrate per-label score offsets ===")
+        from training.binary.calibrate import calibrate
+        calibrate(
+            annotation_csv=args.annotation_csv,
+            model_path=None if args.model == "SAVSNET/PetBERT" else args.model,
+            device_arg=args.device,
+        )
 
     return 0
 

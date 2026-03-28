@@ -30,8 +30,6 @@ class ScanConfig:
     group_classifier_path: str | None = None
     group_classifier_threshold: float = 0.3
     finetuned_model_path: str | None = None
-    knn_group_selector_path: str | None = None
-    calibration_offsets_path: str | None = None
     categorization_mode: str = "default"  # "default" | "group-keyword"
 
 

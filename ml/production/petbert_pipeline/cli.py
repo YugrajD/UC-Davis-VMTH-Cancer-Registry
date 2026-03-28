@@ -129,27 +129,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--knn-group-selector",
-        default=None,
-        help=(
-            "Path to a KnnGroupSelector npz built by ml/scripts/build_knn_selector.py. "
-            "Uses K-nearest-neighbour retrieval on per-column embeddings to predict "
-            "cancer group(s), then cosine similarity selects the best term within each "
-            "group. No training required. Mutually exclusive with --group-classifier."
-        ),
-    )
-    parser.add_argument(
-        "--calibration-offsets",
-        default=None,
-        help=(
-            f"Path to label_offsets.json produced by --mode calibrate. "
-            f"When set, per-label score offsets are applied after mean-centering "
-            f"to correct systematic bias in the score distribution. "
-            f"Only affects the binary run_categorization() path. "
-            f"(default: {config.CALIBRATION_OFFSETS_JSON})"
-        ),
-    )
-    parser.add_argument(
         "--categorization-mode",
         default="default",
         choices=["default", "group-keyword"],
@@ -206,8 +185,6 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         group_classifier_path=args.group_classifier,
         group_classifier_threshold=args.group_classifier_threshold,
         finetuned_model_path=args.finetuned_model_path,
-        knn_group_selector_path=args.knn_group_selector,
-        calibration_offsets_path=args.calibration_offsets,
         categorization_mode=args.categorization_mode,
     )
 

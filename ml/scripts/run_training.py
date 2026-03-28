@@ -16,21 +16,11 @@ Modes
                      and cancer label text land closer together in vector space.
                      Run once; then cold-start and retrain with train-classifier.
 
-  build-knn          Build a K-nearest-neighbour lookup structure from the
-                     embedding cache for group-based gating.
-
-  calibrate          One-shot: compute per-label score offsets that correct for
-                     systematic bias in the score distribution after mean-centering.
-                     Saves ml/output/calibration/label_offsets.json; apply at
-                     inference with --calibration-offsets in run_production.py.
-
 Usage
 -----
   python ml/scripts/run_training.py --mode train-classifier --label "c1"
   python ml/scripts/run_training.py --mode adapt-backbone --device xpu --local-only
   python ml/scripts/run_training.py --mode train-groups --device xpu
-  python ml/scripts/run_training.py --mode build-knn
-  python ml/scripts/run_training.py --mode calibrate --device xpu
 """
 
 import argparse
@@ -48,8 +38,6 @@ from training.group.build_training_data import build_training_data
 from training.group.train import train as train_group
 from training.contrastive.build_contrastive_dataset import build_contrastive_pairs
 from training.contrastive.train_contrastive import train as train_contrastive
-from model.knn_group_selector import KnnGroupSelector
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -58,15 +46,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=["train-classifier", "train-groups", "adapt-backbone", "build-knn", "calibrate"],
+        choices=["train-classifier", "train-groups", "adapt-backbone"],
         default="train-classifier",
         help=(
             "What to train: "
             "train-classifier (label presence model, iterative — default), "
             "train-groups (group classifier, one-shot), "
-            "adapt-backbone (fine-tune embedding model), "
-            "build-knn (K-nearest-neighbour lookup), "
-            "calibrate (per-label score offsets, one-shot)."
+            "adapt-backbone (fine-tune embedding model)."
         ),
     )
     parser.add_argument(
@@ -153,20 +139,6 @@ def main() -> int:
     parser.add_argument("--hard-neg-margin", type=float, default=0.3,
                         help="[adapt-backbone] Margin for hard-negative loss (default: 0.3)")
 
-    # ------------------------------------------------------------------
-    # build-knn args
-    # ------------------------------------------------------------------
-    parser.add_argument("--knn-cache", default=config.EMBEDDING_CACHE_NPZ,
-                        help=f"[build-knn] Embedding cache file (default: {config.EMBEDDING_CACHE_NPZ})")
-    parser.add_argument("--knn-out", default=config.KNN_SELECTOR_NPZ,
-                        help="[build-knn] Output path for the KNN lookup structure")
-    parser.add_argument("--knn-k", type=int, default=10,
-                        help="[build-knn] Nearest neighbours to vote with (default: 10)")
-    parser.add_argument("--knn-min-cases", type=int, default=10,
-                        help="[build-knn] Drop groups with fewer confirmed cases (default: 10)")
-    parser.add_argument("--knn-mean-only", action="store_true",
-                        help="[build-knn] Use mean embeddings (768-dim) instead of per-column (2304-dim)")
-
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
@@ -176,7 +148,7 @@ def main() -> int:
     #   1. Annotation file already exists → skip (unless --force-reannotate).
     #   2. Default keyword annotation file is missing → auto-run keyword annotation.
     #   3. A custom annotation file is missing → error (user must annotate first).
-    if args.mode in ("train-classifier", "train-groups", "adapt-backbone", "calibrate"):
+    if args.mode in ("train-classifier", "train-groups", "adapt-backbone"):
         annotation_path = Path(args.annotation_csv)
         is_default_keyword_file = (
             annotation_path.resolve() == Path(config.KEYWORD_ANNOTATION_CSV).resolve()
@@ -279,27 +251,6 @@ def main() -> int:
         print(f"  rm -f {config.OUTPUT_TRAINING_DIR}/contrastive/evaluation_co_bank.csv")
         print(f"  rm -f {args.backbone_out_dir}/presence_classifier_current.pt")
         print(f"Then retrain with: --mode train-classifier --model {args.backbone_out_dir} --local-only")
-
-    elif args.mode == "build-knn":
-        print("\n=== Build KNN group lookup ===")
-        selector = KnnGroupSelector.build(
-            cache_path=args.knn_cache,
-            labels_csv_path=args.annotation_csv,
-            k=args.knn_k,
-            per_column=not args.knn_mean_only,
-            min_group_cases=args.knn_min_cases,
-        )
-        selector.save(args.knn_out)
-        print(f"Saved KNN lookup to {args.knn_out}")
-
-    elif args.mode == "calibrate":
-        print("\n=== Calibrate per-label score offsets ===")
-        from training.binary.calibrate import calibrate
-        calibrate(
-            annotation_csv=args.annotation_csv,
-            model_path=None if args.model == "SAVSNET/PetBERT" else args.model,
-            device_arg=args.device,
-        )
 
     return 0
 

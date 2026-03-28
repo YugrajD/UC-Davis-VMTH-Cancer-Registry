@@ -39,9 +39,7 @@ FINETUNE_DATASET_DIR = "ml/data/finetune_dataset"
 CHECKPOINT_BINARY_DIR = "ml/output/checkpoints/binary"
 CHECKPOINT_CONTRASTIVE_DIR = "ml/output/checkpoints/contrastive"
 CHECKPOINT_GROUP_DIR = "ml/output/checkpoints/group"
-CHECKPOINT_KNN_DIR = "ml/output/checkpoints/knn_selector"
 CHECKPOINT_FINETUNE_DIR = "ml/output/checkpoints/finetune"
-KNN_SELECTOR_NPZ = "ml/output/checkpoints/knn_selector/knn_group_selector.npz"
 
 # ---------------------------------------------------------------------------
 # Output directories
@@ -50,11 +48,6 @@ OUTPUT_TRAINING_DIR = "ml/output/training"
 OUTPUT_EVALUATION_DIR = "ml/output/evaluation"
 OUTPUT_PRODUCTION_DIR = "ml/output/production"
 PETBERT_SCAN_OUTPUT_DIR = "ml/output/report"  # default for standalone petbert_pipeline CLI
-
-# ---------------------------------------------------------------------------
-# Calibration outputs
-# ---------------------------------------------------------------------------
-CALIBRATION_OFFSETS_JSON = "ml/output/calibration/label_offsets.json"
 
 # Derived structured outputs (build paths programmatically from the dirs above
 # rather than hardcoding every leaf; see run_cycle.py for the pattern)

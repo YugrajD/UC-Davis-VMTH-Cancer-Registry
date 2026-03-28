@@ -26,6 +26,13 @@ import numpy as np
 from ICD_labels import best_behavior
 from .embedding import cosine_similarity_matrix
 
+
+def _behavior_digit(code: str) -> str:
+    """Return the ICD-O behavior digit from a code string like '8000/3' → '3'."""
+    parts = code.split("/")
+    return parts[-1][0] if len(parts) > 1 and parts[-1] else ""
+
+
 if TYPE_CHECKING:
     from ICD_labels import TaxonomyLabel
 
@@ -251,7 +258,9 @@ def run_categorization_group(
             top_k_methods.append(["low_confidence"])
             continue
 
-        # For each predicted group, pick the best term by cosine similarity
+        # For each predicted group, pick the best term by behavior keyword filtering
+        # then cosine similarity within the filtered pool (same approach as group-keyword mode).
+        behavior = best_behavior(text)
         k_idxs: list[int] = []
         k_scores: list[float] = []
         k_meths: list[str] = []
@@ -261,12 +270,16 @@ def run_categorization_group(
             label_idxs = group_to_label_indices.get(group_name, [])
             if not label_idxs:
                 continue
-            group_embs = label_embeddings[label_idxs]  # (k, 768)
-            sims = cosine_similarity_matrix(
-                mean_embeddings[i : i + 1], group_embs
+            filtered: list[int] = []
+            if behavior:
+                filtered = [j for j in label_idxs if _behavior_digit(taxonomy_labels[j].code) == behavior]
+            pool = filtered if filtered else label_idxs
+            pool_embs = label_embeddings[pool]  # (k, 768)
+            pool_sims = cosine_similarity_matrix(
+                mean_embeddings[i : i + 1], pool_embs
             )[0]  # (k,)
-            best_within = int(np.argmax(sims))
-            best_label_idx = label_idxs[best_within]
+            best_within = int(np.argmax(pool_sims))
+            best_label_idx = pool[best_within]
             k_idxs.append(best_label_idx)
             k_scores.append(float(case_probs[g_idx]))
             k_meths.append("embedding")
@@ -342,11 +355,6 @@ def run_categorization_group_keyword(
     group_to_label_indices: dict[str, list[int]] = {}
     for j, tl in enumerate(taxonomy_labels):
         group_to_label_indices.setdefault(tl.group, []).append(j)
-
-    def _behavior_digit(code: str) -> str:
-        # code format: "8000/3" or "8006.1/1" — digit is first char after "/"
-        parts = code.split("/")
-        return parts[-1][0] if len(parts) > 1 and parts[-1] else ""
 
     final_labels: list[str] = []
     final_indices: list[int] = []

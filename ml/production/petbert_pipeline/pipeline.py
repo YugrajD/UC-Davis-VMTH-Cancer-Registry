@@ -5,12 +5,10 @@ This is the main entry point for the data categorization pipeline. The high-leve
   1.   Load and clean clinical report text from reportText.csv.
   2.   Embed each text column independently with PetBERT (768-dim vector each).
   3.   Load the Vet-ICD-O taxonomy and embed each label the same way.
-  4.   Compare per-column embeddings to label embeddings via cosine similarity;
-       the label with the highest score across any column wins per case.
-  5.   Return the top-k qualifying labels per case (up to 5 above the confidence
-       threshold), or the top-1 as "low_confidence" if none pass.
-  6.   Map the chosen label indices back to ICD-O code, group, and term.
-  7.   Write all results to CSV / NPZ / JSON output files.
+  4.   Score each (case, label) pair with the PresenceClassifier;
+       select top-k labels per case using group-keyword categorization.
+  5.   Map the chosen label indices back to ICD-O code, group, and term.
+  6.   Write all results to CSV / NPZ / JSON output files.
 """
 
 import json
@@ -21,12 +19,11 @@ import torch
 from sklearn.decomposition import PCA
 
 from .categorization import run_categorization, run_categorization_group, run_categorization_group_keyword
-from .embedding import cosine_similarity_matrix, embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
 from model.presence_classifier import PresenceClassifier
 from model.group_classifier import GroupClassifier
 from .io import (
     build_outputs,
-    write_column_scores_csv,
     write_embeddings_npz,
     write_neighbors_csv,
     write_predictions_csv,
@@ -95,7 +92,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             report_csv_path=config.csv_path,
             labels_csv_path=config.labels_csv_path,
             expected_col_names=cols,
-            require_enriched=config.enrich_labels_csv_path is not None,
         )
 
     if cache is not None:
@@ -110,7 +106,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         token_counts    = cache["token_counts"][sel]
         label_catalog   = label_catalog_for_config(config.labels_csv_path)
         label_embeddings = cache["label_embeddings"]
-        enriched_label_embeddings = cache.get("enriched_label_embeddings")
     else:
         # Step 2: Extract text representations (via PetBERT or FineTuned Model)
         # this uses direct classification
@@ -178,19 +173,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             desc="Embedding labels",
         )
 
-        # Optional: enrich label embeddings with the mean report embeddings of
-        # keyword-confirmed cases (pulled from the just-computed mean embeddings).
-        enriched_label_embeddings = None
-        if config.enrich_labels_csv_path is not None:
-            from ICD_labels import compute_enriched_label_embeddings
-            enriched_label_embeddings = compute_enriched_label_embeddings(
-                label_embeddings,
-                label_catalog.labels,
-                config.enrich_labels_csv_path,
-                ids,
-                embeddings,
-            )
-
         # Save cache if a path was provided (cache miss means we just computed)
         if config.embedding_cache_path:
             save_cache(
@@ -205,18 +187,9 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 model_name=config.model_name,
                 report_csv_path=config.csv_path,
                 labels_csv_path=config.labels_csv_path,
-                enriched_label_embeddings=enriched_label_embeddings,
             )
 
     # --- Step 4: Categorize with top-k predictions ---------------------------
-    # Use enriched label embeddings when available (richer context from
-    # keyword-matched diagnoses), otherwise fall back to plain label embeddings.
-    active_label_embeddings = (
-        enriched_label_embeddings
-        if enriched_label_embeddings is not None
-        else label_embeddings
-    )
-
     col_emb_list = [col_embeddings[col] for col in cols]
     col_has_content_list = [col_has_content[col] for col in cols]
 
@@ -248,7 +221,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         categorization = run_categorization_group(
             texts=texts,
             mean_embeddings=embeddings,
-            label_embeddings=active_label_embeddings,
+            label_embeddings=label_embeddings,
             taxonomy_labels=label_catalog.taxonomy_labels,
             labels=label_catalog.labels,
             group_probs=group_probs,
@@ -258,21 +231,20 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         )
 
     else:
-        # Binary-only or cosine-baseline mode.
-        # Optional: use the binary PresenceClassifier to replace cosine similarity scores.
-        presence_score_matrix = None
-        if config.presence_classifier_path is not None:
-            print(f"Loading presence classifier from {config.presence_classifier_path}...")
-            classifier = PresenceClassifier.load(config.presence_classifier_path)
-            classifier.to(torch_device)
-            presence_score_matrix = classifier.score_matrix(
-                torch.from_numpy(col_emb_concat),
-                torch.from_numpy(active_label_embeddings),
-            ).numpy()
-            classifier.cpu()
-            del classifier
+        # Binary-classifier mode — requires --presence-classifier.
+        if config.presence_classifier_path is None:
+            raise ValueError("--presence-classifier is required")
+        print(f"Loading presence classifier from {config.presence_classifier_path}...")
+        classifier = PresenceClassifier.load(config.presence_classifier_path)
+        classifier.to(torch_device)
+        presence_score_matrix = classifier.score_matrix(
+            torch.from_numpy(col_emb_concat),
+            torch.from_numpy(label_embeddings),
+        ).numpy()
+        classifier.cpu()
+        del classifier
 
-        if config.categorization_mode == "group-keyword" and presence_score_matrix is not None:
+        if config.categorization_mode == "group-keyword":
             categorization = run_categorization_group_keyword(
                 texts=texts,
                 score_matrix=presence_score_matrix,
@@ -285,7 +257,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             categorization = run_categorization(
                 texts=texts,
                 text_embeddings=col_emb_list,
-                label_embeddings=active_label_embeddings,
+                label_embeddings=label_embeddings,
                 labels=label_catalog.labels,
                 embedding_min_sim=config.embedding_min_sim,
                 col_has_content=col_has_content_list,
@@ -312,33 +284,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         categorization.final_indices, label_catalog.labels, label_catalog.taxonomy_labels
     )
 
-    # --- Step 6: Compute per-column top predictions for column scores ---------
-    col_top_terms: dict[str, list[str]] = {}
-    col_top_groups: dict[str, list[str]] = {}
-    col_top_codes: dict[str, list[str]] = {}
-    col_top_scores: dict[str, list[float]] = {}
-
-    for col in cols:
-        col_sims = cosine_similarity_matrix(col_embeddings[col], active_label_embeddings)  # (N, M)
-        col_top_idx = np.argmax(col_sims, axis=1)
-        col_top_sc = col_sims[np.arange(n), col_top_idx].astype(np.float32)
-        # Zero out scores for rows where this column was empty
-        col_top_sc[~col_has_content[col]] = 0.0
-        t, g, c = resolve_taxonomy_matches(
-            col_top_idx.tolist(), label_catalog.labels, label_catalog.taxonomy_labels
-        )
-        col_top_terms[col] = t
-        col_top_groups[col] = g
-        col_top_codes[col] = c
-        col_top_scores[col] = col_top_sc.tolist()
-
-    # Mark which column had the highest score per row (decisive column)
-    col_decisive: dict[str, list[bool]] = {col: [False] * n for col in cols}
-    for i in range(n):
-        best_col = max(cols, key=lambda c: col_top_scores[c][i])
-        col_decisive[best_col][i] = True
-
-    # --- Step 7: PCA for 2-D visualization -----------------------------------
+    # --- Step 6: PCA for 2-D visualization -----------------------------------
     pca = PCA(n_components=2, random_state=0)
     pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
 
@@ -385,18 +331,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         pca_2d=pca_2d,
         original_row_indices=row_indices,
         diagnosis_indices=[1] * n,
-    )
-
-    write_column_scores_csv(
-        path=outputs.column_scores_csv,
-        ids=ids,
-        id_col=config.id_col,
-        col_texts=col_texts,
-        col_top_terms=col_top_terms,
-        col_top_groups=col_top_groups,
-        col_top_codes=col_top_codes,
-        col_top_scores=col_top_scores,
-        col_decisive=col_decisive,
     )
 
     if outputs.neighbors_csv is not None:

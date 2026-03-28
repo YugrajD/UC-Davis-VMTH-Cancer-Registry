@@ -22,7 +22,6 @@ def build_outputs(out_dir: str, task: TaskMode) -> ScanOutputs:
         provenance_csv=os.path.join(out_dir, "petbert_provenance.csv"),
         similarity_csv=os.path.join(out_dir, "petbert_similarity_scores.csv"),
         visualization_csv=os.path.join(out_dir, "petbert_visualization.csv"),
-        column_scores_csv=os.path.join(out_dir, "petbert_column_scores.csv"),
         neighbors_csv=neighbors_csv,
         npz=os.path.join(out_dir, "petbert_embeddings.npz"),
         summary_json=os.path.join(out_dir, "petbert_summary.json"),
@@ -68,41 +67,6 @@ def write_predictions_csv(
     pred_df = pd.DataFrame(rows)
     pred_df.to_csv(path, index=False)
     return pred_df
-
-
-def write_column_scores_csv(
-    *,
-    path: str,
-    ids: list[str],
-    id_col: str,
-    col_texts: dict[str, list[str]],
-    col_top_terms: dict[str, list[str]],
-    col_top_groups: dict[str, list[str]],
-    col_top_codes: dict[str, list[str]],
-    col_top_scores: dict[str, list[float]],
-    col_decisive: dict[str, list[bool]],
-) -> None:
-    """Write the per-column similarity score file.
-
-    One row per (case x column). Shows which taxonomy label each text column
-    independently matched best, and which column was decisive (highest score)
-    for each case.
-    """
-    rows = []
-    for i, patient_id in enumerate(ids):
-        for col_name in col_texts:
-            rows.append({
-                "row_index": i,
-                id_col: patient_id,
-                "column_name": col_name,
-                "column_text": col_texts[col_name][i],
-                "top_term": col_top_terms[col_name][i],
-                "top_group": col_top_groups[col_name][i],
-                "top_code": col_top_codes[col_name][i],
-                "top_score": round(col_top_scores[col_name][i], 4),
-                "was_decisive": col_decisive[col_name][i],
-            })
-    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 def write_provenance_csv(

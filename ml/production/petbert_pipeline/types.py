@@ -26,7 +26,6 @@ class ScanConfig:
     labels_csv_path: str
     presence_classifier_path: str | None
     embedding_cache_path: str | None = None
-    enrich_labels_csv_path: str | None = None
     group_classifier_path: str | None = None
     group_classifier_threshold: float = 0.3
     finetuned_model_path: str | None = None
@@ -39,7 +38,6 @@ class ScanOutputs:
     provenance_csv: str
     similarity_csv: str
     visualization_csv: str
-    column_scores_csv: str
     neighbors_csv: str | None
     npz: str
     summary_json: str

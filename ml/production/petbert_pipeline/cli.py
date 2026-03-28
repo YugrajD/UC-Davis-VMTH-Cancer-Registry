@@ -86,17 +86,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--enrich-labels-csv",
-        default=None,
-        help=(
-            "Path to keyword_annotation.csv. When provided, each taxonomy label embedding "
-            "is averaged 50/50 with the mean cached report embedding of its keyword-confirmed "
-            "cases, pulling label representations toward the clinical language in real reports. "
-            "Requires --embedding-cache. Enriched embeddings are stored in the cache so "
-            "subsequent runs reuse them without recomputing."
-        ),
-    )
-    parser.add_argument(
         "--group-classifier",
         default=None,
         help=(
@@ -181,7 +170,6 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         labels_csv_path=args.labels_csv,
         presence_classifier_path=args.presence_classifier,
         embedding_cache_path=args.embedding_cache,
-        enrich_labels_csv_path=args.enrich_labels_csv,
         group_classifier_path=args.group_classifier,
         group_classifier_threshold=args.group_classifier_threshold,
         finetuned_model_path=args.finetuned_model_path,
@@ -196,7 +184,6 @@ def main() -> int:
 
     print("Wrote:")
     print(outputs.predictions_csv)
-    print(outputs.column_scores_csv)
     print(outputs.provenance_csv)
     print(outputs.similarity_csv)
     print(outputs.visualization_csv)

@@ -51,9 +51,15 @@ _ANNOTATION_OPTIONS: list[tuple[str, str]] = [
 ]
 
 _TRAINING_MODES: list[tuple[str, str]] = [
-    ("train-classifier — label presence model",  "train-classifier"),
-    ("adapt-backbone — fine-tune PetBERT",        "adapt-backbone"),
-    ("train-groups — group classifier",           "train-groups"),
+    ("Binary Presence Classifier",  "train-classifier"),
+    ("Group Classifier",            "train-groups"),
+    ("Contrastive Fine-Tuning",     "adapt-backbone"),
+]
+
+_CLASSIFIER_MODEL_OPTIONS: list[tuple[str, str]] = [
+    ("Fine-tuned PetBERT  [dim](contrastive checkpoint)[/]", CHECKPOINT_CONTRASTIVE),
+    ("Default PetBERT  [dim](SAVSNET/PetBERT)[/]",           "SAVSNET/PetBERT"),
+    ("Other (specify path)…",                                 "other"),
 ]
 
 
@@ -149,15 +155,25 @@ class TrainingView(VerticalScroll):
 
         # ── train-classifier ─────────────────────────────────────────────
         with Vertical(id="sec-classifier"):
-            yield Label("Label");          yield Input(value="", placeholder="e.g. c21", id="cl-label")
-            yield Label("Epochs");         yield Input(value="25",   id="cl-epochs")
-            yield Label("Hidden dim");     yield Input(value="512",  id="cl-hidden")
-            yield Label("CO neg/case");    yield Input(value="5",    id="cl-co-neg")
-            yield Label("FP neg/case");    yield Input(value="10",   id="cl-fp-neg")
-            yield Label("Recall weight");  yield Input(value="0.25", id="cl-recall")
-            yield Label("Min similarity"); yield Input(value="0.05", id="cl-minsim")
-            yield Label("Model path");     yield Input(value=CHECKPOINT_CONTRASTIVE, id="cl-model")
-            yield Label("CO bank CSV");    yield Input(value=CO_NEG_BANK_CSV, id="cl-co-bank")
+            yield Label("Model  [dim]embedding backbone used to encode reports and labels[/]")
+            yield Select(_CLASSIFIER_MODEL_OPTIONS, value=CHECKPOINT_CONTRASTIVE, id="cl-model-select")
+            yield Input(placeholder="HuggingFace ID or local path", id="cl-model-custom")
+            yield Label("Label  [dim]identifies this cycle in evaluation history (e.g. c21)[/]")
+            yield Input(value="", placeholder="e.g. c21", id="cl-label")
+            yield Label("Epochs  [dim]training passes per cycle — 25 is the production default[/]")
+            yield Input(value="25", id="cl-epochs")
+            yield Label("Hidden dim  [dim]MLP hidden layer width — 512 is the production best[/]")
+            yield Input(value="512", id="cl-hidden")
+            yield Label("CO neg/case  [dim]wrong-group negatives from the CO bank per case — always use 5[/]")
+            yield Input(value="5", id="cl-co-neg")
+            yield Label("FP neg/case  [dim]extra hard negatives per false-positive case — default 10[/]")
+            yield Input(value="10", id="cl-fp-neg")
+            yield Label("Recall weight  [dim]0 = pure F1 · 1 = pure recall — 0.25 balances both[/]")
+            yield Input(value="0.25", id="cl-recall")
+            yield Label("Min similarity  [dim]floor for surfacing predictions — 0.05 keeps uncertain cases[/]")
+            yield Input(value="0.05", id="cl-minsim")
+            yield Label("CO bank CSV  [dim]rolling wrong-label feedback bank (~24k pairs)[/]")
+            yield Input(value=CO_NEG_BANK_CSV, id="cl-co-bank")
             yield Label("Annotation CSV")
             yield Select(_ANNOTATION_OPTIONS, value=KEYWORD_ANNOTATION_CSV, id="cl-ann-csv")
             yield Label("Device")
@@ -169,11 +185,16 @@ class TrainingView(VerticalScroll):
 
         # ── adapt-backbone ───────────────────────────────────────────────
         with Vertical(id="sec-backbone"):
-            yield Label("Epochs");      yield Input(value="3",    id="bb-epochs")
-            yield Label("Batch size");  yield Input(value="32",   id="bb-batch")
-            yield Label("LR");          yield Input(value="2e-5", id="bb-lr")
-            yield Label("Temperature"); yield Input(value="0.07", id="bb-temp")
-            yield Label("Max length");  yield Input(value="256",  id="bb-maxlen")
+            yield Label("Epochs  [dim]fine-tuning passes — 3 avoids overfitting the small labelled set[/]")
+            yield Input(value="3", id="bb-epochs")
+            yield Label("Batch size  [dim]in-batch negatives for InfoNCE loss — larger = harder loss[/]")
+            yield Input(value="32", id="bb-batch")
+            yield Label("LR  [dim]peak learning rate — 2e-5 is safe to avoid catastrophic forgetting[/]")
+            yield Input(value="2e-5", id="bb-lr")
+            yield Label("Temperature  [dim]InfoNCE sharpness — lower = harder loss; 0.07 default[/]")
+            yield Input(value="0.07", id="bb-temp")
+            yield Label("Max length  [dim]BERT token limit per report — 256 default[/]")
+            yield Input(value="256", id="bb-maxlen")
             yield Label("Device")
             yield Select(_DEVICE_OPTIONS, value="xpu", id="bb-device")
             yield Label("Local only");      yield Switch(value=True,  id="bb-local-only")
@@ -187,8 +208,10 @@ class TrainingView(VerticalScroll):
 
         # ── train-groups ─────────────────────────────────────────────────
         with Vertical(id="sec-groups"):
-            yield Label("Epochs"); yield Input(value="50",   id="gr-epochs")
-            yield Label("LR");     yield Input(value="5e-5", id="gr-lr")
+            yield Label("Epochs  [dim]one-shot training — 50 default; revisit at ~15k cases[/]")
+            yield Input(value="50", id="gr-epochs")
+            yield Label("LR  [dim]peak learning rate with cosine schedule — 5e-5 default[/]")
+            yield Input(value="5e-5", id="gr-lr")
             yield Label("Annotation CSV")
             yield Select(_ANNOTATION_OPTIONS, value=KEYWORD_ANNOTATION_CSV, id="gr-ann-csv")
             yield Label("Device")
@@ -199,11 +222,13 @@ class TrainingView(VerticalScroll):
 
     def on_mount(self) -> None:
         self._show_section("classifier")
+        self.query_one("#cl-model-custom").display = False
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id != "tr-mode":
-            return
-        self._show_section(_MODE_SECTION.get(str(event.value), "classifier"))
+        if event.select.id == "tr-mode":
+            self._show_section(_MODE_SECTION.get(str(event.value), "classifier"))
+        elif event.select.id == "cl-model-select":
+            self.query_one("#cl-model-custom").display = (str(event.value) == "other")
 
     def _show_section(self, active: str) -> None:
         for name in _MODE_SECTION.values():
@@ -226,10 +251,12 @@ class TrainingView(VerticalScroll):
 
     def _run_classifier(self) -> None:
         g = lambda wid: self.query_one(wid, Input).value.strip()
+        model_val = str(self.query_one("#cl-model-select", Select).value)
+        model = g("#cl-model-custom") if model_val == "other" else model_val
         cmd = [
             _PYTHON, str(_SCRIPTS / "run_training.py"),
             "--mode", "train-classifier",
-            "--model",             g("#cl-model"),
+            "--model",             model,
             "--epochs",            g("#cl-epochs"),
             "--hidden-dim",        g("#cl-hidden"),
             "--co-neg-per-case",   g("#cl-co-neg"),

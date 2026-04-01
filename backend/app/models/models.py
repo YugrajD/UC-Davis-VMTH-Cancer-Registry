@@ -171,5 +171,6 @@ class IngestionJob(Base):
     rejection_reason = Column(Text)
     ingestion_log_id = Column(Integer, ForeignKey("ingestion_logs.id"))
     processing_error = Column(Text)
+    batch_job_name = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))

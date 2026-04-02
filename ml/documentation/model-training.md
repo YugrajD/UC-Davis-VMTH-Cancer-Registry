@@ -356,7 +356,7 @@ This approach shares the GroupClassifier's data ceiling: it needs ~10,000+ confi
 cases before it can generalize across the 44 groups. It is not recommended until the
 GroupClassifier proves competitive.
 
-> **Known code issues** must be resolved before running. See [petbert-pipeline.md](petbert-pipeline.md#wip-fine-tuned-petbert-mode) for the full list.
+> **Known code issues** must be resolved before running. See [training-log/training-log-finetune.md](training-log/training-log-finetune.md) for the full list.
 
 ---
 
@@ -426,3 +426,4 @@ Per-column embeddings (2304-dim)
 **Conclusion:** Approach abandoned. Revisit when the database grows past ~15,000 confirmed cases.
 Code is preserved: `run_categorization_hybrid()` in `categorization.py`, wired in `pipeline.py`.
 Full root-cause analysis in [training-log/training-log-binary.md](training-log/training-log-binary.md).
+

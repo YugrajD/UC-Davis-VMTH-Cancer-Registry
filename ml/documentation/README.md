@@ -85,7 +85,7 @@ Invoked via `run_production.py`. Takes clinical report text, produces cancer lab
 | `pipeline.py` | Top-level orchestration: load → embed → score → write |
 | `embedding.py` | PetBERT loading, per-column mean-pooled embedding |
 | `embedding_cache.py` | Save/load cached embeddings — avoids re-running PetBERT every cycle |
-| `categorization.py` | Four strategies: cosine argmax (default), two-stage GroupClassifier, KNN hybrid, and group-keyword (behavior keyword term selection) |
+| `categorization.py` | Classifier-driven label selection, group-keyword term correction, and non-default categorization modes |
 | `io.py` | Write all output files (CSV, NPZ, JSON) |
 | `cli.py` | `argparse` CLI; `build_config()` maps args → `ScanConfig` |
 | `utils.py` | Text cleaning, device selection, column merging |
@@ -133,7 +133,6 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 | `catalog.py` | Build a `LabelCatalog` (label strings + embedding texts) |
 | `projection.py` | Map predicted label indices → `(term, group, code)` output fields |
 | `behavior_keywords.py` | ICD-O behavior code keyword lists and scorer — used by `--categorization-mode group-keyword` |
-| `enrichment.py` | Blend label embeddings toward confirmed-case centroids (experimental) |
 | `labels.csv` | Vet-ICD-O-canine-1 taxonomy: ~857 terms across 44 cancer groups |
 
 ### `model/` — Neural network architectures
@@ -195,7 +194,7 @@ output/annotation/keyword/keyword_annotation.csv
 ml/data/report.csv  (clinical reports, 12,620 cases)
     │
     ▼ run_production.py  (Step 0 — first run only: embed all reports)
-ml/data/embedding_cache.npz
+ml/output/training/embedding_cache.npz
     │
     ├──► [Step 1] assemble training data  ◄── annotation + feedback bank
     │         └── data/training_pairs.csv
@@ -246,7 +245,7 @@ ml/data/embedding_cache.npz
 | `output/training/group/group_training_data.npz` | Cached multi-hot training targets for group classifier |
 | `output/splits/train_cases.txt` | Case IDs reserved for training (generated once by `create_split.py`) |
 | `output/splits/test_cases.txt` | Case IDs held out for evaluation (generated once by `create_split.py`) |
-| `data/embedding_cache.npz` | Cached PetBERT embeddings |
+| `output/training/embedding_cache.npz` | Cached PetBERT embeddings |
 | `data/training_pairs.csv` | Generated (case, label, target) pairs for classifier training |
 
 ---
@@ -324,7 +323,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode build-knn
 | File | Contents |
 |---|---|
 | `README.md` | This file — project overview, structure, quick start |
-| `petbert-pipeline.md` | Production scoring pipeline: how it works, CLI reference, output formats |
+| `production-pipeline.md` | Authoritative implementation-based walkthrough of the code path used by `run_production.py` today |
 | `label-annotation.md` | Both annotation methods: keyword and LLM — how they work, coverage comparison, known limitations |
 | `classifiers.md` | All classifier approaches: architecture, advantages/disadvantages, evaluation results |
 | `model-training.md` | Comparison table and architectural decisions |

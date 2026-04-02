@@ -313,7 +313,7 @@ Continue with subsequent cycles (update `--label` each time) as normal.
 Fine-tunes PetBERT as a group sequence classifier. Architecturally the same as the
 group classifier but replaces the frozen-embedding MLP with a full transformer.
 Not recommended until the group classifier proves competitive (~10,000 confirmed cases).
-Known code issues must be resolved before running — see `petbert-pipeline.md`.
+Known code issues must be resolved before running — see `training-log/training-log-finetune.md`.
 
 ---
 
@@ -345,3 +345,5 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
 | Backbone adaptation completed | No | No | No — full cold start |
 | Hyperparameter change (`--hidden-dim`, `--epochs`) | Yes | Yes | No — retrain only |
 | New training cycle (same architecture) | Yes | Yes | Overwritten each cycle |
+
+

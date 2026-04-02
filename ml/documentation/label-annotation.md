@@ -7,8 +7,8 @@ text to standardized Vet-ICD-O-canine-1 labels: the **keyword pipeline** and the
 > - **Annotation pipelines** (this document) — annotation only: `diagnosis text → cancer label`
 >   Lives in `annotation/`. Two methods available; the LLM pipeline is the authoritative source.
 >   Neither runs in production.
-> - **PetBERT pipeline** (`production/petbert_pipeline/`) — production system: `report text → cancer label`
->   See [petbert-pipeline.md](petbert-pipeline.md).
+> - **Production pipeline** (`production/petbert_pipeline/`) — production system: `report text → cancer label`
+>   See [production-pipeline.md](production-pipeline.md).
 
 ---
 
@@ -43,7 +43,7 @@ as Uncertain or No Match due to negation and hedging.
 
 ## Why Annotation Is Needed
 
-The PetBERT pipeline (production) classifies full multi-section pathology reports. Training it
+The production pipeline classifies full multi-section pathology reports. Training it
 requires ground-truth cancer labels, but those labels don't exist in the raw database — only
 free-text diagnosis strings do.
 
@@ -450,3 +450,4 @@ and top 20 terms.
 | `ml/output/annotation/llm/llm_annotation.csv` | LLM pipeline: per-row match results |
 | `ml/output/annotation/llm/llm_summary.json` | LLM pipeline: aggregate statistics |
 | `ml/output/annotation/llm/llm_summary.md` | LLM pipeline: human-readable summary |
+

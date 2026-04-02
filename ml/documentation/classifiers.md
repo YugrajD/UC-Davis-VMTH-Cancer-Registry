@@ -9,7 +9,7 @@ PresenceClassifier (Approach 3) is currently the production best.
 | Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
 | GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end (MLP macro F1=0.4975 on 17 groups) |
 | Contrastive fine-tuned PetBERT + PresenceClassifier | **Production best** | **86.5% Good+Slight (Phase 18, c16) — 56.5% Good with group-keyword mode** |
-| End-to-end fine-tuned PetBERT | WIP — see `petbert-pipeline.md` | Not benchmarked |
+| End-to-end fine-tuned PetBERT | WIP — see `production-pipeline.md` | Not benchmarked |
 
 > **Training ground truth:** All three approaches derive training labels from the keyword
 > pipeline (`keyword_annotation.csv`). The keyword pipeline maps diagnosis field text to
@@ -563,7 +563,7 @@ See [model-training.md](model-training.md#approach-3--contrastive-fine-tuning-in
 ## Approach 4 — End-to-end Fine-tuned PetBERT (WIP)
 
 Fine-tunes PetBERT end-to-end as a sequence classifier, removing the frozen-embedding
-bottleneck. See `petbert-pipeline.md` for scripts, usage, and known code issues.
+bottleneck. See `production-pipeline.md` for the live production path and `training-log/training-log-finetune.md` for scripts, usage, and known code issues.
 
 ### Architecture
 
@@ -617,7 +617,7 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
 
 ### Constraints
 
-- Known code issues to resolve before a full training run (see `petbert-pipeline.md`):
+- Known code issues to resolve before a full training run (see `training-log/training-log-finetune.md`):
   - `WeightedTrainer` constructor argument order is fragile
   - Class weights tensor moved to device during `__init__` before device is resolved
   - No stratified val split in `build_dataset.py`
@@ -653,3 +653,5 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
 
 Phase-by-phase results, fix descriptions, and cycle-by-cycle tables are in
 [training-log-binary.md](training-log/training-log-binary.md).
+
+

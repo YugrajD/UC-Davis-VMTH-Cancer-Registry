@@ -40,6 +40,41 @@ Predictions are scored against keyword ground truth per case:
 **Good+Slight** is the primary performance metric. The CO rate (completely off) is the
 key failure mode — the classifier is confidently predicting the wrong cancer group.
 
+### Evaluation Pipeline Flow
+
+Standard evaluation compares model predictions against verified annotation labels and
+assigns each case to an outcome bucket before logging cycle history.
+
+```mermaid
+flowchart TB
+    subgraph IN4["Input"]
+        A["predictions.csv"]
+        B["annotation labels / verified labels"]
+    end
+    subgraph P4["Process"]
+        C["Compare predicted labels to verified labels"]
+        E["Good<br>Exact term match"]
+        F["Slightly Off<br>Correct group, wrong term"]
+        G["Completely Off<br>Wrong group"]
+        H["false_positive"]
+        I["false_negative"]
+    end
+    subgraph OUT4["Output"]
+        J["evaluation.csv"]
+        L["evaluation_history.csv"]
+    end
+
+    A --> C
+    B --> C
+    C --> E & F & G & H & I
+    E --> J
+    F --> J
+    G --> J
+    H --> J
+    I --> J
+    J --> L
+```
+
 ---
 
 ## Approach 1 — Binary PresenceClassifier
@@ -426,4 +461,3 @@ Per-column embeddings (2304-dim)
 **Conclusion:** Approach abandoned. Revisit when the database grows past ~15,000 confirmed cases.
 Code is preserved: `run_categorization_hybrid()` in `categorization.py`, wired in `pipeline.py`.
 Full root-cause analysis in [training-log/training-log-binary.md](training-log/training-log-binary.md).
-

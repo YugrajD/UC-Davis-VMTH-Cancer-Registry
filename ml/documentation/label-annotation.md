@@ -52,6 +52,37 @@ These annotation pipelines bridge that gap: they scan the short, structured `dia
 against the Vet-ICD-O taxonomy. Cases not matched are treated as non-cancer negative training
 examples.
 
+## Annotation Pipeline Flow
+
+The strongest documented supervision path is the LLM pipeline: detect cancer-signal rows,
+try exact and fuzzy matching first, then use Ollama only for unresolved cancer-positive rows.
+
+```mermaid
+flowchart TD
+    subgraph IN1["Input"]
+        A["diagnoses.csv<br/>Diagnosis text"]
+    end
+
+    subgraph P1["Process"]
+        B["Detect cancer-signal rows"]
+        C["Exact label match"]
+        D["Fuzzy label match"]
+        E["Ollama LLM label resolution"]
+    end
+
+    subgraph OUT1["Output"]
+        F["llm_annotation.csv<br/>Verified term, group, ICD code"]
+        G["Training supervision"]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+```
+
 ---
 
 ## Shared Normalization
@@ -450,4 +481,3 @@ and top 20 terms.
 | `ml/output/annotation/llm/llm_annotation.csv` | LLM pipeline: per-row match results |
 | `ml/output/annotation/llm/llm_summary.json` | LLM pipeline: aggregate statistics |
 | `ml/output/annotation/llm/llm_summary.md` | LLM pipeline: human-readable summary |
-

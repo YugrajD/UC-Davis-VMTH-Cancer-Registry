@@ -18,7 +18,39 @@ report.csv
 
 ## Flow Chart
 
-![Production pipeline SVG](current-production-pipeline.svg)
+```mermaid
+flowchart TD
+    subgraph IN3["Input"]
+        A["report.csv<br/>Report text columns"]
+        C["labels.csv<br/>Taxonomy labels"]
+    end
+
+    subgraph P3["Process"]
+        B["Embed each report column with adapted PetBERT"]
+        D["Embed each label with adapted PetBERT"]
+        E["Concatenate report-column embeddings"]
+        F["Prepare label embeddings"]
+        G["PresenceClassifier scores each case-label pair"]
+        H["Rank labels by score"]
+        I["Select top predictions"]
+        J["Project label index to term, group, ICD code"]
+    end
+
+    subgraph OUT3["Output"]
+        K["predictions.csv"]
+    end
+
+    A --> B
+    C --> D
+    B --> E
+    D --> F
+    E --> G
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+```
 
 ## Entry Point And Auto-Selection
 

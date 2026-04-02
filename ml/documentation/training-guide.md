@@ -17,6 +17,40 @@ labeled data was previously used for both training and evaluation, so metrics we
 in-sample. With no new labeled data expected, the split is the only way to measure
 true held-out performance.
 
+## Training Pipeline Flow
+
+The strongest documented training path is contrastive backbone adaptation followed by
+iterative `PresenceClassifier` training, with the test split held out for later evaluation.
+
+```mermaid
+flowchart TD
+    subgraph IN2["Input"]
+        A["report.csv"]
+        B["annotation labels / verified labels"]
+    end
+
+    subgraph P2["Process"]
+        C["Create case-level train/test split"]
+        D["Contrastive fine-tune"]
+        E["Train PresenceClassifier"]
+        F["Testing data branch<br/>Hold out test split for evaluation"]
+    end
+
+    subgraph OUT2["Output"]
+        G["contrastive-adapted PetBERT model"]
+        H["presence_classifier_best.pt"]
+        I["Held-out testing data for evaluation"]
+    end
+
+    A --> C
+    B --> C
+    C -->|"training data"| D
+    D --> G
+    D -->|"training data"| E
+    E --> H
+    C -->|"testing data"| I
+```
+
 ### Generate the split (run once)
 
 ```bash
@@ -345,5 +379,3 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
 | Backbone adaptation completed | No | No | No — full cold start |
 | Hyperparameter change (`--hidden-dim`, `--epochs`) | Yes | Yes | No — retrain only |
 | New training cycle (same architecture) | Yes | Yes | Overwritten each cycle |
-
-

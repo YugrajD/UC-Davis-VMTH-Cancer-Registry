@@ -1,56 +1,132 @@
-# Data De-identifier & Parser
+# Data Processing
 
-This process is designed to parse and de-identify the source data "2024-2025 diagnosis.csv"
+This document describes the raw CSV parsing step that feeds the ML pipeline. It is aligned
+with the current ML documentation in `ml/documentation/` and with the parser implementation
+in `database/scripts/parse_diagnostics.py`.
 
-## Parser
-The source file has 6 columns:
-- DtOfRq — Date of request
-- Sex — Patient sex (e.g. FS = female spayed)
-- Species — e.g. K9 (canine)
-- Breed
-- Diagnoses (labels) — Numbered diagnosis list
-- Text (pathology report) — Full pathology report text
-The data is structured so that a single case spans many rows — the date/sex/species/breed only appear on the first row of each case, with the remaining rows continuing the pathology report text in the last column. 
+## Purpose
 
-The first 180 rows cover just 2 cases:
-- Jan 8, 2025 — FS K9 Vizsla: Skin pinnae angiomatosis / proliferative thrombovascular necrosis
-- Jan 9, 2025 — FS K9 Mix: Multiple skin masses (infundibular acanthoma, sebaceous hyperplasia, follicular cyst, sebaceous adenoma)
+The source `* diagnostics.csv` exports are semi-structured. One case can span multiple rows:
 
-## De-identification
-Each case should be assigned with its own case_id 
-The Case ID should hide the personal info  
+- Demographics only appear on the first row of a case.
+- Diagnosis entries may be numbered across multiple rows.
+- Report text is stored in a single free-text column with embedded heading markers such as
+  `|H|...||` and subheading markers such as `|U|...||:`.
 
-## Output
-The parser should output 3 files;
-- demographics.csv 
-- diagnoses.csv
-- reportText.csv
+The parser de-identifies each case, assigns a stable internal `case_id`, and produces the
+two ML input files plus a demographics file for downstream database work.
 
-### demographics.csv
-This file should contain the patient info and demographics:
-- Case ID
-- DtOfRq — Date of request
-- Sex — Patient sex (e.g. FS = female spayed)
-- Species — e.g. K9 (canine)
-- Breed
+## Source Format
 
-### diagnoses.csv
-This file should contain the diagnosis labels, for the purpose of verification and training for PetBERT model
-- Case ID
-- Diagnoses (labels) — Numbered diagnosis list
+The raw CSV has 6 columns:
 
-### reportText.csv
-This file should contain the pathology report text. Within the text, there're headings (|H|xxx:||) and sub-headings (|U|xxx||:)
-Instead of having the entire text in one column, the plan is to separate them by headings
-Get rid of all empty lines, extra spaces, and formatting stuff
-- Case ID
-- ADDENDUM
-- FINAL COMMENT
-- CLINICAL ABSTRACT
-- GROSS DESCRIPTION
-- HISTOPATHOLOGICAL SUMMARY
-- ANCILLARY TESTS
-- (Any other heading that's missing)
+- `DtOfRq`
+- `Sex`
+- `Species`
+- `Breed`
+- `Diagnoses`
+- `Text`
 
+The first populated `DtOfRq` starts a new case. Continuation rows for the same case leave
+the demographics columns blank and append more diagnosis or report text.
 
+## Output Files
 
+The parser writes three files to `database/data/output/`:
+
+- `demographics.csv`
+- `diagnoses.csv`
+- `report.csv`
+
+### `demographics.csv`
+
+One row per parsed case.
+
+Columns:
+
+- `case_id`
+- `DtOfRq`
+- `Sex`
+- `Species`
+- `Breed`
+
+### `diagnoses.csv`
+
+One row per diagnosis item. This is the input used by the ML annotation pipelines described in
+`ml/documentation/label-annotation.md`.
+
+Columns:
+
+- `case_id`
+- `diagnosis_number`
+- `diagnosis`
+
+### `report.csv`
+
+One row per parsed case. This is the input used by the production PetBERT pipeline described in
+`ml/documentation/petbert-pipeline.md`.
+
+Columns:
+
+- `case_id`
+- One column per discovered report heading
+
+Common headings include:
+
+- `ADDENDUM`
+- `FINAL COMMENT`
+- `CLINICAL ABSTRACT`
+- `GROSS DESCRIPTION`
+- `HISTOPATHOLOGICAL SUMMARY`
+- `ANCILLARY TESTS`
+
+Additional headings are preserved dynamically when they appear in source data.
+
+## Heading Normalization
+
+The parser normalizes common heading variants to the canonical names used throughout the ML docs.
+Examples:
+
+- `FINAL COMMENTS` -> `FINAL COMMENT`
+- `GROSS FINDINGS` -> `GROSS DESCRIPTION`
+- `ANCILLARY TESTING` -> `ANCILLARY TESTS`
+- `ADDITIONAL TESTS` -> `ANCILLARY TESTS`
+- `CLINICAL ABS TRACT` -> `CLINICAL ABSTRACT`
+
+`ADDENDUM` variants are collapsed to `ADDENDUM`, and malformed date-prefixed headings are mapped
+to `GROSS DESCRIPTION`.
+
+## Text Cleaning
+
+For each report section, the parser:
+
+- removes pipe-formatting markers such as `|H|`, `|U|`, and similar inline markup
+- converts embedded subheadings into plain text labels
+- removes blank lines
+- trims repeated whitespace
+- preserves section-level content in separate columns rather than flattening the whole report
+
+## Case IDs and De-identification
+
+Each parsed case receives a generated internal identifier:
+
+- `CASE-0001`
+- `CASE-0002`
+- `CASE-0003`
+
+This `case_id` is the join key between `diagnoses.csv` and `report.csv` for ML workflows.
+
+## Relationship To ML Docs
+
+This preprocessing step feeds the current ML pipeline as follows:
+
+- `database/data/output/diagnoses.csv` -> `ml/data/diagnoses.csv`
+- `database/data/output/report.csv` -> `ml/data/report.csv`
+
+From there:
+
+- `ml/data/diagnoses.csv` is consumed by the keyword and LLM annotation pipelines
+- `ml/data/report.csv` is consumed by the production PetBERT pipeline
+
+For the current ML architecture and commands, use `ml/documentation/README.md` as the canonical
+reference.

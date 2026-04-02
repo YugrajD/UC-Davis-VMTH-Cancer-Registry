@@ -8,13 +8,14 @@ The UC Davis VMTH Cancer Registry ingests PetBERT cancer predictions and patient
 
 ## Data Sources
 
-### 1. PetBERT Predictions (`petbert_scan_predictions.csv`)
+### 1. PetBERT Predictions (`petbert_predictions.csv`)
 - **Format**: CSV with columns: `anon_id`, `original_text`, `predicted_term`, `predicted_group`, `predicted_code`, `confidence`, `method`
 - **Content**: AI-generated cancer predictions from pathology reports
 - **Key Features**:
   - Multiple predictions per row (numbered format: `"1) Term 2) Term"`)
   - Each row may represent a different visit or report for the same dog
   - `anon_id` format: `"ID_3"`, `"ID_37"`, etc.
+  - Current ML docs use the renamed production output `petbert_predictions.csv`; older references to `petbert_scan_predictions.csv` are legacy naming
 
 ### 2. Dog Demographics (`All_deidentified_K9.xlsx`)
 - **Format**: Excel file with columns: `anon_id`, `Sex`, `Owner Zipcode Zipcode`
@@ -215,7 +216,7 @@ matched_ids = set(petbert.keys()) & set(visits.keys())
 ### Prerequisites
 - PostgreSQL with PostGIS extension
 - Python dependencies: `psycopg2-binary`, `pandas`, `openpyxl`
-- Data files: `petbert_scan_predictions.csv`, `All_deidentified_K9.xlsx`
+- Data files: `petbert_predictions.csv`, `All_deidentified_K9.xlsx`
 
 ### Steps
 
@@ -258,3 +259,18 @@ matched_ids = set(petbert.keys()) & set(visits.keys())
 - Support multiple data sources (not just PetBERT)
 - Add temporal analysis (diagnosis_date trends)
 - Implement data validation rules (confidence thresholds, required fields)
+
+---
+
+## Alignment Notes
+
+This document now uses the current ML naming from `ml/documentation/`:
+
+- `petbert_predictions.csv` is the canonical prediction filename
+- production outputs live under `ml/output/production/<mode>/`
+
+Related canonical ML references:
+
+- `ml/documentation/README.md` for the four-pipeline overview
+- `ml/documentation/petbert-pipeline.md` for production prediction outputs
+- `ml/documentation/label-annotation.md` for `ml/data/diagnoses.csv`

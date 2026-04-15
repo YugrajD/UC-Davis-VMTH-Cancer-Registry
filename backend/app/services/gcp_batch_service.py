@@ -79,17 +79,19 @@ def submit_batch_job(job_id: int) -> str:
         image_uri=settings.GCP_BATCH_IMAGE_URI,
         commands=[],
     )
-    container.environment = batch_v1.Environment(
-        variables={
-            "JOB_ID": str(job_id),
-            "INPUT_CSV_PATH": input_csv,
-            "OUTPUT_DIR": output_dir,
-            "MODEL_PATH": model_path,
-            "LABELS_CSV_PATH": labels_csv,
-        },
-    )
 
-    runnable = batch_v1.Runnable(container=container)
+    runnable = batch_v1.Runnable(
+        container=container,
+        environment=batch_v1.Environment(
+            variables={
+                "JOB_ID": str(job_id),
+                "INPUT_CSV_PATH": input_csv,
+                "OUTPUT_DIR": output_dir,
+                "MODEL_PATH": model_path,
+                "LABELS_CSV_PATH": labels_csv,
+            },
+        ),
+    )
 
     task_spec = batch_v1.TaskSpec(
         runnables=[runnable],
@@ -109,6 +111,7 @@ def submit_batch_job(job_id: int) -> str:
         task_spec=task_spec,
     )
 
+    sa_email = settings.GCP_BATCH_SERVICE_ACCOUNT or None
     allocation = batch_v1.AllocationPolicy(
         instances=[
             batch_v1.AllocationPolicy.InstancePolicyOrTemplate(
@@ -117,6 +120,7 @@ def submit_batch_job(job_id: int) -> str:
                 ),
             )
         ],
+        service_account=batch_v1.ServiceAccount(email=sa_email) if sa_email else None,
     )
 
     batch_job = batch_v1.Job(
@@ -138,6 +142,22 @@ def submit_batch_job(job_id: int) -> str:
 
     logger.info("Submitted Batch job %s for ingestion job %d", created.name, job_id)
     return created.name
+
+
+def cancel_batch_job(job_name: str) -> None:
+    """Cancel a running GCP Batch job.
+
+    Uses the Batch cancel API which stops execution without deleting the job
+    record, preserving logs in Cloud Logging.
+    Silently ignores errors (e.g. job already finished) so callers don't need
+    to handle races between polling and cancellation.
+    """
+    try:
+        client = _get_batch_client()
+        client.cancel_job(name=job_name)
+        logger.info("Cancelled Batch job %s", job_name)
+    except Exception:
+        logger.warning("Could not cancel Batch job %s (may have already finished)", job_name, exc_info=True)
 
 
 def get_batch_job_status(job_name: str) -> tuple[str, str | None]:

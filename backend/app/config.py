@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     GCP_BATCH_MACHINE_TYPE: str = "n1-standard-4"
     GCP_BATCH_POLL_INTERVAL: int = 60
     GCP_BATCH_TIMEOUT_HOURS: int = 12
+    GCP_BATCH_SERVICE_ACCOUNT: str = ""
 
     @property
     def cors_origins_list(self) -> List[str]:

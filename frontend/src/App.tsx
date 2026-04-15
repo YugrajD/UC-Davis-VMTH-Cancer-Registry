@@ -24,10 +24,10 @@ function AppContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--color-background)]">
+    <div className="min-h-screen flex flex-col bg-[var(--color-background)]">
       <Navigation activeTab={activeTab} onTabChange={setActiveTab} />
 
-      <main className="max-w-[1400px] mx-auto px-6 py-6">
+      <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-6">
         {activeTab === 'data-upload' ? (
           <DataUpload />
         ) : activeTab === 'review-queue' ? (

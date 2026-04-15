@@ -51,11 +51,11 @@ _COLD_START_WARNING = """
 ║  COLD START REQUIRED                                             ║
 ║                                                                  ║
 ║  The embedding space has changed. Before running a downstream    ║
-║  training cycle with this model, delete the stale cache and CO  ║
-║  bank — they are anchored to the old model's embedding space:   ║
+║  training cycle with this model, delete the stale cache and CO   ║
+║  bank — they are anchored to the old model's embedding space:    ║
 ║                                                                  ║
-║    rm ml/data/embedding_cache.npz                               ║
-║    rm ml/output/evaluation/evaluation_co_bank.csv               ║
+║    rm ml/data/embedding_cache.npz                                ║
+║    rm ml/output/evaluation/evaluation_co_bank.csv                ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -96,7 +96,9 @@ def train(
     # --- 1. Load tokenizer and model ---
     print(f"[finetune] Loading tokenizer and model: {model_name}", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=local_only)
-    model = AutoModelForMaskedLM.from_pretrained(model_name, local_files_only=local_only)
+    model = AutoModelForMaskedLM.from_pretrained(
+        model_name, local_files_only=local_only
+    )
 
     # --- 2. Build dataset ---
     sources: list[tuple[str, list[str]]] = [(report_csv, text_cols)]
@@ -111,14 +113,14 @@ def train(
     n_train = n - n_val
 
     import torch
+
     train_ds, val_ds = torch.utils.data.random_split(
         full_dataset,
         [n_train, n_val],
         generator=torch.Generator().manual_seed(42),
     )
     print(
-        f"[finetune] Split: {n_train:,} train / {n_val:,} val  "
-        f"(val_frac={val_frac})",
+        f"[finetune] Split: {n_train:,} train / {n_val:,} val  (val_frac={val_frac})",
         flush=True,
     )
 
@@ -188,31 +190,62 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="MLM domain adaptation — fine-tune PetBERT on cancer registry reports."
     )
-    p.add_argument("--csv", default=_DEFAULT_REPORT_CSV,
-                   help=f"Report CSV (default: {_DEFAULT_REPORT_CSV})")
-    p.add_argument("--text-cols", nargs="+", default=_DEFAULT_TEXT_COLS,
-                   help="Text columns to concatenate from the report CSV")
-    p.add_argument("--model", default=_DEFAULT_MODEL,
-                   help=f"Base model to fine-tune (default: {_DEFAULT_MODEL})")
-    p.add_argument("--output-dir", default=_DEFAULT_OUTPUT_DIR,
-                   help=f"Where to save the fine-tuned checkpoint (default: {_DEFAULT_OUTPUT_DIR})")
-    p.add_argument("--epochs", type=int, default=3,
-                   help="Training epochs (default: 3)")
-    p.add_argument("--lr", type=float, default=2e-5,
-                   help="Learning rate (default: 2e-5)")
-    p.add_argument("--batch-size", type=int, default=16,
-                   help="Per-device batch size (default: 16)")
-    p.add_argument("--mlm-probability", type=float, default=0.15,
-                   help="Fraction of tokens to mask per example (default: 0.15)")
-    p.add_argument("--val-frac", type=float, default=0.1,
-                   help="Fraction of corpus held out for validation (default: 0.1)")
-    p.add_argument("--include-diagnoses", action="store_true",
-                   help=f"Also include {_DEFAULT_DIAGNOSES_CSV} `diagnosis` column in the corpus")
-    p.add_argument("--local-only", action="store_true",
-                   help="Use only locally cached model files (no HuggingFace Hub download)")
-    p.add_argument("--device", default="auto",
-                   choices=["auto", "cpu", "cuda", "mps", "xpu"],
-                   help="Compute device (default: auto)")
+    p.add_argument(
+        "--csv",
+        default=_DEFAULT_REPORT_CSV,
+        help=f"Report CSV (default: {_DEFAULT_REPORT_CSV})",
+    )
+    p.add_argument(
+        "--text-cols",
+        nargs="+",
+        default=_DEFAULT_TEXT_COLS,
+        help="Text columns to concatenate from the report CSV",
+    )
+    p.add_argument(
+        "--model",
+        default=_DEFAULT_MODEL,
+        help=f"Base model to fine-tune (default: {_DEFAULT_MODEL})",
+    )
+    p.add_argument(
+        "--output-dir",
+        default=_DEFAULT_OUTPUT_DIR,
+        help=f"Where to save the fine-tuned checkpoint (default: {_DEFAULT_OUTPUT_DIR})",
+    )
+    p.add_argument("--epochs", type=int, default=3, help="Training epochs (default: 3)")
+    p.add_argument(
+        "--lr", type=float, default=2e-5, help="Learning rate (default: 2e-5)"
+    )
+    p.add_argument(
+        "--batch-size", type=int, default=16, help="Per-device batch size (default: 16)"
+    )
+    p.add_argument(
+        "--mlm-probability",
+        type=float,
+        default=0.15,
+        help="Fraction of tokens to mask per example (default: 0.15)",
+    )
+    p.add_argument(
+        "--val-frac",
+        type=float,
+        default=0.1,
+        help="Fraction of corpus held out for validation (default: 0.1)",
+    )
+    p.add_argument(
+        "--include-diagnoses",
+        action="store_true",
+        help=f"Also include {_DEFAULT_DIAGNOSES_CSV} `diagnosis` column in the corpus",
+    )
+    p.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Use only locally cached model files (no HuggingFace Hub download)",
+    )
+    p.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cpu", "cuda", "mps", "xpu"],
+        help="Compute device (default: auto)",
+    )
     return p
 
 

@@ -181,11 +181,17 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     col_emb_list = [col_embeddings[col] for col in cols]
     col_has_content_list = [col_has_content[col] for col in cols]
 
+    taxonomy_labels = label_catalog.taxonomy_labels
+
     # Optional: two-stage categorization via GroupClassifier (recommended).
     # The GroupClassifier predicts which cancer group(s) each report belongs to,
     # then cosine similarity selects the best term within each predicted group.
     # This eliminates the ~42% completely-off floor of the binary PresenceClassifier.
     if config.group_classifier_path is not None:
+        if taxonomy_labels is None:
+            raise ValueError(
+                "Group classifier categorization requires taxonomy labels, but none were loaded."
+            )
         print(f"Loading group classifier from {config.group_classifier_path}...")
         group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
         group_clf.to(torch_device)
@@ -197,7 +203,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             texts=texts,
             mean_embeddings=embeddings,
             label_embeddings=active_label_embeddings,
-            taxonomy_labels=label_catalog.taxonomy_labels,
+            taxonomy_labels=taxonomy_labels,
             labels=label_catalog.labels,
             group_probs=group_probs,
             group_names=group_names,

@@ -5,13 +5,17 @@ No env PYTHONPATH needed — this script adds ml/ to sys.path automatically.
 Usage:
   python ml/scripts/run_training.py --mode binary --label "v12"
   python ml/scripts/run_training.py --mode group  --epochs 50
+  python ml/scripts/run_training.py --mode finetune --epochs 3 --local-only
   python ml/scripts/run_training.py --skip-keyword-scan --mode binary
 
 Modes:
-  binary  Run the full binary PresenceClassifier training cycle (default)
-          Steps: keyword_pipeline → build_pairs → train → petbert_pipeline → evaluate → log
-  group   Build GroupClassifier training data and train
-          Steps: keyword_pipeline → build_group_data → train_group
+  binary    Run the full binary PresenceClassifier training cycle (default)
+            Steps: keyword_pipeline → build_pairs → train → petbert_pipeline → evaluate → log
+  group     Build GroupClassifier training data and train
+            Steps: keyword_pipeline → build_group_data → train_group
+  finetune  MLM domain adaptation — fine-tune PetBERT on unlabeled reports (no labels needed)
+            Steps: tokenize corpus → train with masked LM objective → save checkpoint
+            After: cold start required (delete embedding_cache.npz + evaluation_co_bank.csv)
 """
 
 import sys
@@ -24,6 +28,7 @@ import argparse
 
 from keyword_pipeline.pipeline import KeywordConfig, run_keyword_scan
 from training.binary.run_cycle import main as run_binary_cycle
+from training.finetune.train import train as train_finetune
 from training.group.build_training_data import build_training_data
 from training.group.train import train as train_group
 
@@ -32,8 +37,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="End-to-end training pipeline (keyword scan → train → evaluate)."
     )
-    parser.add_argument("--mode", choices=["binary", "group"], default="binary",
-                        help="Training mode: binary PresenceClassifier (default) or group GroupClassifier")
+    parser.add_argument("--mode", choices=["binary", "group", "finetune"], default="binary",
+                        help="Training mode: binary PresenceClassifier (default), group GroupClassifier, "
+                             "or finetune (MLM domain adaptation of PetBERT)")
     parser.add_argument("--skip-keyword-scan", action="store_true",
                         help="Skip keyword pipeline step (reuse existing ml/output/diagnoses/keyword_predictions.csv)")
     # Binary training args forwarded to run_binary_cycle:
@@ -54,10 +60,22 @@ def main() -> int:
                         help="Min embedding similarity threshold (binary mode, default: 0.05)")
     parser.add_argument("--local-only", action="store_true",
                         help="Use only locally cached PetBERT model files")
+    # Finetune mode args:
+    parser.add_argument("--lr", type=float, default=2e-5,
+                        help="Learning rate (finetune mode, default: 2e-5)")
+    parser.add_argument("--batch-size", type=int, default=16,
+                        help="Per-device batch size (finetune mode, default: 16)")
+    parser.add_argument("--mlm-probability", type=float, default=0.15,
+                        help="MLM masking fraction (finetune mode, default: 0.15)")
+    parser.add_argument("--output-dir", default="ml/model/checkpoints/petbert_mlm",
+                        help="Checkpoint output directory (finetune mode)")
+    parser.add_argument("--include-diagnoses", action="store_true",
+                        help="Include diagnoses.csv in the MLM corpus (finetune mode)")
     args = parser.parse_args()
 
     # Step 1: Keyword scan (generate ground truth labels)
-    if not args.skip_keyword_scan:
+    # Not needed for finetune mode — MLM training uses raw text, no labels.
+    if args.mode != "finetune" and not args.skip_keyword_scan:
         print("\n=== Step 1: Keyword pipeline ===")
         run_keyword_scan(KeywordConfig(
             csv_path="database/data/output/diagnoses.csv",
@@ -87,6 +105,19 @@ def main() -> int:
             run_binary_cycle()
         finally:
             sys.argv = old_argv
+
+    elif args.mode == "finetune":
+        print("\n=== MLM domain adaptation ===")
+        train_finetune(
+            epochs=args.epochs,
+            lr=args.lr,
+            batch_size=args.batch_size,
+            mlm_probability=args.mlm_probability,
+            output_dir=args.output_dir,
+            include_diagnoses=args.include_diagnoses,
+            local_only=args.local_only,
+            device_arg=args.device,
+        )
 
     elif args.mode == "group":
         print("\n=== Step 2a: Build group training data ===")

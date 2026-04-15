@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView } from './components';
+import { AuthProvider } from './contexts/AuthContext';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
 
-function App() {
+function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
@@ -23,12 +24,14 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--color-background)]">
+    <div className="min-h-screen flex flex-col bg-[var(--color-background)]">
       <Navigation activeTab={activeTab} onTabChange={setActiveTab} />
-      
-      <main className="max-w-[1400px] mx-auto px-6 py-6">
+
+      <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-6">
         {activeTab === 'data-upload' ? (
           <DataUpload />
+        ) : activeTab === 'review-queue' ? (
+          <AdminQueue />
         ) : activeTab === 'breed-disparities' ? (
           <BreedDisparitiesView />
         ) : activeTab === 'analysis' ? (
@@ -157,6 +160,14 @@ function App() {
 
       <Footer />
     </div>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 

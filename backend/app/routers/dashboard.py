@@ -7,7 +7,7 @@ from sqlalchemy import text, select, func
 from app.database import get_db
 from app.schemas.schemas import DashboardSummary, SpeciesBreakdown, TopCancer, FilterOptions
 from app.models.models import (
-    Species, Breed, CancerType, County, Patient, CancerCase, CaseDiagnosis
+    Species, Breed, CancerType, County, Patient, CaseDiagnosis
 )
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
@@ -19,22 +19,19 @@ _PETBERT_FILTER = Patient.data_source == "petbert"
 
 @router.get("/summary", response_model=DashboardSummary)
 async def get_summary(db: AsyncSession = Depends(get_db)):
-    # Total cases (ingested only)
+    # Total cases (ingested only) — count distinct patients with petbert data
     result = await db.execute(
-        select(func.count(CancerCase.id))
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        select(func.count(Patient.id))
         .where(_PETBERT_FILTER)
     )
     total_cases = result.scalar() or 0
 
     # Total patients (ingested only)
-    result = await db.execute(select(func.count(Patient.id)).where(_PETBERT_FILTER))
-    total_patients = result.scalar() or 0
+    total_patients = total_cases
 
     # Total counties with cases (ingested only)
     result = await db.execute(
-        select(func.count(func.distinct(CancerCase.county_id)))
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        select(func.count(func.distinct(Patient.county_id)))
         .where(_PETBERT_FILTER)
     )
     total_counties = result.scalar() or 0
@@ -42,10 +39,9 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
     # Year range (ingested only; diagnosis_date may be null)
     result = await db.execute(
         select(
-            func.min(func.extract("year", CancerCase.diagnosis_date)),
-            func.max(func.extract("year", CancerCase.diagnosis_date))
+            func.min(func.extract("year", Patient.diagnosis_date)),
+            func.max(func.extract("year", Patient.diagnosis_date))
         )
-        .join(Patient, Patient.id == CancerCase.patient_id)
         .where(_PETBERT_FILTER)
     )
     row = result.one()
@@ -53,13 +49,12 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
 
     # Species breakdown (ingested only)
     result = await db.execute(
-        select(Species.name, func.count(CancerCase.id).label("cnt"))
-        .select_from(CancerCase)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        select(Species.name, func.count(Patient.id).label("cnt"))
+        .select_from(Patient)
         .join(Species, Species.id == Patient.species_id)
         .where(_PETBERT_FILTER)
         .group_by(Species.name)
-        .order_by(func.count(CancerCase.id).desc())
+        .order_by(func.count(Patient.id).desc())
     )
     species_rows = result.all()
     species_breakdown = [
@@ -75,8 +70,7 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(CancerType.name, func.count(CaseDiagnosis.id).label("cnt"))
         .select_from(CaseDiagnosis)
-        .join(CancerCase, CancerCase.id == CaseDiagnosis.case_id)
-        .join(Patient, Patient.id == CancerCase.patient_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .where(_PETBERT_FILTER)
         .group_by(CancerType.name)
@@ -87,13 +81,12 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
 
     # Top county (ingested only)
     result = await db.execute(
-        select(County.name, func.count(CancerCase.id).label("cnt"))
-        .select_from(CancerCase)
-        .join(Patient, Patient.id == CancerCase.patient_id)
-        .join(County, County.id == CancerCase.county_id)
+        select(County.name, func.count(Patient.id).label("cnt"))
+        .select_from(Patient)
+        .join(County, County.id == Patient.county_id)
         .where(_PETBERT_FILTER)
         .group_by(County.name)
-        .order_by(func.count(CancerCase.id).desc())
+        .order_by(func.count(Patient.id).desc())
         .limit(1)
     )
     top_county_row = result.first()
@@ -121,8 +114,8 @@ async def get_filter_options(db: AsyncSession = Depends(get_db)):
 
     result = await db.execute(
         select(
-            func.min(func.extract("year", CancerCase.diagnosis_date)),
-            func.max(func.extract("year", CancerCase.diagnosis_date))
+            func.min(func.extract("year", Patient.diagnosis_date)),
+            func.max(func.extract("year", Patient.diagnosis_date))
         )
     )
     row = result.one()

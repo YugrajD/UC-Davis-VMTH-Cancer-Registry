@@ -38,7 +38,6 @@ class CancerType(Base):
     name = Column(String(100), nullable=False, unique=True)
     description = Column(Text)
 
-    cases = relationship("CancerCase", back_populates="cancer_type")
     case_diagnoses = relationship("CaseDiagnosis", back_populates="cancer_type")
 
 
@@ -54,7 +53,6 @@ class County(Base):
     is_catchment = Column(Boolean, nullable=False, server_default="false")
 
     patients = relationship("Patient", back_populates="county")
-    cases = relationship("CancerCase", back_populates="county")
 
 
 class Patient(Base):
@@ -64,61 +62,35 @@ class Patient(Base):
     species_id = Column(Integer, ForeignKey("species.id"), nullable=True)
     breed_id = Column(Integer, ForeignKey("breeds.id"), nullable=True)
     sex = Column(String(20), nullable=True)
-    age_years = Column(Numeric(5, 1), nullable=True)
-    weight_kg = Column(Numeric(6, 2))
     county_id = Column(Integer, ForeignKey("counties.id"), nullable=True)
-    registered_date = Column(Date, nullable=True)
     anon_id = Column(String(100), nullable=True, unique=True, index=True)
     zip_code = Column(String(10), nullable=True)
     data_source = Column(String(20), nullable=True, default="mock")
+    diagnosis_date = Column(Date, nullable=True)
+    outcome = Column(String(20), nullable=True)
 
     species = relationship("Species", back_populates="patients")
     breed = relationship("Breed", back_populates="patients")
     county = relationship("County", back_populates="patients")
-    cases = relationship("CancerCase", back_populates="patient")
-
-
-class CancerCase(Base):
-    __tablename__ = "cancer_cases"
-
-    id = Column(Integer, primary_key=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
-    cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=True)  # optional; types in case_diagnoses
-    diagnosis_date = Column(Date, nullable=True)
-    stage = Column(String(5))
-    outcome = Column(String(20))
-    county_id = Column(Integer, ForeignKey("counties.id"), nullable=True)
-    source_row_index = Column(Integer, nullable=True)
-    diagnosis_index = Column(Integer, nullable=True)
-    icd_o_code = Column(String(20), nullable=True)
-    predicted_term = Column(Text, nullable=True)
-    original_text = Column(Text, nullable=True)
-    confidence = Column(Numeric(4, 2), nullable=True)
-    prediction_method = Column(String(20), nullable=True)
-
-    patient = relationship("Patient", back_populates="cases")
-    cancer_type = relationship("CancerType", back_populates="cases")
-    county = relationship("County", back_populates="cases")
-    reports = relationship("PathologyReport", back_populates="case")
-    diagnoses = relationship("CaseDiagnosis", back_populates="case", cascade="all, delete-orphan")
+    diagnoses = relationship("CaseDiagnosis", back_populates="patient")
+    reports = relationship("PathologyReport", back_populates="patient")
 
 
 class CaseDiagnosis(Base):
-    """One row per cancer prediction (e.g. PetBERT) under a single registry case."""
+    """One row per cancer prediction (e.g. PetBERT) under a single patient."""
     __tablename__ = "case_diagnoses"
 
     id = Column(Integer, primary_key=True)
-    case_id = Column(Integer, ForeignKey("cancer_cases.id", ondelete="CASCADE"), nullable=False)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=False)
     icd_o_code = Column(String(20), nullable=True)
     predicted_term = Column(Text, nullable=True)
-    original_text = Column(Text, nullable=True)
     confidence = Column(Numeric(4, 2), nullable=True)
     prediction_method = Column(String(20), nullable=True)
     source_row_index = Column(Integer, nullable=True)
     diagnosis_index = Column(Integer, nullable=True)
 
-    case = relationship("CancerCase", back_populates="diagnoses")
+    patient = relationship("Patient", back_populates="diagnoses")
     cancer_type = relationship("CancerType", back_populates="case_diagnoses")
 
 
@@ -126,13 +98,13 @@ class PathologyReport(Base):
     __tablename__ = "pathology_reports"
 
     id = Column(Integer, primary_key=True)
-    case_id = Column(Integer, ForeignKey("cancer_cases.id"), nullable=False)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     report_text = Column(Text, nullable=False)
     classification = Column(String(100))
     confidence_score = Column(Numeric(5, 4))
     report_date = Column(Date, nullable=False)
 
-    case = relationship("CancerCase", back_populates="reports")
+    patient = relationship("Patient", back_populates="reports")
 
 
 class CalEnviroScreen(Base):
@@ -182,3 +154,24 @@ class IngestionLog(Base):
     rows_errored = Column(Integer, default=0)
     errors = Column(JSONB, default=list)
     warnings = Column(JSONB, default=list)
+
+
+class IngestionJob(Base):
+    __tablename__ = "ingestion_jobs"
+
+    id = Column(Integer, primary_key=True)
+    uploaded_by_email = Column(String(255), nullable=False)
+    uploaded_by_sub = Column(String(255), nullable=False)
+    dataset_a_filename = Column(String(255), nullable=False)
+    dataset_b_filename = Column(String(255), nullable=False)
+    storage_path = Column(String(500), nullable=False)
+    status = Column(String(20), nullable=False, default="pending_review")
+    reviewed_by_email = Column(String(255))
+    reviewed_at = Column(DateTime(timezone=True))
+    rejection_reason = Column(Text)
+    ingestion_log_id = Column(Integer, ForeignKey("ingestion_logs.id"))
+    processing_error = Column(Text)
+    batch_job_name = Column(String(500), nullable=True)
+    processing_stage = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True))
+    updated_at = Column(DateTime(timezone=True))

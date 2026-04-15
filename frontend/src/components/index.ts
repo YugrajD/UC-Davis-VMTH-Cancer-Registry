@@ -7,3 +7,5 @@ export { Footer } from './Footer/Footer';
 export { DataUpload } from './DataUpload/DataUpload';
 export { AnalysisView } from './AnalysisView/AnalysisView';
 export { BreedDisparitiesView } from './BreedDisparitiesView/BreedDisparitiesView';
+export { LoginModal } from './LoginModal/LoginModal';
+export { AdminQueue } from './AdminQueue/AdminQueue';

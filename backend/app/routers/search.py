@@ -6,7 +6,7 @@ from sqlalchemy import select, func, text
 from typing import Optional
 
 from app.database import get_db
-from app.models.models import PathologyReport, CancerCase, CancerType
+from app.models.models import PathologyReport, CancerType
 from app.schemas.schemas import (
     ClassifyRequest, ClassifyResult, ReportOut, ReportSearchResponse
 )
@@ -56,7 +56,7 @@ async def search_reports(
         reports=[
             ReportOut(
                 id=r.id,
-                case_id=r.case_id,
+                patient_id=r.patient_id,
                 report_text=r.report_text,
                 classification=r.classification,
                 confidence_score=float(r.confidence_score) if r.confidence_score else None,

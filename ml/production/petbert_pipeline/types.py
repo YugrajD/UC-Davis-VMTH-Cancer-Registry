@@ -30,6 +30,9 @@ class ScanConfig:
     group_classifier_threshold: float = 0.3
     finetuned_model_path: str | None = None
     categorization_mode: str = "default"  # "default" | "group-keyword"
+    cascade_threshold: float = 0.0  # >0 enables kNN fallback for low-confidence predictions
+    cascade_k: int = 5
+    cascade_adaptive_path: str = ""  # path to per-group thresholds JSON
 
 
 @dataclass(frozen=True)

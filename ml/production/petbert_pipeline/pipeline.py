@@ -300,6 +300,20 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         all_k_methods=categorization.top_k_methods,
     )
 
+    # --- Cascade post-processing: kNN fallback for low-confidence predictions ---
+    if config.cascade_threshold > 0:
+        from .cascade import apply_cascade
+        apply_cascade(
+            predictions_csv=outputs.predictions_csv,
+            report_embeddings=embeddings,
+            label_embeddings=label_embeddings,
+            case_ids=ids,
+            labels_csv_path=config.labels_csv_path,
+            threshold=config.cascade_threshold,
+            k=config.cascade_k,
+            adaptive_thresholds_path=config.cascade_adaptive_path,
+        )
+
     write_provenance_csv(
         path=outputs.provenance_csv,
         ids=ids,

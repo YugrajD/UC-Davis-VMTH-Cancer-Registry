@@ -78,7 +78,6 @@ def _make_scan_config(args, *, out_dir: str, classifier_path: str | None = None)
         labels_csv_path=config.LABELS_CSV,
         presence_classifier_path=classifier_path,
         embedding_cache_path=args.embedding_cache or None,
-        enrich_labels_csv_path=args.enrich_labels_csv or None,
     )
 
 

@@ -14,16 +14,13 @@ import {
 } from '../../data/superfundData';
 import { MOCK_PESTICIDE_DATA, PESTICIDE_BY_COUNTY } from '../../data/pesticideData';
 
-// ---------------------------------------------------------------------------
-// GeoJSON sources — swap ACTIVE_GEO_URL to switch county ↔ census-tract level.
-// Phase 1: county polygons (~1 MB, 58 features)
-// Phase 2: census tract polygons — download CB 500k file from Census Bureau,
-//   simplify with mapshaper, place in public/california-tracts.geojson, then:
-//   const ACTIVE_GEO_URL = '/california-tracts.geojson';
-// ---------------------------------------------------------------------------
-// Phase 2: census tract GeoJSON (cb_2019_06_tract_500k, simplified 20%)
-// Properties used: GEOID (11-digit), COUNTYFP (3-digit), NAME (tract number)
-const ACTIVE_GEO_URL = '/california-tracts.geojson';
+// GeoJSON sources
+// County polygons: ~1 MB, 58 features, property key "name"
+// Census tract polygons: cb_2019_06_tract_500k simplified 20%, 8041 features
+//   properties: GEOID (11-digit), COUNTYFP (3-digit), NAME (tract number)
+const COUNTY_GEO_URL =
+  'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
+const TRACT_GEO_URL = '/california-tracts.geojson';
 
 // California county FIPS → county name
 const CA_COUNTY_FIPS: Record<string, string> = {
@@ -74,6 +71,28 @@ function hexToRgba(hex: string, alpha = 200): [number, number, number, number] {
 
 const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
 const HOVER_COLOR: [number, number, number, number] = [245, 166, 35, 220];
+
+/** County name from a GeoJSON feature — works for both county and tract GeoJSON. */
+function countyFromFeature(
+  props: Record<string, unknown> | null,
+  tractLevel: boolean,
+): string {
+  if (!props) return '';
+  return tractLevel
+    ? (CA_COUNTY_FIPS[props.COUNTYFP as string] ?? '')
+    : ((props.name as string) ?? '');
+}
+
+/** Hover key — tract GEOID in tract mode, county name in county mode. */
+function hoverKeyFromFeature(
+  props: Record<string, unknown> | null,
+  tractLevel: boolean,
+): string {
+  if (!props) return '';
+  return tractLevel
+    ? ((props.GEOID as string) ?? '')
+    : ((props.name as string) ?? '');
+}
 
 // ---------------------------------------------------------------------------
 // Shared DeckGL map container
@@ -187,10 +206,12 @@ function CancerMap({
   countyData,
   countRange,
   showSuperfund,
+  tractLevel,
 }: {
   countyData: CountyData[];
   countRange: { min: number; max: number };
   showSuperfund: boolean;
+  tractLevel: boolean;
 }) {
   const countyDataMap = useMemo(() => {
     const m = new Map<string, CountyData>();
@@ -206,30 +227,31 @@ function CancerMap({
     [countRange],
   );
 
-  const [hovered, setHovered] = useState<string | null>(null); // GEOID of hovered tract
+  const [hovered, setHovered] = useState<string | null>(null);
 
   const geoLayer = useMemo(
     () =>
       new GeoJsonLayer({
         id: 'cancer-counties',
-        data: ACTIVE_GEO_URL,
+        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const geoid = (feature.properties?.GEOID || '') as string;
-          if (geoid === hovered) return HOVER_COLOR;
-          const county = CA_COUNTY_FIPS[feature.properties?.COUNTYFP as string] ?? '';
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          if (key && key === hovered) return HOVER_COLOR;
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
-        getLineColor: [255, 255, 255, 100],
-        lineWidthMinPixels: 0.3,
-        onHover: ({ object }) => setHovered((object?.properties?.GEOID as string) ?? null),
-        updateTriggers: { getFillColor: [countyDataMap, colorScale, hovered] },
+        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        onHover: ({ object }) =>
+          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, tractLevel) : null),
+        updateTriggers: { getFillColor: [countyDataMap, colorScale, hovered, tractLevel], data: [tractLevel] },
       }),
-    [countyDataMap, colorScale, hovered],
+    [countyDataMap, colorScale, hovered, tractLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -241,13 +263,15 @@ function CancerMap({
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
     if (info.layer?.id === 'cancer-counties') {
-      const county = CA_COUNTY_FIPS[info.object.properties?.COUNTYFP as string] ?? 'Unknown';
-      const tractName = (info.object.properties?.NAME || '') as string;
+      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
       const count = countyDataMap.get(county.toLowerCase())?.count ?? 0;
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>` : '';
+      const header = tractLevel
+        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
+        : `<strong style="font-size:13px">${county}</strong>`;
       return {
-        html: `<strong style="font-size:13px">Tract ${tractName}</strong><br/><span style="color:#6b7280">${county} County</span><br/>${count.toLocaleString()} cases${sfStr}`,
+        html: `${header}<br/>${count.toLocaleString()} cases${sfStr}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -266,7 +290,7 @@ function CancerMap({
       layers={layers}
       getTooltip={getTooltip}
       title="Cancer Incidence"
-      subtitle="Case count by county (census tract boundaries)"
+      subtitle={tractLevel ? 'Case count by county · census tract boundaries' : 'Case count by county'}
       legend={
         <GradientLegend
           label="Cases"
@@ -299,11 +323,13 @@ function EnviroScreenMap({
   data,
   indicator,
   showSuperfund,
+  tractLevel,
   onIndicatorChange,
 }: {
   data: CalEnviroScreenData[];
   indicator: CESIndicator;
   showSuperfund: boolean;
+  tractLevel: boolean;
   onIndicatorChange: (v: CESIndicator) => void;
 }) {
   const countyValueMap = useMemo(() => {
@@ -326,30 +352,31 @@ function EnviroScreenMap({
     [valueRange],
   );
 
-  const [hovered, setHovered] = useState<string | null>(null); // GEOID
+  const [hovered, setHovered] = useState<string | null>(null);
   const indicatorLabel = CES_INDICATORS.find(i => i.value === indicator)?.label ?? indicator;
 
   const geoLayer = useMemo(
     () =>
       new GeoJsonLayer({
         id: 'enviro-counties',
-        data: ACTIVE_GEO_URL,
+        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const geoid = (feature.properties?.GEOID || '') as string;
-          if (geoid === hovered) return HOVER_COLOR;
-          const county = CA_COUNTY_FIPS[feature.properties?.COUNTYFP as string] ?? '';
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          if (key && key === hovered) return HOVER_COLOR;
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
           const val = countyValueMap.get(county.toLowerCase());
           return val != null ? hexToRgba(colorScale(val)) : NO_DATA_COLOR;
         },
-        getLineColor: [255, 255, 255, 100],
-        lineWidthMinPixels: 0.3,
-        onHover: ({ object }) => setHovered((object?.properties?.GEOID as string) ?? null),
-        updateTriggers: { getFillColor: [countyValueMap, colorScale, hovered] },
+        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        onHover: ({ object }) =>
+          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, tractLevel) : null),
+        updateTriggers: { getFillColor: [countyValueMap, colorScale, hovered, tractLevel], data: [tractLevel] },
       }),
-    [countyValueMap, colorScale, hovered],
+    [countyValueMap, colorScale, hovered, tractLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -361,11 +388,13 @@ function EnviroScreenMap({
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
     if (info.layer?.id === 'enviro-counties') {
-      const county = CA_COUNTY_FIPS[info.object.properties?.COUNTYFP as string] ?? 'Unknown';
-      const tractName = (info.object.properties?.NAME || '') as string;
+      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
       const val = countyValueMap.get(county.toLowerCase());
+      const header = tractLevel
+        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
+        : `<strong style="font-size:13px">${county}</strong>`;
       return {
-        html: `<strong style="font-size:13px">Tract ${tractName}</strong><br/><span style="color:#6b7280">${county} County</span><br/>${val != null ? `${indicatorLabel}: <strong>${val.toFixed(1)}</strong>` : 'No data'}`,
+        html: `${header}<br/>${val != null ? `${indicatorLabel}: <strong>${val.toFixed(1)}</strong>` : 'No data'}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -412,7 +441,7 @@ function EnviroScreenMap({
 // Human Cancer Registry map
 // ---------------------------------------------------------------------------
 
-function HumanCancerMap({ showSuperfund }: { showSuperfund: boolean }) {
+function HumanCancerMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; tractLevel: boolean }) {
   const rateMap = useMemo(() => {
     const m = new Map<string, { rate: number | null; cases: number | null }>();
     HUMAN_CANCER_RATES.forEach(d => m.set(d.county.toLowerCase(), { rate: d.rate, cases: d.cases }));
@@ -432,30 +461,31 @@ function HumanCancerMap({ showSuperfund }: { showSuperfund: boolean }) {
     [rateRange],
   );
 
-  const [hovered, setHovered] = useState<string | null>(null); // GEOID
+  const [hovered, setHovered] = useState<string | null>(null);
 
   const geoLayer = useMemo(
     () =>
       new GeoJsonLayer({
         id: 'human-counties',
-        data: ACTIVE_GEO_URL,
+        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const geoid = (feature.properties?.GEOID || '') as string;
-          if (geoid === hovered) return HOVER_COLOR;
-          const county = CA_COUNTY_FIPS[feature.properties?.COUNTYFP as string] ?? '';
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          if (key && key === hovered) return HOVER_COLOR;
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
           const info = rateMap.get(county.toLowerCase());
           const rate = info?.rate;
           return rate != null ? hexToRgba(colorScale(rate)) : NO_DATA_COLOR;
         },
-        getLineColor: [255, 255, 255, 100],
-        lineWidthMinPixels: 0.3,
-        onHover: ({ object }) => setHovered((object?.properties?.GEOID as string) ?? null),
-        updateTriggers: { getFillColor: [rateMap, colorScale, hovered] },
+        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        onHover: ({ object }) =>
+          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, tractLevel) : null),
+        updateTriggers: { getFillColor: [rateMap, colorScale, hovered, tractLevel], data: [tractLevel] },
       }),
-    [rateMap, colorScale, hovered],
+    [rateMap, colorScale, hovered, tractLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -467,13 +497,15 @@ function HumanCancerMap({ showSuperfund }: { showSuperfund: boolean }) {
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
     if (info.layer?.id === 'human-counties') {
-      const county = CA_COUNTY_FIPS[info.object.properties?.COUNTYFP as string] ?? 'Unknown';
-      const tractName = (info.object.properties?.NAME || '') as string;
+      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
       const info2 = rateMap.get(county.toLowerCase());
       const rate = info2?.rate;
       const casesStr = info2?.cases != null ? ` (${info2.cases.toLocaleString()}/yr)` : '';
+      const header = tractLevel
+        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
+        : `<strong style="font-size:13px">${county}</strong>`;
       return {
-        html: `<strong style="font-size:13px">Tract ${tractName}</strong><br/><span style="color:#6b7280">${county} County</span><br/>${rate != null ? `${rate.toFixed(1)} per 100K${casesStr}` : 'Suppressed'}`,
+        html: `${header}<br/>${rate != null ? `${rate.toFixed(1)} per 100K${casesStr}` : 'Suppressed'}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -515,7 +547,7 @@ function HumanCancerMap({ showSuperfund }: { showSuperfund: boolean }) {
 // Pesticide Use map
 // ---------------------------------------------------------------------------
 
-function PesticideMap({ showSuperfund }: { showSuperfund: boolean }) {
+function PesticideMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; tractLevel: boolean }) {
   const valueRange = useMemo(() => {
     const vals = MOCK_PESTICIDE_DATA.map(d => d.lbs_per_sq_mile);
     return { min: Math.min(...vals), max: Math.max(...vals) };
@@ -529,29 +561,30 @@ function PesticideMap({ showSuperfund }: { showSuperfund: boolean }) {
     [valueRange],
   );
 
-  const [hovered, setHovered] = useState<string | null>(null); // GEOID
+  const [hovered, setHovered] = useState<string | null>(null);
 
   const geoLayer = useMemo(
     () =>
       new GeoJsonLayer({
         id: 'pesticide-counties',
-        data: ACTIVE_GEO_URL,
+        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const geoid = (feature.properties?.GEOID || '') as string;
-          if (geoid === hovered) return [96, 165, 250, 220] as [number, number, number, number];
-          const county = CA_COUNTY_FIPS[feature.properties?.COUNTYFP as string] ?? '';
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          if (key && key === hovered) return [96, 165, 250, 220] as [number, number, number, number];
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
           const data = PESTICIDE_BY_COUNTY[county];
           return data ? hexToRgba(colorScale(data.lbs_per_sq_mile)) : NO_DATA_COLOR;
         },
-        getLineColor: [255, 255, 255, 100],
-        lineWidthMinPixels: 0.3,
-        onHover: ({ object }) => setHovered((object?.properties?.GEOID as string) ?? null),
-        updateTriggers: { getFillColor: [colorScale, hovered] },
+        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        onHover: ({ object }) =>
+          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, tractLevel) : null),
+        updateTriggers: { getFillColor: [colorScale, hovered, tractLevel], data: [tractLevel] },
       }),
-    [colorScale, hovered],
+    [colorScale, hovered, tractLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -563,11 +596,13 @@ function PesticideMap({ showSuperfund }: { showSuperfund: boolean }) {
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
     if (info.layer?.id === 'pesticide-counties') {
-      const county = CA_COUNTY_FIPS[info.object.properties?.COUNTYFP as string] ?? 'Unknown';
-      const tractName = (info.object.properties?.NAME || '') as string;
+      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
       const data = PESTICIDE_BY_COUNTY[county];
+      const header = tractLevel
+        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
+        : `<strong style="font-size:13px">${county}</strong>`;
       return {
-        html: `<strong style="font-size:13px">Tract ${tractName}</strong><br/><span style="color:#6b7280">${county} County</span><br/>${data ? `${data.lbs_per_sq_mile.toLocaleString()} lbs/sq mi<br/><span style="color:#6b7280">${data.top_pesticide_class}</span>` : 'No data'}`,
+        html: `${header}<br/>${data ? `${data.lbs_per_sq_mile.toLocaleString()} lbs/sq mi<br/><span style="color:#6b7280">${data.top_pesticide_class}</span>` : 'No data'}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -745,6 +780,7 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
   const [twoMapSelection, setTwoMapSelection] = useState<[MapId, MapId]>(['vmth', 'enviro']);
   const [threeMapSelection, setThreeMapSelection] = useState<[MapId, MapId, MapId]>(['vmth', 'enviro', 'human']);
   const [showSuperfund, setShowSuperfund] = useState(false);
+  const [tractLevel, setTractLevel] = useState(false);
   const [scatterXVar, setScatterXVar] = useState<ScatterXVar>('pesticide');
 
   const { data: cesData } = useCalEnviroScreenData();
@@ -764,10 +800,10 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
 
   const renderMap = (id: MapId) => {
     switch (id) {
-      case 'vmth':    return <CancerMap key={id} countyData={countyData} countRange={countRange} showSuperfund={showSuperfund} />;
-      case 'enviro':  return <EnviroScreenMap key={id} data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} onIndicatorChange={setSelectedIndicator} />;
-      case 'human':   return <HumanCancerMap key={id} showSuperfund={showSuperfund} />;
-      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} />;
+      case 'vmth':    return <CancerMap key={id} countyData={countyData} countRange={countRange} showSuperfund={showSuperfund} tractLevel={tractLevel} />;
+      case 'enviro':  return <EnviroScreenMap key={id} data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} tractLevel={tractLevel} onIndicatorChange={setSelectedIndicator} />;
+      case 'human':   return <HumanCancerMap key={id} showSuperfund={showSuperfund} tractLevel={tractLevel} />;
+      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} tractLevel={tractLevel} />;
     }
   };
 
@@ -810,6 +846,14 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
           >
             <span className={`w-2 h-2 rounded-full ${showSuperfund ? 'bg-red-500' : 'bg-gray-400'}`} />
             Superfund Sites
+          </button>
+
+          <button
+            onClick={() => setTractLevel(v => !v)}
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${tractLevel ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
+          >
+            <span className={`w-2 h-2 rounded-full ${tractLevel ? 'bg-blue-500' : 'bg-gray-400'}`} />
+            Census Tract Level
           </button>
 
           {mapCount < 4 && (

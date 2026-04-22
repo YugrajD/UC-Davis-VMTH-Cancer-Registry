@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
-import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
+import DeckGL from '@deck.gl/react';
+import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
+import type { PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import type { CountyData, CESIndicator, CalEnviroScreenData } from '../../types';
@@ -12,67 +14,173 @@ import {
 } from '../../data/superfundData';
 import { MOCK_PESTICIDE_DATA, PESTICIDE_BY_COUNTY } from '../../data/pesticideData';
 
-const GEO_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
+// ---------------------------------------------------------------------------
+// GeoJSON sources — swap ACTIVE_GEO_URL to switch county ↔ census-tract level.
+// Phase 1: county polygons (~1 MB, 58 features)
+// Phase 2: census tract polygons — download CB 500k file from Census Bureau,
+//   simplify with mapshaper, place in public/california-tracts.geojson, then:
+//   const ACTIVE_GEO_URL = '/california-tracts.geojson';
+// ---------------------------------------------------------------------------
+// Phase 2: census tract GeoJSON (cb_2019_06_tract_500k, simplified 20%)
+// Properties used: GEOID (11-digit), COUNTYFP (3-digit), NAME (tract number)
+const ACTIVE_GEO_URL = '/california-tracts.geojson';
 
-const MAP_PROJECTION_CONFIG = {
-  scale: 2400,
-  center: [-119.5, 37.5] as [number, number],
+// California county FIPS → county name
+const CA_COUNTY_FIPS: Record<string, string> = {
+  '001': 'Alameda',       '003': 'Alpine',       '005': 'Amador',
+  '007': 'Butte',         '009': 'Calaveras',    '011': 'Colusa',
+  '013': 'Contra Costa',  '015': 'Del Norte',    '017': 'El Dorado',
+  '019': 'Fresno',        '021': 'Glenn',         '023': 'Humboldt',
+  '025': 'Imperial',      '027': 'Inyo',          '029': 'Kern',
+  '031': 'Kings',         '033': 'Lake',          '035': 'Lassen',
+  '037': 'Los Angeles',   '039': 'Madera',        '041': 'Marin',
+  '043': 'Mariposa',      '045': 'Mendocino',    '047': 'Merced',
+  '049': 'Modoc',         '051': 'Mono',          '053': 'Monterey',
+  '055': 'Napa',          '057': 'Nevada',        '059': 'Orange',
+  '061': 'Placer',        '063': 'Plumas',        '065': 'Riverside',
+  '067': 'Sacramento',    '069': 'San Benito',    '071': 'San Bernardino',
+  '073': 'San Diego',     '075': 'San Francisco', '077': 'San Joaquin',
+  '079': 'San Luis Obispo','081': 'San Mateo',    '083': 'Santa Barbara',
+  '085': 'Santa Clara',   '087': 'Santa Cruz',   '089': 'Shasta',
+  '091': 'Sierra',        '093': 'Siskiyou',     '095': 'Solano',
+  '097': 'Sonoma',        '099': 'Stanislaus',   '101': 'Sutter',
+  '103': 'Tehama',        '105': 'Trinity',       '107': 'Tulare',
+  '109': 'Tuolumne',      '111': 'Ventura',      '113': 'Yolo',
+  '115': 'Yuba',
 };
 
-interface AnalysisViewProps {
-  countyData: CountyData[];
-  countRange: { min: number; max: number };
-}
-
-interface MapTooltip {
-  county: string;
-  value: string;
-  x: number;
-  y: number;
-}
+const INITIAL_VIEW_STATE = {
+  longitude: -119.5,
+  latitude: 37.35,
+  zoom: 5.5,
+  pitch: 0,
+  bearing: 0,
+};
 
 // ---------------------------------------------------------------------------
-// Superfund dot overlay — rendered inside any ComposableMap
+// Utilities
 // ---------------------------------------------------------------------------
 
-function SuperfundOverlay({ sites }: { sites: SuperfundSite[] }) {
-  const [hovered, setHovered] = useState<SuperfundSite | null>(null);
+/** Convert a d3-scale hex color string to a DeckGL RGBA tuple. */
+function hexToRgba(hex: string, alpha = 200): [number, number, number, number] {
+  const h = hex.replace('#', '');
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+    alpha,
+  ];
+}
 
+const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
+const HOVER_COLOR: [number, number, number, number] = [245, 166, 35, 220];
+
+// ---------------------------------------------------------------------------
+// Shared DeckGL map container
+// ---------------------------------------------------------------------------
+
+interface DeckMapProps {
+  layers: (GeoJsonLayer | ScatterplotLayer)[];
+  getTooltip: (info: PickingInfo) => { html: string; style?: Record<string, string | undefined> } | null;
+  title: string;
+  subtitle?: React.ReactNode;
+  headerRight?: React.ReactNode;
+  legend: React.ReactNode;
+}
+
+function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+            {title}
+          </h3>
+          {subtitle && (
+            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{subtitle}</p>
+          )}
+        </div>
+        {headerRight}
+      </div>
+      <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
+        <DeckGL
+          initialViewState={INITIAL_VIEW_STATE}
+          controller
+          layers={layers}
+          getTooltip={getTooltip}
+          style={{ position: 'absolute', inset: '0' }}
+        />
+        {/* Legend */}
+        <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
+          {legend}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GradientLegend({
+  label,
+  gradient,
+  min,
+  max,
+  noDataLabel = 'No data',
+  extra,
+}: {
+  label: string;
+  gradient: string;
+  min: string;
+  max: string;
+  noDataLabel?: string;
+  extra?: React.ReactNode;
+}) {
   return (
     <>
-      {sites.map((site) => (
-        <Marker key={site.name} coordinates={site.coordinates}>
-          <circle
-            r={5}
-            fill={site.status === 'active' ? '#EF4444' : site.status === 'proposed' ? '#F97316' : '#22C55E'}
-            stroke="#FFFFFF"
-            strokeWidth={1}
-            opacity={0.85}
-            style={{ cursor: 'pointer' }}
-            onMouseEnter={() => setHovered(site)}
-            onMouseLeave={() => setHovered(null)}
-          />
-        </Marker>
-      ))}
-      {hovered && (
-        <Marker coordinates={hovered.coordinates}>
-          <foreignObject x={8} y={-40} width={200} height={80} style={{ overflow: 'visible' }}>
-            <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2 text-xs pointer-events-none" style={{ width: '180px' }}>
-              <p className="font-semibold text-[var(--color-text-primary)]">{hovered.name}</p>
-              <p className="text-[var(--color-text-secondary)] mt-0.5">
-                {hovered.county} Co. · <span className={hovered.status === 'active' ? 'text-red-500' : hovered.status === 'proposed' ? 'text-orange-500' : 'text-green-600'}>{hovered.status}</span>
-              </p>
-              <p className="text-[var(--color-text-secondary)] mt-0.5 truncate">{hovered.contaminants.join(', ')}</p>
-            </div>
-          </foreignObject>
-        </Marker>
-      )}
+      <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">{label}</p>
+      <div className="w-28 h-3 rounded" style={{ background: gradient }} />
+      <div className="flex justify-between mt-1">
+        <span className="text-[10px] text-[var(--color-text-secondary)]">{min}</span>
+        <span className="text-[10px] text-[var(--color-text-secondary)]">{max}</span>
+      </div>
+      <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
+        <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
+        <span className="text-[10px] text-[var(--color-text-secondary)]">{noDataLabel}</span>
+      </div>
+      {extra}
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// VMTH Cancer Incidence choropleth
+// Superfund ScatterplotLayer factory (shared across all maps)
+// ---------------------------------------------------------------------------
+
+function useSuperfundLayer(enabled: boolean) {
+  return useMemo(() => {
+    if (!enabled) return null;
+    return new ScatterplotLayer<SuperfundSite>({
+      id: 'superfund',
+      data: MOCK_SUPERFUND_SITES,
+      getPosition: d => d.coordinates,
+      getFillColor: d =>
+        d.status === 'active'
+          ? [239, 68, 68, 230]
+          : d.status === 'proposed'
+            ? [249, 115, 22, 230]
+            : [34, 197, 94, 230],
+      getLineColor: [255, 255, 255, 255],
+      lineWidthMinPixels: 1,
+      radiusMinPixels: 5,
+      radiusMaxPixels: 14,
+      getRadius: 3000,
+      pickable: true,
+      updateTriggers: { getFillColor: [] },
+    });
+  }, [enabled]);
+}
+
+// ---------------------------------------------------------------------------
+// VMTH Cancer Incidence map
 // ---------------------------------------------------------------------------
 
 function CancerMap({
@@ -84,115 +192,124 @@ function CancerMap({
   countRange: { min: number; max: number };
   showSuperfund: boolean;
 }) {
-  const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
-
   const countyDataMap = useMemo(() => {
-    const map = new Map<string, CountyData>();
-    countyData.forEach(c => map.set(c.county.toLowerCase(), c));
-    return map;
+    const m = new Map<string, CountyData>();
+    countyData.forEach(c => m.set(c.county.toLowerCase(), c));
+    return m;
   }, [countyData]);
 
-  const colorScale = useMemo(() => {
-    return scaleLinear<string>()
-      .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
-      .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
-  }, [countRange]);
+  const colorScale = useMemo(
+    () =>
+      scaleLinear<string>()
+        .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
+        .range(['#E6F3F5', '#6BB5BF', '#1A6B77']),
+    [countRange],
+  );
+
+  const [hovered, setHovered] = useState<string | null>(null); // GEOID of hovered tract
+
+  const geoLayer = useMemo(
+    () =>
+      new GeoJsonLayer({
+        id: 'cancer-counties',
+        data: ACTIVE_GEO_URL,
+        pickable: true,
+        stroked: true,
+        filled: true,
+        getFillColor: (feature) => {
+          const geoid = (feature.properties?.GEOID || '') as string;
+          if (geoid === hovered) return HOVER_COLOR;
+          const county = CA_COUNTY_FIPS[feature.properties?.COUNTYFP as string] ?? '';
+          const info = countyDataMap.get(county.toLowerCase());
+          const count = info?.count ?? 0;
+          return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
+        },
+        getLineColor: [255, 255, 255, 100],
+        lineWidthMinPixels: 0.3,
+        onHover: ({ object }) => setHovered((object?.properties?.GEOID as string) ?? null),
+        updateTriggers: { getFillColor: [countyDataMap, colorScale, hovered] },
+      }),
+    [countyDataMap, colorScale, hovered],
+  );
+
+  const superfundLayer = useSuperfundLayer(showSuperfund);
+  const layers = useMemo(
+    () => [geoLayer, ...(superfundLayer ? [superfundLayer] : [])],
+    [geoLayer, superfundLayer],
+  );
+
+  const getTooltip = (info: PickingInfo) => {
+    if (!info.object) return null;
+    if (info.layer?.id === 'cancer-counties') {
+      const county = CA_COUNTY_FIPS[info.object.properties?.COUNTYFP as string] ?? 'Unknown';
+      const tractName = (info.object.properties?.NAME || '') as string;
+      const count = countyDataMap.get(county.toLowerCase())?.count ?? 0;
+      const sf = SUPERFUND_BY_COUNTY[county];
+      const sfStr = sf ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>` : '';
+      return {
+        html: `<strong style="font-size:13px">Tract ${tractName}</strong><br/><span style="color:#6b7280">${county} County</span><br/>${count.toLocaleString()} cases${sfStr}`,
+        style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
+      };
+    }
+    if (info.layer?.id === 'superfund') {
+      const site = info.object as SuperfundSite;
+      return {
+        html: `<strong style="font-size:13px">${site.name}</strong><br/><span style="color:#6b7280">${site.county} Co. · ${site.status}</span><br/><span style="color:#9ca3af;font-size:11px">${site.contaminants.join(', ')}</span>`,
+        style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)', maxWidth: '200px' },
+      };
+    }
+    return null;
+  };
 
   return (
-    <div className="relative">
-      <div style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
-        <ComposableMap
-          projection="geoMercator"
-          projectionConfig={MAP_PROJECTION_CONFIG}
-          width={400}
-          height={400}
-          style={{ width: '100%', height: '100%' }}
-        >
-          <Geographies geography={GEO_URL}>
-            {({ geographies }) =>
-              geographies.map((geo) => {
-                const name = (geo.properties.name || '') as string;
-                const info = countyDataMap.get(name.toLowerCase());
-                const count = info?.count ?? 0;
-                const fill = count > 0 ? colorScale(count) : '#E5E7EB';
-                return (
-                  <Geography
-                    key={geo.rsmKey}
-                    geography={geo}
-                    fill={fill}
-                    stroke="#FFFFFF"
-                    strokeWidth={0.5}
-                    style={{
-                      default: { outline: 'none' },
-                      hover: { fill: '#F5A623', stroke: '#E87722', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
-                      pressed: { fill: '#E87722', outline: 'none' },
-                    }}
-                    onMouseEnter={(e) => {
-                      const event = e as unknown as React.MouseEvent;
-                      const sf = SUPERFUND_BY_COUNTY[name];
-                      const sfStr = sf ? ` · ${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}` : '';
-                      setTooltip({ county: name, value: `${count.toLocaleString()} cases${sfStr}`, x: event.clientX, y: event.clientY });
-                    }}
-                    onMouseLeave={() => setTooltip(null)}
-                  />
-                );
-              })
-            }
-          </Geographies>
-          {showSuperfund && <SuperfundOverlay sites={MOCK_SUPERFUND_SITES} />}
-        </ComposableMap>
-      </div>
-
-      <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
-        <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">Cases</p>
-        <div className="w-28 h-3 rounded" style={{ background: 'linear-gradient(to right, #E6F3F5, #6BB5BF, #1A6B77)' }} />
-        <div className="flex justify-between mt-1">
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.min}</span>
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.max}</span>
-        </div>
-        {showSuperfund && (
-          <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
-            {[{ color: '#EF4444', label: 'Active' }, { color: '#F97316', label: 'Proposed' }, { color: '#22C55E', label: 'Remediated' }].map(({ color, label }) => (
-              <div key={label} className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full border border-white" style={{ backgroundColor: color }} />
-                <span className="text-[10px] text-[var(--color-text-secondary)]">{label} Superfund</span>
+    <DeckMap
+      layers={layers}
+      getTooltip={getTooltip}
+      title="Cancer Incidence"
+      subtitle="Case count by county (census tract boundaries)"
+      legend={
+        <GradientLegend
+          label="Cases"
+          gradient="linear-gradient(to right, #E6F3F5, #6BB5BF, #1A6B77)"
+          min={String(countRange.min)}
+          max={String(countRange.max)}
+          extra={
+            showSuperfund ? (
+              <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                {[{ color: '#EF4444', label: 'Active' }, { color: '#F97316', label: 'Proposed' }, { color: '#22C55E', label: 'Remediated' }].map(({ color, label }) => (
+                  <div key={label} className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full border border-white shadow-sm" style={{ backgroundColor: color }} />
+                    <span className="text-[10px] text-[var(--color-text-secondary)]">{label} Superfund</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {tooltip && (
-        <div className="fixed z-50 pointer-events-none" style={{ left: tooltip.x + 12, top: tooltip.y - 12, transform: 'translateY(-100%)' }}>
-          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[160px]">
-            <p className="font-semibold text-sm text-[var(--color-text-primary)]">{tooltip.county}</p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">{tooltip.value}</p>
-          </div>
-        </div>
-      )}
-    </div>
+            ) : null
+          }
+        />
+      }
+    />
   );
 }
 
 // ---------------------------------------------------------------------------
-// CalEnviroScreen choropleth
+// CalEnviroScreen map
 // ---------------------------------------------------------------------------
 
 function EnviroScreenMap({
   data,
   indicator,
   showSuperfund,
+  onIndicatorChange,
 }: {
   data: CalEnviroScreenData[];
   indicator: CESIndicator;
   showSuperfund: boolean;
+  onIndicatorChange: (v: CESIndicator) => void;
 }) {
-  const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
-
   const countyValueMap = useMemo(() => {
-    const map = new Map<string, number | null>();
-    data.forEach(d => map.set(d.county_name.toLowerCase(), d[indicator]));
-    return map;
+    const m = new Map<string, number | null>();
+    data.forEach(d => m.set(d.county_name.toLowerCase(), d[indicator]));
+    return m;
   }, [data, indicator]);
 
   const valueRange = useMemo(() => {
@@ -201,92 +318,105 @@ function EnviroScreenMap({
     return { min: Math.min(...vals), max: Math.max(...vals) };
   }, [data, indicator]);
 
-  const colorScale = useMemo(() => {
-    return scaleLinear<string>()
-      .domain([valueRange.min, (valueRange.min + valueRange.max) / 2, valueRange.max])
-      .range(['#4CAF50', '#FFC107', '#F44336']);
-  }, [valueRange]);
+  const colorScale = useMemo(
+    () =>
+      scaleLinear<string>()
+        .domain([valueRange.min, (valueRange.min + valueRange.max) / 2, valueRange.max])
+        .range(['#4CAF50', '#FFC107', '#F44336']),
+    [valueRange],
+  );
 
+  const [hovered, setHovered] = useState<string | null>(null); // GEOID
   const indicatorLabel = CES_INDICATORS.find(i => i.value === indicator)?.label ?? indicator;
 
+  const geoLayer = useMemo(
+    () =>
+      new GeoJsonLayer({
+        id: 'enviro-counties',
+        data: ACTIVE_GEO_URL,
+        pickable: true,
+        stroked: true,
+        filled: true,
+        getFillColor: (feature) => {
+          const geoid = (feature.properties?.GEOID || '') as string;
+          if (geoid === hovered) return HOVER_COLOR;
+          const county = CA_COUNTY_FIPS[feature.properties?.COUNTYFP as string] ?? '';
+          const val = countyValueMap.get(county.toLowerCase());
+          return val != null ? hexToRgba(colorScale(val)) : NO_DATA_COLOR;
+        },
+        getLineColor: [255, 255, 255, 100],
+        lineWidthMinPixels: 0.3,
+        onHover: ({ object }) => setHovered((object?.properties?.GEOID as string) ?? null),
+        updateTriggers: { getFillColor: [countyValueMap, colorScale, hovered] },
+      }),
+    [countyValueMap, colorScale, hovered],
+  );
+
+  const superfundLayer = useSuperfundLayer(showSuperfund);
+  const layers = useMemo(
+    () => [geoLayer, ...(superfundLayer ? [superfundLayer] : [])],
+    [geoLayer, superfundLayer],
+  );
+
+  const getTooltip = (info: PickingInfo) => {
+    if (!info.object) return null;
+    if (info.layer?.id === 'enviro-counties') {
+      const county = CA_COUNTY_FIPS[info.object.properties?.COUNTYFP as string] ?? 'Unknown';
+      const tractName = (info.object.properties?.NAME || '') as string;
+      const val = countyValueMap.get(county.toLowerCase());
+      return {
+        html: `<strong style="font-size:13px">Tract ${tractName}</strong><br/><span style="color:#6b7280">${county} County</span><br/>${val != null ? `${indicatorLabel}: <strong>${val.toFixed(1)}</strong>` : 'No data'}`,
+        style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
+      };
+    }
+    if (info.layer?.id === 'superfund') {
+      const site = info.object as SuperfundSite;
+      return {
+        html: `<strong style="font-size:13px">${site.name}</strong><br/><span style="color:#6b7280">${site.county} Co. · ${site.status}</span>`,
+        style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
+      };
+    }
+    return null;
+  };
+
   return (
-    <div className="relative">
-      <div style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
-        <ComposableMap
-          projection="geoMercator"
-          projectionConfig={MAP_PROJECTION_CONFIG}
-          width={400}
-          height={400}
-          style={{ width: '100%', height: '100%' }}
+    <DeckMap
+      layers={layers}
+      getTooltip={getTooltip}
+      title="CalEnviroScreen 4.0"
+      subtitle="Environmental health percentile"
+      headerRight={
+        <select
+          value={indicator}
+          onChange={(e) => onIndicatorChange(e.target.value as CESIndicator)}
+          className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
         >
-          <Geographies geography={GEO_URL}>
-            {({ geographies }) =>
-              geographies.map((geo) => {
-                const name = (geo.properties.name || '') as string;
-                const val = countyValueMap.get(name.toLowerCase());
-                const fill = val != null ? colorScale(val) : '#E5E7EB';
-                return (
-                  <Geography
-                    key={geo.rsmKey}
-                    geography={geo}
-                    fill={fill}
-                    stroke="#FFFFFF"
-                    strokeWidth={0.5}
-                    style={{
-                      default: { outline: 'none' },
-                      hover: { fill: '#F5A623', stroke: '#E87722', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
-                      pressed: { fill: '#E87722', outline: 'none' },
-                    }}
-                    onMouseEnter={(e) => {
-                      const event = e as unknown as React.MouseEvent;
-                      setTooltip({ county: name, value: val != null ? `${indicatorLabel}: ${val.toFixed(1)}` : 'No data', x: event.clientX, y: event.clientY });
-                    }}
-                    onMouseLeave={() => setTooltip(null)}
-                  />
-                );
-              })
-            }
-          </Geographies>
-          {showSuperfund && <SuperfundOverlay sites={MOCK_SUPERFUND_SITES} />}
-        </ComposableMap>
-      </div>
-
-      <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
-        <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">Percentile (0–100)</p>
-        <div className="w-28 h-3 rounded" style={{ background: 'linear-gradient(to right, #4CAF50, #FFC107, #F44336)' }} />
-        <div className="flex justify-between mt-1">
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{valueRange.min.toFixed(0)}</span>
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{valueRange.max.toFixed(0)}</span>
-        </div>
-        <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
-          <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
-          <span className="text-[10px] text-[var(--color-text-secondary)]">No data</span>
-        </div>
-      </div>
-
-      {tooltip && (
-        <div className="fixed z-50 pointer-events-none" style={{ left: tooltip.x + 12, top: tooltip.y - 12, transform: 'translateY(-100%)' }}>
-          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[160px]">
-            <p className="font-semibold text-sm text-[var(--color-text-primary)]">{tooltip.county}</p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">{tooltip.value}</p>
-          </div>
-        </div>
-      )}
-    </div>
+          {CES_INDICATORS.map((ind) => (
+            <option key={ind.value} value={ind.value}>{ind.label}</option>
+          ))}
+        </select>
+      }
+      legend={
+        <GradientLegend
+          label="Percentile (0–100)"
+          gradient="linear-gradient(to right, #4CAF50, #FFC107, #F44336)"
+          min={valueRange.min.toFixed(0)}
+          max={valueRange.max.toFixed(0)}
+        />
+      }
+    />
   );
 }
 
 // ---------------------------------------------------------------------------
-// Human Cancer Registry choropleth
+// Human Cancer Registry map
 // ---------------------------------------------------------------------------
 
 function HumanCancerMap({ showSuperfund }: { showSuperfund: boolean }) {
-  const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
-
   const rateMap = useMemo(() => {
-    const map = new Map<string, { rate: number | null; cases: number | null }>();
-    HUMAN_CANCER_RATES.forEach(d => map.set(d.county.toLowerCase(), { rate: d.rate, cases: d.cases }));
-    return map;
+    const m = new Map<string, { rate: number | null; cases: number | null }>();
+    HUMAN_CANCER_RATES.forEach(d => m.set(d.county.toLowerCase(), { rate: d.rate, cases: d.cases }));
+    return m;
   }, []);
 
   const rateRange = useMemo(() => {
@@ -294,171 +424,183 @@ function HumanCancerMap({ showSuperfund }: { showSuperfund: boolean }) {
     return { min: Math.min(...vals), max: Math.max(...vals) };
   }, []);
 
-  const colorScale = useMemo(() => {
-    return scaleLinear<string>()
-      .domain([rateRange.min, (rateRange.min + rateRange.max) / 2, rateRange.max])
-      .range(['#F3E5F5', '#9C27B0', '#4A148C']);
-  }, [rateRange]);
+  const colorScale = useMemo(
+    () =>
+      scaleLinear<string>()
+        .domain([rateRange.min, (rateRange.min + rateRange.max) / 2, rateRange.max])
+        .range(['#F3E5F5', '#9C27B0', '#4A148C']),
+    [rateRange],
+  );
+
+  const [hovered, setHovered] = useState<string | null>(null); // GEOID
+
+  const geoLayer = useMemo(
+    () =>
+      new GeoJsonLayer({
+        id: 'human-counties',
+        data: ACTIVE_GEO_URL,
+        pickable: true,
+        stroked: true,
+        filled: true,
+        getFillColor: (feature) => {
+          const geoid = (feature.properties?.GEOID || '') as string;
+          if (geoid === hovered) return HOVER_COLOR;
+          const county = CA_COUNTY_FIPS[feature.properties?.COUNTYFP as string] ?? '';
+          const info = rateMap.get(county.toLowerCase());
+          const rate = info?.rate;
+          return rate != null ? hexToRgba(colorScale(rate)) : NO_DATA_COLOR;
+        },
+        getLineColor: [255, 255, 255, 100],
+        lineWidthMinPixels: 0.3,
+        onHover: ({ object }) => setHovered((object?.properties?.GEOID as string) ?? null),
+        updateTriggers: { getFillColor: [rateMap, colorScale, hovered] },
+      }),
+    [rateMap, colorScale, hovered],
+  );
+
+  const superfundLayer = useSuperfundLayer(showSuperfund);
+  const layers = useMemo(
+    () => [geoLayer, ...(superfundLayer ? [superfundLayer] : [])],
+    [geoLayer, superfundLayer],
+  );
+
+  const getTooltip = (info: PickingInfo) => {
+    if (!info.object) return null;
+    if (info.layer?.id === 'human-counties') {
+      const county = CA_COUNTY_FIPS[info.object.properties?.COUNTYFP as string] ?? 'Unknown';
+      const tractName = (info.object.properties?.NAME || '') as string;
+      const info2 = rateMap.get(county.toLowerCase());
+      const rate = info2?.rate;
+      const casesStr = info2?.cases != null ? ` (${info2.cases.toLocaleString()}/yr)` : '';
+      return {
+        html: `<strong style="font-size:13px">Tract ${tractName}</strong><br/><span style="color:#6b7280">${county} County</span><br/>${rate != null ? `${rate.toFixed(1)} per 100K${casesStr}` : 'Suppressed'}`,
+        style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
+      };
+    }
+    if (info.layer?.id === 'superfund') {
+      const site = info.object as SuperfundSite;
+      return {
+        html: `<strong style="font-size:13px">${site.name}</strong><br/><span style="color:#6b7280">${site.county} Co. · ${site.status}</span>`,
+        style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
+      };
+    }
+    return null;
+  };
 
   return (
-    <div className="relative">
-      <div style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
-        <ComposableMap
-          projection="geoMercator"
-          projectionConfig={MAP_PROJECTION_CONFIG}
-          width={400}
-          height={400}
-          style={{ width: '100%', height: '100%' }}
-        >
-          <Geographies geography={GEO_URL}>
-            {({ geographies }) =>
-              geographies.map((geo) => {
-                const name = (geo.properties.name || '') as string;
-                const info = rateMap.get(name.toLowerCase());
-                const rate = info?.rate;
-                const fill = rate != null ? colorScale(rate) : '#E5E7EB';
-                return (
-                  <Geography
-                    key={geo.rsmKey}
-                    geography={geo}
-                    fill={fill}
-                    stroke="#FFFFFF"
-                    strokeWidth={0.5}
-                    style={{
-                      default: { outline: 'none' },
-                      hover: { fill: '#F5A623', stroke: '#E87722', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
-                      pressed: { fill: '#E87722', outline: 'none' },
-                    }}
-                    onMouseEnter={(e) => {
-                      const event = e as unknown as React.MouseEvent;
-                      const casesStr = info?.cases != null ? ` (${info.cases.toLocaleString()}/yr)` : '';
-                      setTooltip({ county: name, value: rate != null ? `${rate.toFixed(1)} per 100K${casesStr}` : 'Suppressed', x: event.clientX, y: event.clientY });
-                    }}
-                    onMouseLeave={() => setTooltip(null)}
-                  />
-                );
-              })
-            }
-          </Geographies>
-          {showSuperfund && <SuperfundOverlay sites={MOCK_SUPERFUND_SITES} />}
-        </ComposableMap>
-      </div>
-
-      <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
-        <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">Rate per 100K</p>
-        <div className="w-28 h-3 rounded" style={{ background: 'linear-gradient(to right, #F3E5F5, #9C27B0, #4A148C)' }} />
-        <div className="flex justify-between mt-1">
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{rateRange.min.toFixed(0)}</span>
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{rateRange.max.toFixed(0)}</span>
-        </div>
-        <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
-          <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
-          <span className="text-[10px] text-[var(--color-text-secondary)]">Suppressed</span>
-        </div>
-      </div>
-
-      {tooltip && (
-        <div className="fixed z-50 pointer-events-none" style={{ left: tooltip.x + 12, top: tooltip.y - 12, transform: 'translateY(-100%)' }}>
-          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[160px]">
-            <p className="font-semibold text-sm text-[var(--color-text-primary)]">{tooltip.county}</p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">{tooltip.value}</p>
-          </div>
-        </div>
-      )}
-    </div>
+    <DeckMap
+      layers={layers}
+      getTooltip={getTooltip}
+      title="Human Cancer Registry"
+      subtitle={
+        <>
+          Age-adjusted rate per 100K (2017–2021) &middot;{' '}
+          <a href="https://statecancerprofiles.cancer.gov/" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">Source</a>
+        </>
+      }
+      legend={
+        <GradientLegend
+          label="Rate per 100K"
+          gradient="linear-gradient(to right, #F3E5F5, #9C27B0, #4A148C)"
+          min={rateRange.min.toFixed(0)}
+          max={rateRange.max.toFixed(0)}
+          noDataLabel="Suppressed"
+        />
+      }
+    />
   );
 }
 
 // ---------------------------------------------------------------------------
-// Pesticide Use choropleth
+// Pesticide Use map
 // ---------------------------------------------------------------------------
 
 function PesticideMap({ showSuperfund }: { showSuperfund: boolean }) {
-  const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
-
   const valueRange = useMemo(() => {
     const vals = MOCK_PESTICIDE_DATA.map(d => d.lbs_per_sq_mile);
     return { min: Math.min(...vals), max: Math.max(...vals) };
   }, []);
 
-  const colorScale = useMemo(() => {
-    return scaleLinear<string>()
-      .domain([valueRange.min, (valueRange.min + valueRange.max) / 2, valueRange.max])
-      .range(['#FEF9C3', '#F97316', '#7F1D1D']); // pale yellow → orange → dark red
-  }, [valueRange]);
+  const colorScale = useMemo(
+    () =>
+      scaleLinear<string>()
+        .domain([valueRange.min, (valueRange.min + valueRange.max) / 2, valueRange.max])
+        .range(['#FEF9C3', '#F97316', '#7F1D1D']),
+    [valueRange],
+  );
+
+  const [hovered, setHovered] = useState<string | null>(null); // GEOID
+
+  const geoLayer = useMemo(
+    () =>
+      new GeoJsonLayer({
+        id: 'pesticide-counties',
+        data: ACTIVE_GEO_URL,
+        pickable: true,
+        stroked: true,
+        filled: true,
+        getFillColor: (feature) => {
+          const geoid = (feature.properties?.GEOID || '') as string;
+          if (geoid === hovered) return [96, 165, 250, 220] as [number, number, number, number];
+          const county = CA_COUNTY_FIPS[feature.properties?.COUNTYFP as string] ?? '';
+          const data = PESTICIDE_BY_COUNTY[county];
+          return data ? hexToRgba(colorScale(data.lbs_per_sq_mile)) : NO_DATA_COLOR;
+        },
+        getLineColor: [255, 255, 255, 100],
+        lineWidthMinPixels: 0.3,
+        onHover: ({ object }) => setHovered((object?.properties?.GEOID as string) ?? null),
+        updateTriggers: { getFillColor: [colorScale, hovered] },
+      }),
+    [colorScale, hovered],
+  );
+
+  const superfundLayer = useSuperfundLayer(showSuperfund);
+  const layers = useMemo(
+    () => [geoLayer, ...(superfundLayer ? [superfundLayer] : [])],
+    [geoLayer, superfundLayer],
+  );
+
+  const getTooltip = (info: PickingInfo) => {
+    if (!info.object) return null;
+    if (info.layer?.id === 'pesticide-counties') {
+      const county = CA_COUNTY_FIPS[info.object.properties?.COUNTYFP as string] ?? 'Unknown';
+      const tractName = (info.object.properties?.NAME || '') as string;
+      const data = PESTICIDE_BY_COUNTY[county];
+      return {
+        html: `<strong style="font-size:13px">Tract ${tractName}</strong><br/><span style="color:#6b7280">${county} County</span><br/>${data ? `${data.lbs_per_sq_mile.toLocaleString()} lbs/sq mi<br/><span style="color:#6b7280">${data.top_pesticide_class}</span>` : 'No data'}`,
+        style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
+      };
+    }
+    if (info.layer?.id === 'superfund') {
+      const site = info.object as SuperfundSite;
+      return {
+        html: `<strong style="font-size:13px">${site.name}</strong><br/><span style="color:#6b7280">${site.county} Co. · ${site.status}</span>`,
+        style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
+      };
+    }
+    return null;
+  };
 
   return (
-    <div className="relative">
-      <div style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
-        <ComposableMap
-          projection="geoMercator"
-          projectionConfig={MAP_PROJECTION_CONFIG}
-          width={400}
-          height={400}
-          style={{ width: '100%', height: '100%' }}
-        >
-          <Geographies geography={GEO_URL}>
-            {({ geographies }) =>
-              geographies.map((geo) => {
-                const name = (geo.properties.name || '') as string;
-                const data = PESTICIDE_BY_COUNTY[name];
-                const val = data?.lbs_per_sq_mile;
-                const fill = val != null ? colorScale(val) : '#E5E7EB';
-                return (
-                  <Geography
-                    key={geo.rsmKey}
-                    geography={geo}
-                    fill={fill}
-                    stroke="#FFFFFF"
-                    strokeWidth={0.5}
-                    style={{
-                      default: { outline: 'none' },
-                      hover: { fill: '#60A5FA', stroke: '#2563EB', strokeWidth: 1.5, outline: 'none', cursor: 'pointer' },
-                      pressed: { fill: '#2563EB', outline: 'none' },
-                    }}
-                    onMouseEnter={(e) => {
-                      const event = e as unknown as React.MouseEvent;
-                      setTooltip({
-                        county: name,
-                        value: val != null
-                          ? `${val.toLocaleString()} lbs/sq mi · ${data.top_pesticide_class}`
-                          : 'No data',
-                        x: event.clientX,
-                        y: event.clientY,
-                      });
-                    }}
-                    onMouseLeave={() => setTooltip(null)}
-                  />
-                );
-              })
-            }
-          </Geographies>
-          {showSuperfund && <SuperfundOverlay sites={MOCK_SUPERFUND_SITES} />}
-        </ComposableMap>
-      </div>
-
-      <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
-        <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">lbs / sq mile</p>
-        <div className="w-28 h-3 rounded" style={{ background: 'linear-gradient(to right, #FEF9C3, #F97316, #7F1D1D)' }} />
-        <div className="flex justify-between mt-1">
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{valueRange.min}</span>
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{valueRange.max}</span>
-        </div>
-        <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
-          <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
-          <span className="text-[10px] text-[var(--color-text-secondary)]">No data</span>
-        </div>
-      </div>
-
-      {tooltip && (
-        <div className="fixed z-50 pointer-events-none" style={{ left: tooltip.x + 12, top: tooltip.y - 12, transform: 'translateY(-100%)' }}>
-          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[160px]">
-            <p className="font-semibold text-sm text-[var(--color-text-primary)]">{tooltip.county}</p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">{tooltip.value}</p>
-          </div>
-        </div>
-      )}
-    </div>
+    <DeckMap
+      layers={layers}
+      getTooltip={getTooltip}
+      title="Pesticide Use"
+      subtitle={
+        <>
+          Avg annual lbs active ingredient / sq mi (2015–2019) &middot;{' '}
+          <a href="https://trackingcalifornia.org/data-and-tools/pesticide-mapping-tool" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">Source</a>
+        </>
+      }
+      legend={
+        <GradientLegend
+          label="lbs / sq mile"
+          gradient="linear-gradient(to right, #FEF9C3, #F97316, #7F1D1D)"
+          min={String(valueRange.min)}
+          max={String(valueRange.max)}
+        />
+      }
+    />
   );
 }
 
@@ -489,13 +631,9 @@ function CorrelationScatterPlot({
     const cesMap = new Map(cesData.map(d => [d.county_name, d]));
     return countyData.flatMap(c => {
       let x: number | null = null;
-      if (xVar === 'pesticide') {
-        x = PESTICIDE_BY_COUNTY[c.county]?.lbs_per_sq_mile ?? null;
-      } else if (xVar === 'superfund') {
-        x = SUPERFUND_BY_COUNTY[c.county]?.total ?? 0;
-      } else if (xVar === 'ces_score') {
-        x = cesMap.get(c.county)?.ces_score ?? null;
-      }
+      if (xVar === 'pesticide') x = PESTICIDE_BY_COUNTY[c.county]?.lbs_per_sq_mile ?? null;
+      else if (xVar === 'superfund') x = SUPERFUND_BY_COUNTY[c.county]?.total ?? 0;
+      else if (xVar === 'ces_score') x = cesMap.get(c.county)?.ces_score ?? null;
       if (x === null) return [];
       return [{ county: c.county, x, y: c.count }];
     });
@@ -509,23 +647,21 @@ function CorrelationScatterPlot({
 
   const xScale = useMemo(() => {
     if (points.length === 0) return scaleLinear().domain([0, 1]).range([0, innerW]);
-    const xVals = points.map(p => p.x);
-    return scaleLinear().domain([0, Math.max(...xVals) * 1.05]).range([0, innerW]).nice();
+    return scaleLinear().domain([0, Math.max(...points.map(p => p.x)) * 1.05]).range([0, innerW]).nice();
   }, [points, innerW]);
 
   const yScale = useMemo(() => {
     if (points.length === 0) return scaleLinear().domain([0, 1]).range([innerH, 0]);
-    const yVals = points.map(p => p.y);
-    return scaleLinear().domain([0, Math.max(...yVals) * 1.1]).range([innerH, 0]).nice();
+    return scaleLinear().domain([0, Math.max(...points.map(p => p.y)) * 1.1]).range([innerH, 0]).nice();
   }, [points, innerH]);
 
-  // Simple linear regression for trend line
   const trendLine = useMemo(() => {
     if (points.length < 2) return null;
     const n = points.length;
     const meanX = points.reduce((s, p) => s + p.x, 0) / n;
     const meanY = points.reduce((s, p) => s + p.y, 0) / n;
-    const slope = points.reduce((s, p) => s + (p.x - meanX) * (p.y - meanY), 0) /
+    const slope =
+      points.reduce((s, p) => s + (p.x - meanX) * (p.y - meanY), 0) /
       points.reduce((s, p) => s + (p.x - meanX) ** 2, 0);
     const intercept = meanY - slope * meanX;
     const xMin = Math.min(...points.map(p => p.x));
@@ -538,72 +674,30 @@ function CorrelationScatterPlot({
   const yTicks = yScale.ticks(5);
 
   if (points.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">
-        No overlapping county data for this variable.
-      </div>
-    );
+    return <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">No overlapping county data for this variable.</div>;
   }
 
   return (
     <div className="overflow-x-auto">
-      <svg
-        width="100%"
-        viewBox={`0 0 ${width} ${height}`}
-        style={{ maxWidth: `${width}px`, display: 'block', margin: '0 auto' }}
-      >
+      <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: `${width}px`, display: 'block', margin: '0 auto' }}>
         <g transform={`translate(${margin.left},${margin.top})`}>
-          {/* Grid lines */}
-          {yTicks.map(t => (
-            <line key={t} x1={0} x2={innerW} y1={yScale(t)} y2={yScale(t)} stroke="#E5E7EB" strokeWidth={1} />
-          ))}
-          {xTicks.map(t => (
-            <line key={t} x1={xScale(t)} x2={xScale(t)} y1={0} y2={innerH} stroke="#E5E7EB" strokeWidth={1} />
-          ))}
-
-          {/* Trend line */}
+          {yTicks.map(t => <line key={t} x1={0} x2={innerW} y1={yScale(t)} y2={yScale(t)} stroke="#E5E7EB" strokeWidth={1} />)}
+          {xTicks.map(t => <line key={t} x1={xScale(t)} x2={xScale(t)} y1={0} y2={innerH} stroke="#E5E7EB" strokeWidth={1} />)}
           {trendLine && (
-            <line
-              x1={xScale(trendLine.x1)} y1={yScale(trendLine.y1)}
-              x2={xScale(trendLine.x2)} y2={yScale(trendLine.y2)}
-              stroke="#94A3B8" strokeWidth={1.5} strokeDasharray="4 3"
-            />
+            <line x1={xScale(trendLine.x1)} y1={yScale(trendLine.y1)} x2={xScale(trendLine.x2)} y2={yScale(trendLine.y2)} stroke="#94A3B8" strokeWidth={1.5} strokeDasharray="4 3" />
           )}
-
-          {/* Data points */}
           {points.map(p => (
             <g key={p.county} onMouseEnter={() => setHovered(p.county)} onMouseLeave={() => setHovered(null)}>
-              <circle
-                cx={xScale(p.x)}
-                cy={yScale(p.y)}
-                r={hovered === p.county ? 7 : 5}
-                fill={hovered === p.county ? '#E87722' : '#1A6B77'}
-                opacity={0.8}
-                style={{ cursor: 'pointer', transition: 'r 0.1s' }}
-              />
+              <circle cx={xScale(p.x)} cy={yScale(p.y)} r={hovered === p.county ? 7 : 5} fill={hovered === p.county ? '#E87722' : '#1A6B77'} opacity={0.8} style={{ cursor: 'pointer', transition: 'r 0.1s' }} />
               {hovered === p.county && (
                 <g>
-                  <rect
-                    x={xScale(p.x) + 8}
-                    y={yScale(p.y) - 30}
-                    width={130}
-                    height={38}
-                    rx={4}
-                    fill="white"
-                    stroke="#E5E7EB"
-                    strokeWidth={1}
-                    filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))"
-                  />
+                  <rect x={xScale(p.x) + 8} y={yScale(p.y) - 30} width={140} height={38} rx={4} fill="white" stroke="#E5E7EB" strokeWidth={1} filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))" />
                   <text x={xScale(p.x) + 14} y={yScale(p.y) - 14} fontSize={10} fontWeight="600" fill="#1F2937">{p.county}</text>
-                  <text x={xScale(p.x) + 14} y={yScale(p.y) + 2} fontSize={9} fill="#6B7280">
-                    {xVarMeta.label}: {p.x.toLocaleString()} · Cases: {p.y.toLocaleString()}
-                  </text>
+                  <text x={xScale(p.x) + 14} y={yScale(p.y) + 2} fontSize={9} fill="#6B7280">{xVarMeta.label}: {p.x.toLocaleString()} · Cases: {p.y.toLocaleString()}</text>
                 </g>
               )}
             </g>
           ))}
-
-          {/* X axis */}
           <line x1={0} x2={innerW} y1={innerH} y2={innerH} stroke="#9CA3AF" strokeWidth={1} />
           {xTicks.map(t => (
             <g key={t} transform={`translate(${xScale(t)},${innerH})`}>
@@ -611,11 +705,7 @@ function CorrelationScatterPlot({
               <text y={16} textAnchor="middle" fontSize={9} fill="#6B7280">{t.toLocaleString()}</text>
             </g>
           ))}
-          <text x={innerW / 2} y={innerH + 40} textAnchor="middle" fontSize={10} fill="#374151">
-            {xVarMeta.label} ({xVarMeta.unit})
-          </text>
-
-          {/* Y axis */}
+          <text x={innerW / 2} y={innerH + 40} textAnchor="middle" fontSize={10} fill="#374151">{xVarMeta.label} ({xVarMeta.unit})</text>
           <line x1={0} x2={0} y1={0} y2={innerH} stroke="#9CA3AF" strokeWidth={1} />
           {yTicks.map(t => (
             <g key={t} transform={`translate(0,${yScale(t)})`}>
@@ -623,14 +713,7 @@ function CorrelationScatterPlot({
               <text x={-8} textAnchor="end" dominantBaseline="middle" fontSize={9} fill="#6B7280">{t.toLocaleString()}</text>
             </g>
           ))}
-          <text
-            transform={`translate(${-44},${innerH / 2}) rotate(-90)`}
-            textAnchor="middle"
-            fontSize={10}
-            fill="#374151"
-          >
-            Cancer Cases
-          </text>
+          <text transform={`translate(${-44},${innerH / 2}) rotate(-90)`} textAnchor="middle" fontSize={10} fill="#374151">Cancer Cases</text>
         </g>
       </svg>
     </div>
@@ -638,7 +721,7 @@ function CorrelationScatterPlot({
 }
 
 // ---------------------------------------------------------------------------
-// AnalysisView — root component
+// Root AnalysisView
 // ---------------------------------------------------------------------------
 
 type MapId = 'vmth' | 'enviro' | 'human' | 'pesticide';
@@ -651,6 +734,11 @@ const MAP_OPTIONS: { id: MapId; label: string }[] = [
   { id: 'pesticide', label: 'Pesticide Use' },
 ];
 
+interface AnalysisViewProps {
+  countyData: CountyData[];
+  countRange: { min: number; max: number };
+}
+
 export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
   const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
   const [mapCount, setMapCount] = useState<MapCount>(3);
@@ -659,106 +747,38 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
   const [showSuperfund, setShowSuperfund] = useState(false);
   const [scatterXVar, setScatterXVar] = useState<ScatterXVar>('pesticide');
 
-  const { data: cesData, loading, error } = useCalEnviroScreenData();
+  const { data: cesData } = useCalEnviroScreenData();
 
-  const visibleMaps: MapId[] = mapCount === 2
-    ? twoMapSelection
-    : mapCount === 3
-      ? threeMapSelection
-      : ['vmth', 'enviro', 'human', 'pesticide'];
+  const visibleMaps: MapId[] =
+    mapCount === 2 ? twoMapSelection :
+    mapCount === 3 ? threeMapSelection :
+    ['vmth', 'enviro', 'human', 'pesticide'];
 
-  const handleSlotChange = (slot: number, value: MapId, count: MapCount) => {
-    if (count === 2) {
-      setTwoMapSelection(prev => {
-        const next: [MapId, MapId] = [...prev] as [MapId, MapId];
-        next[slot] = value;
-        return next;
-      });
+  const handleSlotChange = (slot: number, value: MapId) => {
+    if (mapCount === 2) {
+      setTwoMapSelection(prev => { const next = [...prev] as [MapId, MapId]; next[slot] = value; return next; });
     } else {
-      setThreeMapSelection(prev => {
-        const next: [MapId, MapId, MapId] = [...prev] as [MapId, MapId, MapId];
-        next[slot] = value;
-        return next;
-      });
+      setThreeMapSelection(prev => { const next = [...prev] as [MapId, MapId, MapId]; next[slot] = value; return next; });
     }
   };
 
   const renderMap = (id: MapId) => {
     switch (id) {
-      case 'vmth':
-        return (
-          <div key={id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Cancer Incidence</h3>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Case count by county</p>
-            </div>
-            <CancerMap countyData={countyData} countRange={countRange} showSuperfund={showSuperfund} />
-          </div>
-        );
-      case 'enviro':
-        return (
-          <div key={id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">CalEnviroScreen 4.0</h3>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Environmental health percentile</p>
-              </div>
-              <select
-                value={selectedIndicator}
-                onChange={(e) => setSelectedIndicator(e.target.value as CESIndicator)}
-                className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-              >
-                {CES_INDICATORS.map((ind) => (
-                  <option key={ind.value} value={ind.value}>{ind.label}</option>
-                ))}
-              </select>
-            </div>
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-24">
-                <div className="w-8 h-8 border-4 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
-                <p className="mt-4 text-sm text-[var(--color-text-secondary)]">Loading CalEnviroScreen data...</p>
-              </div>
-            ) : error ? (
-              <div className="p-6"><p className="text-sm text-red-600">Error: {error}</p></div>
-            ) : (
-              <EnviroScreenMap data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} />
-            )}
-          </div>
-        );
-      case 'human':
-        return (
-          <div key={id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Human Cancer Registry</h3>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                Age-adjusted rate per 100K (2017–2021) &middot;{' '}
-                <a href="https://statecancerprofiles.cancer.gov/" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">Source</a>
-              </p>
-            </div>
-            <HumanCancerMap showSuperfund={showSuperfund} />
-          </div>
-        );
-      case 'pesticide':
-        return (
-          <div key={id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Pesticide Use</h3>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                Avg annual lbs active ingredient / sq mile (2015–2019) &middot;{' '}
-                <a href="https://trackingcalifornia.org/data-and-tools/pesticide-mapping-tool" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">Source</a>
-              </p>
-            </div>
-            <PesticideMap showSuperfund={showSuperfund} />
-          </div>
-        );
+      case 'vmth':    return <CancerMap key={id} countyData={countyData} countRange={countRange} showSuperfund={showSuperfund} />;
+      case 'enviro':  return <EnviroScreenMap key={id} data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} onIndicatorChange={setSelectedIndicator} />;
+      case 'human':   return <HumanCancerMap key={id} showSuperfund={showSuperfund} />;
+      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} />;
     }
   };
 
-  const gridCols = mapCount === 2 ? 'lg:grid-cols-2' : mapCount === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-2 xl:grid-cols-4';
+  const gridCols =
+    mapCount === 2 ? 'lg:grid-cols-2' :
+    mapCount === 3 ? 'lg:grid-cols-3' :
+    'lg:grid-cols-2 xl:grid-cols-4';
 
   return (
     <div className="space-y-6">
-      {/* Description + controls */}
+      {/* Controls */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-start gap-4">
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1">
@@ -766,21 +786,16 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
             <a href="https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">CalEnviroScreen 4.0</a>
             , and pesticide use from{' '}
             <a href="https://trackingcalifornia.org/data-and-tools/pesticide-mapping-tool" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">CDPR</a>
-            . Toggle Superfund sites to overlay{' '}
-            <a href="https://www.epa.gov/superfund/search-superfund-sites-where-you-live" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">EPA NPL sites</a>
-            {' '}on any map.
+            . Maps support pan &amp; zoom. Toggle{' '}
+            <a href="https://www.epa.gov/superfund/search-superfund-sites-where-you-live" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">EPA Superfund sites</a>
+            {' '}as an overlay on any map.
           </p>
-          {/* Map count toggle */}
           <div className="flex rounded-lg border border-gray-300 overflow-hidden shrink-0">
-            {([2, 3, 4] as MapCount[]).map((n) => (
+            {([2, 3, 4] as MapCount[]).map(n => (
               <button
                 key={n}
                 onClick={() => setMapCount(n)}
-                className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 first:border-l-0 transition-colors ${
-                  mapCount === n
-                    ? 'bg-[var(--color-teal)] text-white'
-                    : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
-                }`}
+                className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 first:border-l-0 transition-colors ${mapCount === n ? 'bg-[var(--color-teal)] text-white' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
               >
                 {n} Maps
               </button>
@@ -788,22 +803,15 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
           </div>
         </div>
 
-        {/* Controls row */}
         <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-100">
-          {/* Superfund toggle */}
           <button
             onClick={() => setShowSuperfund(v => !v)}
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
-              showSuperfund
-                ? 'bg-red-50 border-red-300 text-red-700'
-                : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'
-            }`}
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${showSuperfund ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
           >
             <span className={`w-2 h-2 rounded-full ${showSuperfund ? 'bg-red-500' : 'bg-gray-400'}`} />
             Superfund Sites
           </button>
 
-          {/* Map slot selectors for 2/3-map modes */}
           {mapCount < 4 && (
             <>
               <span className="text-xs font-medium text-[var(--color-text-secondary)]">Show:</span>
@@ -811,12 +819,10 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
                 <select
                   key={i}
                   value={mapCount === 2 ? twoMapSelection[i] : threeMapSelection[i]}
-                  onChange={(e) => handleSlotChange(i, e.target.value as MapId, mapCount)}
+                  onChange={e => handleSlotChange(i, e.target.value as MapId)}
                   className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
                 >
-                  {MAP_OPTIONS.map(opt => (
-                    <option key={opt.id} value={opt.id}>{opt.label}</option>
-                  ))}
+                  {MAP_OPTIONS.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
                 </select>
               ))}
             </>
@@ -829,31 +835,25 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
         {visibleMaps.map(renderMap)}
       </div>
 
-      {/* Correlation scatter plot */}
+      {/* Scatter plot */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-              Environmental Correlation
-            </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-              Cancer cases vs. environmental exposure by county
-            </p>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Environmental Correlation</h3>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Cancer cases vs. environmental exposure by county</p>
           </div>
           <select
             value={scatterXVar}
-            onChange={(e) => setScatterXVar(e.target.value as ScatterXVar)}
+            onChange={e => setScatterXVar(e.target.value as ScatterXVar)}
             className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
           >
-            {X_VAR_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label} ({o.unit})</option>
-            ))}
+            {X_VAR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label} ({o.unit})</option>)}
           </select>
         </div>
         <div className="p-4">
           <CorrelationScatterPlot countyData={countyData} cesData={cesData} xVar={scatterXVar} />
           <p className="text-xs text-[var(--color-text-secondary)] mt-3 text-center">
-            Dashed line shows linear trend. Each dot is one county. Hover for details.
+            Dashed line shows linear trend · Each dot is one county · Hover for details
           </p>
         </div>
       </div>

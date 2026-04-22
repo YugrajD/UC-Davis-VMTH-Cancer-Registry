@@ -8,20 +8,23 @@ The UC Davis VMTH Cancer Registry ingests PetBERT cancer predictions and patient
 
 ## Data Sources
 
-### 1. PetBERT Predictions (`petbert_scan_predictions.csv`)
-- **Format**: CSV with columns: `anon_id`, `original_text`, `predicted_term`, `predicted_group`, `predicted_code`, `confidence`, `method`
-- **Content**: AI-generated cancer predictions from pathology reports
-- **Key Features**:
-  - Multiple predictions per row (numbered format: `"1) Term 2) Term"`)
-  - Each row may represent a different visit or report for the same dog
+### 1. Dataset A — Clinical Notes + Demographics
+- **Format**: CSV with columns: `DtOfRq`, `Sex`, `Species`, `Breed`, `Diagnoses`, `Text`
+- **Content**: De-identified pathology reports with demographics
+- **Key Columns**:
+  - `Text` — pathology report text (PetBERT ML input)
+  - `Diagnoses` — human-assigned diagnostic labels (not ML input)
+  - `DtOfRq`, `Sex`, `Species`, `Breed` — patient demographics
   - `anon_id` format: `"ID_3"`, `"ID_37"`, etc.
+- **Processing**: PetBERT processes the `Text` column. ML worker returns predictions (predicted_term, predicted_group, predicted_code, confidence, method). Demographics are extracted and merged during ingestion.
 
-### 2. Dog Demographics (`All_deidentified_K9.xlsx`)
-- **Format**: Excel file with columns: `anon_id`, `Sex`, `Owner Zipcode Zipcode`
-- **Content**: Patient demographic information (sex, ZIP code)
+### 2. Dataset B — Supplementary Demographics
+- **Format**: CSV with columns: `Sex`, `Zipcode`
+- **Content**: Supplementary patient demographics (primarily ZIP code)
 - **Key Features**:
-  - Multiple rows per `anon_id` (different visits)
-  - Takes first non-empty sex/ZIP per `anon_id`
+  - Adds ZIP code mapping (ZIP → county) not available in Dataset A
+  - Sex column serves as secondary/fallback data
+  - Multiple rows per `anon_id` (different visits); takes first non-empty value
   - `anon_id` may be stored as numeric (`37`) or string (`"37.0"`, `"ID_37"`)
 
 ---
@@ -30,15 +33,22 @@ The UC Davis VMTH Cancer Registry ingests PetBERT cancer predictions and patient
 
 ### Step 1: Data Parsing
 
-**PetBERT CSV (`parse_petbert`)**
-- Reads CSV and splits numbered predictions (e.g., `"1) Lymphoma 2) Mast Cell"`)
+**ML Worker Predictions (`parse_predictions`)**
+- Parses ML worker output and splits numbered predictions (e.g., `"1) Lymphoma 2) Mast Cell"`)
 - Groups by `anon_id` → `{anon_id: [diagnosis1, diagnosis2, ...]}`
 - Each diagnosis includes: `row_index`, `diagnosis_index`, `predicted_group`, `predicted_term`, `icd_o_code`, `confidence`, `original_text`, `method`
 
-**K9 Excel (`parse_visits`)**
-- Reads Excel using pandas
+**Dataset A Demographics (`parse_dataset_a_demographics`)**
+- Parses Dataset A CSV for demographic columns: `DtOfRq`, `Sex`, `Species`, `Breed`
+- Groups by `anon_id` → `{anon_id: {sex, breed, diagnosis_date, species}}`
+- Takes first non-empty value per `anon_id`
+- Primary source for sex, breed, species, and diagnosis date
+
+**Dataset B Demographics (`parse_demographics_csv`)**
+- Parses Dataset B CSV for: `anon_id`, `Sex`, `Zipcode`
 - Groups by `anon_id` → `{anon_id: {sex, zip}}`
 - Takes first non-empty sex/ZIP per `anon_id`
+- Primary source for ZIP code (→ county mapping)
 
 **Critical: Anon ID Normalization**
 - **Problem**: CSV uses `"ID_37"`, Excel may use `"37"` or `"37.0"` → same dog appears twice
@@ -47,15 +57,12 @@ The UC Davis VMTH Cancer Registry ingests PetBERT cancer predictions and patient
   - `"37.0"` → `"ID_37"`
   - `"ID_37"` → `"ID_37"` (already canonical)
 
-### Step 2: Matching Patients
+### Step 2: Merging Demographics & Matching Patients
 
-```python
-matched_ids = set(petbert.keys()) & set(visits.keys())
-```
-
-- Only processes `anon_id`s that appear in **both** datasets
-- Skips PetBERT-only (no demographics) and visits-only (no diagnoses)
-- Result: List of `anon_id`s ready for ingestion
+- All patients with predictions are processed (demographics are optional enrichment)
+- Demographics are merged: Dataset A provides Sex/Species/Breed/DtOfRq, Dataset B adds Zipcode
+- Dataset A sex takes priority; Dataset B sex is a fallback
+- Result: List of `anon_id`s from predictions, enriched with available demographics
 
 ### Step 3: Database Upsert
 

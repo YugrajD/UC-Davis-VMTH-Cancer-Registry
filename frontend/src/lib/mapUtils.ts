@@ -1,7 +1,6 @@
 // Shared constants and helpers for all Deck.gl map components.
 
-export const COUNTY_GEO_URL =
-  'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
+export const COUNTY_GEO_URL = '/california-counties.geojson';
 
 export const TRACT_GEO_URL = '/california-tracts.geojson';
 

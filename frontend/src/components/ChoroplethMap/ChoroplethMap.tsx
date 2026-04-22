@@ -26,7 +26,7 @@ const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 255];
 
 // Background applied to both the container div and the DeckGL canvas container
 // so the backdrop is consistently light regardless of WebGL compositing mode.
-const MAP_BG_CSS = '#f8fafc';
+const MAP_BG_CSS = '#f1f5f9';
 
 const EXPANDED_VIEW_STATE = { ...INITIAL_VIEW_STATE, zoom: 4.9 };
 

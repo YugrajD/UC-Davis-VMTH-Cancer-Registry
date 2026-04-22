@@ -233,6 +233,7 @@ class IngestionResponse(BaseModel):
     warnings: List[str] = []
     row_results: List[IngestionRowResult] = []
     ingestion_log_id: Optional[int] = None
+    result_summary: Optional[dict] = None
 
 
 # --- Ingestion Jobs ---

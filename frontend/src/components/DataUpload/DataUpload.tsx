@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { uploadCSV, fetchMyJobs, type IngestionJob } from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
+import { STAGE_LABELS } from '../shared/pipelineStages';
 
 interface CsvPreview {
   headers: string[];
@@ -206,9 +207,17 @@ export function DataUpload() {
     if (user) loadMyJobs();
   }, [user, loadMyJobs]);
 
+  // Auto-poll every 10s while any job is processing
+  useEffect(() => {
+    const hasProcessing = myJobs.some(j => j.status === 'processing');
+    if (!hasProcessing) return;
+    const interval = setInterval(loadMyJobs, 10000);
+    return () => clearInterval(interval);
+  }, [myJobs, loadMyJobs]);
+
   const handleUpload = async () => {
-    if (!fileA || !fileB) {
-      setError('Both Dataset A and Dataset B are required.');
+    if (!fileA) {
+      setError('Dataset A is required.');
       return;
     }
 
@@ -218,7 +227,7 @@ export function DataUpload() {
 
     try {
       const token = await getAccessToken();
-      await uploadCSV(fileA, fileB, token);
+      await uploadCSV(fileA, fileB ?? undefined, token);
       setSubmitted(true);
       if (user) await loadMyJobs();
     } catch (err) {
@@ -247,15 +256,20 @@ export function DataUpload() {
             Dataset A — Clinical Notes
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-            CSV with columns: <code className="bg-gray-100 px-1 rounded">anon_id</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Clinical Diagnoses</code>
+            CSV with columns:{' '}
+            <code className="bg-gray-100 px-1 rounded">DtOfRq</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">Sex</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">Species</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">Breed</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">Diagnoses</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">Text</code>
           </p>
           <label className="block">
             <span className="sr-only">Choose Dataset A file</span>
             <input
               ref={refA}
               type="file"
-              accept=".csv"
+              accept=".csv,.xlsx"
               onChange={(e) => setFileA(e.target.files?.[0] ?? null)}
               className="block w-full text-sm text-gray-500
                 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
@@ -279,18 +293,15 @@ export function DataUpload() {
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mb-4">
             CSV with columns:{' '}
-            <code className="bg-gray-100 px-1 rounded">case_id</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">DtOfRq</code>,{' '}
             <code className="bg-gray-100 px-1 rounded">Sex</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Species</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Breed</code>
+            <code className="bg-gray-100 px-1 rounded">Zipcode</code>
           </p>
           <label className="block">
             <span className="sr-only">Choose Dataset B file</span>
             <input
               ref={refB}
               type="file"
-              accept=".csv"
+              accept=".csv,.xlsx"
               onChange={(e) => setFileB(e.target.files?.[0] ?? null)}
               className="block w-full text-sm text-gray-500
                 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
@@ -312,7 +323,7 @@ export function DataUpload() {
       <div className="flex items-center gap-4">
         <button
           onClick={handleUpload}
-          disabled={loading || !fileA || !fileB}
+          disabled={loading || !fileA}
           className="px-6 py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md
             hover:bg-[var(--color-teal-dark)] disabled:opacity-50 disabled:cursor-not-allowed
             transition-colors"
@@ -396,7 +407,34 @@ export function DataUpload() {
                     <td className="px-4 py-2.5 text-gray-600">#{job.id}</td>
                     <td className="px-4 py-2.5 font-mono text-xs">{job.dataset_a_filename}</td>
                     <td className="px-4 py-2.5 font-mono text-xs">{job.dataset_b_filename}</td>
-                    <td className="px-4 py-2.5"><StatusBadge status={job.status} /></td>
+                    <td className="px-4 py-2.5">
+                      <StatusBadge status={job.status} />
+                      {job.status === 'processing' && job.processing_stage && (
+                        <div className="flex items-center gap-1 mt-1">
+                          <div className="w-2.5 h-2.5 border-2 border-gray-300 border-t-[var(--color-teal)] rounded-full animate-spin shrink-0" />
+                          <span className="text-xs text-[var(--color-teal)]">
+                            {STAGE_LABELS[job.processing_stage] ?? job.processing_stage}
+                          </span>
+                        </div>
+                      )}
+                      {job.status === 'completed' && job.result_summary && (
+                        <div className="mt-1 space-y-0.5">
+                          <p className="text-xs text-gray-500">
+                            {job.result_summary.patients} records · {job.result_summary.diagnoses} diagnoses
+                          </p>
+                          {job.result_summary.avg_confidence !== null && (
+                            <p className="text-xs font-medium text-green-700">
+                              {job.result_summary.avg_confidence}% avg confidence
+                            </p>
+                          )}
+                          {job.result_summary.top_cancer_types[0] && (
+                            <p className="text-xs text-gray-500 truncate max-w-[180px]" title={job.result_summary.top_cancer_types[0].name}>
+                              Top: {job.result_summary.top_cancer_types[0].name}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-xs text-gray-500">
                       {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}
                     </td>

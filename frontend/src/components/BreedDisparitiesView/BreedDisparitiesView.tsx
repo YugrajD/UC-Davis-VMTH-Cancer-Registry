@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
-import type { BreedDetail } from '../../api/client';
 import { MOCK_BREEDS, getMockBreedDetail } from '../../data/mockData';
 
 const GEO_URL =
@@ -13,14 +12,11 @@ const MAP_PROJECTION_CONFIG = {
 };
 
 export function BreedDisparitiesView() {
-  const [breeds, setBreeds] = useState<string[]>([]);
-  const [selectedBreed, setSelectedBreed] = useState<string>('');
-  const [detail, setDetail] = useState<BreedDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [breeds] = useState<string[]>(() => [...MOCK_BREEDS].sort());
+  const [selectedBreed, setSelectedBreed] = useState<string>(() => [...MOCK_BREEDS].sort()[0] ?? '');
 
   // Autocomplete state
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState<string>(() => [...MOCK_BREEDS].sort()[0] ?? '');
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -34,24 +30,11 @@ export function BreedDisparitiesView() {
     y: number;
   } | null>(null);
 
-  // Load breed list from mock data
-  useEffect(() => {
-    const breedNames = [...MOCK_BREEDS].sort();
-    setBreeds(breedNames);
-    if (breedNames.length > 0) {
-      setSelectedBreed(breedNames[0]);
-      setQuery(breedNames[0]);
-    }
-  }, []);
-
-  // Get breed detail from mock data
-  useEffect(() => {
-    if (!selectedBreed) return;
-    setLoading(true);
-    setError(null);
-    setDetail(getMockBreedDetail(selectedBreed));
-    setLoading(false);
-  }, [selectedBreed]);
+  // Derive detail synchronously from selectedBreed
+  const detail = useMemo(
+    () => (selectedBreed ? getMockBreedDetail(selectedBreed) : null),
+    [selectedBreed],
+  );
 
   // Filtered suggestions
   const suggestions = useMemo(() => {
@@ -60,18 +43,16 @@ export function BreedDisparitiesView() {
     return breeds.filter((b) => b.toLowerCase().includes(lower)).slice(0, 20);
   }, [query, breeds]);
 
-  // Reset highlight when suggestions change
-  useEffect(() => {
-    setHighlightedIndex(0);
-  }, [suggestions]);
+  // Clamp highlightedIndex to valid range (avoids resetting state in an effect)
+  const effectiveHighlightedIndex = Math.min(highlightedIndex, Math.max(0, suggestions.length - 1));
 
   // Scroll highlighted item into view
   useEffect(() => {
     if (isOpen && listRef.current) {
-      const item = listRef.current.children[highlightedIndex] as HTMLElement | undefined;
+      const item = listRef.current.children[effectiveHighlightedIndex] as HTMLElement | undefined;
       item?.scrollIntoView({ block: 'nearest' });
     }
-  }, [highlightedIndex, isOpen]);
+  }, [effectiveHighlightedIndex, isOpen]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -109,8 +90,8 @@ export function BreedDisparitiesView() {
         break;
       case 'Enter':
         e.preventDefault();
-        if (suggestions[highlightedIndex]) {
-          selectBreed(suggestions[highlightedIndex]);
+        if (suggestions[effectiveHighlightedIndex]) {
+          selectBreed(suggestions[effectiveHighlightedIndex]);
         }
         break;
       case 'Escape':
@@ -178,7 +159,7 @@ export function BreedDisparitiesView() {
                   onMouseDown={() => selectBreed(breed)}
                   onMouseEnter={() => setHighlightedIndex(i)}
                   className={`px-3 py-2 text-sm cursor-pointer ${
-                    i === highlightedIndex
+                    i === effectiveHighlightedIndex
                       ? 'bg-[var(--color-teal)] text-white'
                       : 'text-[var(--color-text-primary)] hover:bg-gray-50'
                   } ${breed === selectedBreed ? 'font-semibold' : ''}`}
@@ -196,34 +177,7 @@ export function BreedDisparitiesView() {
         </div>
       </div>
 
-      {/* Loading / Error */}
-      {loading && (
-        <div className="bg-white rounded-lg border border-gray-200 p-12 flex flex-col items-center justify-center">
-          <div className="w-8 h-8 border-4 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
-          <p className="mt-4 text-sm text-[var(--color-text-secondary)]">
-            Loading breed data...
-          </p>
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
-          <svg
-            className="w-5 h-5 text-red-500 flex-shrink-0"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fillRule="evenodd"
-              d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-              clipRule="evenodd"
-            />
-          </svg>
-          <p className="text-sm text-red-700">{error}</p>
-        </div>
-      )}
-
-      {!loading && !error && detail && (
+      {detail && (
         <>
           {/* Summary Stats */}
           <div className="bg-white rounded-lg border border-gray-200 p-4">

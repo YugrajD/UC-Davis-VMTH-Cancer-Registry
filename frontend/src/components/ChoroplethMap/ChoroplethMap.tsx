@@ -119,7 +119,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
           if (key && key === localHovered) return HOVER_COLOR;
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
-          return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
+          return count > 0 ? hexToRgba(colorScale(count), 255) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
@@ -248,9 +248,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
             controller
             layers={layers}
             getTooltip={getTooltip}
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            parameters={{ clearColor: [0.945, 0.961, 0.976, 1.0] } as any}
-            style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0' }}
+            style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
           />
           <MapLegend countRange={countRange} showSuperfund={showSuperfund} />
         </div>
@@ -303,7 +301,7 @@ export function ChoroplethMap({
           if (isHovered) return HOVER_COLOR;
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
-          return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
+          return count > 0 ? hexToRgba(colorScale(count), 255) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
@@ -442,9 +440,7 @@ export function ChoroplethMap({
           controller
           layers={layers}
           getTooltip={getTooltip}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          parameters={{ clearColor: [0.945, 0.961, 0.976, 1.0] } as any}
-          style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0' }}
+          style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
         />
         <MapLegend countRange={countRange} showSuperfund={showSuperfund} />
       </div>

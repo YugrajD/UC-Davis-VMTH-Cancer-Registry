@@ -224,7 +224,7 @@ describe('useFilteredData — regionSummary', () => {
 
   it('catchment count equals sum of its region counts', () => {
     const { regionSummary } = useFilteredData(DEFAULT_FILTERS);
-    const catchment = regionSummary.children?.[0]!;
+    const catchment = regionSummary.children![0];
     const regionSum = (catchment.children ?? []).reduce((s, r) => s + r.count, 0);
     expect(catchment.count).toBe(regionSum);
   });

@@ -35,6 +35,9 @@ logs/
 # Claude Code
 CLAUDE.md
 
+# GCP service account keys
+secrets/
+
 # IDE
 .vscode/*
 !.vscode/extensions.json

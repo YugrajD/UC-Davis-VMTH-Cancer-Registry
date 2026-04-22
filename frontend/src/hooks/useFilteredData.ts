@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
 import { MOCK_COUNTY_DATA } from '../data/mockData';
 
@@ -44,20 +44,13 @@ function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
 }
 
 export function useFilteredData(filters: FilterState) {
-  const [countyData, setCountyData] = useState<CountyData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { cancerType, breed, sex } = filters;
+  const countyData = useMemo(
+    () => applyFilters(MOCK_COUNTY_DATA, { cancerType, breed, sex } as FilterState),
+    [cancerType, breed, sex],
+  );
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    setCountyData(applyFilters(MOCK_COUNTY_DATA, filters));
-    setLoading(false);
-  }, [filters.cancerType, filters.breed, filters.sex]);
-
-  const regionSummary = useMemo(() => {
-    return generateRegionSummary(countyData);
-  }, [countyData]);
+  const regionSummary = useMemo(() => generateRegionSummary(countyData), [countyData]);
 
   const countRange = useMemo(() => {
     const counts = countyData.map(c => c.count).filter(n => n > 0);
@@ -72,8 +65,8 @@ export function useFilteredData(filters: FilterState) {
     countyData,
     regionSummary,
     countRange,
-    loading,
-    error,
+    loading: false,
+    error: null,
   };
 }
 

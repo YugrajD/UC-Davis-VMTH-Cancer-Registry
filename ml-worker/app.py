@@ -1,7 +1,7 @@
 """ML worker microservice — wraps PetBERT scan pipeline as an HTTP endpoint.
 
-Accepts a CSV upload (Dataset A with columns anon_id, Clinical Diagnoses),
-runs the PetBERT categorization pipeline, and returns structured predictions.
+Accepts a CSV upload (Dataset A), runs the PetBERT categorization pipeline,
+and returns structured predictions.
 """
 
 import csv
@@ -26,11 +26,11 @@ async def health():
 async def predict(file: UploadFile = File(...)):
     """Run PetBERT categorization on an uploaded CSV.
 
-    Expects CSV with columns: anon_id, Clinical Diagnoses
-    Returns structured predictions JSON.
+    Expects CSV with columns: anon_id, Clinical Diagnoses (+ optional others).
+    PetBERT processes the Clinical Diagnoses column. Returns structured predictions JSON.
     """
-    if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="File must be a .csv")
+    if not file.filename or not file.filename.lower().endswith((".csv", ".xlsx")):
+        raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")
 
     contents = await file.read()
     if not contents:
@@ -56,7 +56,8 @@ async def predict(file: UploadFile = File(...)):
         config = ScanConfig(
             csv_path=csv_path,
             id_col="anon_id",
-            text_col="Clinical Diagnoses",
+            text_cols=("Clinical Diagnoses",),
+            col_weights={"Clinical Diagnoses": 1.0},
             model_name=os.environ.get("PETBERT_MODEL_PATH", "/ml/models/petbert"),
             local_only=True,
             out_dir=out_dir,
@@ -68,9 +69,8 @@ async def predict(file: UploadFile = File(...)):
             embedding_min_sim=0.6,
             device="auto",
             labels_csv_path="/ml/labels/labels.csv",
-            carcinoma_csv_path="/ml/data/dataCarcinoma.csv",
-            sarcoma_csv_path="/ml/data/dataSarcoma.csv",
-            use_auxiliary_labels=False,
+            presence_classifier_path=None,
+            embedding_cache_path=None,
         )
 
         try:

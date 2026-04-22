@@ -37,7 +37,7 @@ export interface GeoJSONResponse {
   type: "FeatureCollection";
   features: {
     type: "Feature";
-    geometry: any;
+    geometry: Record<string, unknown>;
     properties: GeoJSONFeatureProperties;
   }[];
 }
@@ -181,11 +181,21 @@ export interface IngestionJob {
   dataset_a_filename: string;
   dataset_b_filename: string;
   status: string;
+  processing_stage?: string | null;
   reviewed_by_email?: string | null;
   reviewed_at?: string | null;
   rejection_reason?: string | null;
   ingestion_log_id?: number | null;
   processing_error?: string | null;
+  result_summary?: {
+    patients: number;
+    diagnoses: number;
+    avg_confidence: number | null;
+    high_confidence: number;
+    medium_confidence: number;
+    low_confidence: number;
+    top_cancer_types: { name: string; count: number }[];
+  } | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -210,12 +220,12 @@ export interface IngestionResponse {
 
 export async function uploadCSV(
   datasetA: File,
-  datasetB: File,
+  datasetB?: File,
   token?: string | null,
 ): Promise<IngestionJob> {
   const formData = new FormData();
   formData.append('dataset_a', datasetA);
-  formData.append('dataset_b', datasetB);
+  if (datasetB) formData.append('dataset_b', datasetB);
 
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -234,7 +244,12 @@ export async function uploadCSV(
   return response.json();
 }
 
-export async function fetchJobs(token: string): Promise<IngestionJob[]> {
+export async function fetchJobs(token: string, statuses?: string[]): Promise<IngestionJob[]> {
+  if (statuses && statuses.length > 0) {
+    const params = new URLSearchParams();
+    statuses.forEach(s => params.append('status', s));
+    return fetchJsonAuth(`/api/v1/ingest/jobs?${params}`, token);
+  }
   return fetchJsonAuth('/api/v1/ingest/jobs', token);
 }
 
@@ -255,6 +270,18 @@ export async function fetchJobPreview(token: string, jobId: number, dataset: 'a'
     throw new Error(err.detail || `Preview failed: ${response.status}`);
   }
   return response.text();
+}
+
+export async function cancelJob(token: string, jobId: number): Promise<IngestionJob> {
+  const response = await fetch(`/api/v1/ingest/jobs/${jobId}/cancel`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Cancel failed: ${response.status}`);
+  }
+  return response.json();
 }
 
 export async function reviewJob(

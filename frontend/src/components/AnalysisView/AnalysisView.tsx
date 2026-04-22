@@ -51,8 +51,8 @@ const CA_COUNTY_FIPS: Record<string, string> = {
 
 const INITIAL_VIEW_STATE = {
   longitude: -119.5,
-  latitude: 37.35,
-  zoom: 5.5,
+  latitude: 37.6,
+  zoom: 5.1,
   pitch: 0,
   bearing: 0,
 };

@@ -12,7 +12,7 @@ export const INITIAL_VIEW_STATE = {
   bearing: 0,
 };
 
-export const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
+export const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 255];
 export const HOVER_COLOR: [number, number, number, number] = [245, 166, 35, 220];
 
 /** Convert a d3-scale hex color string to a DeckGL RGBA tuple. */

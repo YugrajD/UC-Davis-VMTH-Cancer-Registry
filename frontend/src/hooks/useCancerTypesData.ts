@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import type { FilterState } from '../types';
 import type { IncidenceRecord } from '../api/client';
 import { MOCK_CANCER_TYPE_INCIDENTS } from '../data/mockData';
@@ -24,14 +24,7 @@ interface CancerTypesState {
 }
 
 export function useCancerTypesData(filters: FilterState): CancerTypesState {
-  const [data, setData] = useState<IncidenceRecord[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-
+  const data = useMemo(() => {
     let result = MOCK_CANCER_TYPE_INCIDENTS;
 
     // If a specific cancer type is selected, show only that one
@@ -60,9 +53,8 @@ export function useCancerTypesData(filters: FilterState): CancerTypesState {
       }));
     }
 
-    setData(result);
-    setLoading(false);
+    return result;
   }, [filters.cancerType, filters.sex, filters.breed]);
 
-  return { data, loading, error };
+  return { data, loading: false, error: null };
 }

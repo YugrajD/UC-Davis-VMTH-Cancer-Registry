@@ -13,12 +13,22 @@ import {
   COUNTY_GEO_URL,
   TRACT_GEO_URL,
   INITIAL_VIEW_STATE,
-  NO_DATA_COLOR,
   HOVER_COLOR,
   hexToRgba,
   countyFromFeature,
   hoverKeyFromFeature,
 } from '../../lib/mapUtils';
+
+// Fully opaque — matches the original react-simple-maps appearance.
+// Using the global NO_DATA_COLOR (alpha=180) with a transparent WebGL canvas
+// can make no-data counties appear darker than expected.
+const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 255];
+
+// Background applied to both the container div and the DeckGL canvas container
+// so the backdrop is consistently light regardless of WebGL compositing mode.
+const MAP_BG_CSS = '#f8fafc';
+
+const EXPANDED_VIEW_STATE = { ...INITIAL_VIEW_STATE, zoom: 4.9 };
 
 interface ChoroplethMapProps {
   data: CountyData[];
@@ -222,18 +232,25 @@ export function ChoroplethMap({
     </div>
   );
 
-  const deckMap = (height: number) => (
-    <div className="relative" style={{ height, backgroundColor: '#f8fafc' }}>
-      <DeckGL
-        initialViewState={INITIAL_VIEW_STATE}
-        controller
-        layers={layers}
-        getTooltip={getTooltip}
-        style={{ position: 'absolute', inset: '0' }}
-      />
-      {legend}
-    </div>
-  );
+  const deckMap = (mapKey: 'normal' | 'expanded') => {
+    const height = mapKey === 'expanded' ? 560 : 450;
+    const viewState = mapKey === 'expanded' ? EXPANDED_VIEW_STATE : INITIAL_VIEW_STATE;
+    return (
+      <div className="relative" style={{ height, backgroundColor: MAP_BG_CSS }}>
+        <DeckGL
+          key={mapKey}
+          initialViewState={viewState}
+          controller
+          layers={layers}
+          getTooltip={getTooltip}
+          // background on the DeckGL container div composites behind the
+          // transparent WebGL canvas, giving the map a light backdrop.
+          style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
+        />
+        {legend}
+      </div>
+    );
+  };
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative">
@@ -264,7 +281,7 @@ export function ChoroplethMap({
 
       {/* Only mount one DeckGL instance at a time — two instances sharing the same
           layer objects causes the second canvas to render blank. */}
-      {!isExpanded && deckMap(450)}
+      {!isExpanded && deckMap('normal')}
 
       {/* Expanded modal */}
       {isExpanded && (
@@ -293,7 +310,7 @@ export function ChoroplethMap({
                 </button>
               </div>
             </div>
-            {deckMap(560)}
+            {deckMap('expanded')}
           </div>
         </div>
       )}

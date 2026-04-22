@@ -187,6 +187,15 @@ export interface IngestionJob {
   rejection_reason?: string | null;
   ingestion_log_id?: number | null;
   processing_error?: string | null;
+  result_summary?: {
+    patients: number;
+    diagnoses: number;
+    avg_confidence: number | null;
+    high_confidence: number;
+    medium_confidence: number;
+    low_confidence: number;
+    top_cancer_types: { name: string; count: number }[];
+  } | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

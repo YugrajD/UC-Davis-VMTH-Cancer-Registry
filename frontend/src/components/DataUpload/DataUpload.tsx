@@ -417,6 +417,23 @@ export function DataUpload() {
                           </span>
                         </div>
                       )}
+                      {job.status === 'completed' && job.result_summary && (
+                        <div className="mt-1 space-y-0.5">
+                          <p className="text-xs text-gray-500">
+                            {job.result_summary.patients} records · {job.result_summary.diagnoses} diagnoses
+                          </p>
+                          {job.result_summary.avg_confidence !== null && (
+                            <p className="text-xs font-medium text-green-700">
+                              {job.result_summary.avg_confidence}% avg confidence
+                            </p>
+                          )}
+                          {job.result_summary.top_cancer_types[0] && (
+                            <p className="text-xs text-gray-500 truncate max-w-[180px]" title={job.result_summary.top_cancer_types[0].name}>
+                              Top: {job.result_summary.top_cancer_types[0].name}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-gray-500">
                       {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}

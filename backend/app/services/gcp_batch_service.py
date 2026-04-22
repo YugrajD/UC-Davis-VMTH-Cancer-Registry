@@ -66,22 +66,50 @@ def submit_batch_job(job_id: int) -> str:
 
     Returns the full job resource name
     (e.g. projects/{p}/locations/{l}/jobs/{j}).
+
+    Uses gsutil to download/upload files instead of gcsfuse volume mount
+    to avoid compatibility issues with non-DNS-compliant bucket names.
     """
     client = _get_batch_client()
 
-    gcs_mount_path = "/mnt/gcs"
-    input_csv = f"{gcs_mount_path}/{_GCS_PREFIX}/{job_id}/dataset_a.csv"
-    output_dir = f"{gcs_mount_path}/{_GCS_PREFIX}/{job_id}"
-    model_path = f"{gcs_mount_path}/models/petbert"
-    labels_csv = f"{gcs_mount_path}/models/labels/labels.csv"
+    bucket = settings.GCS_BUCKET
+    local_data = "/tmp/batch_data"
+    input_csv = f"{local_data}/dataset_a.csv"
+    output_dir = local_data
+    model_path = f"{local_data}/models/petbert"
+    labels_csv = f"{local_data}/models/labels/labels.csv"
 
-    container = batch_v1.Runnable.Container(
+    # Pre-task: download input CSV, model weights, and labels from GCS
+    # Uses google/cloud-sdk container since COS doesn't have gcloud installed
+    setup_container = batch_v1.Runnable.Container(
+        image_uri="gcr.io/google.com/cloudsdktool/google-cloud-cli:slim",
+        commands=[
+            "/bin/bash", "-c",
+            (
+                f"set -e && "
+                f"mkdir -p {local_data}/models/petbert {local_data}/models/labels && "
+                f"echo 'Downloading input CSV...' && "
+                f"gcloud storage cp 'gs://{bucket}/{_GCS_PREFIX}/{job_id}/dataset_a.csv' {input_csv} && "
+                f"echo 'Downloading model weights...' && "
+                f"gcloud storage cp -r 'gs://{bucket}/models/petbert/*' {model_path}/ && "
+                f"echo 'Downloading labels...' && "
+                f"gcloud storage cp 'gs://{bucket}/models/labels/labels.csv' {labels_csv} && "
+                f"echo 'Download complete.'"
+            ),
+        ],
+        volumes=[f"{local_data}:{local_data}"],
+    )
+    setup_runnable = batch_v1.Runnable(container=setup_container)
+
+    # Main task: run PetBERT inference container
+    main_container = batch_v1.Runnable.Container(
         image_uri=settings.GCP_BATCH_IMAGE_URI,
         commands=[],
+        volumes=[f"{local_data}:{local_data}"],
     )
 
-    runnable = batch_v1.Runnable(
-        container=container,
+    main_runnable = batch_v1.Runnable(
+        container=main_container,
         environment=batch_v1.Environment(
             variables={
                 "JOB_ID": str(job_id),
@@ -93,18 +121,28 @@ def submit_batch_job(job_id: int) -> str:
         ),
     )
 
+    # Post-task: upload predictions back to GCS
+    upload_container = batch_v1.Runnable.Container(
+        image_uri="gcr.io/google.com/cloudsdktool/google-cloud-cli:slim",
+        commands=[
+            "/bin/bash", "-c",
+            (
+                f"set -e && "
+                f"echo 'Uploading predictions...' && "
+                f"gcloud storage cp {local_data}/predictions.json "
+                f"'gs://{bucket}/{_GCS_PREFIX}/{job_id}/predictions.json' && "
+                f"echo 'Upload complete.'"
+            ),
+        ],
+        volumes=[f"{local_data}:{local_data}"],
+    )
+    upload_runnable = batch_v1.Runnable(container=upload_container)
+
     task_spec = batch_v1.TaskSpec(
-        runnables=[runnable],
+        runnables=[setup_runnable, main_runnable, upload_runnable],
         max_retry_count=0,
         max_run_duration=f"{settings.GCP_BATCH_TIMEOUT_HOURS * 3600}s",
     )
-
-    # Mount the GCS bucket so the container reads/writes files directly
-    gcs_volume = batch_v1.Volume(
-        gcs=batch_v1.GCS(remote_path=settings.GCS_BUCKET),
-        mount_path=gcs_mount_path,
-    )
-    task_spec.volumes = [gcs_volume]
 
     task_group = batch_v1.TaskGroup(
         task_count=1,

@@ -1,0 +1,19 @@
+# Dockerfile for GCP Batch PetBERT inference.
+# Build from the repo root:
+#   docker build -f ml-worker/Dockerfile.batch -t petbert-batch .
+#
+# Model weights (12GB) come from the GCS mount at /mnt/gcs, NOT baked into
+# the image.
+
+FROM python:3.11-slim
+
+WORKDIR /worker
+
+COPY ml-worker/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY ml/petbert_scan /ml/petbert_scan
+COPY ml/labels /ml/labels
+COPY ml-worker/batch_predict.py .
+
+ENTRYPOINT ["python", "batch_predict.py"]

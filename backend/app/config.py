@@ -17,6 +17,17 @@ class Settings(BaseSettings):
     ADMIN_EMAILS: str = ""
     UPLOAD_DIR: str = "/app/uploads"
 
+    # GCP Batch — set USE_GCP_BATCH=true to route ML inference through GCP
+    USE_GCP_BATCH: bool = False
+    GCP_PROJECT_ID: str = ""
+    GCP_REGION: str = "us-central1"
+    GCS_BUCKET: str = ""
+    GCP_BATCH_IMAGE_URI: str = ""
+    GCP_BATCH_MACHINE_TYPE: str = "n1-standard-4"
+    GCP_BATCH_POLL_INTERVAL: int = 60
+    GCP_BATCH_TIMEOUT_HOURS: int = 12
+    GCP_BATCH_SERVICE_ACCOUNT: str = ""
+
     @property
     def cors_origins_list(self) -> List[str]:
         return json.loads(self.CORS_ORIGINS)

@@ -74,7 +74,7 @@ export function ChoroplethMap({
           if (isHovered) return HOVER_COLOR;
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
-          return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
+          return count > 0 ? hexToRgba(colorScale(count), 255) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
@@ -262,7 +262,9 @@ export function ChoroplethMap({
         </div>
       </div>
 
-      {deckMap(450)}
+      {/* Only mount one DeckGL instance at a time — two instances sharing the same
+          layer objects causes the second canvas to render blank. */}
+      {!isExpanded && deckMap(450)}
 
       {/* Expanded modal */}
       {isExpanded && (

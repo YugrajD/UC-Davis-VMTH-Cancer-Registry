@@ -334,6 +334,7 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "ingestion_log_id": job.ingestion_log_id,
         "processing_error": job.processing_error,
         "batch_job_name": job.batch_job_name,
+        "result_summary": job.result_summary,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }

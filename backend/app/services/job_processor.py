@@ -143,6 +143,7 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
             job.status = "completed"
             job.processing_stage = None
             job.ingestion_log_id = ingestion_result.ingestion_log_id
+            job.result_summary = ingestion_result.result_summary
             job.updated_at = datetime.now(timezone.utc)
             await db.commit()
 
@@ -280,6 +281,7 @@ async def _process_via_gcp_batch(job_id: int) -> None:
             job.status = "completed"
             job.processing_stage = None
             job.ingestion_log_id = ingestion_result.ingestion_log_id
+            job.result_summary = ingestion_result.result_summary
             job.updated_at = datetime.now(timezone.utc)
             await db.commit()
 

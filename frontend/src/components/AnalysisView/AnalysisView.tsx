@@ -173,7 +173,7 @@ function CancerMap({
           const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
-          return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
+          return count > 0 ? hexToRgba(colorScale(count), 255) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
@@ -298,7 +298,7 @@ function EnviroScreenMap({
           if (key && key === hovered) return HOVER_COLOR;
           const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
           const val = countyValueMap.get(county.toLowerCase());
-          return val != null ? hexToRgba(colorScale(val)) : NO_DATA_COLOR;
+          return val != null ? hexToRgba(colorScale(val), 255) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
@@ -407,7 +407,7 @@ function HumanCancerMap({ showSuperfund, tractLevel }: { showSuperfund: boolean;
           const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
           const info = rateMap.get(county.toLowerCase());
           const rate = info?.rate;
-          return rate != null ? hexToRgba(colorScale(rate)) : NO_DATA_COLOR;
+          return rate != null ? hexToRgba(colorScale(rate), 255) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
@@ -506,7 +506,7 @@ function PesticideMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; t
           if (key && key === hovered) return [96, 165, 250, 220] as [number, number, number, number];
           const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
           const data = PESTICIDE_BY_COUNTY[county];
-          return data ? hexToRgba(colorScale(data.lbs_per_sq_mile)) : NO_DATA_COLOR;
+          return data ? hexToRgba(colorScale(data.lbs_per_sq_mile), 255) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,

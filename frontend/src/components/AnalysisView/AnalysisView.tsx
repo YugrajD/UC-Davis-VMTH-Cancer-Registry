@@ -51,7 +51,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
         </div>
         {headerRight}
       </div>
-      <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
+      <div className="relative" style={{ height: '400px', backgroundColor: '#f8fafc' }}>
         <DeckGL
           initialViewState={INITIAL_VIEW_STATE}
           controller

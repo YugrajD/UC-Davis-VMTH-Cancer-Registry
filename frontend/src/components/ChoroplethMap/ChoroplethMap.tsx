@@ -223,7 +223,7 @@ export function ChoroplethMap({
   );
 
   const deckMap = (height: number) => (
-    <div className="relative" style={{ height, backgroundColor: '#f1f5f9' }}>
+    <div className="relative" style={{ height, backgroundColor: '#f8fafc' }}>
       <DeckGL
         initialViewState={INITIAL_VIEW_STATE}
         controller

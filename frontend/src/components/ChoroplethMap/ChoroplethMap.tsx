@@ -19,8 +19,8 @@ import {
   hoverKeyFromFeature,
 } from '../../lib/mapUtils';
 
-// Fully opaque — matches the original react-simple-maps appearance.
-const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 255];
+// Local NO_DATA_COLOR — slightly transparent so the map background shows through.
+const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
 
 // Background applied to both the container div and the DeckGL canvas container.
 const MAP_BG_CSS = '#f1f5f9';
@@ -119,7 +119,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
           if (key && key === localHovered) return HOVER_COLOR;
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
-          return count > 0 ? hexToRgba(colorScale(count), 255) : NO_DATA_COLOR;
+          return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
@@ -301,7 +301,7 @@ export function ChoroplethMap({
           if (isHovered) return HOVER_COLOR;
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
-          return count > 0 ? hexToRgba(colorScale(count), 255) : NO_DATA_COLOR;
+          return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
         getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: tractLevel ? 0.3 : 0.5,

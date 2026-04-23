@@ -57,7 +57,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
           controller
           layers={layers}
           getTooltip={getTooltip}
-          style={{ position: 'absolute', inset: '0' }}
+          style={{ position: 'absolute', inset: '0', background: '#f1f5f9' }}
         />
         {/* Legend */}
         <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">

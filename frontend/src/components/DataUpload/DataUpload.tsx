@@ -176,18 +176,28 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+const REQUIRED_COLUMNS = [
+  'Date of Birth',
+  'Sex',
+  'Species',
+  'Breed',
+  'Zipcode Zipcode',
+  'RfrrVtrn Zipcode Zipcode',
+  'DtOfRq',
+  'Diagnoses',
+  'Text',
+];
+
 export function DataUpload() {
   const { user, getAccessToken } = useAuth();
-  const [fileA, setFileA] = useState<File | null>(null);
-  const [fileB, setFileB] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [myJobs, setMyJobs] = useState<IngestionJob[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
 
-  const refA = useRef<HTMLInputElement>(null);
-  const refB = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const loadMyJobs = useCallback(async () => {
     const token = await getAccessToken();
@@ -216,8 +226,8 @@ export function DataUpload() {
   }, [myJobs, loadMyJobs]);
 
   const handleUpload = async () => {
-    if (!fileA) {
-      setError('Dataset A is required.');
+    if (!file) {
+      setError('Please select a dataset file.');
       return;
     }
 
@@ -227,7 +237,7 @@ export function DataUpload() {
 
     try {
       const token = await getAccessToken();
-      await uploadCSV(fileA, fileB ?? undefined, token);
+      await uploadCSV(file, token);
       setSubmitted(true);
       if (user) await loadMyJobs();
     } catch (err) {
@@ -238,99 +248,63 @@ export function DataUpload() {
   };
 
   const handleReset = () => {
-    setFileA(null);
-    setFileB(null);
+    setFile(null);
     setSubmitted(false);
     setError(null);
-    if (refA.current) refA.current.value = '';
-    if (refB.current) refB.current.value = '';
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   return (
     <div className="space-y-6">
-      {/* File Inputs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Dataset A */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-1">
-            Dataset A — Clinical Notes
-          </h3>
-          <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-            CSV with columns:{' '}
-            <code className="bg-gray-100 px-1 rounded">DtOfRq</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Sex</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Species</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Breed</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Diagnoses</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Text</code>
-          </p>
-          <label className="block">
-            <span className="sr-only">Choose Dataset A file</span>
-            <input
-              ref={refA}
-              type="file"
-              accept=".csv,.xlsx"
-              onChange={(e) => setFileA(e.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-gray-500
-                file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
-                file:text-sm file:font-semibold
-                file:bg-[var(--color-teal)] file:text-white
-                hover:file:bg-[var(--color-teal-dark)] file:cursor-pointer"
-            />
-          </label>
-          {fileA && (
-            <>
-              <p className="mt-2 text-xs text-green-700">{fileA.name} selected</p>
-              <FilePreview file={fileA} />
-            </>
-          )}
+      {/* File Input */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-1">
+          Dataset
+        </h3>
+        <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+          Upload a CSV or Excel file containing patient visit data. Required columns:
+        </p>
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          {REQUIRED_COLUMNS.map(col => (
+            <code key={col} className="bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded text-xs">
+              {col}
+            </code>
+          ))}
         </div>
-
-        {/* Dataset B */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-1">
-            Dataset B — Demographics
-          </h3>
-          <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-            CSV with columns:{' '}
-            <code className="bg-gray-100 px-1 rounded">Sex</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">Zipcode</code>
-          </p>
-          <label className="block">
-            <span className="sr-only">Choose Dataset B file</span>
-            <input
-              ref={refB}
-              type="file"
-              accept=".csv,.xlsx"
-              onChange={(e) => setFileB(e.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-gray-500
-                file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
-                file:text-sm file:font-semibold
-                file:bg-[var(--color-teal)] file:text-white
-                hover:file:bg-[var(--color-teal-dark)] file:cursor-pointer"
-            />
-          </label>
-          {fileB && (
-            <>
-              <p className="mt-2 text-xs text-green-700">{fileB.name} selected</p>
-              <FilePreview file={fileB} />
-            </>
-          )}
-        </div>
+        <label className="block">
+          <span className="sr-only">Choose dataset file</span>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,.xlsx"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="block w-full text-sm text-gray-500
+              file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
+              file:text-sm file:font-semibold
+              file:bg-[var(--color-teal)] file:text-white
+              hover:file:bg-[var(--color-teal-dark)] file:cursor-pointer"
+          />
+        </label>
+        {file && (
+          <>
+            <p className="mt-2 text-xs text-green-700">{file.name} selected</p>
+            <FilePreview file={file} />
+          </>
+        )}
       </div>
 
       {/* Actions */}
       <div className="flex items-center gap-4">
         <button
           onClick={handleUpload}
-          disabled={loading || !fileA}
+          disabled={loading || !file}
           className="px-6 py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md
             hover:bg-[var(--color-teal-dark)] disabled:opacity-50 disabled:cursor-not-allowed
             transition-colors"
         >
           {loading ? 'Submitting...' : 'Submit for Review'}
         </button>
-        {(fileA || fileB || submitted) && (
+        {(file || submitted) && (
           <button
             onClick={handleReset}
             disabled={loading}
@@ -344,7 +318,7 @@ export function DataUpload() {
       {/* Loading indicator */}
       {loading && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <p className="text-sm text-blue-800">Uploading files for review...</p>
+          <p className="text-sm text-blue-800">Uploading file for review...</p>
           <div className="mt-2 h-1.5 bg-blue-100 rounded-full overflow-hidden">
             <div className="h-full bg-blue-500 rounded-full animate-pulse w-2/3" />
           </div>
@@ -369,82 +343,82 @@ export function DataUpload() {
         </div>
       )}
 
-      {/* My Uploads — only shown when signed in */}
-      {user && <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">My Uploads</h3>
-          <button
-            onClick={loadMyJobs}
-            className="text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium"
-          >
-            Refresh
-          </button>
-        </div>
+      {/* My Uploads */}
+      {user && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">My Uploads</h3>
+            <button
+              onClick={loadMyJobs}
+              className="text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium"
+            >
+              Refresh
+            </button>
+          </div>
 
-        {jobsLoading ? (
-          <div className="p-8 flex justify-center">
-            <div className="w-6 h-6 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
-          </div>
-        ) : myJobs.length === 0 ? (
-          <div className="p-8 text-center">
-            <p className="text-sm text-[var(--color-text-secondary)]">No uploads yet.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Dataset A</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Dataset B</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Submitted</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {myJobs.map((job) => (
-                  <tr key={job.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2.5 text-gray-600">#{job.id}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs">{job.dataset_a_filename}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs">{job.dataset_b_filename}</td>
-                    <td className="px-4 py-2.5">
-                      <StatusBadge status={job.status} />
-                      {job.status === 'processing' && job.processing_stage && (
-                        <div className="flex items-center gap-1 mt-1">
-                          <div className="w-2.5 h-2.5 border-2 border-gray-300 border-t-[var(--color-teal)] rounded-full animate-spin shrink-0" />
-                          <span className="text-xs text-[var(--color-teal)]">
-                            {STAGE_LABELS[job.processing_stage] ?? job.processing_stage}
-                          </span>
-                        </div>
-                      )}
-                      {job.status === 'completed' && job.result_summary && (
-                        <div className="mt-1 space-y-0.5">
-                          <p className="text-xs text-gray-500">
-                            {job.result_summary.patients} records · {job.result_summary.diagnoses} diagnoses
-                          </p>
-                          {job.result_summary.avg_confidence !== null && (
-                            <p className="text-xs font-medium text-green-700">
-                              {job.result_summary.avg_confidence}% avg confidence
-                            </p>
-                          )}
-                          {job.result_summary.top_cancer_types[0] && (
-                            <p className="text-xs text-gray-500 truncate max-w-[180px]" title={job.result_summary.top_cancer_types[0].name}>
-                              Top: {job.result_summary.top_cancer_types[0].name}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-gray-500">
-                      {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}
-                    </td>
+          {jobsLoading ? (
+            <div className="p-8 flex justify-center">
+              <div className="w-6 h-6 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+            </div>
+          ) : myJobs.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="text-sm text-[var(--color-text-secondary)]">No uploads yet.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">File</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Submitted</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>}
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {myJobs.map((job) => (
+                    <tr key={job.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2.5 text-gray-600">#{job.id}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs">{job.dataset_a_filename}</td>
+                      <td className="px-4 py-2.5">
+                        <StatusBadge status={job.status} />
+                        {job.status === 'processing' && job.processing_stage && (
+                          <div className="flex items-center gap-1 mt-1">
+                            <div className="w-2.5 h-2.5 border-2 border-gray-300 border-t-[var(--color-teal)] rounded-full animate-spin shrink-0" />
+                            <span className="text-xs text-[var(--color-teal)]">
+                              {STAGE_LABELS[job.processing_stage] ?? job.processing_stage}
+                            </span>
+                          </div>
+                        )}
+                        {job.status === 'completed' && job.result_summary && (
+                          <div className="mt-1 space-y-0.5">
+                            <p className="text-xs text-gray-500">
+                              {job.result_summary.patients} records · {job.result_summary.diagnoses} diagnoses
+                            </p>
+                            {job.result_summary.avg_confidence !== null && (
+                              <p className="text-xs font-medium text-green-700">
+                                {job.result_summary.avg_confidence}% avg confidence
+                              </p>
+                            )}
+                            {job.result_summary.top_cancer_types[0] && (
+                              <p className="text-xs text-gray-500 truncate max-w-[180px]" title={job.result_summary.top_cancer_types[0].name}>
+                                Top: {job.result_summary.top_cancer_types[0].name}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-gray-500">
+                        {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

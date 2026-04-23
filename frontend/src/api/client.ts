@@ -219,13 +219,11 @@ export interface IngestionResponse {
 }
 
 export async function uploadCSV(
-  datasetA: File,
-  datasetB?: File,
+  dataset: File,
   token?: string | null,
 ): Promise<IngestionJob> {
   const formData = new FormData();
-  formData.append('dataset_a', datasetA);
-  if (datasetB) formData.append('dataset_b', datasetB);
+  formData.append('dataset_a', dataset);
 
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;

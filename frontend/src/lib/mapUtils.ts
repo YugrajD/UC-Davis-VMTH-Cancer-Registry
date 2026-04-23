@@ -12,12 +12,20 @@ export const INITIAL_VIEW_STATE = {
   bearing: 0,
 };
 
-export const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 255];
+export const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
 export const HOVER_COLOR: [number, number, number, number] = [245, 166, 35, 220];
 
-/** Convert a d3-scale hex color string to a DeckGL RGBA tuple. */
-export function hexToRgba(hex: string, alpha = 200): [number, number, number, number] {
-  const h = hex.replace('#', '');
+/**
+ * Convert a d3-scale color string to a DeckGL RGBA tuple.
+ * d3.scaleLinear<string>() returns "rgb(r, g, b)" via d3-interpolate, not hex.
+ * This handles both formats so fills render correctly.
+ */
+export function hexToRgba(color: string, alpha = 200): [number, number, number, number] {
+  const rgb = color.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (rgb) {
+    return [parseInt(rgb[1]), parseInt(rgb[2]), parseInt(rgb[3]), alpha];
+  }
+  const h = color.replace('#', '');
   return [
     parseInt(h.slice(0, 2), 16),
     parseInt(h.slice(2, 4), 16),

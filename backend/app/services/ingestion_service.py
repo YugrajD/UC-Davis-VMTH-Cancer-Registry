@@ -199,15 +199,28 @@ def _parse_date(raw: str):
         return None
 
 
+def _clean_zip(raw: str) -> str:
+    """Normalize a raw zip cell: strip NA/NaN, drop trailing '.0', keep empty string on miss."""
+    s = str(raw or "").strip()
+    if s.lower() in ("", "na", "nan"):
+        return ""
+    return s.split(".")[0]
+
+
 def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
     """Parse Dataset A CSV for demographic columns.
 
-    Dataset A columns: anon_id, DtOfRq, Sex, Species, Breed, ...
-    Extracts: sex, breed, diagnosis_date, species per anon_id.
+    Dataset A columns: anon_id, DtOfRq, Sex, Species, Breed,
+    'Zipcode Zipcode', 'RfrrVtrn Zipcode Zipcode', ...
+    Extracts: sex, breed, diagnosis_date, species, zip per anon_id.
     Takes first non-empty value per anon_id (same pattern as demographics).
 
+    Zip preference: 'Zipcode Zipcode'; falls back to
+    'RfrrVtrn Zipcode Zipcode' when the primary is missing/NA.
+
     Returns: {anon_id: {"sex": str|None, "breed": str|None,
-                         "diagnosis_date": date|None, "species": str|None}}
+                         "diagnosis_date": date|None, "species": str|None,
+                         "zip": str|None}}
     """
     text = csv_bytes.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
@@ -234,12 +247,17 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
         if raw_species.lower() == "nan":
             raw_species = ""
 
+        raw_zip = _clean_zip(row.get("Zipcode Zipcode", "")) or _clean_zip(
+            row.get("RfrrVtrn Zipcode Zipcode", "")
+        )
+
         if anon_id not in result:
             result[anon_id] = {
                 "sex": None,
                 "breed": None,
                 "diagnosis_date": None,
                 "species": None,
+                "zip": None,
             }
 
         if result[anon_id]["sex"] is None and raw_sex:
@@ -253,6 +271,9 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
 
         if result[anon_id]["species"] is None and raw_species:
             result[anon_id]["species"] = raw_species
+
+        if result[anon_id]["zip"] is None and raw_zip:
+            result[anon_id]["zip"] = raw_zip
 
     return result
 
@@ -307,7 +328,7 @@ async def ingest_upload(
         b = dataset_b_demo.get(aid, {})
         demographics[aid] = {
             "sex": a.get("sex") or b.get("sex"),
-            "zip": b.get("zip"),
+            "zip": a.get("zip") or b.get("zip"),
             "breed": a.get("breed"),
             "diagnosis_date": a.get("diagnosis_date"),
             "species": a.get("species"),

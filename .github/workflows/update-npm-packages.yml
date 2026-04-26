@@ -1,0 +1,101 @@
+name: Update npm packages
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Every Monday at 9am UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-packages:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fail fast: if the build is already broken before any updates, stop here
+      # so we don't incorrectly blame a package update for a pre-existing failure.
+      - name: Verify baseline build
+        run: npm run build
+
+      - name: Install npm-check-updates
+        run: npm install -g npm-check-updates
+
+      - name: Update packages
+        run: |
+          # --target minor: only allow patch and minor bumps; skip major versions
+          # because major bumps can contain breaking API changes.
+          UPDATES=$(ncu --jsonUpgraded --target minor 2>/dev/null || echo '{}')
+
+          if [ "$UPDATES" = "{}" ]; then
+            echo "All packages are up to date."
+            exit 0
+          fi
+
+          echo "Candidate updates:"
+          echo "$UPDATES" | jq .
+
+          while IFS=$'\t' read -r pkg new_ver; do
+            # Read the raw version string from package.json (e.g. "^2.1.0")
+            # and strip any leading range specifier to get a bare version number.
+            OLD_VER=$(node -p "
+              const p = require('./package.json');
+              const raw = p.dependencies?.['${pkg}'] ?? p.devDependencies?.['${pkg}'] ?? '';
+              raw.replace(/^[^\\d]*/, '')
+            ")
+            NEW_VER=$(echo "$new_ver" | sed 's/^[^0-9]*//')
+
+            if [ -z "$OLD_VER" ]; then
+              echo "Could not resolve current version for ${pkg}, skipping."
+              continue
+            fi
+
+            if [ "$OLD_VER" = "$NEW_VER" ]; then
+              echo "${pkg} is already at ${NEW_VER}, skipping."
+              continue
+            fi
+
+            echo "--- Updating ${pkg}: ${OLD_VER} -> ${NEW_VER} ---"
+
+            # Update only this one package in package.json, then reinstall
+            ncu --upgrade --filter "$pkg" --target minor
+            npm install
+
+            # Run the build as a safety gate. TypeScript compilation and the
+            # Vite bundle step together catch type-signature changes, missing
+            # exports, and incompatible peer deps introduced by the update.
+            if npm run build 2>&1; then
+              git add package.json package-lock.json
+              git commit -m "chore: updated ${pkg} from ${OLD_VER} to ${NEW_VER}"
+              echo "Committed: ${pkg} ${OLD_VER} -> ${NEW_VER}"
+            else
+              echo "Build failed after updating ${pkg}; reverting and continuing."
+              git checkout -- package.json package-lock.json
+              # Restore a clean install so the next package starts from a known state
+              npm ci
+            fi
+          done < <(echo "$UPDATES" | jq -r 'to_entries[] | [.key, .value] | @tsv')
+
+      - name: Push changes
+        run: git push

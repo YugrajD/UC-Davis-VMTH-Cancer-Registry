@@ -8,6 +8,7 @@ from typing import Optional, List
 from app.database import get_db
 from app.models.models import CancerType, Patient, Species, Breed, County, CaseDiagnosis
 from app.schemas.schemas import IncidenceRecord, IncidenceResponse, BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount
+from app.services.review_filter import apply_review_filter
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
 
@@ -25,6 +26,7 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
                    year_end: Optional[int], sex: Optional[str]):
     """Apply common filters to a query statement (ingested data only)."""
     stmt = stmt.where(Patient.data_source == "petbert")
+    stmt = apply_review_filter(stmt)
     if species:
         stmt = stmt.where(Species.name.in_(species))
     if cancer_type:
@@ -208,7 +210,7 @@ async def get_breed_detail(
     Includes ALL data where breed_id IS NOT NULL (mock + real).
     """
     # --- total cases ---
-    total_stmt = (
+    total_stmt = apply_review_filter(
         select(func.count(CaseDiagnosis.id))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -218,7 +220,7 @@ async def get_breed_detail(
     total_cases = (await db.execute(total_stmt)).scalar() or 0
 
     # --- sex breakdown ---
-    sex_stmt = (
+    sex_stmt = apply_review_filter(
         select(Patient.sex.label("sex"), func.count(CaseDiagnosis.id).label("count"))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -231,7 +233,7 @@ async def get_breed_detail(
     sex_breakdown = [BreedSexCount(sex=r.sex or "Unknown", count=r.count) for r in sex_rows]
 
     # --- cancer types ---
-    ct_stmt = (
+    ct_stmt = apply_review_filter(
         select(CancerType.name.label("cancer_type"), func.count(CaseDiagnosis.id).label("count"))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -245,7 +247,7 @@ async def get_breed_detail(
     cancer_types = [BreedCancerTypeCount(cancer_type=r.cancer_type, count=r.count) for r in ct_rows]
 
     # --- county distribution ---
-    county_stmt = (
+    county_stmt = apply_review_filter(
         select(
             County.name.label("county_name"),
             County.fips_code.label("fips_code"),

@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 from app.config import settings
 from app.database import async_session
 from app.models.models import IngestionJob
-from app.routers import dashboard, incidence, geo, trends, search, ingest
+from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review
 from app.routers import auth as auth_router
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,7 @@ app.include_router(geo.router)
 app.include_router(trends.router)
 app.include_router(search.router)
 app.include_router(ingest.router)
+app.include_router(diagnoses_review.router)
 app.include_router(auth_router.router)
 
 

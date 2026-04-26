@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { TabType } from '../../types';
 import { TABS } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginModal } from '../LoginModal/LoginModal';
+import { fetchPendingCount } from '../../api/client';
+
+const PENDING_POLL_MS = 30_000;
 
 interface NavigationProps {
   activeTab: TabType;
@@ -10,8 +13,34 @@ interface NavigationProps {
 }
 
 export function Navigation({ activeTab, onTabChange }: NavigationProps) {
-  const { user, isAdmin, signOut, loading } = useAuth();
+  const { user, isAdmin, signOut, loading, getAccessToken } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+
+  // Poll pending diagnosis count for the badge (admin-only).
+  useEffect(() => {
+    if (!isAdmin) {
+      setPendingCount(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      const token = await getAccessToken();
+      if (!token || cancelled) return;
+      try {
+        const r = await fetchPendingCount(token);
+        if (!cancelled) setPendingCount(r.count);
+      } catch {
+        // Silent — badge is non-critical UI.
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, PENDING_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [isAdmin, getAccessToken]);
 
   // Filter tabs: admin-only tabs are hidden from non-admin users.
   const visibleTabs = TABS.filter(tab => {
@@ -83,22 +112,31 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
       <nav className="px-6">
         <div className="max-w-[1400px] mx-auto">
           <div className="flex gap-1">
-            {visibleTabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => onTabChange(tab.id)}
-                className={`
-                  px-5 py-3 text-sm font-medium transition-all duration-200
-                  border-b-3 -mb-[1px]
-                  ${activeTab === tab.id
-                    ? 'bg-[var(--color-primary-orange)] text-[var(--color-teal-dark)] border-[var(--color-primary-orange)] rounded-t-md'
-                    : 'text-[var(--color-teal)] hover:bg-gray-50 border-transparent hover:border-[var(--color-teal-light)]'
-                  }
-                `}
-              >
-                {tab.label}
-              </button>
-            ))}
+            {visibleTabs.map((tab) => {
+              const showBadge =
+                tab.id === 'diagnosis-review' && pendingCount !== null && pendingCount > 0;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => onTabChange(tab.id)}
+                  className={`
+                    px-5 py-3 text-sm font-medium transition-all duration-200
+                    border-b-3 -mb-[1px] inline-flex items-center gap-2
+                    ${activeTab === tab.id
+                      ? 'bg-[var(--color-primary-orange)] text-[var(--color-teal-dark)] border-[var(--color-primary-orange)] rounded-t-md'
+                      : 'text-[var(--color-teal)] hover:bg-gray-50 border-transparent hover:border-[var(--color-teal-light)]'
+                    }
+                  `}
+                >
+                  {tab.label}
+                  {showBadge && (
+                    <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded-full bg-amber-500 text-white">
+                      {pendingCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       </nav>

@@ -13,9 +13,9 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
   const { user, isAdmin, signOut, loading } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
 
-  // Filter tabs: only show Review Queue for admins
+  // Filter tabs: admin-only tabs are hidden from non-admin users.
   const visibleTabs = TABS.filter(tab => {
-    if (tab.id === 'review-queue') return isAdmin;
+    if (tab.id === 'review-queue' || tab.id === 'diagnosis-review') return isAdmin;
     return true;
   });
 

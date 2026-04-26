@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     GCP_BATCH_TIMEOUT_HOURS: int = 12
     GCP_BATCH_SERVICE_ACCOUNT: str = ""
 
+    # Per-diagnosis manual review thresholds (conservative defaults; tune
+    # against a labeled validation set before relying on the auto-accept
+    # band). A row is auto-confirmed at ingest only when *both* gates pass.
+    REVIEW_AUTO_ACCEPT_CONFIDENCE: float = 0.85
+    REVIEW_AUTO_ACCEPT_MARGIN: float = 0.10  # top1 - top2 spread
+
     @property
     def cors_origins_list(self) -> List[str]:
         return json.loads(self.CORS_ORIGINS)

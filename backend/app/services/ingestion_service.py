@@ -17,11 +17,13 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.models import (
     Breed,
     CancerType,
     CaseDiagnosis,
     County,
+    DiagnosisReviewEvent,
     IngestionLog,
     Patient,
     Species,
@@ -455,11 +457,20 @@ async def ingest_upload(
         if not patient_id:
             continue
 
+        # Top-1 vs top-2 margin is computed once per case_id and only
+        # attached to the rank-1 row (it is not meaningful for lower ranks).
+        conf_by_rank = {d["diagnosis_index"]: (d["confidence"] or 0.0) for d in petbert[anon_id]}
+        top1_conf = conf_by_rank.get(1, 0.0)
+        top2_conf = conf_by_rank.get(2, 0.0)
+        margin = top1_conf - top2_conf if top1_conf and top2_conf else None
+
         for diag in petbert[anon_id]:
             group = diag["predicted_group"] or "Unknown"
 
             if group not in cancer_type_map:
-                # Upsert cancer type
+                # Upsert cancer type. PetBERT-introduced types are accepted
+                # as confirmed; reviewer-introduced types go in unconfirmed
+                # (see review router).
                 ct_stmt = pg_insert(CancerType.__table__).values(
                     name=group,
                 ).on_conflict_do_nothing(index_elements=["name"])
@@ -473,25 +484,60 @@ async def ingest_upload(
 
             cancer_type_id = cancer_type_map[group]
 
+            conf = diag["confidence"] or 0.0
+            method = diag["method"]
+            rank = diag["diagnosis_index"]
+
+            # Review gate: flag pending when confidence is below the auto-
+            # accept threshold OR (rank-1 only) the margin to the next
+            # candidate is too tight OR the pipeline already labelled the
+            # row low_confidence.
+            row_margin = margin if rank == 1 else None
+            margin_too_tight = (
+                row_margin is not None
+                and row_margin < settings.REVIEW_AUTO_ACCEPT_MARGIN
+            )
+            needs_review = (
+                method == "low_confidence"
+                or conf < settings.REVIEW_AUTO_ACCEPT_CONFIDENCE
+                or margin_too_tight
+            )
+            review_status = "pending" if needs_review else "confirmed"
+
             diagnosis = CaseDiagnosis(
                 patient_id=patient_id,
                 cancer_type_id=cancer_type_id,
                 icd_o_code=diag["icd_o_code"] or None,
                 predicted_term=diag["predicted_term"] or None,
-                confidence=round(diag["confidence"], 2) if diag["confidence"] else None,
-                prediction_method=diag["method"] or None,
+                confidence=round(conf, 2) if conf else None,
+                prediction_method=method or None,
                 source_row_index=diag["row_index"],
-                diagnosis_index=diag["diagnosis_index"],
+                diagnosis_index=rank,
+                review_status=review_status,
+                top2_margin=round(row_margin, 2) if row_margin is not None else None,
             )
             db.add(diagnosis)
             diagnoses_inserted += 1
+
+            if needs_review:
+                # Audit-log the auto-flag so the queue can show "flagged at
+                # ingest" alongside subsequent reviewer actions.
+                db.add(DiagnosisReviewEvent(
+                    case_diagnosis=diagnosis,
+                    actor_email="system",
+                    action="flagged",
+                    from_status=None,
+                    to_status="pending",
+                    cancer_type_id_after=cancer_type_id,
+                    icd_o_code_after=diag["icd_o_code"] or None,
+                ))
 
             row_results.append(IngestionRowResult(
                 row_number=diag["row_index"],
                 anon_id=anon_id,
                 status="inserted",
                 cancer_type=group,
-                confidence=round(diag["confidence"], 2) if diag["confidence"] else None,
+                confidence=round(conf, 2) if conf else None,
             ))
 
     await db.flush()

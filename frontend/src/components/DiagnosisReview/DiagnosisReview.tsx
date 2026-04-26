@@ -57,16 +57,6 @@ interface DetailPanelProps {
 }
 
 function DetailPanel({ detail, loading, onAction, busy }: DetailPanelProps) {
-  const [correctName, setCorrectName] = useState('');
-  const [correctIcd, setCorrectIcd] = useState('');
-  const [notes, setNotes] = useState('');
-
-  useEffect(() => {
-    setCorrectName(detail?.cancer_type_name ?? '');
-    setCorrectIcd(detail?.icd_o_code ?? '');
-    setNotes('');
-  }, [detail?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
   if (loading) {
     return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   }
@@ -77,6 +67,21 @@ function DetailPanel({ detail, loading, onAction, busy }: DetailPanelProps) {
       </div>
     );
   }
+  // Re-mount the body when the selected diagnosis changes so the form
+  // fields reset to the new defaults without an effect-driven setState.
+  return <DetailPanelBody key={detail.id} detail={detail} onAction={onAction} busy={busy} />;
+}
+
+interface DetailPanelBodyProps {
+  detail: DiagnosisDetail;
+  onAction: DetailPanelProps['onAction'];
+  busy: boolean;
+}
+
+function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
+  const [correctName, setCorrectName] = useState(detail.cancer_type_name);
+  const [correctIcd, setCorrectIcd] = useState(detail.icd_o_code ?? '');
+  const [notes, setNotes] = useState('');
 
   return (
     <div className="p-6 space-y-5">

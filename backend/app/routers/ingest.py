@@ -4,6 +4,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -49,15 +50,100 @@ _COLUMN_RENAMES = {
 }
 
 
+# Fields that must have real values (not NA/empty) for a row to be a patient header.
+_HEADER_SENTINEL_COLS = ["Date of Birth", "Sex", "Species", "Breed"]
+
+# Columns concatenated from continuation rows into the preceding header.
+_CONTINUATION_COLS = ["Text", "Clinical Diagnoses"]
+
+# HTML tag pattern for stripping markup from pathology text.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _is_na(value) -> bool:
+    """Return True if the value is missing, empty, or the string 'NA'."""
+    if value is None:
+        return True
+    s = str(value).strip()
+    return s == "" or s.lower() == "na" or s.lower() == "nan"
+
+
+def _merge_continuation_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Merge HTML-like continuation rows into single patient records.
+
+    The uploaded file may have one 'header row' per patient followed by zero or
+    more 'continuation rows' where all demographic fields are NA and only the
+    ``Text`` and/or ``Clinical Diagnoses`` columns carry additional content.
+    This function collapses each group into a single row with the fragments
+    concatenated.
+
+    A row is treated as a *patient header* when at least one sentinel column
+    (Date of Birth, Sex, Species, Breed) contains a real value.  Otherwise it
+    is a continuation row appended to the preceding patient.
+
+    Rows that appear before the first header are silently skipped.
+    """
+    # Identify which sentinel columns are actually present in the dataframe.
+    sentinel_cols = [c for c in _HEADER_SENTINEL_COLS if c in df.columns]
+    cont_cols = [c for c in _CONTINUATION_COLS if c in df.columns]
+
+    # Fast path: no sentinel columns found → file is already flat, return as-is.
+    if not sentinel_cols:
+        return df
+
+    patients: list[dict] = []
+    current: dict | None = None
+
+    for _, row in df.iterrows():
+        is_header = any(not _is_na(row.get(c)) for c in sentinel_cols)
+
+        if is_header:
+            if current is not None:
+                patients.append(current)
+            current = row.to_dict()
+            # Strip HTML from the initial fragments.
+            for col in cont_cols:
+                if not _is_na(current.get(col)):
+                    current[col] = _HTML_TAG_RE.sub("", str(current[col])).strip()
+        else:
+            # Continuation row — append its fragments to the current patient.
+            if current is None:
+                continue  # orphaned continuation before any header; skip
+            for col in cont_cols:
+                if _is_na(row.get(col)):
+                    continue
+                fragment = _HTML_TAG_RE.sub("", str(row[col])).strip()
+                if not fragment:
+                    continue
+                existing = str(current.get(col, "") or "").strip()
+                current[col] = f"{existing} {fragment}".strip() if existing else fragment
+
+    # Flush the last patient.
+    if current is not None:
+        patients.append(current)
+
+    if not patients:
+        return df
+
+    merged = pd.DataFrame(patients, columns=df.columns)
+    logger.info(
+        "_merge_continuation_rows: %d raw rows → %d patient records",
+        len(df),
+        len(merged),
+    )
+    return merged
+
+
 def _normalize_columns(csv_bytes: bytes) -> bytes:
     """Normalize CSV columns to match the deployed GCP Batch image expectations.
 
-    - Adds ``anon_id`` column (row index) if missing
+    - Merges HTML-like continuation rows into single patient records
     - Renames known variant column names to canonical forms
+    - Adds ``anon_id`` column (sequential per patient) if missing
     """
-    df = pd.read_csv(io.BytesIO(csv_bytes))
+    df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
 
-    # Rename columns to canonical names
+    # Rename columns to canonical names first so sentinel detection works.
     rename_map = {}
     for col in df.columns:
         canonical = _COLUMN_RENAMES.get(col.strip().lower())
@@ -66,9 +152,12 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
     if rename_map:
         df = df.rename(columns=rename_map)
 
-    # Add anon_id if missing (row index as string)
+    # Merge continuation rows into one record per patient.
+    df = _merge_continuation_rows(df)
+
+    # Add anon_id if missing — one sequential ID per merged patient record.
     if "anon_id" not in df.columns:
-        df.insert(0, "anon_id", [str(i) for i in range(len(df))])
+        df.insert(0, "anon_id", [f"VMTH_{i}" for i in range(len(df))])
 
     return df.to_csv(index=False).encode("utf-8")
 

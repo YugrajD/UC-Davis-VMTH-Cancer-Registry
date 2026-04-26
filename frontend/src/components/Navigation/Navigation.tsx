@@ -17,12 +17,10 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
   const [showLogin, setShowLogin] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
 
-  // Poll pending diagnosis count for the badge (admin-only).
+  // Poll pending diagnosis count for the badge (admin-only). Non-admins
+  // never see the tab so we can leave any stale count in state.
   useEffect(() => {
-    if (!isAdmin) {
-      setPendingCount(null);
-      return;
-    }
+    if (!isAdmin) return;
     let cancelled = false;
     const tick = async () => {
       const token = await getAccessToken();
@@ -114,7 +112,10 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
           <div className="flex gap-1">
             {visibleTabs.map((tab) => {
               const showBadge =
-                tab.id === 'diagnosis-review' && pendingCount !== null && pendingCount > 0;
+                isAdmin &&
+                tab.id === 'diagnosis-review' &&
+                pendingCount !== null &&
+                pendingCount > 0;
               return (
                 <button
                   key={tab.id}

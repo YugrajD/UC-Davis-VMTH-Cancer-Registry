@@ -307,3 +307,105 @@ export async function reviewJob(
 
   return response.json();
 }
+
+
+// --- Per-diagnosis review queue (admin-only) ---
+
+export interface PendingDiagnosis {
+  id: number;
+  patient_anon_id: string | null;
+  cancer_type_id: number;
+  cancer_type_name: string;
+  icd_o_code: string | null;
+  predicted_term: string | null;
+  confidence: number | null;
+  top2_margin: number | null;
+  prediction_method: string | null;
+  diagnosis_index: number | null;
+  review_status: 'pending' | 'confirmed' | 'corrected' | 'rejected';
+}
+
+export interface DiagnosisReviewEvent {
+  id: number;
+  actor_email: string;
+  action: string;
+  from_status: string | null;
+  to_status: string;
+  cancer_type_id_before: number | null;
+  cancer_type_id_after: number | null;
+  icd_o_code_before: string | null;
+  icd_o_code_after: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface DiagnosisDetail extends PendingDiagnosis {
+  original_cancer_type_id: number | null;
+  original_icd_o_code: string | null;
+  original_predicted_term: string | null;
+  reviewed_by_email: string | null;
+  reviewed_at: string | null;
+  reviewer_notes: string | null;
+  events: DiagnosisReviewEvent[];
+}
+
+export type ReviewActionKind = 'confirm' | 'correct' | 'reject';
+
+export interface ReviewActionPayload {
+  action: ReviewActionKind;
+  cancer_type_name?: string;
+  icd_o_code?: string;
+  predicted_term?: string;
+  notes?: string;
+}
+
+export async function fetchPendingDiagnoses(
+  token: string,
+  params: {
+    limit?: number;
+    offset?: number;
+    cancer_type_id?: number;
+    method?: string;
+    max_confidence?: number;
+  } = {},
+): Promise<PendingDiagnosis[]> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) qs.append(k, String(v));
+  }
+  const url = `/api/v1/diagnoses/pending${qs.toString() ? `?${qs}` : ''}`;
+  return fetchJsonAuth(url, token);
+}
+
+export async function fetchPendingCount(token: string): Promise<{ count: number }> {
+  return fetchJsonAuth('/api/v1/diagnoses/pending/count', token);
+}
+
+export async function fetchDiagnosisDetail(
+  token: string,
+  diagnosisId: number,
+): Promise<DiagnosisDetail> {
+  return fetchJsonAuth(`/api/v1/diagnoses/${diagnosisId}`, token);
+}
+
+export async function reviewDiagnosis(
+  token: string,
+  diagnosisId: number,
+  payload: ReviewActionPayload,
+): Promise<DiagnosisDetail> {
+  const response = await fetch(`/api/v1/diagnoses/${diagnosisId}/review`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Review failed: ${response.status}`);
+  }
+
+  return response.json();
+}

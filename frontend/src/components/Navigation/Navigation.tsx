@@ -13,14 +13,14 @@ interface NavigationProps {
 }
 
 export function Navigation({ activeTab, onTabChange }: NavigationProps) {
-  const { user, isAdmin, signOut, loading, getAccessToken } = useAuth();
+  const { user, isAdmin, isReviewer, signOut, loading, getAccessToken } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
 
-  // Poll pending diagnosis count for the badge (admin-only). Non-admins
-  // never see the tab so we can leave any stale count in state.
+  // Poll pending diagnosis count for the badge (admins + reviewers). Users
+  // without review access never see the tab so we leave stale state alone.
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!(isAdmin || isReviewer)) return;
     let cancelled = false;
     const tick = async () => {
       const token = await getAccessToken();
@@ -38,11 +38,13 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [isAdmin, getAccessToken]);
+  }, [isAdmin, isReviewer, getAccessToken]);
 
-  // Filter tabs: admin-only tabs are hidden from non-admin users.
+  // Review queue and diagnosis review are visible to admins and reviewers.
   const visibleTabs = TABS.filter(tab => {
-    if (tab.id === 'review-queue' || tab.id === 'diagnosis-review') return isAdmin;
+    if (tab.id === 'review-queue' || tab.id === 'diagnosis-review') {
+      return isAdmin || isReviewer;
+    }
     return true;
   });
 
@@ -112,7 +114,7 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
           <div className="flex gap-1">
             {visibleTabs.map((tab) => {
               const showBadge =
-                isAdmin &&
+                (isAdmin || isReviewer) &&
                 tab.id === 'diagnosis-review' &&
                 pendingCount !== null &&
                 pendingCount > 0;

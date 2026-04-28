@@ -82,6 +82,18 @@ class CurrentUser:
     sub: str
     email: str
     is_admin: bool
+    # Scoped roles (admins implicitly hold both).
+    is_uploader: bool = False
+    is_reviewer: bool = False
+
+
+def _resolve_roles(email: str) -> tuple[bool, bool, bool]:
+    """Return (is_admin, is_uploader, is_reviewer) for a given email."""
+    is_admin = email in settings.admin_emails_list
+    # Admins implicitly inherit lower-privilege roles.
+    is_uploader = is_admin or email in settings.uploader_emails_list
+    is_reviewer = is_admin or email in settings.reviewer_emails_list
+    return is_admin, is_uploader, is_reviewer
 
 
 async def get_current_user(
@@ -112,9 +124,15 @@ async def get_current_user(
             detail="Token missing required claims",
         )
 
-    is_admin = email in settings.admin_emails_list
+    is_admin, is_uploader, is_reviewer = _resolve_roles(email)
 
-    return CurrentUser(sub=sub, email=email, is_admin=is_admin)
+    return CurrentUser(
+        sub=sub,
+        email=email,
+        is_admin=is_admin,
+        is_uploader=is_uploader,
+        is_reviewer=is_reviewer,
+    )
 
 
 async def get_optional_user(
@@ -133,7 +151,14 @@ async def get_optional_user(
     if not email or not sub:
         return None
 
-    return CurrentUser(sub=sub, email=email, is_admin=email in settings.admin_emails_list)
+    is_admin, is_uploader, is_reviewer = _resolve_roles(email)
+    return CurrentUser(
+        sub=sub,
+        email=email,
+        is_admin=is_admin,
+        is_uploader=is_uploader,
+        is_reviewer=is_reviewer,
+    )
 
 
 async def require_admin(
@@ -144,5 +169,17 @@ async def require_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
+        )
+    return user
+
+
+async def require_reviewer(
+    user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Require the current user to hold the reviewer or admin role."""
+    if not user.is_reviewer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Reviewer access required",
         )
     return user

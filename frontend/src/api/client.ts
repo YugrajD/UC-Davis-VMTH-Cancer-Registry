@@ -167,6 +167,8 @@ export async function fetchCalEnviroScreen(): Promise<CalEnviroScreenData[]> {
 export interface MeResponse {
   email: string;
   is_admin: boolean;
+  is_uploader: boolean;
+  is_reviewer: boolean;
 }
 
 export async function fetchMe(token: string): Promise<MeResponse> {

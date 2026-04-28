@@ -291,6 +291,7 @@ async def ingest_upload(
     dataset_a_filename: str,
     dataset_b_filename: Optional[str],
     dataset_a_csv: Optional[bytes] = None,
+    ingestion_job_id: int | None = None,
 ) -> IngestionResponse:
     """Ingest ML worker predictions + optional demographics into the database.
 
@@ -515,6 +516,7 @@ async def ingest_upload(
                 diagnosis_index=rank,
                 review_status=review_status,
                 top2_margin=round(row_margin, 2) if row_margin is not None else None,
+                ingestion_job_id=ingestion_job_id,
             )
             db.add(diagnosis)
             diagnoses_inserted += 1

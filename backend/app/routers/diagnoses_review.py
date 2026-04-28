@@ -29,6 +29,7 @@ from app.models.models import (
     CancerType,
     CaseDiagnosis,
     DiagnosisReviewEvent,
+    IngestionJob,
     Patient,
 )
 
@@ -51,6 +52,9 @@ class PendingDiagnosis(BaseModel):
     prediction_method: Optional[str]
     diagnosis_index: Optional[int]
     review_status: str
+    ingestion_job_id: Optional[int] = None
+    job_filename: Optional[str] = None
+    job_created_at: Optional[datetime] = None
 
 
 class ReviewEventOut(BaseModel):
@@ -193,12 +197,20 @@ async def list_pending(
     cancer_type_id: Optional[int] = None,
     method: Optional[str] = None,
     max_confidence: Optional[float] = None,
+    ingestion_job_id: Optional[int] = None,
 ) -> list[PendingDiagnosis]:
     """Paginated review queue, optionally filtered."""
     query = (
-        select(CaseDiagnosis, CancerType.name, Patient.anon_id)
+        select(
+            CaseDiagnosis,
+            CancerType.name,
+            Patient.anon_id,
+            IngestionJob.dataset_a_filename,
+            IngestionJob.created_at,
+        )
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .outerjoin(IngestionJob, IngestionJob.id == CaseDiagnosis.ingestion_job_id)
         .where(CaseDiagnosis.review_status == "pending")
     )
     if cancer_type_id is not None:
@@ -207,9 +219,14 @@ async def list_pending(
         query = query.where(CaseDiagnosis.prediction_method == method)
     if max_confidence is not None:
         query = query.where(CaseDiagnosis.confidence <= max_confidence)
+    if ingestion_job_id is not None:
+        query = query.where(CaseDiagnosis.ingestion_job_id == ingestion_job_id)
 
     query = (
-        query.order_by(CaseDiagnosis.confidence.asc().nulls_first())
+        query.order_by(
+            CaseDiagnosis.ingestion_job_id.desc().nulls_last(),
+            CaseDiagnosis.confidence.asc().nulls_first(),
+        )
         .limit(limit)
         .offset(offset)
     )
@@ -227,8 +244,11 @@ async def list_pending(
             prediction_method=d.prediction_method,
             diagnosis_index=d.diagnosis_index,
             review_status=d.review_status,
+            ingestion_job_id=d.ingestion_job_id,
+            job_filename=job_filename,
+            job_created_at=job_created_at,
         )
-        for d, ct_name, anon_id in rows
+        for d, ct_name, anon_id, job_filename, job_created_at in rows
     ]
 
 

@@ -8,10 +8,14 @@ inverse frequency class weights to the CrossEntropyLoss.
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 import evaluate
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+import config as project_config
 import torch
 import torch.nn as nn
 from datasets import load_from_disk
@@ -66,8 +70,8 @@ class WeightedTrainer(Trainer):
 
 
 def train(
-    dataset_dir: str = "ml/data/finetune_dataset",
-    output_dir: str = "ml/model/checkpoints/petbert_finetuned",
+    dataset_dir: str = project_config.FINETUNE_DATASET_DIR,
+    output_dir: str = project_config.CHECKPOINT_FINETUNE_DIR,
     model_name: str = "SAVSNET/PetBERT",
     epochs: int = 5,
     batch_size: int = 16,
@@ -145,8 +149,8 @@ def train(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", default="ml/data/finetune_dataset")
-    parser.add_argument("--out-dir", default="ml/model/checkpoints/petbert_finetuned")
+    parser.add_argument("--dataset", default=project_config.FINETUNE_DATASET_DIR)
+    parser.add_argument("--out-dir", default=project_config.CHECKPOINT_FINETUNE_DIR)
     parser.add_argument("--model", default="SAVSNET/PetBERT")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=16)

@@ -13,8 +13,8 @@ Usage:
 
 After training, run the PetBERT pipeline with:
   ml/.venv/bin/python3 -m petbert_pipeline \\
-      --group-classifier ml/model/checkpoints/group_classifier_best.pt \\
-      --embedding-cache ml/data/embedding_cache.npz \\
+      --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \\
+      --embedding-cache ml/output/training/embedding_cache.npz \\
       --local-only
 
 Note: group_classifier_current.pt is overwritten each run (best epoch within the run).
@@ -32,6 +32,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+import config
+from model.constants import DEFAULT_HIDDEN_DIM
 from model.group_classifier import GroupClassifier
 
 
@@ -41,6 +44,12 @@ def _resolve_device(arg: str) -> torch.device:
             return torch.device("cuda")
         if torch.backends.mps.is_available():
             return torch.device("mps")
+        try:
+            import intel_extension_for_pytorch as ipex  # noqa: F401
+            if ipex.xpu.is_available():
+                return torch.device("xpu")
+        except (ImportError, AttributeError):
+            pass
         return torch.device("cpu")
     return torch.device(arg)
 
@@ -99,31 +108,75 @@ def train(
     device_arg: str,
     weight_decay: float,
     max_class_weight: float,
+    min_group_cases: int,
+    max_group_cases: int,
+    dropout: float,
 ) -> None:
     # --- Load training data --------------------------------------------------
     print(f"Loading training data: {training_data_path}")
     if not Path(training_data_path).exists():
         print(f"ERROR: training data not found at {training_data_path}")
-        print("Run build_group_training_data.py first:")
-        print("  python ml/training/build_group_training_data.py")
+        print("Run build_training_data.py first:")
+        print("  ml/.venv/Scripts/python.exe ml/training/group/build_training_data.py")
         sys.exit(1)
 
     data = np.load(training_data_path, allow_pickle=True)
-    embeddings = torch.from_numpy(data["embeddings"].astype(np.float32))  # (N, 768)
+    embeddings = torch.from_numpy(data["embeddings"].astype(np.float32))  # (N, D)
     targets = torch.from_numpy(data["targets"].astype(np.float32))        # (N, G)
     group_names: list[str] = list(data["group_names"])
     class_weights = torch.from_numpy(data["class_weights"].astype(np.float32))  # (G,)
+
+    # --- Drop sparse groups --------------------------------------------------
+    if min_group_cases > 0:
+        positive_counts = targets.sum(dim=0)  # (G,)
+        keep_mask = positive_counts >= min_group_cases
+        n_dropped = int((~keep_mask).sum().item())
+        if n_dropped > 0:
+            dropped = [group_names[i] for i in range(len(group_names)) if not keep_mask[i]]
+            print(f"Dropping {n_dropped} group(s) with < {min_group_cases} cases: {dropped}")
+            targets = targets[:, keep_mask]
+            class_weights = class_weights[keep_mask]
+            group_names = [g for g, k in zip(group_names, keep_mask.tolist()) if k]
+
     if max_class_weight > 0:
         class_weights = class_weights.clamp(max=max_class_weight)
 
+    # --- Cap positive samples per group --------------------------------------
+    if max_group_cases > 0:
+        rng = np.random.default_rng(42)
+        selected: set[int] = set()
+        for g in range(len(group_names)):
+            pos_idx = torch.where(targets[:, g] > 0)[0].numpy()
+            if len(pos_idx) > max_group_cases:
+                pos_idx = rng.choice(pos_idx, max_group_cases, replace=False)
+            selected.update(pos_idx.tolist())
+        non_cancer_idx = torch.where(targets.sum(dim=1) == 0)[0].numpy().tolist()
+        keep = torch.tensor(sorted(selected | set(non_cancer_idx)))
+        old_N = embeddings.shape[0]
+        embeddings = embeddings[keep]
+        targets = targets[keep]
+        n_cancer = int((targets.sum(dim=1) > 0).sum())
+        print(
+            f"Per-group cap {max_group_cases}: {embeddings.shape[0]}/{old_N} cases kept "
+            f"({n_cancer} cancer, {embeddings.shape[0] - n_cancer} non-cancer)"
+        )
+        # Recalculate class weights from the capped dataset — stored weights are
+        # computed from the original full dataset and are stale after row removal.
+        pos_counts = targets.sum(dim=0).clamp(min=1)
+        neg_counts = targets.shape[0] - pos_counts
+        class_weights = (neg_counts / pos_counts).float()
+        if max_class_weight > 0:
+            class_weights = class_weights.clamp(max=max_class_weight)
+
     G = len(group_names)
     N = embeddings.shape[0]
+    emb_dim = embeddings.shape[1]
     device = _resolve_device(device_arg)
 
     val_size = max(1, int(N * val_frac))
     train_size = N - val_size
 
-    print(f"Device: {device} | Cases: {N} | Groups: {G}")
+    print(f"Device: {device} | Cases: {N} | Groups: {G} | Emb dim: {emb_dim}")
     print(f"Train: {train_size} | Val: {val_size} | Threshold: {threshold}")
     print(f"Cancer cases: {int((targets.sum(dim=1) > 0).sum())}")
     print()
@@ -138,7 +191,7 @@ def train(
     val_loader = DataLoader(val_ds, batch_size=256, shuffle=False)
 
     # --- Model, optimizer, loss ----------------------------------------------
-    model = GroupClassifier(num_groups=G, hidden_dim=hidden_dim).to(device)
+    model = GroupClassifier(num_groups=G, emb_dim=emb_dim, hidden_dim=hidden_dim, dropout=dropout).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     # BCEWithLogitsLoss applies sigmoid internally — use raw logits from model.net
     criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights.to(device))
@@ -226,17 +279,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Train the GroupClassifier.")
     parser.add_argument(
         "--training-data",
-        default="ml/output/group_training_data.npz",
+        default=config.GROUP_TRAINING_DATA_NPZ,
         help="Path to training data npz from build_group_training_data.py",
     )
     parser.add_argument(
         "--out",
-        default="ml/model/checkpoints/group_classifier_current.pt",
-        help="Output checkpoint path (default: ml/model/checkpoints/group_classifier_current.pt)",
+        default=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_current.pt",
+        help="Output checkpoint path",
     )
     parser.add_argument("--epochs", type=int, default=50, help="Training epochs (default: 50)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate (default: 1e-3)")
-    parser.add_argument("--hidden-dim", type=int, default=256, help="Hidden layer size (default: 256)")
+    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM,
+                        help=f"Hidden layer size (default: {DEFAULT_HIDDEN_DIM})")
     parser.add_argument("--val-frac", type=float, default=0.2, help="Validation fraction (default: 0.2)")
     parser.add_argument(
         "--threshold",
@@ -247,15 +301,29 @@ def main() -> int:
     parser.add_argument(
         "--device",
         default="auto",
-        choices=["auto", "cpu", "cuda", "mps"],
+        choices=["auto", "cpu", "cuda", "mps", "xpu"],
         help="Compute device (default: auto)",
     )
     parser.add_argument("--weight-decay", type=float, default=1e-3, help="Adam weight decay (default: 1e-3)")
+    parser.add_argument("--dropout", type=float, default=0.3, help="MLP dropout probability (default: 0.3)")
     parser.add_argument(
         "--max-class-weight",
         type=float,
         default=500.0,
         help="Cap per-class BCE pos_weight at this value (default: 500). 0 = no cap.",
+    )
+    parser.add_argument(
+        "--min-group-cases",
+        type=int,
+        default=10,
+        help="Drop groups with fewer than this many positive cases (default: 10).",
+    )
+    parser.add_argument(
+        "--max-group-cases",
+        type=int,
+        default=0,
+        help="Cap positive training samples per group at this value (default: 0 = no cap). "
+             "Rows are removed entirely (not label-zeroed) to avoid false negatives.",
     )
     args = parser.parse_args()
     train(
@@ -269,6 +337,9 @@ def main() -> int:
         device_arg=args.device,
         weight_decay=args.weight_decay,
         max_class_weight=args.max_class_weight,
+        min_group_cases=args.min_group_cases,
+        max_group_cases=args.max_group_cases,
+        dropout=args.dropout,
     )
     return 0
 

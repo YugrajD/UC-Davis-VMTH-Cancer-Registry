@@ -262,7 +262,7 @@ export function DataUpload() {
           Dataset
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] mb-3">
-          Upload a CSV or Excel file containing patient visit data. Required columns:
+          Upload a CSV (.csv) or Excel (.xlsx) file containing patient visit data. Required columns:
         </p>
         <div className="flex flex-wrap gap-1.5 mb-4">
           {REQUIRED_COLUMNS.map(col => (

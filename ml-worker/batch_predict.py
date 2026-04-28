@@ -13,8 +13,8 @@ import sys
 # The ml/ package tree is copied into /ml at build time
 sys.path.insert(0, "/ml")
 
-from petbert_scan.pipeline import run_scan
-from petbert_scan.types import ScanConfig
+from production.petbert_pipeline.pipeline import run_scan
+from production.petbert_pipeline.types import ScanConfig
 
 
 def main() -> None:
@@ -23,6 +23,8 @@ def main() -> None:
     output_dir = os.environ["OUTPUT_DIR"]
     model_path = os.environ.get("MODEL_PATH", "/mnt/gcs/models/petbert")
     labels_csv = os.environ.get("LABELS_CSV_PATH", "/mnt/gcs/models/labels/labels.csv")
+    presence_classifier = os.environ.get("PRESENCE_CLASSIFIER_PATH")
+    group_classifier = os.environ.get("GROUP_CLASSIFIER_PATH")
 
     print(f"[batch_predict] job={job_id} input={input_csv} output={output_dir}")
 
@@ -32,7 +34,11 @@ def main() -> None:
     config = ScanConfig(
         csv_path=input_csv,
         id_col="anon_id",
-        text_cols=("Clinical Diagnoses",),
+        # Classifier checkpoints were trained with 3 text columns (pathology
+        # reports), so we repeat the single column 3 times to produce the
+        # expected (N, 2304) col_emb_concat shape.  The pipeline dict-deduplicates
+        # embeddings, so the column is only embedded once.
+        text_cols=("Clinical Diagnoses", "Clinical Diagnoses", "Clinical Diagnoses"),
         col_weights={"Clinical Diagnoses": 1.0},
         model_name=model_path,
         local_only=True,
@@ -45,7 +51,8 @@ def main() -> None:
         embedding_min_sim=0.6,
         device="auto",
         labels_csv_path=labels_csv,
-        presence_classifier_path=None,
+        presence_classifier_path=presence_classifier,
+        group_classifier_path=group_classifier,
     )
 
     print("[batch_predict] Starting PetBERT scan...")

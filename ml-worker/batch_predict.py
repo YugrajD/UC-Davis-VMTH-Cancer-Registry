@@ -53,6 +53,7 @@ def main() -> None:
         labels_csv_path=labels_csv,
         presence_classifier_path=presence_classifier,
         group_classifier_path=group_classifier,
+        categorization_mode="group-keyword",
     )
 
     print("[batch_predict] Starting PetBERT scan...")

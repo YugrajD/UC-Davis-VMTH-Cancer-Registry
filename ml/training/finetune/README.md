@@ -1,14 +1,15 @@
-# PetBERT Fine-tuning (Planned)
+# End-to-end PetBERT Fine-tuning — Approach 4 (WIP)
 
-## Intended interface
-- Input: labeled (report_text, cancer_term) pairs + base PetBERT model path
-- Output: fine-tuned checkpoint at `ml/model/checkpoints/petbert_finetuned/`
+Fine-tunes PetBERT end-to-end as a group sequence classifier using CrossEntropyLoss.
+Not recommended until ~10,000+ confirmed cases; see model-training.md for details.
 
-## Integration
-`petbert_pipeline/embedding.py` already accepts `--model PATH`.
-A fine-tuned checkpoint can be passed directly — no other code changes needed.
+## Files
+- `build_dataset.py` — Build HuggingFace `DatasetDict`; compute inverse-frequency class weights
+- `train.py`         — Fine-tune with `WeightedTrainer` (class-weighted CrossEntropyLoss)
 
-## Planned files
-- `dataset.py`  — PyTorch Dataset for (text, label) pairs
-- `train.py`    — Fine-tuning loop (HuggingFace Trainer or manual)
-- `evaluate.py` — Embedding quality metrics post fine-tune
+## Output
+- Dataset: `ml/data/finetune_dataset/`
+- Checkpoint: `ml/output/checkpoints/finetune/`
+
+## See also
+Contrastive fine-tuning (Approach 3, production best) lives in `ml/training/contrastive/`.

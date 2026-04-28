@@ -10,12 +10,16 @@ cycle's step 1, replacing the single-cycle evaluation.csv as the CO source.
 
 import argparse
 import csv
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+import config
 
 
 def update_co_bank(
-    evaluation_csv: str = "ml/output/evaluation/evaluation.csv",
-    bank_csv: str = "ml/output/evaluation/evaluation_co_bank.csv",
+    evaluation_csv: str = f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation.csv",
+    bank_csv: str = f"{config.OUTPUT_TRAINING_DIR}/binary/evaluation_co_bank.csv",
 ) -> int:
     bank_path = Path(bank_csv)
     existing: dict[tuple, dict] = {}
@@ -62,13 +66,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--evaluation-csv",
-        default="ml/output/evaluation/evaluation.csv",
-        help="Evaluation CSV produced by evaluate.py (default: ml/output/evaluation/evaluation.csv)",
+        default=f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation.csv",
+        help="Evaluation CSV produced by evaluate.py",
     )
     parser.add_argument(
         "--bank-csv",
-        default="ml/output/evaluation/evaluation_co_bank.csv",
-        help="Path to the rolling CO-negative bank (default: ml/output/evaluation/evaluation_co_bank.csv)",
+        default=f"{config.OUTPUT_TRAINING_DIR}/binary/evaluation_co_bank.csv",
+        help="Path to the rolling CO-negative bank",
     )
     args = parser.parse_args()
     return update_co_bank(

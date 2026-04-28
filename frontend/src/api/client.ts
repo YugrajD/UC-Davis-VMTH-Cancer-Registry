@@ -175,6 +175,61 @@ export async function fetchMe(token: string): Promise<MeResponse> {
   return fetchJsonAuth('/api/v1/auth/me', token);
 }
 
+// --- User-role admin panel ---
+
+export interface UserRoles {
+  email: string;
+  is_admin: boolean;
+  is_uploader: boolean;
+  is_reviewer: boolean;
+  updated_by_email: string | null;
+  updated_at: string | null;
+  /** False when no DB row exists yet — values come from env-fallback or defaults. */
+  persisted: boolean;
+}
+
+/** Treat empty input and bare strings without "@" as invalid client-side. */
+export function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+export function isValidEmail(raw: string): boolean {
+  const e = normalizeEmail(raw);
+  return e.length > 0 && e.length <= 255 && e.includes('@');
+}
+
+export async function fetchUserRoles(token: string, email: string): Promise<UserRoles> {
+  const normalized = normalizeEmail(email);
+  return fetchJsonAuth(
+    `/api/v1/admin/users/${encodeURIComponent(normalized)}/roles`,
+    token,
+  );
+}
+
+export async function updateUserRoles(
+  token: string,
+  email: string,
+  roles: { is_admin: boolean; is_uploader: boolean; is_reviewer: boolean },
+): Promise<UserRoles> {
+  const normalized = normalizeEmail(email);
+  const response = await fetch(
+    `/api/v1/admin/users/${encodeURIComponent(normalized)}/roles`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(roles),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Update failed: ${response.status}`);
+  }
+  return response.json();
+}
+
 // --- Ingestion Jobs ---
 
 export interface IngestionJob {

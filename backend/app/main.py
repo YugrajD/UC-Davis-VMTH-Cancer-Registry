@@ -10,9 +10,10 @@ from sqlalchemy import select, update
 
 from app.config import settings
 from app.database import async_session
-from app.models.models import IngestionJob
-from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review
+from app.models.models import IngestionJob, UserRole
+from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review, admin_users
 from app.routers import auth as auth_router
+from app.services.role_seed import seed_user_roles_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not check stale jobs on startup: %s", e)
 
+    # Seed user_roles from env-var allow lists. Idempotent — only inserts
+    # rows that don't already exist; never overwrites UI-managed values.
+    try:
+        async with async_session() as db:
+            inserted = await seed_user_roles_from_env(db)
+            if inserted:
+                logger.info("Seeded %d user_roles rows from env vars", inserted)
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not seed user_roles from env: %s", e)
+
     yield
 
 
@@ -77,6 +89,7 @@ app.include_router(trends.router)
 app.include_router(search.router)
 app.include_router(ingest.router)
 app.include_router(diagnoses_review.router)
+app.include_router(admin_users.router)
 app.include_router(auth_router.router)
 
 

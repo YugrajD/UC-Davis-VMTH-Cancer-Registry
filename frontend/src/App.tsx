@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AuthProvider } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue, DiagnosisReview } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue, DiagnosisReview, UserManagement } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
@@ -57,6 +57,8 @@ function AppContent() {
           <AdminQueue />
         ) : activeTab === 'diagnosis-review' ? (
           <DiagnosisReview />
+        ) : activeTab === 'user-management' ? (
+          <UserManagement />
         ) : activeTab === 'breed-disparities' ? (
           <BreedDisparitiesView />
         ) : activeTab === 'analysis' ? (

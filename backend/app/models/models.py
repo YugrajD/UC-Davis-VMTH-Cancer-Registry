@@ -236,3 +236,19 @@ class IngestionJob(Base):
     result_summary = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
+
+
+class UserRole(Base):
+    """Per-email role assignments managed via the admin panel.
+
+    DB rows take precedence over the *_EMAILS env vars, which are now
+    only used as a startup seed.
+    """
+    __tablename__ = "user_roles"
+
+    email = Column(String(255), primary_key=True)
+    is_admin = Column(Boolean, nullable=False, server_default="false")
+    is_uploader = Column(Boolean, nullable=False, server_default="false")
+    is_reviewer = Column(Boolean, nullable=False, server_default="false")
+    updated_by_email = Column(String(255), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

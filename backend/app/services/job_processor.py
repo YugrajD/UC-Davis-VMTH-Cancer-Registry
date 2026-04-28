@@ -174,6 +174,7 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
                 dataset_a_filename=dataset_a_filename,
                 dataset_b_filename=dataset_b_filename,
                 dataset_a_csv=dataset_a_bytes,
+                ingestion_job_id=job_id,
             )
 
             result = await db.execute(
@@ -319,6 +320,7 @@ async def _process_via_gcp_batch(job_id: int) -> None:
                 dataset_a_filename=dataset_a_filename,
                 dataset_b_filename=dataset_b_filename,
                 dataset_a_csv=dataset_a_bytes,
+                ingestion_job_id=job_id,
             )
 
             result = await db.execute(

@@ -106,8 +106,10 @@ class CaseDiagnosis(Base):
     original_icd_o_code = Column(String(20), nullable=True)
     original_predicted_term = Column(Text, nullable=True)
     top2_margin = Column(Numeric(4, 2), nullable=True)
+    ingestion_job_id = Column(Integer, ForeignKey("ingestion_jobs.id"), nullable=True)
 
     patient = relationship("Patient", back_populates="diagnoses")
+    ingestion_job = relationship("IngestionJob")
     cancer_type = relationship(
         "CancerType",
         back_populates="case_diagnoses",
@@ -221,7 +223,7 @@ class IngestionJob(Base):
     uploaded_by_email = Column(String(255), nullable=False)
     uploaded_by_sub = Column(String(255), nullable=False)
     dataset_a_filename = Column(String(255), nullable=False)
-    dataset_b_filename = Column(String(255), nullable=False)
+    dataset_b_filename = Column(String(255), nullable=True)
     storage_path = Column(String(500), nullable=False)
     status = Column(String(20), nullable=False, default="pending_review")
     reviewed_by_email = Column(String(255))

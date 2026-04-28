@@ -323,6 +323,9 @@ export interface PendingDiagnosis {
   prediction_method: string | null;
   diagnosis_index: number | null;
   review_status: 'pending' | 'confirmed' | 'corrected' | 'rejected';
+  ingestion_job_id: number | null;
+  job_filename: string | null;
+  job_created_at: string | null;
 }
 
 export interface DiagnosisReviewEvent {
@@ -367,6 +370,7 @@ export async function fetchPendingDiagnoses(
     cancer_type_id?: number;
     method?: string;
     max_confidence?: number;
+    ingestion_job_id?: number;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();

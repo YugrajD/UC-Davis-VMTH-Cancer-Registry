@@ -14,7 +14,12 @@ class Settings(BaseSettings):
     ML_WORKER_URL: str = "http://localhost:8001"
     SUPABASE_JWT_SECRET: str = ""
     SUPABASE_URL: str = ""
+    # Comma-separated email lists. Admins implicitly hold uploader and
+    # reviewer privileges, so these env vars only need users who don't
+    # also appear in ADMIN_EMAILS.
     ADMIN_EMAILS: str = ""
+    UPLOADER_EMAILS: str = ""
+    REVIEWER_EMAILS: str = ""
     UPLOAD_DIR: str = "/app/uploads"
 
     # GCP Batch — set USE_GCP_BATCH=true to route ML inference through GCP
@@ -43,6 +48,18 @@ class Settings(BaseSettings):
         if not self.ADMIN_EMAILS:
             return []
         return [e.strip() for e in self.ADMIN_EMAILS.split(",") if e.strip()]
+
+    @property
+    def uploader_emails_list(self) -> List[str]:
+        if not self.UPLOADER_EMAILS:
+            return []
+        return [e.strip() for e in self.UPLOADER_EMAILS.split(",") if e.strip()]
+
+    @property
+    def reviewer_emails_list(self) -> List[str]:
+        if not self.REVIEWER_EMAILS:
+            return []
+        return [e.strip() for e in self.REVIEWER_EMAILS.split(",") if e.strip()]
 
     class Config:
         env_file = ".env"

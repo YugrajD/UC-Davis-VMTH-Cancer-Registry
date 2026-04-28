@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from typing import Optional
-from app.auth import CurrentUser, get_current_user, get_optional_user, require_admin
+from app.auth import CurrentUser, get_current_user, get_optional_user, require_admin, require_reviewer
 from app.config import settings
 from app.database import get_db
 from app.models.models import IngestionJob
@@ -193,8 +193,8 @@ async def upload_datasets(
     if dataset_b_bytes:
         dataset_b_bytes = _normalize_columns(_ensure_csv(dataset_b_bytes, dataset_b.filename))
 
-    # Rate limit: 3 uploads per day for non-admin users
-    if not user or not user.is_admin:
+    # Rate limit: 3 uploads per day. Admins and uploader-role users bypass.
+    if not user or not (user.is_admin or user.is_uploader):
         uploader_id = user.email if user else "anonymous"
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         count_result = await db.execute(
@@ -256,7 +256,8 @@ async def list_jobs(
     valid_statuses = {"pending_review", "processing", "completed", "failed", "rejected"}
     filtered_statuses = [s for s in status if s in valid_statuses]
 
-    if user.is_admin and not mine:
+    # Reviewers and admins see the global queue; uploaders see only their own.
+    if (user.is_admin or user.is_reviewer) and not mine:
         query = select(IngestionJob)
     else:
         query = select(IngestionJob).where(
@@ -281,8 +282,8 @@ async def get_job(
     """Get a single job by ID (for polling)."""
     job = await _get_job_or_404(db, job_id)
 
-    # Non-admin can only see their own jobs
-    if not user.is_admin and job.uploaded_by_email != user.email:
+    # Reviewers and admins see all jobs; uploaders see only their own.
+    if not (user.is_admin or user.is_reviewer) and job.uploaded_by_email != user.email:
         raise HTTPException(status_code=403, detail="Access denied")
 
     return _job_to_dict(job)
@@ -293,9 +294,9 @@ async def preview_job_dataset(
     job_id: int,
     dataset: str,
     db: AsyncSession = Depends(get_db),
-    _admin: CurrentUser = Depends(require_admin),
+    _reviewer: CurrentUser = Depends(require_reviewer),
 ):
-    """Stream a stored CSV file for admin preview."""
+    """Stream a stored CSV file for reviewer preview."""
     if dataset not in ("a", "b"):
         raise HTTPException(status_code=400, detail="dataset must be 'a' or 'b'")
 
@@ -321,7 +322,7 @@ async def preview_job_dataset(
 async def cancel_job(
     job_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: CurrentUser = Depends(require_admin),
+    actor: CurrentUser = Depends(require_reviewer),
 ):
     """Cancel a job that is currently processing."""
     job = await _get_job_or_404(db, job_id)
@@ -335,8 +336,8 @@ async def cancel_job(
     now = datetime.now(timezone.utc)
     job.status = "cancelled"
     job.processing_stage = None
-    job.processing_error = "Cancelled by admin"
-    job.reviewed_by_email = admin.email
+    job.processing_error = f"Cancelled by {actor.email}"
+    job.reviewed_by_email = actor.email
     job.reviewed_at = now
     job.updated_at = now
     await db.commit()
@@ -360,7 +361,7 @@ async def review_job(
     job_id: int,
     review: IngestionJobReview,
     db: AsyncSession = Depends(get_db),
-    admin: CurrentUser = Depends(require_admin),
+    reviewer: CurrentUser = Depends(require_reviewer),
 ):
     """Approve or reject a pending job."""
     job = await _get_job_or_404(db, job_id)
@@ -375,7 +376,7 @@ async def review_job(
         raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
 
     now = datetime.now(timezone.utc)
-    job.reviewed_by_email = admin.email
+    job.reviewed_by_email = reviewer.email
     job.reviewed_at = now
     job.updated_at = now
 

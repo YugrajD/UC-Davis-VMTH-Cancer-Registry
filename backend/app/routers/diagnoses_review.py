@@ -23,7 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth import CurrentUser, require_admin
+from app.auth import CurrentUser, require_reviewer
 from app.database import get_db
 from app.models.models import (
     CancerType,
@@ -177,7 +177,7 @@ def _to_detail(diag: CaseDiagnosis) -> DiagnosisDetail:
 @router.get("/pending/count")
 async def pending_count(
     db: AsyncSession = Depends(get_db),
-    _admin: CurrentUser = Depends(require_admin),
+    _reviewer: CurrentUser = Depends(require_reviewer),
 ) -> dict:
     """Cheap counter for the nav badge."""
     result = await db.execute(
@@ -191,7 +191,7 @@ async def pending_count(
 @router.get("/pending")
 async def list_pending(
     db: AsyncSession = Depends(get_db),
-    _admin: CurrentUser = Depends(require_admin),
+    _reviewer: CurrentUser = Depends(require_reviewer),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     cancer_type_id: Optional[int] = None,
@@ -256,7 +256,7 @@ async def list_pending(
 async def get_diagnosis(
     diagnosis_id: int,
     db: AsyncSession = Depends(get_db),
-    _admin: CurrentUser = Depends(require_admin),
+    _reviewer: CurrentUser = Depends(require_reviewer),
 ) -> DiagnosisDetail:
     diag = await _get_or_404(db, diagnosis_id)
     return _to_detail(diag)
@@ -267,7 +267,7 @@ async def review_diagnosis(
     diagnosis_id: int,
     body: ReviewAction,
     db: AsyncSession = Depends(get_db),
-    admin: CurrentUser = Depends(require_admin),
+    reviewer: CurrentUser = Depends(require_reviewer),
 ) -> DiagnosisDetail:
     diag = await _get_or_404(db, diagnosis_id)
 
@@ -306,14 +306,14 @@ async def review_diagnosis(
             diag.predicted_term = body.predicted_term
         diag.review_status = "corrected"
 
-    diag.reviewed_by_email = admin.email
+    diag.reviewed_by_email = reviewer.email
     diag.reviewed_at = datetime.now(timezone.utc)
     if body.notes:
         diag.reviewer_notes = body.notes
 
     db.add(DiagnosisReviewEvent(
         case_diagnosis_id=diag.id,
-        actor_email=admin.email,
+        actor_email=reviewer.email,
         action=body.action,
         from_status=from_status,
         to_status=diag.review_status,

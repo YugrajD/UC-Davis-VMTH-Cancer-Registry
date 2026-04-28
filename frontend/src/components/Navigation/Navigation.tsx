@@ -41,10 +41,12 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
   }, [isAdmin, isReviewer, getAccessToken]);
 
   // Review queue and diagnosis review are visible to admins and reviewers.
+  // User management is admin-only.
   const visibleTabs = TABS.filter(tab => {
     if (tab.id === 'review-queue' || tab.id === 'diagnosis-review') {
       return isAdmin || isReviewer;
     }
+    if (tab.id === 'user-management') return isAdmin;
     return true;
   });
 

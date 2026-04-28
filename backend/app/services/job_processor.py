@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import async_session
@@ -26,23 +25,54 @@ _GCP_BATCH_STATE_TO_STAGE: dict[str, str] = {
 }
 
 
-async def _set_stage(db: AsyncSession, job: IngestionJob, stage: str) -> None:
-    """Update processing_stage and commit. No-op if stage is unchanged."""
-    if job.processing_stage == stage:
-        return
-    job.processing_stage = stage
-    job.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+# ---------------------------------------------------------------------------
+# Helpers — each opens and closes its own short-lived DB session so callers
+# never hold a connection across long I/O (ML worker calls, GCP polling, etc.)
+# ---------------------------------------------------------------------------
+
+async def _update_job(job_id: int, **fields) -> None:
+    """Open a fresh session, update the given fields on the job, and commit."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(IngestionJob).where(IngestionJob.id == job_id)
+        )
+        job = result.scalar_one_or_none()
+        if not job:
+            return
+        for key, value in fields.items():
+            setattr(job, key, value)
+        job.updated_at = datetime.now(timezone.utc)
+        await db.commit()
 
 
-async def _is_cancelled(db: AsyncSession, job_id: int) -> bool:
-    """Re-read the job status from the DB and return True if it was cancelled."""
-    result = await db.execute(
-        select(IngestionJob).where(IngestionJob.id == job_id)
-    )
-    job = result.scalar_one_or_none()
-    return job is not None and job.status == "cancelled"
+async def _is_cancelled(job_id: int) -> bool:
+    """Check if a job was cancelled (uses its own short-lived session)."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(IngestionJob.status).where(IngestionJob.id == job_id)
+        )
+        status = result.scalar_one_or_none()
+        return status == "cancelled"
 
+
+async def _mark_failed(job_id: int, error_msg: str) -> None:
+    """Mark a job as failed with the given error message."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(IngestionJob).where(IngestionJob.id == job_id)
+        )
+        job = result.scalar_one_or_none()
+        if job and job.status == "processing":
+            job.status = "failed"
+            job.processing_stage = None
+            job.processing_error = error_msg[:2000]
+            job.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 async def process_approved_job(job_id: int) -> None:
     """Route to the correct processing backend based on config."""
@@ -56,23 +86,23 @@ async def process_approved_job(job_id: int) -> None:
         # error handlers run (e.g. import errors, missing config).
         logger.exception("Job %d crashed before inner error handler", job_id)
         try:
-            async with async_session() as db:
-                result = await db.execute(
-                    select(IngestionJob).where(IngestionJob.id == job_id)
-                )
-                job = result.scalar_one_or_none()
-                if job and job.status == "processing":
-                    job.status = "failed"
-                    job.processing_stage = None
-                    job.processing_error = str(e)[:2000]
-                    job.updated_at = datetime.now(timezone.utc)
-                    await db.commit()
+            await _mark_failed(job_id, str(e))
         except Exception:
             logger.exception("Job %d: failed to mark job as failed in last-resort handler", job_id)
 
 
+# ---------------------------------------------------------------------------
+# Local ML-worker path
+# ---------------------------------------------------------------------------
+
 async def _process_via_local_ml_worker(job_id: int) -> None:
-    """Process an approved ingestion job via the local ml-worker container."""
+    """Process an approved ingestion job via the local ml-worker container.
+
+    Uses short-lived DB sessions so no connection is held open during
+    the (potentially minutes-long) ML worker HTTP call.
+    """
+
+    # --- Phase 1: fetch job metadata, mark as processing ----------------
     async with async_session() as db:
         result = await db.execute(
             select(IngestionJob).where(IngestionJob.id == job_id)
@@ -82,87 +112,92 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
             logger.error("Job %d not found", job_id)
             return
 
+        storage_path = job.storage_path
+        dataset_a_filename = job.dataset_a_filename
+        dataset_b_filename = job.dataset_b_filename
+
         job.status = "processing"
         job.processing_stage = "reading_files"
         job.updated_at = datetime.now(timezone.utc)
         await db.commit()
 
-        try:
-            storage_path = job.storage_path
-            dataset_a_path = f"{storage_path}/dataset_a.csv"
-            dataset_b_path = f"{storage_path}/dataset_b.csv"
+    try:
+        # --- Phase 2: read files from disk (no DB needed) ---------------
+        dataset_a_path = f"{storage_path}/dataset_a.csv"
+        dataset_b_path = f"{storage_path}/dataset_b.csv"
 
-            with open(dataset_a_path, "rb") as f:
-                dataset_a_bytes = f.read()
+        with open(dataset_a_path, "rb") as f:
+            dataset_a_bytes = f.read()
 
-            dataset_b_bytes = b""
-            if os.path.exists(dataset_b_path):
-                with open(dataset_b_path, "rb") as f:
-                    dataset_b_bytes = f.read()
+        dataset_b_bytes = b""
+        if os.path.exists(dataset_b_path):
+            with open(dataset_b_path, "rb") as f:
+                dataset_b_bytes = f.read()
 
-            # Forward Dataset A to ML worker
-            await _set_stage(db, job, "running_ml_worker")
-            ml_worker_url = f"{settings.ML_WORKER_URL}/predict"
-            async with httpx.AsyncClient(timeout=ML_WORKER_TIMEOUT) as client:
-                response = await client.post(
-                    ml_worker_url,
-                    files={"file": ("dataset_a.csv", dataset_a_bytes, "text/csv")},
-                )
+        # --- Phase 3: call ML worker (long-running, no DB session) ------
+        await _update_job(job_id, processing_stage="running_ml_worker")
 
-            if response.status_code != 200:
-                detail = "ML worker error"
-                try:
-                    err_body = response.json()
-                    detail = err_body.get("detail", detail)
-                except Exception:
-                    pass
-                raise RuntimeError(f"ML worker returned {response.status_code}: {detail}")
+        ml_worker_url = f"{settings.ML_WORKER_URL}/predict"
+        async with httpx.AsyncClient(timeout=ML_WORKER_TIMEOUT) as client:
+            response = await client.post(
+                ml_worker_url,
+                files={"file": ("dataset_a.csv", dataset_a_bytes, "text/csv")},
+            )
 
-            ml_result = response.json()
-            predictions = ml_result.get("predictions", [])
+        if response.status_code != 200:
+            detail = "ML worker error"
+            try:
+                err_body = response.json()
+                detail = err_body.get("detail", detail)
+            except Exception:
+                pass
+            raise RuntimeError(f"ML worker returned {response.status_code}: {detail}")
 
-            if not predictions:
-                raise RuntimeError("ML worker returned no predictions")
+        ml_result = response.json()
+        predictions = ml_result.get("predictions", [])
 
-            # Check for cancellation before writing to the database
-            if await _is_cancelled(db, job_id):
-                logger.info("Job %d was cancelled before ingestion", job_id)
-                return
+        if not predictions:
+            raise RuntimeError("ML worker returned no predictions")
 
-            # Ingest into database
-            await _set_stage(db, job, "ingesting")
+        # --- Phase 4: fresh session for cancellation check + ingestion --
+        if await _is_cancelled(job_id):
+            logger.info("Job %d was cancelled before ingestion", job_id)
+            return
+
+        await _update_job(job_id, processing_stage="ingesting")
+
+        async with async_session() as db:
             ingestion_result = await ingest_upload(
                 db=db,
                 predictions=predictions,
                 demographics_csv=dataset_b_bytes if dataset_b_bytes else None,
-                dataset_a_filename=job.dataset_a_filename,
-                dataset_b_filename=job.dataset_b_filename,
+                dataset_a_filename=dataset_a_filename,
+                dataset_b_filename=dataset_b_filename,
                 dataset_a_csv=dataset_a_bytes,
             )
 
-            job.status = "completed"
-            job.processing_stage = None
-            job.ingestion_log_id = ingestion_result.ingestion_log_id
-            job.result_summary = ingestion_result.result_summary
-            job.updated_at = datetime.now(timezone.utc)
-            await db.commit()
-
-            logger.info("Job %d completed: %d inserted", job_id, ingestion_result.inserted)
-
-        except Exception as e:
-            logger.exception("Job %d failed", job_id)
-            await db.rollback()
             result = await db.execute(
                 select(IngestionJob).where(IngestionJob.id == job_id)
             )
             job = result.scalar_one_or_none()
             if job:
-                job.status = "failed"
+                job.status = "completed"
                 job.processing_stage = None
-                job.processing_error = str(e)[:2000]
+                job.ingestion_log_id = ingestion_result.ingestion_log_id
+                job.result_summary = ingestion_result.result_summary
                 job.updated_at = datetime.now(timezone.utc)
                 await db.commit()
 
+        logger.info("Job %d completed: %d inserted", job_id, ingestion_result.inserted)
+
+    except Exception as e:
+        logger.exception("Job %d failed", job_id)
+        await _mark_failed(job_id, str(e))
+
+
+# ---------------------------------------------------------------------------
+# GCP Batch path
+# ---------------------------------------------------------------------------
 
 async def _process_via_gcp_batch(job_id: int) -> None:
     """Process an approved ingestion job via GCP Batch.
@@ -184,6 +219,7 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
     loop = asyncio.get_running_loop()
 
+    # --- Phase 1: fetch job metadata, mark as processing ----------------
     async with async_session() as db:
         result = await db.execute(
             select(IngestionJob).where(IngestionJob.id == job_id)
@@ -193,116 +229,118 @@ async def _process_via_gcp_batch(job_id: int) -> None:
             logger.error("Job %d not found", job_id)
             return
 
+        storage_path = job.storage_path
+        dataset_a_filename = job.dataset_a_filename
+        dataset_b_filename = job.dataset_b_filename
+
         job.status = "processing"
         job.processing_stage = "uploading_to_gcs"
         job.updated_at = datetime.now(timezone.utc)
         await db.commit()
 
-        try:
-            storage_path = job.storage_path
-            dataset_a_path = f"{storage_path}/dataset_a.csv"
-            dataset_b_path = f"{storage_path}/dataset_b.csv"
+    try:
+        # --- Phase 2: read files and upload to GCS (no long DB hold) ----
+        dataset_a_path = f"{storage_path}/dataset_a.csv"
+        dataset_b_path = f"{storage_path}/dataset_b.csv"
 
-            with open(dataset_a_path, "rb") as f:
-                dataset_a_bytes = f.read()
+        with open(dataset_a_path, "rb") as f:
+            dataset_a_bytes = f.read()
 
-            dataset_b_bytes = b""
-            if os.path.exists(dataset_b_path):
-                with open(dataset_b_path, "rb") as f:
-                    dataset_b_bytes = f.read()
+        dataset_b_bytes = b""
+        if os.path.exists(dataset_b_path):
+            with open(dataset_b_path, "rb") as f:
+                dataset_b_bytes = f.read()
 
-            # 1. Upload CSV to GCS
-            logger.info("Job %d: uploading dataset_a.csv to GCS", job_id)
-            await loop.run_in_executor(
-                None, upload_csv_to_gcs, job_id, "dataset_a.csv", dataset_a_bytes
+        logger.info("Job %d: uploading dataset_a.csv to GCS", job_id)
+        await loop.run_in_executor(
+            None, upload_csv_to_gcs, job_id, "dataset_a.csv", dataset_a_bytes
+        )
+
+        # --- Phase 3: submit Batch job ----------------------------------
+        await _update_job(job_id, processing_stage="submitting_batch_job")
+        logger.info("Job %d: submitting GCP Batch job", job_id)
+        batch_job_name = await loop.run_in_executor(
+            None, submit_batch_job, job_id
+        )
+
+        await _update_job(
+            job_id,
+            processing_stage="batch_queued",
+            batch_job_name=batch_job_name,
+        )
+
+        # --- Phase 4: poll until terminal state -------------------------
+        logger.info("Job %d: polling Batch job %s", job_id, batch_job_name)
+        terminal_states = {"SUCCEEDED", "FAILED", "DELETION_IN_PROGRESS"}
+        poll_interval = settings.GCP_BATCH_POLL_INTERVAL
+
+        while True:
+            await asyncio.sleep(poll_interval)
+            state, error_msg = await loop.run_in_executor(
+                None, get_batch_job_status, batch_job_name
+            )
+            logger.info("Job %d: Batch status = %s", job_id, state)
+
+            mapped_stage = _GCP_BATCH_STATE_TO_STAGE.get(state)
+            if mapped_stage:
+                await _update_job(job_id, processing_stage=mapped_stage)
+
+            if state in terminal_states:
+                break
+
+            if await _is_cancelled(job_id):
+                logger.info("Job %d was cancelled during Batch polling", job_id)
+                return
+
+        if state != "SUCCEEDED":
+            raise RuntimeError(
+                f"GCP Batch job {batch_job_name} ended with state {state}: "
+                f"{error_msg or 'no details'}"
             )
 
-            # 2. Submit Batch job
-            await _set_stage(db, job, "submitting_batch_job")
-            logger.info("Job %d: submitting GCP Batch job", job_id)
-            batch_job_name = await loop.run_in_executor(
-                None, submit_batch_job, job_id
-            )
+        # --- Phase 5: download predictions ------------------------------
+        await _update_job(job_id, processing_stage="downloading_predictions")
+        logger.info("Job %d: downloading predictions from GCS", job_id)
+        predictions = await loop.run_in_executor(
+            None, download_predictions_from_gcs, job_id
+        )
 
-            job.batch_job_name = batch_job_name
-            await _set_stage(db, job, "batch_queued")
+        if not predictions:
+            raise RuntimeError("Batch job produced no predictions")
 
-            # 3. Poll until terminal state, mirroring GCP Batch state in processing_stage
-            logger.info("Job %d: polling Batch job %s", job_id, batch_job_name)
-            terminal_states = {"SUCCEEDED", "FAILED", "DELETION_IN_PROGRESS"}
-            poll_interval = settings.GCP_BATCH_POLL_INTERVAL
+        # --- Phase 6: ingest into database (fresh session) --------------
+        await _update_job(job_id, processing_stage="ingesting")
 
-            while True:
-                await asyncio.sleep(poll_interval)
-                state, error_msg = await loop.run_in_executor(
-                    None, get_batch_job_status, batch_job_name
-                )
-                logger.info("Job %d: Batch status = %s", job_id, state)
-
-                mapped_stage = _GCP_BATCH_STATE_TO_STAGE.get(state)
-                if mapped_stage:
-                    await _set_stage(db, job, mapped_stage)
-
-                if state in terminal_states:
-                    break
-
-                # Check for cancellation between polls
-                if await _is_cancelled(db, job_id):
-                    logger.info("Job %d was cancelled during Batch polling", job_id)
-                    return
-
-            if state != "SUCCEEDED":
-                raise RuntimeError(
-                    f"GCP Batch job {batch_job_name} ended with state {state}: "
-                    f"{error_msg or 'no details'}"
-                )
-
-            # 4. Download predictions from GCS
-            await _set_stage(db, job, "downloading_predictions")
-            logger.info("Job %d: downloading predictions from GCS", job_id)
-            predictions = await loop.run_in_executor(
-                None, download_predictions_from_gcs, job_id
-            )
-
-            if not predictions:
-                raise RuntimeError("Batch job produced no predictions")
-
-            # 5. Ingest into database
-            await _set_stage(db, job, "ingesting")
+        async with async_session() as db:
             ingestion_result = await ingest_upload(
                 db=db,
                 predictions=predictions,
                 demographics_csv=dataset_b_bytes if dataset_b_bytes else None,
-                dataset_a_filename=job.dataset_a_filename,
-                dataset_b_filename=job.dataset_b_filename,
+                dataset_a_filename=dataset_a_filename,
+                dataset_b_filename=dataset_b_filename,
                 dataset_a_csv=dataset_a_bytes,
             )
 
-            job.status = "completed"
-            job.processing_stage = None
-            job.ingestion_log_id = ingestion_result.ingestion_log_id
-            job.result_summary = ingestion_result.result_summary
-            job.updated_at = datetime.now(timezone.utc)
-            await db.commit()
-
-            logger.info("Job %d completed via GCP Batch: %d inserted", job_id, ingestion_result.inserted)
-
-            # 6. Cleanup GCS files (best-effort)
-            try:
-                await loop.run_in_executor(None, cleanup_gcs_job_files, job_id)
-            except Exception:
-                logger.warning("Job %d: GCS cleanup failed (non-fatal)", job_id, exc_info=True)
-
-        except Exception as e:
-            logger.exception("Job %d failed (GCP Batch path)", job_id)
-            await db.rollback()
             result = await db.execute(
                 select(IngestionJob).where(IngestionJob.id == job_id)
             )
             job = result.scalar_one_or_none()
             if job:
-                job.status = "failed"
+                job.status = "completed"
                 job.processing_stage = None
-                job.processing_error = str(e)[:2000]
+                job.ingestion_log_id = ingestion_result.ingestion_log_id
+                job.result_summary = ingestion_result.result_summary
                 job.updated_at = datetime.now(timezone.utc)
                 await db.commit()
+
+        logger.info("Job %d completed via GCP Batch: %d inserted", job_id, ingestion_result.inserted)
+
+        # Cleanup GCS files (best-effort)
+        try:
+            await loop.run_in_executor(None, cleanup_gcs_job_files, job_id)
+        except Exception:
+            logger.warning("Job %d: GCS cleanup failed (non-fatal)", job_id, exc_info=True)
+
+    except Exception as e:
+        logger.exception("Job %d failed (GCP Batch path)", job_id)
+        await _mark_failed(job_id, str(e))

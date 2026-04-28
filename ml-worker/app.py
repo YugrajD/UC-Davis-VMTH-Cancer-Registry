@@ -45,8 +45,8 @@ async def predict(file: UploadFile = File(...)):
 
         # Import pipeline at call time (heavy torch import)
         try:
-            from petbert_scan.pipeline import run_scan
-            from petbert_scan.types import ScanConfig
+            from production.petbert_pipeline.pipeline import run_scan
+            from production.petbert_pipeline.types import ScanConfig
         except ImportError as e:
             raise HTTPException(
                 status_code=500,

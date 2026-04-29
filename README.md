@@ -5,7 +5,7 @@ A full-stack veterinary cancer catchment area dashboard modeled after the UCSF H
 ## Tech Stack
 
 - **Frontend**: React 18 + TypeScript (Vite), Tailwind CSS, react-simple-maps, d3-scale
-- **Backend**: Python 3.11 + FastAPI, SQLAlchemy + GeoAlchemy2
+- **Backend**: Python 3.12 + FastAPI, SQLAlchemy + GeoAlchemy2
 - **Database**: PostgreSQL 16 + PostGIS 3.4
 - **ML/NLP**: PetBERT cancer classification pipeline
 - **Auth**: Supabase Auth (JWT)

@@ -150,7 +150,7 @@ async def upload_datasets(
     await db.commit()
     await db.refresh(job)
 
-    return _job_to_dict(job)
+    return _job_to_dict(job, is_admin=user.is_admin if user else False)
 
 
 @router.get("/jobs")
@@ -180,7 +180,7 @@ async def list_jobs(
     query = query.order_by(IngestionJob.created_at.desc())
     result = await db.execute(query)
     jobs = result.scalars().all()
-    return [_job_to_dict(j) for j in jobs]
+    return [_job_to_dict(j, is_admin=user.is_admin) for j in jobs]
 
 
 @router.get("/jobs/{job_id}")
@@ -196,7 +196,7 @@ async def get_job(
     if not user.is_admin and job.uploaded_by_email != user.email:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    return _job_to_dict(job)
+    return _job_to_dict(job, is_admin=user.is_admin)
 
 
 @router.get("/jobs/{job_id}/preview/{dataset}")
@@ -263,7 +263,7 @@ async def cancel_job(
         except Exception:
             logger.warning("Failed to cancel GCP Batch job for job %d", job_id, exc_info=True)
 
-    return _job_to_dict(job)
+    return _job_to_dict(job, is_admin=True)
 
 
 @router.post("/jobs/{job_id}/review")
@@ -295,7 +295,7 @@ async def review_job(
         job.rejection_reason = review.rejection_reason
         await db.commit()
         await db.refresh(job)
-        return _job_to_dict(job)
+        return _job_to_dict(job, is_admin=True)
 
     # Approve → kick off background processing
     job.status = "processing"
@@ -305,7 +305,7 @@ async def review_job(
 
     asyncio.create_task(process_approved_job(job.id))
 
-    return _job_to_dict(job)
+    return _job_to_dict(job, is_admin=True)
 
 
 # --- Helpers ---
@@ -320,20 +320,25 @@ async def _get_job_or_404(db: AsyncSession, job_id: int) -> IngestionJob:
     return job
 
 
-def _job_to_dict(job: IngestionJob) -> dict:
-    return {
+def _job_to_dict(job: IngestionJob, is_admin: bool = False) -> dict:
+    d = {
         "id": job.id,
         "uploaded_by_email": job.uploaded_by_email,
         "dataset_a_filename": job.dataset_a_filename,
         "dataset_b_filename": job.dataset_b_filename,
         "status": job.status,
         "processing_stage": job.processing_stage,
-        "reviewed_by_email": job.reviewed_by_email,
         "reviewed_at": job.reviewed_at.isoformat() if job.reviewed_at else None,
         "rejection_reason": job.rejection_reason,
         "ingestion_log_id": job.ingestion_log_id,
-        "processing_error": job.processing_error,
-        "batch_job_name": job.batch_job_name,
+        "result_summary": job.result_summary,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }
+    if is_admin:
+        d["batch_job_name"] = job.batch_job_name
+        d["reviewed_by_email"] = job.reviewed_by_email
+        d["processing_error"] = job.processing_error
+    else:
+        d["processing_error"] = "Processing failed" if job.processing_error else None
+    return d

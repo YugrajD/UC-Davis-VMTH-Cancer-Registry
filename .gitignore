@@ -81,6 +81,8 @@ pgdata/
 !database/migrations/*.sql
 
 # Ingestion data (real patient data — never commit)
+database/data/**
+!database/data/.gitkeep
 database/data/*.csv
 database/data/*.tsv
 database/data/*.xlsx
@@ -95,3 +97,56 @@ database/data/output/diagnoses.csv
 database/data/output/reportText.csv
 database/data/patient2.md
 database/data/output/report.csv
+
+# === Patient data (PHI) — belt-and-suspenders ===
+# Block all spreadsheets anywhere in the repo. Patient reports, manual reviews,
+# annotation outputs, and embeddings caches all live in these formats. Existing
+# blocks above cover ml/{data,output} and database/data, but this catches stray
+# files in the repo root, notebooks/, scripts/, or anywhere we don't anticipate.
+*.csv
+*.xlsx
+*.xls
+*.xlsm
+*.tsv
+*.parquet
+*.feather
+*.arrow
+*.pkl
+*.joblib
+*.npz
+*.jsonl
+*.ndjson
+
+# Whitelist non-PHI files we DO want tracked
+!ml/ICD_labels/labels.csv
+!database/migrations/*.sql
+
+# Patient-data file-name patterns — extra safety in case a file lands outside
+# the blocked directories under a different extension
+*spot_check*
+*spot-check*
+*sampled_cases*
+*case_sample*
+*manual_labels*
+*manual-labels*
+*_review*
+*manual_review*
+*gate_flagged*
+*gate-flagged*
+*predictions_with_gates*
+*report_36yr*
+*embedding_cache*
+report_text*
+diagnoses_*
+petbert_predictions*
+petbert_provenance*
+petbert_similarity*
+petbert_visualization*
+petbert_embeddings*
+llm_annotation*
+keyword_annotation*
+
+# Local ML handoff/progress docs currently include case IDs and clinical examples.
+ml/documentation/codex-handoff.md
+ml/documentation/model-and-progress.md
+ml/documentation/fallback-model-notes.md

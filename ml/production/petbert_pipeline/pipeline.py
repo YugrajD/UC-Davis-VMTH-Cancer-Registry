@@ -20,6 +20,7 @@ from sklearn.decomposition import PCA
 
 from .categorization import run_categorization, run_categorization_group, run_categorization_group_keyword
 from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from .text_filters import strip_tissue_lists
 from model.presence_classifier import PresenceClassifier
 from model.group_classifier import GroupClassifier
 from .io import (
@@ -76,6 +77,17 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     col_texts = {col: dataframe[col].map(clean_text).tolist() for col in cols}
     n = len(ids)
     row_indices = list(range(n))
+
+    # Tissue-list filter: drop necropsy "(T1) lung, liver; (T2) ..." segments
+    # from HISTOPATHOLOGICAL SUMMARY before embedding so they don't hijack the
+    # cosine match with organ words. FINAL COMMENT (the diagnostic prose) is
+    # untouched. See text_filters.strip_tissue_lists.
+    if config.strip_tissue_lists and "HISTOPATHOLOGICAL SUMMARY" in col_texts:
+        original_hp = col_texts["HISTOPATHOLOGICAL SUMMARY"]
+        filtered_hp = [strip_tissue_lists(t) for t in original_hp]
+        n_changed = sum(1 for o, f in zip(original_hp, filtered_hp) if o != f)
+        col_texts["HISTOPATHOLOGICAL SUMMARY"] = filtered_hp
+        print(f"Tissue-list filter: stripped list segments from {n_changed:,}/{n:,} HP summaries")
 
     # Merged text per row for provenance display and neighbors
     texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
@@ -207,11 +219,21 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         or config.finetuned_model_path is not None
     ):
         if config.finetuned_model_path is None:
-            # Use external GroupClassifier on per-column concat embeddings (2304-dim)
             print(f"Loading group classifier from {config.group_classifier_path}...")
             group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
             group_clf.to(torch_device)
-            group_probs = group_clf.predict_proba(torch.from_numpy(col_emb_concat)).numpy()
+            # Older 768-dim checkpoints were trained on mean embeddings; newer
+            # 2304-dim ones on per-column concat. Pick the input that matches.
+            if group_clf.emb_dim == embeddings.shape[1]:
+                group_input = embeddings
+            elif group_clf.emb_dim == col_emb_concat.shape[1]:
+                group_input = col_emb_concat
+            else:
+                raise ValueError(
+                    f"GroupClassifier expects emb_dim={group_clf.emb_dim}, "
+                    f"got mean={embeddings.shape[1]}, concat={col_emb_concat.shape[1]}"
+                )
+            group_probs = group_clf.predict_proba(torch.from_numpy(group_input)).numpy()
             group_clf.cpu()
             del group_clf
         else:
@@ -312,6 +334,27 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             threshold=config.cascade_threshold,
             k=config.cascade_k,
             adaptive_thresholds_path=config.cascade_adaptive_path,
+        )
+
+    # --- Rule-based gates: subtype demotion + non-neoplastic suppression ----
+    # Run after the cascade so kNN-replaced rows are also gated. Subtype gate
+    # runs before the non-neoplastic gate so demoted-to-NOS predictions can
+    # still be suppressed when the case isn't a tumor.
+    if config.apply_subtype_gate:
+        from .gates import apply_subtype_gate
+        apply_subtype_gate(
+            predictions_csv=outputs.predictions_csv,
+            reports_csv_path=config.csv_path,
+            labels_csv_path=config.labels_csv_path,
+            id_col=config.id_col,
+            text_cols=config.text_cols,
+        )
+    if config.apply_non_neoplastic_gate:
+        from .gates import apply_non_neoplastic_gate
+        apply_non_neoplastic_gate(
+            predictions_csv=outputs.predictions_csv,
+            reports_csv_path=config.csv_path,
+            id_col=config.id_col,
         )
 
     write_provenance_csv(

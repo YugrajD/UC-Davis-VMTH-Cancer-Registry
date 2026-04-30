@@ -129,6 +129,53 @@ def build_parser() -> argparse.ArgumentParser:
             "Aims to convert 'slightly off' predictions into 'good' ones."
         ),
     )
+    parser.add_argument(
+        "--cascade-threshold",
+        type=float,
+        default=0.0,
+        help=(
+            "Confidence below which a prediction is replaced by a kNN match "
+            "against label definitions. 0.0 disables the cascade."
+        ),
+    )
+    parser.add_argument(
+        "--cascade-k",
+        type=int,
+        default=5,
+        help="Number of nearest label definitions to vote over in the kNN cascade.",
+    )
+    parser.add_argument(
+        "--cascade-adaptive-path",
+        default="",
+        help="Optional path to a per-group threshold JSON for adaptive cascading.",
+    )
+    parser.add_argument(
+        "--strip-tissue-lists",
+        action="store_true",
+        help=(
+            "Strip necropsy tissue-list segments (e.g. '(T1) lung, liver; (T2) ...') "
+            "from HISTOPATHOLOGICAL SUMMARY before embedding. Reduces 'organ-word' "
+            "hijacking on multi-organ necropsy reports."
+        ),
+    )
+    parser.add_argument(
+        "--apply-subtype-gate",
+        action="store_true",
+        help=(
+            "After categorization, demote predicted terms whose qualifier word "
+            "(e.g. 'Microcystic', 'Surface', 'Infiltrative') is absent from the "
+            "report text to the group's NOS variant."
+        ),
+    )
+    parser.add_argument(
+        "--apply-non-neoplastic-gate",
+        action="store_true",
+        help=(
+            "After categorization, replace the prediction with 'Non-neoplastic' "
+            "when the report's primary diagnosis matches inflammation, "
+            "hyperplasia, cyst, or degeneration with no competing tumor diagnosis."
+        ),
+    )
     return parser
 
 
@@ -174,6 +221,12 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         group_classifier_threshold=args.group_classifier_threshold,
         finetuned_model_path=args.finetuned_model_path,
         categorization_mode=args.categorization_mode,
+        cascade_threshold=args.cascade_threshold,
+        cascade_k=args.cascade_k,
+        cascade_adaptive_path=args.cascade_adaptive_path,
+        strip_tissue_lists=args.strip_tissue_lists,
+        apply_subtype_gate=args.apply_subtype_gate,
+        apply_non_neoplastic_gate=args.apply_non_neoplastic_gate,
     )
 
 

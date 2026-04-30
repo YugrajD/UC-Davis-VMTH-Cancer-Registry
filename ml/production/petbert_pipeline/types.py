@@ -33,6 +33,9 @@ class ScanConfig:
     cascade_threshold: float = 0.0  # >0 enables kNN fallback for low-confidence predictions
     cascade_k: int = 5
     cascade_adaptive_path: str = ""  # path to per-group thresholds JSON
+    strip_tissue_lists: bool = False  # drop necropsy tissue-list segments before embedding
+    apply_subtype_gate: bool = False  # demote hallucinated subtype qualifiers to NOS variant
+    apply_non_neoplastic_gate: bool = False  # suppress predictions when report describes non-neoplasia
 
 
 @dataclass(frozen=True)

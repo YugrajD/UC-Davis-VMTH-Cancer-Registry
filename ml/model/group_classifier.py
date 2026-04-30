@@ -93,10 +93,16 @@ class GroupClassifier(nn.Module):
     def load(cls, path: str | Path) -> tuple["GroupClassifier", list[str]]:
         """Load model and return (model, group_names)."""
         data = torch.load(path, map_location="cpu", weights_only=False)
+        # Older checkpoints didn't save hidden_dim — recover it from the first
+        # linear layer's weight shape so legacy artifacts load without errors.
+        if "hidden_dim" in data:
+            hidden_dim = int(data["hidden_dim"])
+        else:
+            hidden_dim = int(data["state_dict"]["net.0.weight"].shape[0])
         model = cls(
             num_groups=data["num_groups"],
             emb_dim=data["emb_dim"],
-            hidden_dim=data.get("hidden_dim", DEFAULT_HIDDEN_DIM),
+            hidden_dim=hidden_dim,
         )
         model.load_state_dict(data["state_dict"])
         return model, data["group_names"]

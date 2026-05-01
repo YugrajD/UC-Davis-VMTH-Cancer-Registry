@@ -1,16 +1,16 @@
 """Build training data for the GroupClassifier.
 
 Reads:
-  - ml/output/training/embedding_cache.npz                         -- embeddings and case_ids
-  - ml/output/annotation/llm/llm_annotation.csv  -- ground-truth (case_id, matched_group)
+  - ml/output/training/embedding_cache.npz       -- tfidf-selected embeddings and case_ids
+  - ml/output/annotation/annotation.csv          -- ground-truth (case_id, matched_group)
 
 Produces:
   - ml/output/training/group/group_training_data.npz with:
-      embeddings    (N, D)  float32  -- report embedding per case (D=2304 per-column, or 768 mean)
-      targets       (N, G)  float32  -- multi-hot group labels (0.0 = non-cancer, 1.0 = present)
-      case_ids      (N,)    object   -- case_id strings
-      group_names   (G,)    object   -- group name strings (index = column in targets)
-      class_weights (G,)    float32  -- inverse-frequency weights for BCEWithLogitsLoss
+      embeddings    (N, 768) float32  -- tfidf-selected report embedding per case
+      targets       (N, G)   float32  -- multi-hot group labels (0.0 = non-cancer, 1.0 = present)
+      case_ids      (N,)     object   -- case_id strings
+      group_names   (G,)     object   -- group name strings (index = column in targets)
+      class_weights (G,)     float32  -- inverse-frequency weights for BCEWithLogitsLoss
 
 Ground-truth assumption: cases in the cache that do not appear in the labels CSV
 are treated as non-cancer (all-zeros target). This is valid for a general veterinary
@@ -20,7 +20,8 @@ Usage:
   python ml/training/group/build_training_data.py
   python ml/training/group/build_training_data.py \\
       --embedding-cache ml/output/training/embedding_cache.npz \\
-      --expectation-csv ml/output/annotation/llm/llm_annotation.csv \\
+      --expectation-csv ml/output/annotation/annotation.csv \\
+      --train-cases ml/output/splits/train_cases.txt \\
       --out ml/output/training/group/group_training_data.npz
 """
 
@@ -39,28 +40,35 @@ def build_training_data(
     cache_path: str,
     expectation_csv_path: str,
     out_path: str,
-    per_column: bool = True,
+    train_cases_txt: str = "",
 ) -> None:
     # --- Load embedding cache ------------------------------------------------
     print(f"Loading embedding cache: {cache_path}")
     if not Path(cache_path).exists():
         print(f"ERROR: cache not found at {cache_path}")
         print("Run the PetBERT scan first to generate the embedding cache:")
-        print("  ml/.venv/Scripts/python.exe -m petbert_pipeline --embedding-cache ml/output/training/embedding_cache.npz --local-only")
+        print("  ml/.venv/Scripts/python.exe ml/scripts/run_production.py --local-only")
         sys.exit(1)
 
     cache = np.load(cache_path, allow_pickle=True)
-    case_ids: list[str] = list(cache["case_ids"])
+    all_case_ids: list[str] = list(cache["case_ids"])
+    all_embeddings: np.ndarray = cache["col_tfidf_selected"]  # (N, 768)
+
+    # --- Filter to train cases if a split is active --------------------------
+    if train_cases_txt:
+        with open(train_cases_txt, encoding="utf-8") as f:
+            train_ids = {line.strip() for line in f if line.strip()}
+        keep = np.array([cid in train_ids for cid in all_case_ids])
+        case_ids = [cid for cid, k in zip(all_case_ids, keep) if k]
+        embeddings = all_embeddings[keep]
+        print(f"Train-cases filter: {len(case_ids)}/{len(all_case_ids)} cases kept")
+    else:
+        case_ids = all_case_ids
+        embeddings = all_embeddings
+
     N = len(case_ids)
     case_idx = {cid: i for i, cid in enumerate(case_ids)}
-
-    if per_column:
-        col_keys = ["col_FINAL_COMMENT", "col_HISTOPATHOLOGICAL_SUMMARY", "col_ANCILLARY_TESTS"]
-        embeddings = np.concatenate([cache[k] for k in col_keys], axis=1)  # (N, 2304)
-        print(f"Using per-column embeddings: {embeddings.shape[1]}-dim ({len(col_keys)} cols × 768)")
-    else:
-        embeddings = cache["mean_embeddings"]  # (N, 768)
-        print(f"Using mean embeddings: {embeddings.shape[1]}-dim")
+    print(f"Embeddings: {embeddings.shape[1]}-dim tfidf-selected")
 
     # --- Load keyword predictions --------------------------------------------
     print(f"Loading keyword predictions: {expectation_csv_path}")
@@ -143,7 +151,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--expectation-csv",
-        default=config.LLM_ANNOTATION_CSV,
+        default=config.ANNOTATION_CSV,
         help="Path to predictions CSV with case_id and matched_group columns",
     )
     parser.add_argument(
@@ -152,12 +160,13 @@ def main() -> int:
         help=f"Output npz path (default: {config.GROUP_TRAINING_DATA_NPZ})",
     )
     parser.add_argument(
-        "--mean-only",
-        action="store_true",
-        help="Use mean embeddings (768-dim) instead of per-column concat (2304-dim).",
+        "--train-cases",
+        default="",
+        help="Path to train_cases.txt. When provided, only those case IDs are included. "
+             "Generate with ml/training/data/create_split.py.",
     )
     args = parser.parse_args()
-    build_training_data(args.embedding_cache, args.expectation_csv, args.out, per_column=not args.mean_only)
+    build_training_data(args.embedding_cache, args.expectation_csv, args.out, args.train_cases)
     return 0
 
 

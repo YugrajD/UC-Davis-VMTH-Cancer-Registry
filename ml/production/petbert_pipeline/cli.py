@@ -3,12 +3,8 @@
 import argparse
 
 import config
-from model.constants import DEFAULT_TEXT_COLS
 from .pipeline import run_scan
 from .types import ScanConfig
-
-_DEFAULT_TEXT_COLS = ",".join(DEFAULT_TEXT_COLS)
-_DEFAULT_COL_WEIGHTS = "FINAL COMMENT:2.0,HISTOPATHOLOGICAL SUMMARY:1.5,ANCILLARY TESTS:0.5"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,19 +15,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id-col", default="case_id", help="ID column name")
     parser.add_argument(
         "--text-cols",
-        default=_DEFAULT_TEXT_COLS,
+        default="",
         help=(
-            "Comma-separated column names to embed independently and weighted-average. "
-            f"Default: '{_DEFAULT_TEXT_COLS}'"
-        ),
-    )
-    parser.add_argument(
-        "--col-weights",
-        default=_DEFAULT_COL_WEIGHTS,
-        help=(
-            "Per-column embedding weights as 'COL:weight,...' pairs. "
-            "Columns absent from this list default to 1.0. "
-            f"Default: '{_DEFAULT_COL_WEIGHTS}'"
+            "Comma-separated column names to embed independently. "
+            "Empty string (default) activates TF-IDF multi-column text selection."
         ),
     )
     parser.add_argument("--model", default="SAVSNET/PetBERT", help="HF model name or local path")
@@ -69,14 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to labels taxonomy CSV.",
     )
     parser.add_argument(
-        "--presence-classifier",
-        default=None,
-        help=(
-            "Path to a trained PresenceClassifier checkpoint (.pt). "
-            "When set, presence probabilities replace cosine similarity for scoring labels."
-        ),
-    )
-    parser.add_argument(
         "--embedding-cache",
         default=None,
         help=(
@@ -90,10 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to a trained GroupClassifier checkpoint (.pt). "
-            "When set, uses two-stage categorization: GroupClassifier predicts cancer group(s), "
-            "then cosine similarity selects the best term within each group. "
-            "Replaces --presence-classifier and eliminates the completely-off floor. "
-            "Train with: python ml/training/train_group_classifier.py"
+            "Enables 3-stage categorization: "
+            "(1) CasePresenceClassifier gates non-cancer cases (if --case-presence-classifier is set), "
+            "(2) GroupClassifier predicts which cancer group(s) a case belongs to, "
+            "(3) ICD-O behavior keyword matching selects the best term within each group."
         ),
     )
     parser.add_argument(
@@ -107,56 +86,43 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--finetuned-model-path",
+        "--case-presence-classifier",
         default=None,
         help=(
-            "Path to a fine-tuned PetBERT sequence classification model checkpoint. "
-            "When set, the pipeline skips independent column embedding and instead "
-            "passes the concatenated report text directly to the fine-tuned model "
-            "to predict cancer groups. Within the predicted group, cosine similarity "
-            "is still used to select the best specific ICD term."
+            "Path to a trained CasePresenceClassifier checkpoint (.pt). "
+            "When set alongside --group-classifier, acts as a first-stage gate: "
+            "cases whose cancer probability is below --case-presence-threshold are "
+            "predicted Uncategorized without reaching the GroupClassifier."
         ),
     )
     parser.add_argument(
-        "--categorization-mode",
-        default="default",
-        choices=["default", "group-keyword"],
+        "--case-presence-threshold",
+        type=float,
+        default=0.5,
         help=(
-            "Categorization strategy within the binary-classifier path. "
-            "'group-keyword' uses the top-scoring label's group as Stage 1, "
-            "then ICD-O behavior keyword matching selects the specific term "
-            "within that group (Stage 2). Requires --presence-classifier. "
-            "Aims to convert 'slightly off' predictions into 'good' ones."
+            "Probability threshold for CasePresenceClassifier gate (default: 0.5). "
+            "Lower = more cases pass (higher recall, higher FP). "
+            "Only used when --case-presence-classifier is set."
+        ),
+    )
+    parser.add_argument(
+        "--tfidf-vectorizer",
+        default=config.TFIDF_VECTORIZER_PATH,
+        help=(
+            "Path to the fitted TF-IDF vectorizer joblib file. "
+            "Used for multi-column text selection when --text-cols is empty. "
+            f"Default: {config.TFIDF_VECTORIZER_PATH}"
         ),
     )
     return parser
 
 
-def _parse_col_weights(raw: str) -> dict[str, float]:
-    """Parse 'COL:weight,...' into a dict. Silently skips malformed pairs."""
-    result: dict[str, float] = {}
-    for token in raw.split(","):
-        token = token.strip()
-        if not token:
-            continue
-        if ":" not in token:
-            continue
-        col, _, val = token.rpartition(":")
-        try:
-            result[col.strip()] = float(val.strip())
-        except ValueError:
-            pass
-    return result
-
-
 def build_config(args: argparse.Namespace) -> ScanConfig:
     text_cols = tuple(c.strip() for c in args.text_cols.split(",") if c.strip())
-    col_weights = _parse_col_weights(args.col_weights)
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
         text_cols=text_cols,
-        col_weights=col_weights,
         model_name=args.model,
         local_only=args.local_only,
         out_dir=args.out_dir,
@@ -168,12 +134,13 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
         labels_csv_path=args.labels_csv,
-        presence_classifier_path=args.presence_classifier,
+        presence_classifier_path=None,
         embedding_cache_path=args.embedding_cache,
         group_classifier_path=args.group_classifier,
         group_classifier_threshold=args.group_classifier_threshold,
-        finetuned_model_path=args.finetuned_model_path,
-        categorization_mode=args.categorization_mode,
+        case_presence_classifier_path=args.case_presence_classifier,
+        case_presence_threshold=args.case_presence_threshold,
+        tfidf_vectorizer_path=args.tfidf_vectorizer,
     )
 
 

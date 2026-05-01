@@ -9,8 +9,8 @@ Modes
                      Run 6–8 cycles; each takes ~10 minutes after the first.
 
   train-groups       One-shot: train a multi-label group classifier.
-                     Not yet competitive at current data volume (~5,800 cases);
-                     re-run when confirmed cases reach ~15,000.
+                     Predicts cancer group (44 classes) from a single report embedding.
+                     Use after adapt-backbone; requires --train-cases for a clean split.
 
   adapt-backbone     Fine-tune the embedding model (PetBERT) so that report text
                      and cancer label text land closer together in vector space.
@@ -38,6 +38,8 @@ from training.group.build_training_data import build_training_data
 from training.group.train import train as train_group
 from training.contrastive.build_contrastive_dataset import build_contrastive_pairs
 from training.contrastive.train_contrastive import train as train_contrastive
+from training.binary.build_case_presence_dataset import build_dataset as build_case_presence_dataset
+from training.binary.train_case_presence import train as train_case_presence
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -46,13 +48,14 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=["train-classifier", "train-groups", "adapt-backbone"],
+        choices=["train-classifier", "train-groups", "adapt-backbone", "train-case-presence"],
         default="train-classifier",
         help=(
             "What to train: "
             "train-classifier (label presence model, iterative — default), "
             "train-groups (group classifier, one-shot), "
-            "adapt-backbone (fine-tune embedding model)."
+            "adapt-backbone (fine-tune embedding model), "
+            "train-case-presence (case-level cancer/no-cancer gate, one-shot)."
         ),
     )
     parser.add_argument(
@@ -76,11 +79,10 @@ def main() -> int:
              "Defaults: train-classifier=25, adapt-backbone=3, train-groups=50.",
     )
     parser.add_argument(
-        "--annotation-csv", default=config.KEYWORD_ANNOTATION_CSV,
+        "--annotation-csv", default=config.ANNOTATION_CSV,
         help="Verified label annotations used as training supervision and evaluation "
-             "ground truth. Accepts keyword_annotation.csv (default) or "
-             "llm_annotation.csv — both share the same format. "
-             f"(default: {config.KEYWORD_ANNOTATION_CSV})",
+             "ground truth. Accepts any annotation CSV in the shared format. "
+             f"(default: {config.ANNOTATION_CSV})",
     )
 
     # ------------------------------------------------------------------
@@ -102,9 +104,38 @@ def main() -> int:
                         help="[train-classifier] Path to rolling wrong-label feedback bank "
                              "(default: auto-derived from --model). Pass empty string to disable.")
     parser.add_argument("--train-cases", default="",
-                        help="[train-classifier, adapt-backbone] Path to train_cases.txt. "
+                        help="[train-classifier, train-groups, adapt-backbone] Path to train_cases.txt. "
                              "When provided, only train cases are used during training. "
                              "Generate with ml/training/data/create_split.py.")
+    parser.add_argument("--max-class-weight", type=float, default=50.0,
+                        help="[train-groups] Cap per-group BCE pos_weight at this value (default: 50). "
+                             "Prevents rare-group class weights (up to 3500x) from dominating training.")
+    parser.add_argument("--weight-decay", type=float, default=1e-3,
+                        help="[train-groups] Adam weight decay / L2 regularization (default: 1e-3).")
+
+    # ------------------------------------------------------------------
+    # train-case-presence args
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--embedding-cache",
+        default=config.EMBEDDING_CACHE_NPZ,
+        help="[train-case-presence] Path to embedding cache NPZ "
+             f"(default: {config.EMBEDDING_CACHE_NPZ})",
+    )
+    parser.add_argument(
+        "--case-presence-recall-weight",
+        type=float,
+        default=0.7,
+        help="[train-case-presence] Recall weight for checkpoint selection (default: 0.7). "
+             "Higher = prefer fewer missed cancer cases over fewer false positives.",
+    )
+    parser.add_argument(
+        "--case-presence-pos-weight",
+        type=float,
+        default=1.0,
+        help="[train-case-presence] BCEWithLogitsLoss pos_weight (default: 1.0). "
+             "Increase if cancer-positive cases are heavily outnumbered.",
+    )
 
     # ------------------------------------------------------------------
     # adapt-backbone args
@@ -152,7 +183,7 @@ def main() -> int:
     #   1. Annotation file already exists → skip (unless --force-reannotate).
     #   2. Default keyword annotation file is missing → auto-run keyword annotation.
     #   3. A custom annotation file is missing → error (user must annotate first).
-    if args.mode in ("train-classifier", "train-groups", "adapt-backbone"):
+    if args.mode in ("train-classifier", "train-groups", "adapt-backbone", "train-case-presence"):
         annotation_path = Path(args.annotation_csv)
         is_default_keyword_file = (
             annotation_path.resolve() == Path(config.KEYWORD_ANNOTATION_CSV).resolve()
@@ -201,6 +232,7 @@ def main() -> int:
             cache_path=config.EMBEDDING_CACHE_NPZ,
             expectation_csv_path=args.annotation_csv,
             out_path=config.GROUP_TRAINING_DATA_NPZ,
+            train_cases_txt=args.train_cases,
         )
         print("\n=== Step 2b: Train group classifier ===")
         train_group(
@@ -212,8 +244,8 @@ def main() -> int:
             val_frac=0.2,
             threshold=0.3,
             device_arg=args.device,
-            weight_decay=0.0,
-            max_class_weight=0.0,
+            weight_decay=args.weight_decay,
+            max_class_weight=args.max_class_weight,
             min_group_cases=10,
             max_group_cases=0,
             dropout=0.3,
@@ -257,6 +289,32 @@ def main() -> int:
         print(f"  rm -f {config.OUTPUT_TRAINING_DIR}/contrastive/evaluation_co_bank.csv")
         print(f"  rm -f {args.backbone_out_dir}/presence_classifier_current.pt")
         print(f"Then retrain with: --mode train-classifier --model {args.backbone_out_dir} --local-only")
+
+    elif args.mode == "train-case-presence":
+        epochs = args.epochs if args.epochs is not None else 20
+
+        print("\n=== Step 2a: Build case-level presence dataset ===")
+        build_case_presence_dataset(
+            annotation_csv=args.annotation_csv,
+            embedding_cache=args.embedding_cache,
+            out=config.CASE_PRESENCE_DATASET_NPZ,
+            train_cases_txt=args.train_cases,
+        )
+        print("\n=== Step 2b: Train case presence classifier ===")
+        train_case_presence(
+            dataset_npz=config.CASE_PRESENCE_DATASET_NPZ,
+            out_dir=config.CHECKPOINT_CONTRASTIVE_DIR,
+            epochs=epochs,
+            device=args.device,
+            recall_weight=args.case_presence_recall_weight,
+            pos_weight=args.case_presence_pos_weight,
+        )
+        print(
+            f"\nCheckpoint: {config.CASE_PRESENCE_CLASSIFIER_PT}\n"
+            "Use with: --case-presence-classifier "
+            f"{config.CASE_PRESENCE_CLASSIFIER_PT} "
+            "--case-presence-threshold 0.5"
+        )
 
     return 0
 

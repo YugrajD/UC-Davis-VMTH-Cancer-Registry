@@ -78,11 +78,14 @@ pgdata/
 !database/migrations/*.sql
 
 # Ingestion data (real patient data — never commit)
-database/data/*.csv
-database/data/*.tsv
-database/data/*.xlsx
-database/data/*.json
+database/data/**/*.csv
+database/data/**/*.tsv
+database/data/**/*.xlsx
+database/data/**/*.json
 !database/data/.gitkeep
+
+# Claude Code internal state
+.claude/
 
 # PetBERT scan output (predictions, embeddings, etc.)
 database/output/

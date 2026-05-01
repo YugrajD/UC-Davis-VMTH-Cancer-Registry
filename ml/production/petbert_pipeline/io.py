@@ -55,6 +55,10 @@ def write_predictions_csv(
                 term = "Uncategorized"
                 group = "Uncategorized"
                 code = ""
+            elif method == "unidentified_cancer":
+                term = "Unidentified Cancer"
+                group = "Unidentified Cancer"
+                code = ""
             rows.append({
                 id_col: patient_id,
                 "diagnosis_index": rank,

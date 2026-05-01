@@ -82,7 +82,8 @@ Invoked via `run_production.py`. Takes clinical report text, produces cancer lab
 |---|---|
 | `__init__.py` | Package public API — import `run_scan`, `ScanConfig`, `build_config`, `build_parser` from here |
 | `types.py` | `ScanConfig` and `ScanOutputs` dataclasses (internal — access via `__init__.py`) |
-| `pipeline.py` | Top-level orchestration: load → embed → score → write |
+| `pipeline.py` | Top-level orchestration: load → select text → embed → score → write |
+| `text_selector.py` | TF-IDF multi-column text selector — concatenates HIST+FINAL COMMENT+COMMENT, compresses to 512-token budget |
 | `embedding.py` | PetBERT loading, per-column mean-pooled embedding |
 | `embedding_cache.py` | Save/load cached embeddings — avoids re-running PetBERT every cycle |
 | `categorization.py` | Classifier-driven label selection, group-keyword term correction, and non-default categorization modes |
@@ -139,9 +140,10 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 
 | File | Role |
 |---|---|
-| `constants.py` | `PETBERT_EMB_DIM=768`, `DEFAULT_HIDDEN_DIM=512`, `DEFAULT_DROPOUT=0.3` |
+| `constants.py` | `PETBERT_EMB_DIM=768`, `DEFAULT_HIDDEN_DIM=512`, `DEFAULT_DROPOUT=0.3`, `DEFAULT_TEXT_COLS` (experiment-path columns) |
 | `presence_classifier.py` | Binary MLP: `[col_embs ‖ label_emb] → present/absent` |
 | `group_classifier.py` | Multi-label MLP: `report_emb → per-group sigmoid probabilities` |
+| `case_presence_classifier.py` | Binary MLP: `report_emb → cancer probability` (case-level gate) |
 
 ### `training/binary/` — Label presence classifier training
 
@@ -163,8 +165,9 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 
 | File | Role |
 |---|---|
-| `build_contrastive_dataset.py` | Build `(report_text, label_text)` pairs from annotations + report CSV |
+| `build_contrastive_dataset.py` | Build `(report_text, label_text)` pairs from annotations + report CSV, using TF-IDF-selected text |
 | `train_contrastive.py` | Adapt PetBERT backbone using contrastive loss; save checkpoint |
+| `fit_text_selector.py` | Fit and save the TF-IDF vectorizer on the full report corpus — run once before backbone adaptation |
 
 ### `training/data/` — Data utilities
 
@@ -246,6 +249,7 @@ ml/output/training/embedding_cache.npz
 | `output/splits/train_cases.txt` | Case IDs reserved for training (generated once by `create_split.py`) |
 | `output/splits/test_cases.txt` | Case IDs held out for evaluation (generated once by `create_split.py`) |
 | `output/training/embedding_cache.npz` | Cached PetBERT embeddings |
+| `output/training/tfidf_selector.joblib` | Fitted TF-IDF vectorizer for multi-column text selection |
 | `data/training_pairs.csv` | Generated (case, label, target) pairs for classifier training |
 
 ---
@@ -258,6 +262,11 @@ ml/output/training/embedding_cache.npz
 **Generate train/test split (run once before first training run):**
 ```bash
 ml/.venv/Scripts/python.exe ml/training/data/create_split.py
+```
+
+**Fit TF-IDF vectorizer (run once, before backbone adaptation or cold start):**
+```bash
+ml/.venv/Scripts/python.exe ml/training/contrastive/fit_text_selector.py
 ```
 
 **Score all reports with the best available classifier:**

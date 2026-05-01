@@ -38,7 +38,7 @@ def load_csv(path: Path) -> list[dict]:
 def build_pairs(
     *,
     report_csv: str = config.REPORTS_CSV,
-    expectation_csv: str = config.KEYWORD_ANNOTATION_CSV,
+    expectation_csv: str = config.ANNOTATION_CSV,
     evaluation_csv: str = f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation.csv",
     labels_csv: str = config.LABELS_CSV,
     out: str = config.TRAINING_PAIRS_CSV,
@@ -245,7 +245,7 @@ def build_pairs(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build training pairs for the presence classifier.")
     parser.add_argument("--report-csv", default=config.REPORTS_CSV)
-    parser.add_argument("--expectation-csv", default=config.KEYWORD_ANNOTATION_CSV)
+    parser.add_argument("--expectation-csv", default=config.ANNOTATION_CSV)
     parser.add_argument("--evaluation-csv",
                         default=f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation.csv")
     parser.add_argument("--labels-csv", default=config.LABELS_CSV)

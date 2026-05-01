@@ -11,7 +11,7 @@ Run with --method keyword --help or --method llm --help for per-method options.
 """
 
 import argparse
-import sys
+import sys 
 
 def main() -> int:
     parser = argparse.ArgumentParser(

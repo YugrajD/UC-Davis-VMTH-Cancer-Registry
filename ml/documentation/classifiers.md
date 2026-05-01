@@ -7,7 +7,7 @@ PresenceClassifier (Approach 3) is currently the production best.
 | Classifier | Status | Best result |
 |---|---|---|
 | Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
-| GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end (MLP macro F1=0.4975 on 17 groups) |
+| GroupClassifier | **Beats binary at threshold=0.90 (Phase 23)** | **50.1% Good+Slight (Phase 23, Round 2 backbone, threshold=0.90)** |
 | Contrastive fine-tuned PetBERT + PresenceClassifier | **Production best** | **86.5% Good+Slight (Phase 18, c16) — 56.5% Good with group-keyword mode** |
 | End-to-end fine-tuned PetBERT | WIP — see `production-pipeline.md` | Not benchmarked |
 
@@ -218,20 +218,15 @@ checkpoint so `load()` reconstructs the correct size automatically.
 ```
 report text
     ↓
-PetBERT (frozen)
+PetBERT (contrastive fine-tuned)
     ↓
-per-column embeddings (3 × 768) → concat → 2304-dim
+fallback-chain embedding (768-dim, col_fallback_selected)
     ↓
 GroupClassifier MLP
     ↓
-sigmoid score per group (17 outputs — groups with ≥100 training cases)
+sigmoid score per group (42 outputs — groups with ≥10 training cases)
     ↓
 threshold → predicted group(s)
-    ↓
-for each predicted group:
-    cosine similarity against terms within that group only
-            ↓
-     best term + ICD code
 ```
 
 Instead of scoring each label independently, the GroupClassifier makes one global
@@ -239,186 +234,160 @@ decision per report: which cancer group(s) does this report belong to? Groups co
 explicitly in the loss function (multi-label BCE). Term selection is then a simpler
 sub-problem — cosine similarity within only the ~20 terms of the predicted group.
 
-**Why this design:** The binary classifier's ~30% CO floor comes from labels competing
+**Why this design:** The binary classifier's CO floor comes from labels competing
 implicitly through argmax after independent scoring. The GroupClassifier directly
-penalizes wrong-group assignments in the loss, eliminating the CO problem at the
-group level (once it generalises).
+penalises wrong-group assignments in the loss, eliminating CO at the group level.
 
-**Important:** The GroupClassifier uses `col_emb_concat` (2304-dim), the same
-per-column concatenated embeddings used by the binary PresenceClassifier — not
-`mean_embedding` (768-dim). Groups with fewer than `--min-group-cases` training
-samples are excluded from training and are unreachable at inference.
+**Phase 23 architecture:** Uses `col_fallback_selected` (768-dim) from the
+contrastive fine-tuned backbone — not the old 3-column concat (2304-dim).
 
 ### Model Architecture
 
 ```
 GroupClassifier(
-    input_dim   = 2304,    # per-column concat (3 × 768)
+    input_dim   = 768,     # fallback-chain embedding (col_fallback_selected)
     hidden_dim  = 512,
-    num_classes = 17,      # groups with ≥100 keyword-confirmed cases
-    dropout     = 0.05
+    num_classes = 42,      # groups with ≥10 LLM-confirmed cases (Phase 23)
+    dropout     = 0.3
 )
 
 forward(x):
-    x = ReLU(Linear(2304 → 512))
-    x = Dropout(0.05)
-    x = Sigmoid(Linear(512 → 17))   # independent probability per class
+    x = ReLU(Linear(768 → 512))
+    x = Dropout(0.3)
+    x = Sigmoid(Linear(512 → 42))   # independent probability per class
 ```
 
 Sigmoid (not softmax) because a report can belong to multiple groups simultaneously.
 Loss: `BCEWithLogitsLoss` with per-class inverse-frequency weights, capped at
 `--max-class-weight` to prevent extreme weights from collapsing recall.
 
-### Training Data
+### Training Data (Phase 23)
 
 | Split | Cases | Label |
 |-------|-------|-------|
-| Cancer (keyword-matched) | ~5,788 unique cases (44 groups) | Multi-hot over matched groups |
-| Non-cancer (no match) | ~6,832 unique cases | Uncategorized (all zeros) |
-| **Total** | **~12,620 cases** | |
+| Cancer (LLM-annotated, train split) | ~21,853 unique cases (42 groups) | Multi-hot over matched groups |
+| Non-cancer (no match, train split) | ~24,799 unique cases | Uncategorized (all zeros) |
+| **Total (train split)** | **~46,652 cases** | |
 
-Training is **one-shot**: build multi-hot targets, train the MLP on cached embeddings,
-evaluate. Re-run whenever keyword coverage improves — no architectural changes needed.
+Training is **one-shot**: build multi-hot targets from cached embeddings, train the MLP,
+evaluate. Re-run whenever annotation coverage improves.
 
-### How to Train
-
-> Run from the `ml/` directory so relative paths resolve correctly.
+### How to Train (Phase 23)
 
 ```bash
-cd ml
-ml/.venv/Scripts/python.exe -m training.group.train \
-  --epochs 1700 \
-  --lr 5e-5 \
-  --hidden-dim 512 \
-  --dropout 0.05 \
-  --max-class-weight 12 \
-  --min-group-cases 100 \
-  --device xpu
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode train-groups \
+  --epochs 50 --lr 5e-5 \
+  --max-class-weight 50 --weight-decay 1e-3 \
+  --device xpu --local-only \
+  --train-cases ml/output/splits/train_cases.txt \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv
 ```
 
-Re-train whenever `keyword_annotation.csv` is updated. The best checkpoint is saved to
-`ml/output/checkpoints/group/group_classifier_best.pt` and metadata to `group_classifier_best.meta.json`.
+Critical hyperparameters:
+- `--max-class-weight 50` — prevents extreme BCE weights (observed up to 3,587× without this)
+- `--weight-decay 1e-3` — L2 regularisation; without it train/val gap is ~0.9 (overfitting)
 
-### Inference Flow
+Best checkpoint saved to `ml/output/checkpoints/group/group_classifier_best.pt`.
 
-1. Load cached `col_emb_concat` (2304-dim) for the report
-2. Forward pass → 17 group probabilities
-3. Apply threshold → predicted group(s); if none → Uncategorized
-4. For each predicted group: cosine similarity against terms in that group only → top term + code
-5. Output: up to k predictions, one per predicted group above threshold
+### Intended Pipeline Design
 
-### Evaluation Results (Early — 768-dim mean, 2026-03-21)
+Three sequential stages, each with a single distinct responsibility:
 
-| Data | Metric | Binary (Phase 11) | GroupClassifier @ 0.3 | GroupClassifier @ 0.8 |
-|------|--------|-------------------|-----------------------|-----------------------|
-| 1,273 cases | Good+Slight | 20.4% | 14.3% | 23.4% |
-| 1,273 cases | CO% | 42.7% | 55.9% | 50.7% |
-| 1,273 cases | FP% | ~30% | 28.0% | 8.4% |
-| 1,273 cases | FN% | 4.2% | 1.8% | 17.6% |
-| **5,788 cases** | **Good+Slight** | **33.1%** | 13.9% | 21.9% |
-| **5,788 cases** | **CO%** | **31.8%** | 57.5% | 54.5% |
-| **5,788 cases** | **FN%** | **1.3%** | — | 15.6% |
+1. **CasePresenceClassifier gate** — case-level binary classifier (`mean_report_emb → cancer probability`).
+   Cases below `--case-presence-threshold` are rejected → Uncategorized without reaching GroupClassifier.
+   Trained with `recall_weight=0.7` to err toward letting uncertain cases through rather than missing cancer.
+   **Responsibility: filter non-cancer cases → reduce FP.**
 
-*These results used 768-dim mean_embedding — incorrect; a pipeline bug fed the wrong
-tensor to the model. See bug fix documentation below.*
+2. **GroupClassifier** — for cases that passed the gate, `report_emb → 42 group probabilities`.
+   Apply `--group-classifier-threshold` → predicted group(s); if none → Uncategorized.
+   **Responsibility: assign cancer to the correct ICD group → reduce CO.**
 
-### End-to-End Evaluation (2304-dim col_emb_concat, 2026-03-23)
+3. **KW correction** — for each predicted group, ICD-O behavior keyword matching narrows candidates
+   to the matching behavior digit, then cosine similarity selects the best specific term within that pool.
+   **Responsibility: pick the right term within the group → convert Slight → Good.**
 
-After fixing the pipeline embedding dimension bug and using the best trained checkpoint
-(macro F1=0.4975, epoch 1672), end-to-end pipeline evaluation showed:
+**Run command:**
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt \
+  --case-presence-threshold 0.5 \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
+  --group-classifier-threshold 0.90 \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --device xpu --local-only
+```
 
-| Metric | Binary (Phase 16) | GroupClassifier (best, t=0.3) |
-|--------|-------------------|-------------------------------|
-| Good+Slight | **41.9%** | 9.3% |
-| CO% | 29.6% | ~37% |
-| FP% | 27.2% | 33.3% |
-| FN% | 1.2% | 16.8% |
+**Run 9 (2026-04-29, superseded):** Used the label-level `PresenceClassifier` score matrix (N × M)
+as the gate instead of `CasePresenceClassifier`. Replaced because `CasePresenceClassifier` is simpler
+(no label matrix needed), trained specifically for case-level cancer detection, and has a tunable
+recall-precision trade-off via its training objective.
 
-The GroupClassifier is a large regression vs binary at current data volumes:
-- Only 17 of 43 groups have ≥100 training cases — the other 26 are unreachable at inference
-- High FP% (33.3%): the model fires positively on non-cancer cases
-- High FN% (16.8%): cases in untrained groups are missed entirely
-- Within-group cosine term selection is still weak even when the group is correct
+**Run 8 (baseline, no gate):** GroupClassifier ran unconditionally; `PresenceClassifier` was a fallback
+for cases where no group cleared the threshold, not a gate.
 
-Binary PresenceClassifier remains the clear winner.
+### Phase 23 Evaluation Results (2026-04-28)
 
-### Hyperparameter Tuning Experiment (2026-03-23) ❌ End-to-end regression
+**Backbone:** Round 2 contrastive fine-tuned PetBERT (InfoNCE + hard-negative loss).
+**Classifier:** GroupClassifier v2 (max_class_weight=50, weight_decay=1e-3), macro F1=0.1922.
+**Comparison baseline:** Binary PresenceClassifier Phase 23 c10.
 
-**Motivation:** With natural class weights the model predicted everything positive (recall→1.0,
-precision→0). The imbalance was severe: Adenoma group had 1,040 positives out of ~12,620 cases
-— a 11:1 ratio, other groups as extreme as 119:1. The hypothesis was that (1) capping training
-samples per group at 100 and (2) filtering groups with <100 samples would reduce overfitting.
+| Metric | Binary (Phase 23 c10) | GroupClassifier @ 0.88 | **GroupClassifier @ 0.90** | GroupClassifier @ 0.92 |
+|--------|-----------------------|------------------------|----------------------------|------------------------|
+| Good+Slight | 47.2% | 49.1% | **50.1%** | 50.2% |
+| CO% | 28.6% | 29.1% | **25.5%** | 21.0% |
+| FP% | 24.2% | 10.0% | **8.9%** | 7.6% |
+| FN% | ~0% | 11.8% | **15.5%** | 21.2% |
+| Rows | 131,951 (top-k) | 40,927 | **37,760** | 34,745 |
 
-**Per-group cap (--max-group-cases) — REGRESSION:**
+**Recommended threshold: 0.90** — beats binary on G+S (+2.9pp), FP (−15.3pp), and CO
+(−3.1pp). FN rises (+15.5pp) because the group gate abstains when uncertain; this is
+the primary trade-off.
 
-Capping positives at 100 per group (row-removal approach, keeping all non-cancer rows) dropped
-macro F1. The cap threw away valid training signal without enough regularization benefit. Removing
-the cap and using only `--max-class-weight` to control BCE weight magnitude worked better:
+The GroupClassifier now outperforms binary end-to-end on the Phase 23 training set
+(46,652 train cases, LLM annotation).
 
-| max-group-cases | max-class-weight | Best F1 |
-|----------------|-----------------|---------|
-| 100 (capped) | auto (up to 119x) | ~0.0 (all positive) |
-| 100 (capped) | 20 | 0.245 |
-| 0 (no cap) | 20 | 0.358 |
-| 0 (no cap) | 12 | 0.409 (best at this LR) |
+### Overfitting Failure Without Weight Guards (2026-04-28)
 
-**Key finding:** `--max-group-cases` removes valid training data. Do not use it. Use
-`--max-class-weight` alone to prevent weight explosion.
+BCE pos_weights on a 46,652-case dataset reach up to 3,587× for rare groups without
+capping. Without weight decay the model converges to "predict every group for every
+case" (train loss 0.23, val loss 1.13). Both guards are required:
 
-**Note:** When `--max-group-cases` is applied, class weights must be recalculated from
-the capped dataset (not the full dataset) to avoid stale weights. This is implemented in
-`train.py` but the approach itself is not recommended.
+| | Uncapped | Fixed (Phase 23) |
+|---|---|---|
+| `--max-class-weight` | up to 3,587× | **50** |
+| `--weight-decay` | 0.0 | **1e-3** |
+| Train loss | 0.23 | 0.247 |
+| Val loss | 1.13 | 0.258 |
 
-**Hyperparameter sweep — best config reached through iterative tuning:**
+**Key finding:** `--max-group-cases` (per-group sample cap) removes valid training
+signal. Do not use it. Use `--max-class-weight` alone to prevent weight explosion.
 
-| Parameter | Values tested | Best |
-|-----------|--------------|------|
-| `--dropout` | 0.4, 0.3, 0.2, 0.1, 0.05, 0.02, 0.0 | **0.05** |
-| `--max-class-weight` | 5, 10, 15, 20, 40, 12, 11, 13 | **12** |
-| `--lr` | 1e-3, 5e-4, 3e-4, 2e-4, 1e-4, 7e-5, 5e-5, 3e-5 | **5e-5** |
-| `--epochs` | 50, 100, 200, 300, 500, 1000, 1700, 2000 | **1700** |
-| `--hidden-dim` | 256, 512 | **512** |
+### Early Experiments (Phase 16, keyword annotation, 5,788 cases) — Historical
 
-Key insights from the sweep:
-- Reducing dropout from 0.3–0.4 to 0.05 gave the largest single gain (~+0.18 F1)
-- Lower LR consistently helped; each halving added ~0.01–0.03 F1
-- 2-layer architecture (512→256→17) regressed vs single hidden layer (reverted)
-- More epochs always helped at LR=5e-5 until epoch ~1672; stopped at 1700
+At 5,788 cases with keyword annotation and the old 3-column 2304-dim architecture:
+- Best macro F1 = 0.4975 (epoch 1672), but end-to-end G+S = 9.3% — large regression
+- Only 17 of 43 groups had ≥100 cases; 26 groups were unreachable at inference
+- High FP (33.3%) and FN (16.8%)
 
-**Best training result:** macro F1 = 0.4975 on 17 groups at epoch 1672.
+These results are superseded by Phase 23 with LLM annotation and the fallback-chain
+768-dim architecture.
 
-**End-to-end result:** 9.3% Good+Slight — large regression vs binary 41.9%.
-The training F1 does not translate to good end-to-end performance because:
-1. Only 17 of 43 groups are trained; the other 26 are unreachable
-2. High FP (33.3%): model fires positively on non-cancer reports
-3. FN (16.8%): cases in untrained groups are entirely missed
-4. Within-group cosine term selection remains weak regardless of group accuracy
-
-**Conclusion:** GroupClassifier MLP requires significantly more labeled data before it
-can compete with binary. Do not retry until ~15,000 keyword-confirmed cases exist.
-
-### Embedding Experiments (What Was Tried)
+### Embedding Experiments (Historical — Phase 16)
 
 #### Priority embedding — FINAL COMMENT first ❌ (2026-03-21)
 
-**Hypothesis:** The mean embedding dilutes the diagnostic signal. FINAL COMMENT is the
-pathologist's conclusion — the most group-discriminating column. Using it as the sole 768-dim
-input (falling back to HISTOPATHOLOGICAL SUMMARY, then ANCILLARY TESTS if empty) should
-give the MLP a cleaner signal without changing the model architecture.
+At 5,788 cases with keyword annotation: using FINAL COMMENT as the sole 768-dim input
+(falling back to HISTOPATHOLOGICAL SUMMARY, ANCILLARY TESTS) regressed macro F1 from
+0.1020 to 0.0695. Val loss diverged (train 0.64, val 2.4+). Reverted.
 
-**Result:** Regression. Macro F1 fell from 0.1020 (mean baseline) to 0.0695. The model
-reverted to the degenerate "approve everything" pattern: recall ≈ 1.0, precision ≈ 0 for
-almost every group. Val loss diverged more severely than the mean baseline (train 0.64,
-val 2.4+ at epoch 25). Reverted.
+At Phase 16 volumes, embedding selection was not a lever — the problem was data volume,
+not embedding quality.
 
-**Why it failed:** The problem is data volume (~132 cases/group), not embedding quality.
-The 768-dim input size and total training examples are identical regardless of which column
-is selected. Choosing FINAL COMMENT doesn't give the model more data — it gives it different
-data, which may actually be noisier because some cases have an empty FINAL COMMENT and fall
-back to a different column, making the input distribution inconsistent.
-
-**Conclusion:** Embedding selection is not a lever for the GroupClassifier at current data
-volumes. The overfitting ceiling can only be broken by more keyword-confirmed cases.
+**Phase 23 resolution:** The fallback-chain 768-dim embedding (col_fallback_selected)
+from the contrastive fine-tuned backbone is now the standard input. The contrastive
+training step aligns report embeddings with ICD label embeddings, providing better
+group discrimination than any column selection on the frozen base model.
 
 ### Bugs Discovered and Fixed (2026-03-23)
 
@@ -456,24 +425,30 @@ causing the model to under-penalize false negatives for capped groups.
 
 ---
 
-### Expected Trajectory as Keyword Coverage Grows
+### Expected Trajectory
 
-| Confirmed cases | Expected outcome |
-|----------------|-----------------|
-| ~5,788 (current) | Overfits — binary wins by large margin (41.9% vs 9.3%) |
-| ~10,000 | More groups cross 100-case threshold; GroupClassifier starts generalising |
-| ~15,000+ | Meaningful CO reduction expected — GroupClassifier should pull ahead |
+| Annotated train cases | Expected outcome |
+|----------------------|-----------------|
+| ~5,788 (Phase 16, keyword) | Overfits — binary wins by large margin (41.9% vs 9.3%) |
+| ~21,853 (Phase 23, LLM) | **GroupClassifier competitive — beats binary at threshold=0.90** |
+| ~30,000+ | FN may decrease as more groups have sufficient coverage |
 
-**Do not retry GroupClassifier in production until ~15,000 keyword-confirmed cases.**
-Hyperparameter tuning has been exhausted at current volume (best F1=0.4975, epoch 1672).
+GroupClassifier became competitive at ~21,853 LLM-annotated train cases with the
+contrastive fine-tuned backbone. Further annotation coverage will primarily reduce FN
+by giving marginal groups more training signal.
 
 ### Implementation Status
 
-- [x] `ml/model/group_classifier.py` — model definition
-- [x] `ml/training/group/build_training_data.py` — multi-hot targets from cache + keyword CSV
-- [x] `ml/training/group/train.py` — training script
-- [x] `ml/production/petbert_pipeline/categorization.py` — two-stage group → cosine inference
-- [x] `ml/production/petbert_pipeline/pipeline.py` — `--group-classifier` CLI flag
+- [x] `ml/model/group_classifier.py` — GroupClassifier model definition
+- [x] `ml/model/case_presence_classifier.py` — CasePresenceClassifier model definition
+- [x] `ml/training/group/build_training_data.py` — multi-hot targets from cache + annotation CSV
+- [x] `ml/training/group/train.py` — GroupClassifier training script
+- [x] `ml/training/binary/build_case_presence_dataset.py` — case-level cancer/no-cancer dataset builder
+- [x] `ml/training/binary/train_case_presence.py` — CasePresenceClassifier training script
+- [x] `ml/scripts/run_training.py --mode train-case-presence` — orchestrates dataset build + training
+- [x] `ml/production/petbert_pipeline/categorization.py` — KW correction within predicted groups
+- [x] `ml/production/petbert_pipeline/pipeline.py` — three-stage gate: `--case-presence-classifier` → `--group-classifier` → KW
+- [x] `ml/production/petbert_pipeline/cli.py` — `--case-presence-classifier`, `--case-presence-threshold` flags
 
 ### Behavior-Keyword Term Selection — Implemented ✅ (2026-03-28)
 
@@ -531,17 +506,17 @@ within-group term selection step.
 
 ### Advantages
 
-- Explicit group competition — wrong-group assignments directly penalized
-- Designed to eliminate the CO floor once data volumes are sufficient
+- Explicit group competition — wrong-group assignments directly penalised
+- FP dramatically reduced vs binary (8.9% vs 24.2% at threshold=0.90)
 - Faster inference: cosine over ~20 terms instead of ~857
 - Simple re-training: one-shot, seconds on cached embeddings
+- Now competitive — beats binary G+S at Phase 23 data volume
 
 ### Disadvantages
 
-- Overfits at current data volume (5,788 cases / 44 groups)
-- Only 17 of 43 groups have enough data (≥100 cases) — 26 groups are unreachable
+- FN trade-off: cases below threshold output Uncategorized (binary never abstains)
 - A mis-predicted group guarantees a wrong term (no recovery path)
-- High FP% (33.3%) and FN% (16.8%) at current data volume — large regression vs binary
+- Requires capped class weights and weight decay to avoid degenerate training
 
 ---
 
@@ -557,6 +532,44 @@ the PresenceClassifier from scratch on the improved embedding space.
 - **Presence classifier checkpoint:** `ml/output/checkpoints/contrastive/presence_classifier_best.pt`
 
 See [model-training.md](model-training.md#approach-3--contrastive-fine-tuning-infonce) for architecture and run commands.
+
+### Unsupervised Contrastive Training — Considered and Rejected ❌
+
+**What it is:** Unsupervised contrastive learning (SimCSE/SimCLR-style for text) creates positive
+pairs from two augmented views of the same input — e.g., passing the same report through PetBERT
+twice with different dropout masks — without any label information. The model learns to be invariant
+to augmentations.
+
+**Why it was considered:** The dataset has ~12,620 total cases but only ~5,788 with keyword
+annotations. Unsupervised contrastive could use all cases, not just the annotated subset, and
+requires no labels.
+
+**Why it does not help here:**
+
+1. **It does not solve the alignment problem.** The core difficulty is cross-modal alignment:
+   report embeddings and label embeddings start in different regions of the embedding space.
+   Supervised InfoNCE fixes this directly — each `(report_text, label_text)` positive pair
+   explicitly pulls report embeddings toward their correct ICD label embeddings.
+   Unsupervised contrastive only trains report→report similarity; it teaches the model nothing
+   about where labels live relative to reports.
+
+2. **PetBERT is already domain-adapted.** Pre-trained on UK veterinary EHRs with masked-LM,
+   it already understands veterinary language. Unsupervised contrastive on this dataset would
+   provide marginal additional domain benefit on top of what PetBERT already knows.
+
+3. **The bottleneck is data, not representation quality.** The Phase 21 conclusion was explicit:
+   *"~70% classifier plateau is a data ceiling. Need more labelled cases."* The Phase 22
+   train/test gap (88.9% train → 74.1% test) is a generalisation problem caused by limited
+   labeled cases. Changing the training paradigm does not fix a data problem.
+
+**What would actually help:**
+- More keyword-confirmed or LLM-annotated cases (direct fix for the data ceiling)
+- Data augmentation on existing labeled pairs (synonym substitution, column permutation)
+- Using unannotated cases as additional in-batch negatives within the existing supervised
+  InfoNCE setup — this keeps cross-modal alignment signal while adding coverage
+
+**Conclusion:** Do not replace supervised InfoNCE with unsupervised contrastive. The supervision
+is the mechanism. Revisit if the annotation pipeline cannot scale to ~10,000+ cases.
 
 ---
 
@@ -631,21 +644,33 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
 
 | | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning | End-to-end fine-tuning |
 |---|---|---|---|---|
-| **Status** | Superseded by Approach 3 | Not competitive | **Production best** | WIP, blocked |
-| **Best result** | 41.9% Good+Slight (Phase 16) | 9.3% Good+Slight (MLP F1=0.4975 on 17 groups) | **86.5% G+S, 56.5% Good / 30.0% Slight (Phase 18, c16, group-keyword mode)** | Not benchmarked |
-| **PetBERT** | Frozen | Frozen | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
+| **Status** | Superseded by Approach 3 | **Competitive (Phase 23)** | **Production best** | WIP, blocked |
+| **Best result** | 41.9% G+S (Phase 16) | **50.1% G+S at threshold=0.90 (Phase 23, Round 2 backbone)** | **86.5% G+S, 56.5% Good / 30.0% Slight (Phase 18, c16, group-keyword mode)** | Not benchmarked |
+| **PetBERT** | Frozen | Contrastive fine-tuned | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
 | **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier | One-shot |
-| **Data requirement** | Works from ~1,273 cases | Needs ~15,000+ cases | Works at ~5,788 cases | Needs ~10,000+ cases |
+| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | Works at ~5,788 cases | Needs ~10,000+ cases |
 | **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative | Slow (full transformer) |
-| **Inference speed** | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) |
-| **CO floor** | ~30% | Designed to eliminate it | **~7%** — dramatically reduced | Designed to eliminate it |
-| **Main constraint** | CO floor eliminated by Approach 3 | Overfits at current volume | Keyword data ceiling | Compute cost, data volume |
+| **Inference speed** | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) |
+| **CO floor** | ~28.6% (Phase 23) | ~25.5% @ t=0.90 | **~7%** — dramatically reduced | Designed to eliminate it |
+| **FP rate** | 24.2% (Phase 23) | **8.9% @ t=0.90** | ~1.9% (Phase 18) | Unknown |
+| **Main constraint** | CO floor; FP from implicit argmax | FN trade-off at high threshold | LLM annotation ceiling | Compute cost, data volume |
 
 ### When to Use Each
 
-- **Now**: Use Phase 18 contrastive checkpoint with `--categorization-mode group-keyword` — **production command** (86.5% G+S, 56.5% Good, 1.9% FP). Output dir: `ml/output/production/contrastive_kw/`
-- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier; re-run contrastive fine-tuning
-- **After GroupClassifier proves competitive (~15,000 cases)**: Consider end-to-end fine-tuning (Approach 4)
+- **Three-stage pipeline (current design — CasePresenceClassifier + GroupClassifier + KW):**
+  ```
+  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt
+  --case-presence-threshold 0.5
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt
+  --group-classifier-threshold 0.90
+  ```
+  Stage 1 filters non-cancer cases; Stage 2 assigns the ICD group; Stage 3 selects the specific term.
+  Train CasePresenceClassifier first with `--mode train-case-presence`.
+
+- **Phase 23 GroupClassifier alone (Run 8 baseline):** `--group-classifier` only, no gate — 50.1% G+S, 8.9% FP, 15.5% FN at threshold=0.90
+- **Phase 23 binary**: standard `--mode train-classifier` cycles — 47.2% G+S, higher FP, lower FN
+- **Phase 18 contrastive (keyword annotation)**: highest overall G+S (86.5%) but evaluated on a smaller dataset — not directly comparable to Phase 23 LLM ground truth
+- **End-to-end fine-tuning**: after three-stage pipeline proves stable and bugs are resolved
 
 ---
 

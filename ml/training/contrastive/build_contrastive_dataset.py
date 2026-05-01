@@ -1,11 +1,11 @@
 """Build (report_text, label_text) pairs for contrastive PetBERT fine-tuning.
 
-Reads keyword_annotation.csv for keyword-confirmed (case, term) pairs and
-report.csv for the full report text. Outputs a flat CSV of pairs that
-train_contrastive.py consumes directly.
+Reads annotation CSV for confirmed (case, term) pairs and report.csv for the
+full report text. Outputs a flat CSV of pairs that train_contrastive.py
+consumes directly.
 
-Label text format matches the pipeline exactly: "{term} {group}".
-Report text format: non-empty columns joined as "[COL NAME] text".
+Label text format: "{term} {group}".
+Report text format: TF-IDF-selected multi-column text matching the production pipeline.
 """
 
 import argparse
@@ -17,15 +17,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import config
-from model.constants import DEFAULT_TEXT_COLS
+from production.petbert_pipeline.text_selector import get_selector, SOURCE_COLS as _TFIDF_SOURCE_COLS
 
 
 def build_contrastive_pairs(
     *,
     reports_csv: str = config.REPORTS_CSV,
-    annotation_csv: str = config.KEYWORD_ANNOTATION_CSV,
+    annotation_csv: str = config.ANNOTATION_CSV,
     out_csv: str = config.CONTRASTIVE_PAIRS_CSV,
-    text_cols: tuple[str, ...] = DEFAULT_TEXT_COLS,
+    tfidf_vectorizer_path: str = config.TFIDF_VECTORIZER_PATH,
     min_report_chars: int = 10,
     train_cases_txt: str = "",
 ) -> int:
@@ -61,6 +61,7 @@ def build_contrastive_pairs(
 
     # --- Step 2: Join with report text --------------------------------------
     print(f"Loading report text from {reports_csv}...")
+    selector = get_selector(tfidf_vectorizer_path)
     pairs: list[dict[str, str]] = []
     skipped_short = 0
 
@@ -71,26 +72,16 @@ def build_contrastive_pairs(
             reader.fieldnames = [
                 c.lstrip("\ufeff").lstrip("ï»¿") for c in reader.fieldnames
             ]
-        available = set(reader.fieldnames or [])
-        valid_cols = [c for c in text_cols if c in available]
-        missing = [c for c in text_cols if c not in available]
-        if missing:
-            print(f"  Warning: columns not found in report CSV: {missing}")
-        if not valid_cols:
-            raise ValueError(f"None of {text_cols} exist in {reports_csv}.")
-
         for row in reader:
             case_id = row.get("case_id", "").strip()
             if case_id not in case_to_labels:
                 continue
 
-            # Concatenate non-empty columns with section markers
-            parts = [
-                f"[{col}] {row.get(col, '').strip()}"
-                for col in valid_cols
-                if row.get(col, "").strip()
-            ]
-            report_text = "\n\n".join(parts)
+            col_texts = {
+                col: row.get(col, "").strip()
+                for col in _TFIDF_SOURCE_COLS
+            }
+            report_text = selector.select(col_texts, max_tokens=512)
 
             if len(report_text) < min_report_chars:
                 skipped_short += 1
@@ -125,10 +116,10 @@ def build_contrastive_pairs(
 def build_hard_neg_pairs(
     *,
     reports_csv: str = config.REPORTS_CSV,
-    annotation_csv: str = config.KEYWORD_ANNOTATION_CSV,
+    annotation_csv: str = config.ANNOTATION_CSV,
     co_bank_csv: str,
     out_csv: str = config.HARD_NEG_PAIRS_CSV,
-    text_cols: tuple[str, ...] = DEFAULT_TEXT_COLS,
+    tfidf_vectorizer_path: str = config.TFIDF_VECTORIZER_PATH,
     min_report_chars: int = 10,
     train_cases_txt: str = "",
 ) -> int:
@@ -189,6 +180,7 @@ def build_hard_neg_pairs(
 
     # --- Step 3: Join with report text and build triplets -------------------
     print(f"Loading report text from {reports_csv}...")
+    selector = get_selector(tfidf_vectorizer_path)
     triplets: list[dict[str, str]] = []
     skipped_short = 0
     seen: set[tuple[str, str, str]] = set()  # dedup by (case_id, correct_label, wrong_label)
@@ -199,22 +191,16 @@ def build_hard_neg_pairs(
             reader.fieldnames = [
                 c.lstrip("\ufeff").lstrip("ï»¿") for c in reader.fieldnames
             ]
-        available = set(reader.fieldnames or [])
-        valid_cols = [c for c in text_cols if c in available]
-        if not valid_cols:
-            raise ValueError(f"None of {text_cols} exist in {reports_csv}.")
-
         for row in reader:
             case_id = row.get("case_id", "").strip()
             if case_id not in case_to_wrong:
                 continue
 
-            parts = [
-                f"[{col}] {row.get(col, '').strip()}"
-                for col in valid_cols
-                if row.get(col, "").strip()
-            ]
-            report_text = "\n\n".join(parts)
+            col_texts = {
+                col: row.get(col, "").strip()
+                for col in _TFIDF_SOURCE_COLS
+            }
+            report_text = selector.select(col_texts, max_tokens=512)
             if len(report_text) < min_report_chars:
                 skipped_short += 1
                 continue
@@ -269,8 +255,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--reports-csv", default=config.REPORTS_CSV,
                         help=f"Path to report text CSV (default: {config.REPORTS_CSV})")
-    parser.add_argument("--annotation-csv", default=config.KEYWORD_ANNOTATION_CSV,
-                        help="Path to keyword annotation CSV")
+    parser.add_argument("--annotation-csv", default=config.ANNOTATION_CSV,
+                        help="Path to annotation CSV")
     parser.add_argument("--co-bank-csv", default=None,
                         help="[build-hard-neg] Path to evaluation CO bank CSV "
                              "(e.g. ml/output/training/binary/evaluation_co_bank.csv)")

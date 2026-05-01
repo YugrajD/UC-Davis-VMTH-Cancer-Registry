@@ -5,16 +5,20 @@ Implementation-based description of what `ml/scripts/run_production.py` does tod
 This is the authoritative source for current production inference behavior. Older
 architectural experiments are preserved in the training logs and idea docs, not here.
 
-As of the current implementation, the default production path is:
+The intended production path is a three-stage sequential pipeline where each stage has
+one distinct responsibility:
 
 ```text
 report.csv
-  -> contrastive-aware model/checkpoint auto-selection
-  -> cached or fresh PetBERT per-column embeddings
-  -> PresenceClassifier score matrix over all ICD labels
-  -> group-keyword term correction within the predicted group
-  -> ranked (term, group, code) predictions + debug artifacts
+  -> PetBERT embedding (cached or fresh)
+  -> CasePresenceClassifier gate   — filters non-cancer cases        (reduces FP)
+  -> GroupClassifier               — assigns cancer to ICD group      (reduces CO)
+  -> KW correction                 — picks best term within group     (converts Slight → Good)
+  -> (term, group, code) predictions + debug artifacts
 ```
+
+The binary `PresenceClassifier` + `group-keyword` mode (earlier production path) is still
+supported via `--presence-classifier` but is superseded by the three-stage design above.
 
 ## Flow Chart
 
@@ -79,14 +83,17 @@ Important columns:
 | Column | Role |
 |---|---|
 | `case_id` | Unique case identifier |
-| `HISTOPATHOLOGICAL SUMMARY` | Microscopic pathology findings |
+| `HISTOPATHOLOGICAL SUMMARY` | Microscopic pathology findings — primary diagnostic source |
 | `FINAL COMMENT` | Pathologist's diagnostic conclusion |
-| `ANCILLARY TESTS` | IHC, stains, PCR, and related tests |
-| `ADDENDUM` | Follow-up notes or consultations |
-| `CLINICAL ABSTRACT` | Referring clinician history and differential diagnoses |
-| `GROSS DESCRIPTION` | Macroscopic specimen description |
+| `COMMENT` | Pathologist notes |
+| `ANCILLARY TESTS` | IHC, stains, PCR, and related tests (not used in TF-IDF path) |
+| `GROSS DESCRIPTION` | Macroscopic specimen description (excluded — adds noise, not signal) |
+| `CLINICAL ABSTRACT` | Referring clinician history (excluded — adds noise, not signal) |
 
-By default, production uses the configured text columns from the CLI and model constants.
+Production uses TF-IDF-based text selection: it concatenates HISTOPATHOLOGICAL SUMMARY +
+FINAL COMMENT + COMMENT with section markers, then compresses to a 512-token budget if
+needed using TF-IDF sentence scoring. This replaces the old fallback-chain approach (single
+column) as the default input path. See `production/petbert_pipeline/text_selector.py`.
 
 ## Step-by-Step Runtime Flow
 
@@ -95,17 +102,24 @@ The main implementation lives in `ml/production/petbert_pipeline/pipeline.py`.
 ### 1. Load and clean report data
 
 The pipeline reads `ml/data/report.csv` using `latin-1`, strips BOM artifacts from
-column names, validates the configured text columns, and normalizes missing values to
-empty strings.
+column names, and normalizes missing values to empty strings.
 
-The merged report text used for provenance and neighbor views is built by concatenating
-non-empty sections with labels like:
+### 1b. TF-IDF text selection (default production path)
+
+When `--text-cols` is empty (the production default), `TextSelector` builds a single
+combined string per case from HISTOPATHOLOGICAL SUMMARY + FINAL COMMENT + COMMENT:
 
 ```text
-[FINAL COMMENT] ...
-[HISTOPATHOLOGICAL SUMMARY] ...
-[ANCILLARY TESTS] ...
+[HISTOPATHOLOGICAL SUMMARY] ... [FINAL COMMENT] ... [COMMENT] ...
 ```
+
+If the combined text fits within 512 tokens (≈2048 chars), it is used as-is.
+If it overflows, the selector scores each sentence by its TF-IDF L1 norm and greedily
+picks the highest-scoring sentences that fit within the budget. The order of selected
+sentences is preserved in the output.
+
+The fitted vectorizer must exist at `ml/output/training/tfidf_selector.joblib` before
+the first run. Build it with `fit_text_selector.py`.
 
 ### 2. Reuse embedding cache when possible
 
@@ -222,14 +236,44 @@ The production CLI still supports multiple modes, but the important current beha
 - `--task neighbors` or `--task both` adds nearest-neighbor output alongside categorization.
 - `--local-only` keeps model loading offline when the files are already cached locally.
 
-## What Is Not The Default Production Path
+## Three-Stage Pipeline (Intended Production Path)
 
-The following code paths exist, but are not the default production route:
+Run after training `CasePresenceClassifier` and `GroupClassifier`:
 
-- `--group-classifier`
-  Uses `GroupClassifier` group probabilities first, then picks terms within groups.
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt \
+  --case-presence-threshold 0.5 \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
+  --group-classifier-threshold 0.90 \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --device xpu --local-only
+```
+
+**Stage 1 — CasePresenceClassifier gate:**
+Takes the mean report embedding (768-dim) and outputs a cancer probability. Cases below
+`--case-presence-threshold` are predicted Uncategorized without reaching the GroupClassifier.
+Trained with `recall_weight=0.7` so it errs toward passing uncertain cases rather than
+missing cancer. Train with `--mode train-case-presence`.
+
+**Stage 2 — GroupClassifier:**
+For cases that passed the gate, predicts which of 42 cancer groups the case belongs to
+(sigmoid per group, threshold applied). Cases where no group clears the threshold become
+Uncategorized.
+
+**Stage 3 — KW correction:**
+Within each predicted group, ICD-O behavior keyword matching narrows candidates to the
+matching behavior digit, then cosine similarity selects the best specific term.
+
+## What Is Not The Intended Production Path
+
+The following code paths exist as alternatives or fallbacks:
+
+- `--presence-classifier` (without `--case-presence-classifier`)
+  Uses the label-level PresenceClassifier score matrix (N × M) as a gate. Superseded by
+  `--case-presence-classifier` which is simpler and purpose-trained.
 - `--finetuned-model-path`
-  Uses a sequence-classification checkpoint to predict groups directly.
+  Uses a sequence-classification checkpoint to predict groups directly. WIP, blocked.
 
 Older experimental and deprecated paths are preserved in the training logs and idea docs,
 not in this file.

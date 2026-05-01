@@ -1,12 +1,16 @@
 """Top-level orchestration for reading input, running categorization, and writing outputs.
 
-This is the main entry point for the data categorization pipeline. The high-level flow is:
+The high-level flow is:
 
   1.   Load and clean clinical report text from reportText.csv.
-  2.   Embed each text column independently with PetBERT (768-dim vector each).
-  3.   Load the Vet-ICD-O taxonomy and embed each label the same way.
-  4.   Score each (case, label) pair with the PresenceClassifier;
-       select top-k labels per case using group-keyword categorization.
+  2.   Select text using TF-IDF multi-column selector (or explicit --text-cols for debugging).
+  3.   Embed the selected text with PetBERT (768-dim vector).
+  4.   Production path — 3-stage:
+         (a) CasePresenceClassifier gates non-cancer cases.
+         (b) GroupClassifier predicts which cancer group(s) each case belongs to.
+         (c) ICD-O behavior keyword matching selects the specific term within each group.
+       Training-cycle path — binary (run_cycle.py only):
+         PresenceClassifier scores all (case, label) pairs; argmax selects winner.
   5.   Map the chosen label indices back to ICD-O code, group, and term.
   6.   Write all results to CSV / NPZ / JSON output files.
 """
@@ -18,10 +22,12 @@ import numpy as np
 import torch
 from sklearn.decomposition import PCA
 
-from .categorization import run_categorization, run_categorization_group, run_categorization_group_keyword
+from .categorization import run_categorization, run_categorization_group
 from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from .text_selector import get_selector, SOURCE_COLS as _TFIDF_SOURCE_COLS
 from model.presence_classifier import PresenceClassifier
 from model.group_classifier import GroupClassifier
+from model.case_presence_classifier import CasePresenceClassifier
 from .io import (
     build_outputs,
     write_embeddings_npz,
@@ -52,36 +58,42 @@ def _validate_columns(
 
 
 def run_scan(config: ScanConfig) -> ScanOutputs:
-    """Execute the full categorization pipeline end-to-end.
-
-    Reads clinical report rows from reportText.csv, embeds each report section
-    independently with PetBERT, computes cosine similarity against taxonomy labels
-    for each column separately, and assigns the top-k labels whose highest
-    similarity across any column exceeds the confidence threshold (up to 5 per case).
-    """
+    """Execute the full categorization pipeline end-to-end."""
 
     # --- Step 0: Prepare output file paths -----------------------------------
     outputs = build_outputs(config.out_dir, config.task)
 
     # --- Step 1: Load input data ---------------------------------------------
     dataframe = pd.read_csv(config.csv_path, encoding='latin-1')
-    # Strip UTF-8 BOM from column names (e.g. ï»¿ prefix from Excel-exported CSVs)
-    dataframe.columns = [col.lstrip('\ufeff').lstrip('ï»¿') for col in dataframe.columns]
+    dataframe.columns = [col.lstrip('﻿').lstrip('ï»¿') for col in dataframe.columns]
     if config.max_rows is not None:
         dataframe = dataframe.head(config.max_rows).copy()
     _validate_columns(dataframe, config.id_col, config.text_cols)
 
     ids = dataframe[config.id_col].map(clean_text).tolist()
-    cols = list(config.text_cols)
-    col_texts = {col: dataframe[col].map(clean_text).tolist() for col in cols}
     n = len(ids)
     row_indices = list(range(n))
 
-    # Merged text per row for provenance display and neighbors
-    texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
+    # --- Step 2: Select text (TF-IDF or explicit columns) --------------------
+    if not config.text_cols:
+        selector = get_selector(config.tfidf_vectorizer_path)
+        cols = ["tfidf_selected"]
+        selected_texts: list[str] = []
+        for i in range(n):
+            row_col_texts = {
+                col: clean_text(dataframe.iloc[i].get(col, ""))
+                for col in _TFIDF_SOURCE_COLS
+            }
+            selected_texts.append(selector.select(row_col_texts, max_tokens=512))
+        col_texts = {"tfidf_selected": selected_texts}
+        texts = selected_texts
+    else:
+        cols = list(config.text_cols)
+        col_texts = {col: dataframe[col].map(clean_text).tolist() for col in cols}
+        texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
     char_lens = np.array([len(t) for t in texts], dtype=np.int32)
 
-    # --- Steps 2–3: Embed with PetBERT (or load from cache) ------------------
+    # --- Steps 3: Embed with PetBERT (or load from cache) --------------------
     torch_device = device_from_arg(config.device)
     cache = None
     if config.embedding_cache_path:
@@ -96,8 +108,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
 
     if cache is not None:
         print(f"Loaded embeddings from cache: {config.embedding_cache_path}")
-        # Build an index so we can slice the cache to exactly the rows in the
-        # dataframe (handles --max-rows and any CSV row-order differences).
         cache_id_to_idx = {cid: i for i, cid in enumerate(cache["case_ids"])}
         sel = [cache_id_to_idx[cid] for cid in ids if cid in cache_id_to_idx]
         col_embeddings  = {col: arr[sel] for col, arr in cache["col_embeddings"].items()}
@@ -107,65 +117,27 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         label_catalog   = label_catalog_for_config(config.labels_csv_path)
         label_embeddings = cache["label_embeddings"]
     else:
-        # Step 2: Extract text representations (via PetBERT or FineTuned Model)
-        # this uses direct classification
-        if config.finetuned_model_path is not None:
-            from .embedding import load_finetuned_classifier, predict_groups_finetuned
-            print(f"Loading fine-tuned PetBERT classifier from {config.finetuned_model_path}...")
-            tokenizer, ft_model, idx_to_group = load_finetuned_classifier(
-                config.finetuned_model_path, local_only=config.local_only
-            )
-            
-            print("Predicting cancer groups directly with fine-tuned model...")
-            group_probs = predict_groups_finetuned(
-                tokenizer,
-                ft_model,
-                texts,
-                device=torch_device,
-                batch_size=config.batch_size,
-                max_length=config.max_length,
-            )
-            
-            # keep index 0 as Uncategorized, matching the training schema
-            # more testing required for independent embeddings vs classifier
-            group_names = [idx_to_group[i] for i in range(len(idx_to_group))]
-            
-            # still need dummy embeddings/has_content for compatibility with the rest of the pipeline
-            col_embeddings = {col: np.zeros((n, 768), dtype=np.float32) for col in cols}
-            col_has_content = {col: np.ones(n, dtype=bool) for col in cols}
-            embeddings = np.zeros((n, 768), dtype=np.float32)
-            token_counts = np.zeros(n, dtype=np.int32)
-            
-            # base model must be loaded to embed the taxonomy labels for term selection between groups
-            print("Loading base SAVSNET/PetBERT to embed taxonomy labels...")
-            _, base_model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
-            
-        else:
-            tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
-            base_model = model
+        tokenizer, model = load_tokenizer_and_model(config.model_name, local_only=config.local_only)
 
-            col_embeddings, col_has_content, token_counts = embed_columns_separate(
-                tokenizer,
-                model,
-                col_texts,
-                device=torch_device,
-                batch_size=config.batch_size,
-                max_length=config.max_length,
-            )
+        col_embeddings, col_has_content, token_counts = embed_columns_separate(
+            tokenizer,
+            model,
+            col_texts,
+            device=torch_device,
+            batch_size=config.batch_size,
+            max_length=config.max_length,
+        )
 
-            # Compute a mean embedding per row (across non-empty columns) for
-            # visualization, neighbors, and the embeddings NPZ.
-            col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)  # (C, N, 768)
-            content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)  # (C, N)
-            col_emb_masked = col_emb_stack * content_mask[:, :, None]  # (C, N, 768)
-            content_counts = np.maximum(content_mask.sum(axis=0), 1.0)  # (N,)
-            embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)  # (N, 768)
+        col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)  # (C, N, 768)
+        content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)
+        col_emb_masked = col_emb_stack * content_mask[:, :, None]
+        content_counts = np.maximum(content_mask.sum(axis=0), 1.0)
+        embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)
 
-        # --- Step 3: Build & embed taxonomy labels ----------------------------
         label_catalog = label_catalog_for_config(config.labels_csv_path)
         label_embeddings, _ = embed_texts(
             tokenizer,
-            base_model,
+            model,
             label_catalog.label_texts,
             device=torch_device,
             batch_size=config.batch_size,
@@ -173,7 +145,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             desc="Embedding labels",
         )
 
-        # Save cache if a path was provided (cache miss means we just computed)
         if config.embedding_cache_path:
             save_cache(
                 config.embedding_cache_path,
@@ -189,35 +160,44 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 labels_csv_path=config.labels_csv_path,
             )
 
-    # --- Step 4: Categorize with top-k predictions ---------------------------
-    col_emb_list = [col_embeddings[col] for col in cols]
-    col_has_content_list = [col_has_content[col] for col in cols]
-
-    # Build per-column concat embedding (used by PresenceClassifier).
+    # --- Step 4: Categorize --------------------------------------------------
     col_emb_concat = np.concatenate(
         [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
          for col in cols],
         axis=1,
     ).astype(np.float32)
 
-    # --- Step 4 (cont): Choose categorization strategy ----------------------
-    # Group-only mode: GroupClassifier MLP or fine-tuned model.
-    if (
-        config.group_classifier_path is not None
-        or config.finetuned_model_path is not None
-    ):
-        if config.finetuned_model_path is None:
-            # Use external GroupClassifier on per-column concat embeddings (2304-dim)
-            print(f"Loading group classifier from {config.group_classifier_path}...")
-            group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
-            group_clf.to(torch_device)
-            group_probs = group_clf.predict_proba(torch.from_numpy(col_emb_concat)).numpy()
-            group_clf.cpu()
-            del group_clf
+    if config.group_classifier_path is not None:
+        # --- Production 3-stage path -----------------------------------------
+        # Stage 1: CasePresenceClassifier gate — rejects non-cancer cases.
+        if config.case_presence_classifier_path is not None:
+            print(f"Loading case presence classifier from {config.case_presence_classifier_path}...")
+            case_clf = CasePresenceClassifier.load(config.case_presence_classifier_path)
+            case_clf.to(torch_device)
+            cancer_probs = case_clf.predict_proba(torch.from_numpy(embeddings)).numpy()
+            case_clf.cpu()
+            del case_clf
+            presence_gate_mask = cancer_probs >= config.case_presence_threshold
+            print(
+                f"  Case presence gate (threshold={config.case_presence_threshold:.2f}): "
+                f"{int(presence_gate_mask.sum())}/{n} cases pass "
+                f"({presence_gate_mask.mean() * 100:.1f}%)"
+            )
         else:
-            # group_probs and group_names already set by fine-tuned model above
-            print("Using group probabilities mapped from the fine-tuned sequence classifier.")
+            presence_gate_mask = np.ones(n, dtype=bool)
 
+        # Stage 2: GroupClassifier predicts which cancer group(s) each case belongs to.
+        print(f"Loading group classifier from {config.group_classifier_path}...")
+        group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
+        group_clf.to(torch_device)
+        group_probs = group_clf.predict_proba(torch.from_numpy(col_emb_concat)).numpy()
+        group_clf.cpu()
+        del group_clf
+
+        # Gate-rejected cases have group_probs zeroed → fall through to Uncategorized.
+        group_probs[~presence_gate_mask] = 0.0
+
+        # Stage 3: KW correction selects the best term within each predicted group.
         categorization = run_categorization_group(
             texts=texts,
             mean_embeddings=embeddings,
@@ -228,10 +208,11 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             group_names=group_names,
             threshold=config.group_classifier_threshold,
             max_predictions=5,
+            presence_mask=presence_gate_mask,
         )
 
     else:
-        # Binary-classifier mode — requires --presence-classifier.
+        # --- Training-cycle binary path (run_cycle.py only) ------------------
         if config.presence_classifier_path is None:
             raise ValueError("--presence-classifier is required")
         print(f"Loading presence classifier from {config.presence_classifier_path}...")
@@ -244,26 +225,16 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         classifier.cpu()
         del classifier
 
-        if config.categorization_mode == "group-keyword":
-            categorization = run_categorization_group_keyword(
-                texts=texts,
-                score_matrix=presence_score_matrix,
-                taxonomy_labels=label_catalog.taxonomy_labels,
-                labels=label_catalog.labels,
-                embedding_min_sim=config.embedding_min_sim,
-                max_predictions=5,
-            )
-        else:
-            categorization = run_categorization(
-                texts=texts,
-                text_embeddings=col_emb_list,
-                label_embeddings=label_embeddings,
-                labels=label_catalog.labels,
-                embedding_min_sim=config.embedding_min_sim,
-                col_has_content=col_has_content_list,
-                max_predictions=5,
-                score_matrix=presence_score_matrix,
-            )
+        categorization = run_categorization(
+            texts=texts,
+            text_embeddings=[col_embeddings[col] for col in cols],
+            label_embeddings=label_embeddings,
+            labels=label_catalog.labels,
+            embedding_min_sim=config.embedding_min_sim,
+            col_has_content=[col_has_content[col] for col in cols],
+            max_predictions=5,
+            score_matrix=presence_score_matrix,
+        )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------
     all_k_terms: list[list[str]] = []
@@ -273,13 +244,11 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         terms, groups, codes = resolve_taxonomy_matches(
             k_idxs, label_catalog.labels, label_catalog.taxonomy_labels
         )
-        # Blank code for low_confidence predictions
         codes = [c if m == "embedding" else "" for c, m in zip(codes, k_methods)]
         all_k_terms.append(terms)
         all_k_groups.append(groups)
         all_k_codes.append(codes)
 
-    # Top-1 resolved info (for provenance, similarity, visualization)
     matched_terms, matched_groups, matched_codes = resolve_taxonomy_matches(
         categorization.final_indices, label_catalog.labels, label_catalog.taxonomy_labels
     )
@@ -288,7 +257,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     pca = PCA(n_components=2, random_state=0)
     pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
 
-    # --- Step 8: Write output files ------------------------------------------
+    # --- Step 7: Write output files ------------------------------------------
     write_predictions_csv(
         path=outputs.predictions_csv,
         ids=ids,
@@ -356,7 +325,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "input_rows": int(n),
         "task": config.task,
         "text_cols": list(config.text_cols),
-        "col_weights": config.col_weights,
         "id_col": config.id_col,
         "max_length": int(config.max_length),
         "batch_size": int(config.batch_size),

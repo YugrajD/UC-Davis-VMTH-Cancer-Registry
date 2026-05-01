@@ -15,9 +15,6 @@ A cycle is the core unit of iterative training:
 After the first cycle, Step 0 is skipped — PetBERT never runs again; all subsequent
 training and inference reads embeddings from the cache.
 
-Typical trajectory with the adapted backbone (Phase 17):
-  c1 ~50%  →  c3 ~65%  →  c8 ~69% (plateau)
-
 Usage:
   python ml/training/binary/run_cycle.py --label "c1" --device xpu --local-only
 """
@@ -29,21 +26,11 @@ from datetime import datetime
 from pathlib import Path
 
 import config
-from model.constants import DEFAULT_TEXT_COLS
 from production.petbert_pipeline import run_scan, ScanConfig
 from training.binary.build_training_pairs import build_pairs
 from evaluation import evaluate, log_evaluation
 from training.binary.train import train
 from training.binary.update_co_bank import update_co_bank
-
-
-def _subdir(model: str) -> str:
-    """Return the output subdirectory for a given model path.
-
-    Uses 'contrastive' when the model path points to the adapted backbone
-    checkpoint directory; 'binary' for the frozen-backbone baseline.
-    """
-    return "contrastive" if "contrastive" in model else "binary"
 
 
 def _banner(title: str) -> None:
@@ -59,12 +46,11 @@ def _score_reports(title: str, scan_config: ScanConfig) -> None:
 
 
 def _make_scan_config(args, *, out_dir: str, classifier_path: str | None = None) -> ScanConfig:
-    """Build a ScanConfig from cycle CLI args."""
+    """Build a ScanConfig for the binary training-cycle scoring path."""
     return ScanConfig(
         csv_path=config.REPORTS_CSV,
         id_col="case_id",
-        text_cols=DEFAULT_TEXT_COLS,
-        col_weights={},
+        text_cols=(),
         model_name=args.model,
         local_only=args.local_only,
         out_dir=out_dir,
@@ -78,7 +64,7 @@ def _make_scan_config(args, *, out_dir: str, classifier_path: str | None = None)
         labels_csv_path=config.LABELS_CSV,
         presence_classifier_path=classifier_path,
         embedding_cache_path=args.embedding_cache or None,
-        enrich_labels_csv_path=args.enrich_labels_csv or None,
+        tfidf_vectorizer_path=config.TFIDF_VECTORIZER_PATH,
     )
 
 
@@ -150,17 +136,13 @@ def main(argv: list[str] | None = None) -> int:
              f"(default: {config.EMBEDDING_CACHE_NPZ})",
     )
     parser.add_argument(
-        "--enrich-labels-csv", default="",
-        help="Annotation CSV for label embedding enrichment (default: disabled).",
-    )
-    parser.add_argument(
         "--hidden-dim", type=int, default=512,
         help="MLP hidden layer size (default: 512).",
     )
     parser.add_argument(
-        "--annotation-csv", default=config.KEYWORD_ANNOTATION_CSV,
+        "--annotation-csv", default=config.ANNOTATION_CSV,
         help="Verified label annotations for training positives and evaluation. "
-             f"(default: {config.KEYWORD_ANNOTATION_CSV})",
+             f"(default: {config.ANNOTATION_CSV})",
     )
     parser.add_argument(
         "--train-cases", default="",
@@ -169,25 +151,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    subdir = _subdir(args.model)
-    ckpt_dir        = config.CHECKPOINT_CONTRASTIVE_DIR if subdir == "contrastive" else config.CHECKPOINT_BINARY_DIR
+    ckpt_dir        = config.CHECKPOINT_CONTRASTIVE_DIR
     checkpoint      = f"{ckpt_dir}/presence_classifier_current.pt"
     checkpoint_best = f"{ckpt_dir}/presence_classifier_best.pt"
-    production_out  = f"{config.OUTPUT_PRODUCTION_DIR}/{subdir}"
-    evaluation_out  = f"{config.OUTPUT_EVALUATION_DIR}/{subdir}"
-    history_csv     = f"{config.OUTPUT_EVALUATION_DIR}/{subdir}/evaluation_history.csv"
+    production_out  = f"{config.OUTPUT_PRODUCTION_DIR}/contrastive"
+    evaluation_out  = f"{config.OUTPUT_EVALUATION_DIR}/contrastive"
+    history_csv     = f"{config.OUTPUT_EVALUATION_DIR}/contrastive/evaluation_history.csv"
 
     if args.co_neg_bank_csv is None:
-        args.co_neg_bank_csv = f"{config.OUTPUT_TRAINING_DIR}/{subdir}/evaluation_co_bank.csv"
+        args.co_neg_bank_csv = f"{config.OUTPUT_TRAINING_DIR}/contrastive/evaluation_co_bank.csv"
 
     label = args.label or f"cycle {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
     # 0 ── Embed reports (first run only) ─────────────────────────────────────
     if args.embedding_cache and not Path(args.embedding_cache).exists():
-        _score_reports(
-            "Step 0/5 — Embed reports into vector space (first run only)",
-            _make_scan_config(args, out_dir=production_out),
-        )
+        try:
+            _score_reports(
+                "Step 0/5 — Embed reports into vector space (first run only)",
+                _make_scan_config(args, out_dir=production_out),
+            )
+        except ValueError as exc:
+            if "presence-classifier" not in str(exc):
+                raise
+            # Cache was saved during embedding; categorisation deferred to Step 3.
+            print("  Embeddings cached — predictions will be produced in Step 3.")
 
     # 1 ── Assemble training data ──────────────────────────────────────────────
     _banner("Step 1/5 — Assemble training data")

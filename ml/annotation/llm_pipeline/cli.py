@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run_compare(args: argparse.Namespace) -> int:
     import os, json
-    models = [m["name"] for m in list_models()]
+    models = [m["id"] for m in list_models()]
     if not models:
         print("No models found.")
         return 1
@@ -75,7 +75,7 @@ def main() -> int:
         if not models:
             print("No models found.")
         for m in models:
-            print(m["name"])
+            print(m["id"])
         return 0
 
     if args.compare_models:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Parse and de-identify all '* diagnostics.csv' files in database/data/ into three output files:
+Parse all per-year CSVs in database/data/input/ into three output files:
   - demographics.csv
   - diagnoses.csv
   - report.csv
@@ -15,8 +15,22 @@ from collections import OrderedDict
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'output')
 
+# Canonical columns written as dedicated columns in report.csv.
+# All other sections are serialised into ADDITIONAL INFORMATION.
+CANONICAL_HEADINGS = [
+    'CLINICAL ABSTRACT',
+    'GROSS DESCRIPTION',
+    'HISTOPATHOLOGICAL SUMMARY',
+    'COMMENT',
+    'FINAL COMMENT',
+    'ANCILLARY TESTS',
+    'ADDENDUM',
+]
+CANONICAL_SET = set(CANONICAL_HEADINGS)
+
 # Map known typos/variants to canonical heading names
 HEADING_NORMALIZATIONS = {
+    # Pre-existing normalizations
     'CLINICAL ABS TRACT': 'CLINICAL ABSTRACT',
     'COM/MENTS AND COMMUNICATIONS': 'COMMENTS AND COMMUNICATIONS',
     'FINAL COMMENTS': 'FINAL COMMENT',
@@ -25,6 +39,56 @@ HEADING_NORMALIZATIONS = {
     'ANCILLARY TESTING': 'ANCILLARY TESTS',
     'ADDITIONAL TESTS': 'ANCILLARY TESTS',
     'FINAL COPLOW DIAGNOSES>': 'FINAL COPLOW DIAGNOSES',
+    # Typos and OCR errors
+    'HISTOPATHOLOGY SUMMARY': 'HISTOPATHOLOGICAL SUMMARY',
+    'HISTOPATHOLOGIC SUMMARY': 'HISTOPATHOLOGICAL SUMMARY',
+    'HISTOPATH0LOGICAL SUMMARY': 'HISTOPATHOLOGICAL SUMMARY',   # zero not O
+    'HISTOPATHOLOGICAL SUMMARY/COMMENT': 'HISTOPATHOLOGICAL SUMMARY',
+    'HISTOPATHOLOGICAL SUMMARY AND COMMENT': 'HISTOPATHOLOGICAL SUMMARY',
+    'HISTOLOGICAL SUMMARY': 'HISTOPATHOLOGICAL SUMMARY',
+    'HISTOPATHOLOGICAL DESCRIPTION': 'HISTOPATHOLOGICAL SUMMARY',
+    'HISTOLOGIC DESCRIPTION': 'HISTOPATHOLOGICAL SUMMARY',
+    'SPECIAL STAIN': 'SPECIAL STAINS',
+    'COMMUNICATIONS': 'COMMENTS AND COMMUNICATIONS',
+    'COMMENTS': 'COMMENT',
+    'ADDEDNUM': 'ADDENDUM',
+    'CLINICAL ABSTRAST': 'CLINICAL ABSTRACT',
+    'CLINICAL ABSRACT': 'CLINICAL ABSTRACT',
+    'LINICAL ABSTRACT': 'CLINICAL ABSTRACT',
+    'GROSS DESCRIPTIONL': 'GROSS DESCRIPTION',
+    'GOI?/ROSS DESCRIPTION': 'GROSS DESCRIPTION',
+    'GROSS DESCRIPTIO': 'GROSS DESCRIPTION',
+    'GROSS NECROPSY FINDING': 'GROSS DESCRIPTION',
+    'FINAL COMMENTO': 'FINAL COMMENT',
+    'COM4ERMENTS AND COMMUNICATIONS': 'COMMENTS AND COMMUNICATIONS',
+    'COMMENTS AND CO/MMUNICATIONS': 'COMMENTS AND COMMUNICATIONS',
+    'COMMENTS AND COMMUNICATION': 'COMMENTS AND COMMUNICATIONS',
+    'ANCIL': 'ANCILLARY TESTS',
+    'ANCILLARY': 'ANCILLARY TESTS',
+    'ANCILLARY TEST': 'ANCILLARY TESTS',
+    'ANCILLARY DIAGNOSTICS': 'ANCILLARY TESTS',
+    'IMMUNOHISTOCHEMISTRY (IHC)': 'IMMUNOHISTOCHEMISTRY',
+    'REFERENCE': 'REFERENCES',
+    'ORIGINAL COMMENT': 'COMMENT',
+    'HISTORY': 'CLINICAL HISTORY',
+    'POLARIZING FILTERS (T3, T2)': 'ANCILLARY TESTS',
+    # Malformed pipe markers — discard (content folds into previous section)
+    '|B': '',
+    '|U': '',
+    'N/A': '',
+    'NONE': '',
+    ',': '',
+    # Case-specific content that bled into a heading marker — fold into COMMENT
+    '|. THE GREEN': 'COMMENT',
+    '| AND G': 'COMMENT',
+    'HYPERGLOBULINEMIA (4.6), EOSINOPHILIA (2620), BASOPHILS (728)': 'COMMENT',
+    'TWO CHARS - LABELED "FINN" -': 'COMMENT',
+    'CLINICAL CONSULT BY DR. OUTERBRIDGE 8/25/2020': 'COMMENT',
+    'MALASSEZIA': 'COMMENT',
+    'T1, LIVER, TWO SECTIONS': 'COMMENT',
+    'GINGIVAL ENLARGEMENT PALATAL TO LMAXI1': 'COMMENT',
+    'FUNGAL VS NEOPLASIA, VS OTHER': 'COMMENT',
+    'FUNGAL (ASPERGILLUS) SINUSITIS': 'COMMENT',
 }
 
 
@@ -32,6 +96,8 @@ def normalize_heading(raw):
     """Strip pipe markers, uppercase, strip whitespace, and apply known normalizations."""
     # Remove any |X| pipe markers that may have bled into the captured heading
     h = re.sub(r'\|[A-Za-z]\|', '', raw).strip().upper()
+    # Strip common leading/trailing punctuation artifacts from OCR or formatting errors
+    h = h.lstrip('/').rstrip(';.').strip()
     # Any ADDENDUM variant (e.g. "ADDENDUM (9-11-25)") → ADDENDUM
     if h.startswith('ADDENDUM'):
         return 'ADDENDUM'
@@ -43,11 +109,11 @@ def normalize_heading(raw):
 
 def extract_heading(cell):
     """
-    If cell contains |H|...:||, extract the heading name and any inline content.
+    If cell contains a |H| or |B| heading marker, extract the heading name and any inline content.
     Returns (heading, inline_content, text_after_marker).
     Returns (None, None, cell) if no heading found.
     """
-    m = re.search(r'\|H\|(.*?)\|\|', cell)
+    m = re.search(r'\|[HB]\|(.*?)\|\|', cell)
     if not m:
         return None, None, cell
     raw = m.group(1)
@@ -108,7 +174,7 @@ def parse_diagnoses(diagnosis_cells):
 
 def parse_report_sections(text_cells):
     """
-    Split report text cells into sections by |H| heading markers.
+    Split report text cells into sections by |H|/|B| heading markers.
     Returns an OrderedDict of {heading: cleaned_content}.
     Headings are discovered dynamically.
     """
@@ -146,6 +212,24 @@ def parse_report_sections(text_cells):
     return sections
 
 
+def build_additional_info(sections):
+    """
+    Serialise all non-canonical sections into a single string.
+    Each section is prefixed with its heading as a label: "HEADING: content"
+    """
+    parts = []
+    for heading, text in sections.items():
+        if heading not in CANONICAL_SET and heading and text.strip():
+            parts.append(f'{heading}: {text.strip()}')
+    return '  '.join(parts)
+
+
+def _na(value):
+    """Return empty string for 'NA' sentinel, otherwise the stripped value."""
+    s = value.strip()
+    return '' if s == 'NA' else s
+
+
 def parse_cases(input_file):
     """Read the CSV and group rows into individual cases."""
     cases = []
@@ -156,32 +240,38 @@ def parse_cases(input_file):
         next(reader)  # skip header row
 
         for row in reader:
-            # Ensure row has at least 6 columns
-            while len(row) < 6:
+            # Ensure row has at least 9 columns
+            while len(row) < 9:
                 row.append('')
-            dt = row[0].strip()
-            sex = row[1].strip()
-            species = row[2].strip()
-            breed = row[3].strip()
-            diagnosis_cell = row[4]
-            text_cell = row[5]
+            dob = _na(row[0])
+            sex = _na(row[1])
+            species = _na(row[2])
+            breed = _na(row[3])
+            zipcode = _na(row[4])
+            rfrr_zipcode = _na(row[5])
+            dt = _na(row[6])
+            diagnosis_cell = row[7]
+            text_cell = row[8]
 
             if dt:
                 # New case starts
                 if current_case:
                     cases.append(current_case)
                 current_case = {
+                    'dob': dob,
                     'dt': dt,
                     'sex': sex,
                     'species': species,
                     'breed': breed,
-                    'diagnosis_cells': [diagnosis_cell] if diagnosis_cell.strip() else [],
+                    'zipcode': zipcode,
+                    'rfrr_zipcode': rfrr_zipcode,
+                    'diagnosis_cells': [diagnosis_cell] if _na(diagnosis_cell) else [],
                     'text_cells': [text_cell],
                 }
             else:
                 if current_case is None:
                     continue
-                if diagnosis_cell.strip():
+                if _na(diagnosis_cell):
                     current_case['diagnosis_cells'].append(diagnosis_cell)
                 current_case['text_cells'].append(text_cell)
 
@@ -194,9 +284,9 @@ def parse_cases(input_file):
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    input_files = sorted(glob.glob(os.path.join(DATA_DIR, '* diagnostics.csv')))
+    input_files = sorted(glob.glob(os.path.join(DATA_DIR, 'input', '*.csv')))
     if not input_files:
-        print(f"No '* diagnostics.csv' files found in {DATA_DIR}")
+        print(f"No CSV files found in {os.path.join(DATA_DIR, 'input')}")
         return
 
     all_raw_cases = []
@@ -205,38 +295,34 @@ def main():
         print(f"  {os.path.basename(path)}: {len(file_cases)} cases")
         all_raw_cases.extend(file_cases)
 
-    cases = all_raw_cases
-    print(f"Total: {len(cases)} cases across {len(input_files)} file(s)")
+    print(f"Total: {len(all_raw_cases)} cases across {len(input_files)} file(s)")
 
-    # Parse each case and collect all heading names (preserving first-seen order)
-    all_headings = []
-    seen_headings = set()
     parsed_cases = []
-
-    for i, case in enumerate(cases):
-        case_id = f'CASE-{i + 1:04d}'
-        diagnoses = parse_diagnoses(case['diagnosis_cells'])
+    skipped = 0
+    case_number = 1
+    for case in all_raw_cases:
         sections = parse_report_sections(case['text_cells'])
+        if not any(text.strip() for text in sections.values()):
+            skipped += 1
+            continue
+        diagnoses = parse_diagnoses(case['diagnosis_cells'])
         parsed_cases.append({
-            'case_id': case_id,
+            'case_id': f'CASE-{case_number:04d}',
             'case': case,
             'diagnoses': diagnoses,
             'sections': sections,
         })
-        for h in sections:
-            if h not in seen_headings:
-                all_headings.append(h)
-                seen_headings.add(h)
+        case_number += 1
 
-    print(f"Headings discovered: {all_headings}")
+    print(f"Skipped {skipped} cases with no report text")
 
     # --- demographics.csv ---
     with open(os.path.join(OUTPUT_DIR, 'demographics.csv'), 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow(['case_id', 'DtOfRq', 'Sex', 'Species', 'Breed'])
+        writer.writerow(['case_id', 'DateOfBirth', 'DtOfRq', 'Sex', 'Species', 'Breed', 'Zipcode', 'RfrrVtrnZipcode'])
         for pc in parsed_cases:
             c = pc['case']
-            writer.writerow([pc['case_id'], c['dt'], c['sex'], c['species'], c['breed']])
+            writer.writerow([pc['case_id'], c['dob'], c['dt'], c['sex'], c['species'], c['breed'], c['zipcode'], c['rfrr_zipcode']])
 
     # --- diagnoses.csv ---
     with open(os.path.join(OUTPUT_DIR, 'diagnoses.csv'), 'w', newline='', encoding='utf-8') as f:
@@ -246,18 +332,23 @@ def main():
             for num, text in pc['diagnoses']:
                 writer.writerow([pc['case_id'], num, text])
 
-    # --- reportText.csv ---
+    # --- report.csv ---
+    report_columns = CANONICAL_HEADINGS + ['ADDITIONAL INFORMATION']
     with open(os.path.join(OUTPUT_DIR, 'report.csv'), 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow(['case_id'] + all_headings)
+        writer.writerow(['case_id'] + report_columns)
         for pc in parsed_cases:
-            row = [pc['case_id']] + [pc['sections'].get(h, '') for h in all_headings]
+            sections = pc['sections']
+            row = [pc['case_id']]
+            for h in CANONICAL_HEADINGS:
+                row.append(sections.get(h, ''))
+            row.append(build_additional_info(sections))
             writer.writerow(row)
 
     print(f"Output written to {OUTPUT_DIR}/")
-    print(f"  demographics.csv  — {len(parsed_cases)} rows")
-    print(f"  diagnoses.csv     — {sum(len(pc['diagnoses']) for pc in parsed_cases)} rows")
-    print(f"  reportText.csv    — {len(parsed_cases)} rows, {len(all_headings)} heading columns")
+    print(f"  demographics.csv       — {len(parsed_cases)} rows")
+    print(f"  diagnoses.csv          — {sum(len(pc['diagnoses']) for pc in parsed_cases)} rows")
+    print(f"  report.csv             — {len(parsed_cases)} rows, {len(report_columns)} columns")
 
 
 if __name__ == '__main__':

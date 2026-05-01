@@ -109,7 +109,7 @@ A cold start is required after any architecture change, new annotation data, or 
 adapting the embedding backbone. Deletes the stale cache, feedback bank, and checkpoint:
 
 ```bash
-rm -f ml/data/embedding_cache.npz
+rm -f ml/output/training/embedding_cache.npz
 rm -f ml/output/training/contrastive/evaluation_co_bank.csv
 rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 ```
@@ -196,6 +196,41 @@ Do **not** raise `--co-neg-per-case` above 5 — causes regression with the per-
 
 ---
 
+## Case Presence Classifier (one-shot)
+
+Trains a binary MLP that predicts cancer vs. non-cancer at the case level. This is the
+first stage of the three-stage production pipeline — it filters non-cancer cases before
+the GroupClassifier runs.
+
+**Input:** mean report embedding (768-dim, from embedding cache).
+**Output:** scalar cancer probability per case.
+**Training objective:** recall-weighted (`recall_weight=0.7`) — errs toward letting
+uncertain cases through rather than missing cancer.
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode train-case-presence \
+  --train-cases ml/output/splits/train_cases.txt \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --epochs 20 --device xpu
+```
+
+Checkpoint saved to `ml/output/checkpoints/contrastive/case_presence_classifier.pt`.
+
+> **Prerequisite:** the embedding cache must already exist. Run `run_production.py` once
+> (or complete a `train-classifier` cycle) to build it.
+
+### Key parameters
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `--epochs` | 20 | One-shot; no iterative cycling |
+| `--case-presence-recall-weight` | 0.7 | Prefer missing fewer cancer cases over reducing FP |
+| `--case-presence-pos-weight` | 1.0 | Increase if cancer-positive cases are heavily outnumbered |
+
+---
+
 ## Group Classifier (one-shot)
 
 Trains a multi-label MLP that predicts cancer group(s) per report. One-shot — run once,
@@ -228,6 +263,18 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 Adapts PetBERT's embedding space so that report text and cancer label text land
 closer together. The adapted backbone is then used as the starting point for
 `train-classifier` cycles. A cold start is required after adaptation.
+
+### Step 0 — Fit the TF-IDF vectorizer (run once, or after report.csv changes significantly)
+
+The contrastive training pairs are built from TF-IDF-selected text that must match
+what production embeds. Fit the vectorizer before building pairs:
+
+```bash
+ml/.venv/Scripts/python.exe ml/training/contrastive/fit_text_selector.py
+```
+
+Saved to `ml/output/training/tfidf_selector.joblib`. Skip this step if the vectorizer
+already exists and `report.csv` has not grown significantly since it was last fitted.
 
 ### Step 1 — Adapt the backbone
 
@@ -306,7 +353,7 @@ Use `--skip-pair-build` to reuse an existing `ml/data/contrastive_pairs.csv`.
 The embedding space has changed. Delete the stale cache, feedback bank, and checkpoint:
 
 ```bash
-rm -f ml/data/embedding_cache.npz
+rm -f ml/output/training/embedding_cache.npz
 rm -f ml/output/training/contrastive/evaluation_co_bank.csv
 rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 ```
@@ -375,7 +422,8 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
 | Change | Cache valid? | Bank valid? | Checkpoint valid? |
 |--------|-------------|-------------|-------------------|
 | New annotation data | No | No | No — full cold start |
-| Architecture change (e.g. `n_cols`) | No | No | No — full cold start |
+| Architecture change (e.g. `n_cols`, input pipeline) | No | No | No — full cold start |
 | Backbone adaptation completed | No | No | No — full cold start |
+| TF-IDF vectorizer re-fitted (`tfidf_selector.joblib`) | No | No | No — full cold start |
 | Hyperparameter change (`--hidden-dim`, `--epochs`) | Yes | Yes | No — retrain only |
 | New training cycle (same architecture) | Yes | Yes | Overwritten each cycle |

@@ -6,7 +6,8 @@ Each predicted label receives one of six verdicts:
   slightly_off   — correct cancer group, wrong specific term
   completely_off — neither term nor group matches any verified label for this case
   false_positive — model made a positive prediction for a case with no verified labels
-  false_negative — case has verified labels but no good/slightly_off prediction was made
+  false_negative — case has verified labels but model predicted "Uncategorized", or case has
+                   no prediction row at all
   true_negative  — model correctly predicted "Uncategorized" for a non-cancer case
                    (excluded from evaluation.csv and from metrics)
 
@@ -38,6 +39,9 @@ def score_prediction(predicted_term: str, predicted_group: str,
         if predicted_term == "Uncategorized":
             return "true_negative"
         return "false_positive"
+    # Model abstained on a confirmed cancer case → false negative, not completely_off.
+    if predicted_term == "Uncategorized":
+        return "false_negative"
     if predicted_term in matched_terms:
         return "good"
     if predicted_group in matched_groups:
@@ -69,10 +73,9 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
     # All cases confirmed to have cancer ground truth
     cancer_case_ids: set[str] = set(case_terms.keys())
 
-    # Score every petbert prediction row; track which cancer cases got a passing verdict
+    # Score every petbert prediction row
     out_rows: list[dict] = []
     true_negative_rows: list[dict] = []
-    adequately_predicted: set[str] = set()
     for row in pb_rows:
         cid = row["case_id"]
         verdict = score_prediction(
@@ -84,12 +87,12 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
             true_negative_rows.append(scored_row)
         else:
             out_rows.append(scored_row)
-        if verdict in ("good", "slightly_off"):
-            adequately_predicted.add(cid)
 
-    # False negatives: confirmed cancer cases with no good/slightly_off prediction
-    fn_case_ids: set[str] = cancer_case_ids - adequately_predicted
-    n_false_negatives = len(fn_case_ids)
+    # False negatives: confirmed cancer cases with no prediction row at all.
+    # Any case that appears in pb_rows already has its verdict (including false_negative
+    # for Uncategorized predictions) and must not receive a second synthesized row.
+    predicted_case_ids: set[str] = {row["case_id"] for row in pb_rows}
+    fn_case_ids: set[str] = cancer_case_ids - predicted_case_ids
 
     # ── Write output CSV ──────────────────────────────────────────────────────
     out_path = out_dir / "evaluation.csv"
@@ -102,7 +105,7 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
         for cid in fn_case_ids
     ]
     # true_negatives are excluded from evaluation.csv (correct abstentions add no signal)
-    all_rows = sorted(out_rows + fn_rows, key=lambda r: r["case_id"])
+    all_rows = sorted(out_rows + fn_rows, key=lambda r: int(r["case_id"].split("-")[-1]) if r["case_id"].split("-")[-1].isdigit() else r["case_id"])
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -110,9 +113,10 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
 
     # ── Console summary ───────────────────────────────────────────────────────
     counts = Counter(r["verdict"] for r in out_rows)
-    # Include false negatives in the total so percentages reflect all cancer cases.
+    # FN = cases scored false_negative from prediction rows + synthesized (no prediction row).
     # True negatives (correct abstentions on non-cancer cases) are excluded from total.
-    total = len(out_rows) + n_false_negatives
+    n_false_negatives = counts["false_negative"] + len(fn_case_ids)
+    total = len(out_rows) + len(fn_case_ids)
     n_true_negatives = len(true_negative_rows)
 
     print(f"\n=== Overall ({total} prediction-cases, {n_true_negatives} correct abstentions excluded) ===")
@@ -127,10 +131,10 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
         print(f"  {label:<22} {n:>5}  ({n / total * 100:.1f}%)")
 
 
-    # Per-group breakdown (excluding false positives — they have no matched group)
+    # Per-group breakdown (excluding verdicts with no meaningful predicted group)
     group_counts: dict[str, Counter] = defaultdict(Counter)
     for row in out_rows:
-        if row["verdict"] == "false_positive":
+        if row["verdict"] in ("false_positive", "false_negative"):
             continue
         # Use the predicted_group as the breakdown axis so every row has one
         group_counts[row["predicted_group"]][row["verdict"]] += 1
@@ -159,7 +163,8 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
     ]
 
     def make_summary_row(scope: str, c: Counter, fn: int = 0) -> dict:
-        n = sum(c.values()) + fn
+        # Exclude false_negative from counter sum; fn is the authoritative total FN count.
+        n = sum(v for k, v in c.items() if k != "false_negative") + fn
         return {
             "scope": scope,
             "total": n,
@@ -202,8 +207,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--expectation-csv",
-        default=config.KEYWORD_ANNOTATION_CSV,
-        help="Path to the verified annotation CSV (keyword or llm).",
+        default=config.ANNOTATION_CSV,
+        help="Path to the verified annotation CSV.",
     )
     parser.add_argument(
         "--out-dir",

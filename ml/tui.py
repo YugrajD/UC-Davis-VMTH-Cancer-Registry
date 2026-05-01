@@ -30,6 +30,7 @@ _SCRIPTS = Path(__file__).parent / "scripts"
 CHECKPOINT_BINARY      = config.CHECKPOINT_BINARY_DIR
 CHECKPOINT_CONTRASTIVE = config.CHECKPOINT_CONTRASTIVE_DIR
 CHECKPOINT_GROUP       = config.CHECKPOINT_GROUP_DIR
+ANNOTATION_CSV         = config.ANNOTATION_CSV
 KEYWORD_ANNOTATION_CSV = config.KEYWORD_ANNOTATION_CSV
 LLM_ANNOTATION_CSV     = config.LLM_ANNOTATION_CSV
 CO_NEG_BANK_CSV        = f"{config.OUTPUT_TRAINING_DIR}/binary/evaluation_co_bank.csv"
@@ -46,6 +47,7 @@ _DEVICE_OPTIONS: list[tuple[str, str]] = [
 ]
 
 _ANNOTATION_OPTIONS: list[tuple[str, str]] = [
+    ("unified", ANNOTATION_CSV),
     ("keyword", KEYWORD_ANNOTATION_CSV),
     ("llm",     LLM_ANNOTATION_CSV),
 ]
@@ -175,7 +177,7 @@ class TrainingView(VerticalScroll):
             yield Label("CO bank CSV  [dim]rolling wrong-label feedback bank (~24k pairs)[/]")
             yield Input(value=CO_NEG_BANK_CSV, id="cl-co-bank")
             yield Label("Annotation CSV")
-            yield Select(_ANNOTATION_OPTIONS, value=KEYWORD_ANNOTATION_CSV, id="cl-ann-csv")
+            yield Select(_ANNOTATION_OPTIONS, value=ANNOTATION_CSV, id="cl-ann-csv")
             yield Label("Device")
             yield Select(_DEVICE_OPTIONS, value="xpu", id="cl-device")
             yield Label("Local only"); yield Switch(value=True, id="cl-local-only")
@@ -213,7 +215,7 @@ class TrainingView(VerticalScroll):
             yield Label("LR  [dim]peak learning rate with cosine schedule — 5e-5 default[/]")
             yield Input(value="5e-5", id="gr-lr")
             yield Label("Annotation CSV")
-            yield Select(_ANNOTATION_OPTIONS, value=KEYWORD_ANNOTATION_CSV, id="gr-ann-csv")
+            yield Select(_ANNOTATION_OPTIONS, value=ANNOTATION_CSV, id="gr-ann-csv")
             yield Label("Device")
             yield Select(_DEVICE_OPTIONS, value="xpu", id="gr-device")
             yield Label("Local only"); yield Switch(value=True, id="gr-local-only")
@@ -334,7 +336,7 @@ class EvaluateView(VerticalScroll):
         yield Label("Label  [dim](optional)[/]")
         yield Input(placeholder="e.g. manual check", id="ev-label")
         yield Label("Annotation CSV")
-        yield Select(_ANNOTATION_OPTIONS, value=KEYWORD_ANNOTATION_CSV, id="ev-ann-csv")
+        yield Select(_ANNOTATION_OPTIONS, value=ANNOTATION_CSV, id="ev-ann-csv")
         yield Label("Prediction CSV  [dim](blank = auto-detect)[/]")
         yield Input(placeholder="ml/output/production/.../petbert_predictions.csv", id="ev-pred-csv")
         yield Label("Out dir  [dim](blank = auto-detect)[/]")

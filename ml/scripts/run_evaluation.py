@@ -34,7 +34,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--annotation-csv",
-        default=config.KEYWORD_ANNOTATION_CSV,
+        default=config.ANNOTATION_CSV,
         help="Verified label annotations to score against.",
     )
     parser.add_argument(

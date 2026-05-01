@@ -4,25 +4,137 @@ import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
-import type { CountyData, CESIndicator, CalEnviroScreenData } from '../../types';
-import { CES_INDICATORS } from '../../types';
+import { useFilteredData } from '../../hooks/useFilteredData';
+import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState } from '../../types';
+import { CES_INDICATORS, CANCER_TYPES, BREEDS, SEX_OPTIONS } from '../../types';
 import { HUMAN_CANCER_RATES } from '../../data/humanCancerRates';
 import {
   MOCK_SUPERFUND_SITES,
   SUPERFUND_BY_COUNTY,
   type SuperfundSite,
 } from '../../data/superfundData';
-import { MOCK_PESTICIDE_DATA, PESTICIDE_BY_COUNTY } from '../../data/pesticideData';
 import {
-  COUNTY_GEO_URL,
-  TRACT_GEO_URL,
+  MOCK_PESTICIDE_DATA,
+  PESTICIDE_BY_COUNTY,
+  PESTICIDE_CLASSES,
+  type PesticideClass,
+  type CountyPesticideData,
+} from '../../data/pesticideData';
+import {
+  GEO_URLS,
   INITIAL_VIEW_STATE,
   NO_DATA_COLOR,
   HOVER_COLOR,
   hexToRgba,
   countyFromFeature,
   hoverKeyFromFeature,
+  type GeoLevel,
 } from '../../lib/mapUtils';
+
+// ---------------------------------------------------------------------------
+// Scatter variable definitions (pair-wise plot)
+// ---------------------------------------------------------------------------
+
+type ScatterVar =
+  | 'cancer_cases'
+  | 'pesticide_lbs'
+  | 'pesticide_2015'
+  | 'pesticide_2019'
+  | 'pesticide_change'
+  | 'superfund_sites'
+  | 'human_cancer_rate'
+  | CESIndicator;
+
+interface ScatterVarOption {
+  value: ScatterVar;
+  label: string;
+  unit: string;
+  group: string;
+}
+
+const SCATTER_VAR_OPTIONS: ScatterVarOption[] = [
+  // VMTH
+  { value: 'cancer_cases', label: 'Cancer Cases', unit: 'cases', group: 'VMTH' },
+  // CDPR
+  { value: 'pesticide_lbs', label: 'Pesticide Use (CDPR)', unit: 'lbs/sq mi', group: 'CDPR' },
+  { value: 'pesticide_2015', label: 'Pesticide Use 2015', unit: 'lbs/sq mi', group: 'CDPR' },
+  { value: 'pesticide_2019', label: 'Pesticide Use 2019', unit: 'lbs/sq mi', group: 'CDPR' },
+  { value: 'pesticide_change', label: 'Pesticide Change 2015\u201319', unit: '%', group: 'CDPR' },
+  // EPA
+  { value: 'superfund_sites', label: 'Superfund Sites', unit: 'sites', group: 'EPA' },
+  // CCR
+  { value: 'human_cancer_rate', label: 'Human Cancer Rate', unit: 'per 100K', group: 'CCR' },
+  // CES — all 24 indicators
+  ...CES_INDICATORS.map(ind => ({
+    value: ind.value as ScatterVar,
+    label: ind.label,
+    unit: 'percentile',
+    group: 'CES',
+  })),
+];
+
+const SCATTER_VAR_GROUPS = ['VMTH', 'CDPR', 'EPA', 'CCR', 'CES'] as const;
+
+function isCesVar(v: ScatterVar): v is CESIndicator {
+  return CES_INDICATORS.some(ind => ind.value === v);
+}
+
+function getVarValue(
+  county: string,
+  v: ScatterVar,
+  countyDataMap: Map<string, CountyData>,
+  cesMap: Map<string, CalEnviroScreenData>,
+): number | null {
+  switch (v) {
+    case 'cancer_cases':
+      return countyDataMap.get(county.toLowerCase())?.count ?? null;
+    case 'pesticide_lbs':
+      return PESTICIDE_BY_COUNTY[county]?.lbs_per_sq_mile ?? null;
+    case 'pesticide_2015':
+      return PESTICIDE_BY_COUNTY[county]?.by_year[2015] ?? null;
+    case 'pesticide_2019':
+      return PESTICIDE_BY_COUNTY[county]?.by_year[2019] ?? null;
+    case 'pesticide_change': {
+      const d = PESTICIDE_BY_COUNTY[county];
+      if (!d) return null;
+      const v15 = d.by_year[2015];
+      const v19 = d.by_year[2019];
+      if (!v15 || !v19) return null;
+      return Math.round(((v19 - v15) / v15) * 100);
+    }
+    case 'superfund_sites':
+      return SUPERFUND_BY_COUNTY[county]?.total ?? 0;
+    case 'human_cancer_rate': {
+      const hr = HUMAN_CANCER_RATES.find(h => h.county === county);
+      return hr?.rate ?? null;
+    }
+    default:
+      // CES indicator
+      if (isCesVar(v)) {
+        return cesMap.get(county)?.[v] ?? null;
+      }
+      return null;
+  }
+}
+
+function getVarMeta(v: ScatterVar): ScatterVarOption {
+  return SCATTER_VAR_OPTIONS.find(o => o.value === v) ?? { value: v, label: String(v), unit: '', group: '' };
+}
+
+// ---------------------------------------------------------------------------
+// Tooltip header helper (shared by all 4 maps)
+// ---------------------------------------------------------------------------
+
+function tooltipHeader(props: Record<string, unknown>, geoLevel: GeoLevel, county: string): string {
+  switch (geoLevel) {
+    case 'county':
+      return `<strong style="font-size:13px">${county}</strong>`;
+    case 'tract':
+      return `<strong style="font-size:13px">Tract ${props.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`;
+    case 'zcta':
+      return `<strong style="font-size:13px">ZIP ${props.ZCTA5CE20 as string}</strong><br/><span style="color:#6b7280">${county} County</span>`;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shared DeckGL map container
@@ -129,6 +241,16 @@ function useSuperfundLayer(enabled: boolean) {
 }
 
 // ---------------------------------------------------------------------------
+// Geo level segmented control
+// ---------------------------------------------------------------------------
+
+const GEO_LEVEL_OPTIONS: { value: GeoLevel; label: string }[] = [
+  { value: 'county', label: 'County' },
+  { value: 'tract', label: 'Tract' },
+  { value: 'zcta', label: 'ZCTA' },
+];
+
+// ---------------------------------------------------------------------------
 // VMTH Cancer Incidence map
 // ---------------------------------------------------------------------------
 
@@ -136,12 +258,12 @@ function CancerMap({
   countyData,
   countRange,
   showSuperfund,
-  tractLevel,
+  geoLevel,
 }: {
   countyData: CountyData[];
   countRange: { min: number; max: number };
   showSuperfund: boolean;
-  tractLevel: boolean;
+  geoLevel: GeoLevel;
 }) {
   const countyDataMap = useMemo(() => {
     const m = new Map<string, CountyData>();
@@ -163,25 +285,25 @@ function CancerMap({
     () =>
       new GeoJsonLayer({
         id: 'cancer-counties',
-        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
+        data: GEO_URLS[geoLevel],
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           if (key && key === hovered) return HOVER_COLOR;
-          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
-        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
-        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) =>
-          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, tractLevel) : null),
-        updateTriggers: { getFillColor: [countyDataMap, colorScale, hovered, tractLevel], data: [tractLevel] },
+          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, geoLevel) : null),
+        updateTriggers: { getFillColor: [countyDataMap, colorScale, hovered, geoLevel], data: [geoLevel] },
       }),
-    [countyDataMap, colorScale, hovered, tractLevel],
+    [countyDataMap, colorScale, hovered, geoLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -193,13 +315,12 @@ function CancerMap({
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
     if (info.layer?.id === 'cancer-counties') {
-      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
+      const props = info.object.properties as Record<string, unknown>;
+      const county = countyFromFeature(props, geoLevel);
       const count = countyDataMap.get(county.toLowerCase())?.count ?? 0;
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>` : '';
-      const header = tractLevel
-        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
-        : `<strong style="font-size:13px">${county}</strong>`;
+      const header = tooltipHeader(props, geoLevel, county);
       return {
         html: `${header}<br/>${count.toLocaleString()} cases${sfStr}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
@@ -215,12 +336,18 @@ function CancerMap({
     return null;
   };
 
+  const subtitle = geoLevel === 'county'
+    ? 'Case count by county'
+    : geoLevel === 'tract'
+      ? 'Case count by county · census tract boundaries'
+      : 'Case count by county · ZCTA boundaries';
+
   return (
     <DeckMap
       layers={layers}
       getTooltip={getTooltip}
       title="Cancer Incidence"
-      subtitle={tractLevel ? 'Case count by county · census tract boundaries' : 'Case count by county'}
+      subtitle={subtitle}
       legend={
         <GradientLegend
           label="Cases"
@@ -253,13 +380,13 @@ function EnviroScreenMap({
   data,
   indicator,
   showSuperfund,
-  tractLevel,
+  geoLevel,
   onIndicatorChange,
 }: {
   data: CalEnviroScreenData[];
   indicator: CESIndicator;
   showSuperfund: boolean;
-  tractLevel: boolean;
+  geoLevel: GeoLevel;
   onIndicatorChange: (v: CESIndicator) => void;
 }) {
   const countyValueMap = useMemo(() => {
@@ -289,24 +416,24 @@ function EnviroScreenMap({
     () =>
       new GeoJsonLayer({
         id: 'enviro-counties',
-        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
+        data: GEO_URLS[geoLevel],
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           if (key && key === hovered) return HOVER_COLOR;
-          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           const val = countyValueMap.get(county.toLowerCase());
           return val != null ? hexToRgba(colorScale(val)) : NO_DATA_COLOR;
         },
-        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
-        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) =>
-          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, tractLevel) : null),
-        updateTriggers: { getFillColor: [countyValueMap, colorScale, hovered, tractLevel], data: [tractLevel] },
+          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, geoLevel) : null),
+        updateTriggers: { getFillColor: [countyValueMap, colorScale, hovered, geoLevel], data: [geoLevel] },
       }),
-    [countyValueMap, colorScale, hovered, tractLevel],
+    [countyValueMap, colorScale, hovered, geoLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -318,11 +445,10 @@ function EnviroScreenMap({
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
     if (info.layer?.id === 'enviro-counties') {
-      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
+      const props = info.object.properties as Record<string, unknown>;
+      const county = countyFromFeature(props, geoLevel);
       const val = countyValueMap.get(county.toLowerCase());
-      const header = tractLevel
-        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
-        : `<strong style="font-size:13px">${county}</strong>`;
+      const header = tooltipHeader(props, geoLevel, county);
       return {
         html: `${header}<br/>${val != null ? `${indicatorLabel}: <strong>${val.toFixed(1)}</strong>` : 'No data'}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
@@ -371,7 +497,7 @@ function EnviroScreenMap({
 // Human Cancer Registry map
 // ---------------------------------------------------------------------------
 
-function HumanCancerMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; tractLevel: boolean }) {
+function HumanCancerMap({ showSuperfund, geoLevel }: { showSuperfund: boolean; geoLevel: GeoLevel }) {
   const rateMap = useMemo(() => {
     const m = new Map<string, { rate: number | null; cases: number | null }>();
     HUMAN_CANCER_RATES.forEach(d => m.set(d.county.toLowerCase(), { rate: d.rate, cases: d.cases }));
@@ -397,25 +523,25 @@ function HumanCancerMap({ showSuperfund, tractLevel }: { showSuperfund: boolean;
     () =>
       new GeoJsonLayer({
         id: 'human-counties',
-        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
+        data: GEO_URLS[geoLevel],
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           if (key && key === hovered) return HOVER_COLOR;
-          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           const info = rateMap.get(county.toLowerCase());
           const rate = info?.rate;
           return rate != null ? hexToRgba(colorScale(rate)) : NO_DATA_COLOR;
         },
-        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
-        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) =>
-          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, tractLevel) : null),
-        updateTriggers: { getFillColor: [rateMap, colorScale, hovered, tractLevel], data: [tractLevel] },
+          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, geoLevel) : null),
+        updateTriggers: { getFillColor: [rateMap, colorScale, hovered, geoLevel], data: [geoLevel] },
       }),
-    [rateMap, colorScale, hovered, tractLevel],
+    [rateMap, colorScale, hovered, geoLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -427,13 +553,12 @@ function HumanCancerMap({ showSuperfund, tractLevel }: { showSuperfund: boolean;
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
     if (info.layer?.id === 'human-counties') {
-      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
+      const props = info.object.properties as Record<string, unknown>;
+      const county = countyFromFeature(props, geoLevel);
       const info2 = rateMap.get(county.toLowerCase());
       const rate = info2?.rate;
       const casesStr = info2?.cases != null ? ` (${info2.cases.toLocaleString()}/yr)` : '';
-      const header = tractLevel
-        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
-        : `<strong style="font-size:13px">${county}</strong>`;
+      const header = tooltipHeader(props, geoLevel, county);
       return {
         html: `${header}<br/>${rate != null ? `${rate.toFixed(1)} per 100K${casesStr}` : 'Suppressed'}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
@@ -474,14 +599,35 @@ function HumanCancerMap({ showSuperfund, tractLevel }: { showSuperfund: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// Pesticide Use map
+// Pesticide Use map (with class dropdown)
 // ---------------------------------------------------------------------------
 
-function PesticideMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; tractLevel: boolean }) {
+function getPesticideValue(data: CountyPesticideData, cls: PesticideClass | 'all'): number {
+  if (cls === 'all') return data.lbs_per_sq_mile;
+  return data.by_class[cls];
+}
+
+function formatLbs(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return String(n);
+}
+
+function PesticideMap({
+  showSuperfund,
+  geoLevel,
+  selectedClass,
+  onClassChange,
+}: {
+  showSuperfund: boolean;
+  geoLevel: GeoLevel;
+  selectedClass: PesticideClass | 'all';
+  onClassChange: (cls: PesticideClass | 'all') => void;
+}) {
   const valueRange = useMemo(() => {
-    const vals = MOCK_PESTICIDE_DATA.map(d => d.lbs_per_sq_mile);
+    const vals = MOCK_PESTICIDE_DATA.map(d => getPesticideValue(d, selectedClass));
     return { min: Math.min(...vals), max: Math.max(...vals) };
-  }, []);
+  }, [selectedClass]);
 
   const colorScale = useMemo(
     () =>
@@ -493,28 +639,32 @@ function PesticideMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; t
 
   const [hovered, setHovered] = useState<string | null>(null);
 
+  const classLabel = selectedClass === 'all'
+    ? 'All Classes'
+    : PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass;
+
   const geoLayer = useMemo(
     () =>
       new GeoJsonLayer({
         id: 'pesticide-counties',
-        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
+        data: GEO_URLS[geoLevel],
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           if (key && key === hovered) return [96, 165, 250, 220] as [number, number, number, number];
-          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           const data = PESTICIDE_BY_COUNTY[county];
-          return data ? hexToRgba(colorScale(data.lbs_per_sq_mile)) : NO_DATA_COLOR;
+          return data ? hexToRgba(colorScale(getPesticideValue(data, selectedClass))) : NO_DATA_COLOR;
         },
-        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
-        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) =>
-          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, tractLevel) : null),
-        updateTriggers: { getFillColor: [colorScale, hovered, tractLevel], data: [tractLevel] },
+          setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, geoLevel) : null),
+        updateTriggers: { getFillColor: [colorScale, hovered, geoLevel, selectedClass], data: [geoLevel] },
       }),
-    [colorScale, hovered, tractLevel],
+    [colorScale, hovered, geoLevel, selectedClass],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -526,13 +676,24 @@ function PesticideMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; t
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
     if (info.layer?.id === 'pesticide-counties') {
-      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
+      const props = info.object.properties as Record<string, unknown>;
+      const county = countyFromFeature(props, geoLevel);
       const data = PESTICIDE_BY_COUNTY[county];
-      const header = tractLevel
-        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
-        : `<strong style="font-size:13px">${county}</strong>`;
+      const header = tooltipHeader(props, geoLevel, county);
+      if (!data) {
+        return {
+          html: `${header}<br/>No data`,
+          style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
+        };
+      }
+      const val = getPesticideValue(data, selectedClass);
+      // Top 3 active ingredients
+      const ingredientsHtml = data.top_ingredients
+        .slice(0, 3)
+        .map(ing => `<br/><span style="color:#6b7280">${ing.name}: ${formatLbs(ing.lbs_applied)} lbs</span>`)
+        .join('');
       return {
-        html: `${header}<br/>${data ? `${data.lbs_per_sq_mile.toLocaleString()} lbs/sq mi<br/><span style="color:#6b7280">${data.top_pesticide_class}</span>` : 'No data'}`,
+        html: `${header}<br/>${val.toLocaleString()} lbs/sq mi · ${classLabel}${ingredientsHtml}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -557,6 +718,18 @@ function PesticideMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; t
           <a href="https://trackingcalifornia.org/data-and-tools/pesticide-mapping-tool" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">Source</a>
         </>
       }
+      headerRight={
+        <select
+          value={selectedClass}
+          onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
+          className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+        >
+          <option value="all">All Classes</option>
+          {PESTICIDE_CLASSES.map(cls => (
+            <option key={cls.value} value={cls.value}>{cls.label}</option>
+          ))}
+        </select>
+      }
       legend={
         <GradientLegend
           label="lbs / sq mile"
@@ -570,39 +743,51 @@ function PesticideMap({ showSuperfund, tractLevel }: { showSuperfund: boolean; t
 }
 
 // ---------------------------------------------------------------------------
-// Correlation Scatter Plot
+// Correlation Scatter Plot (pair-wise)
 // ---------------------------------------------------------------------------
-
-type ScatterXVar = 'pesticide' | 'superfund' | 'ces_score';
-
-const X_VAR_OPTIONS: { value: ScatterXVar; label: string; unit: string }[] = [
-  { value: 'pesticide', label: 'Pesticide Use', unit: 'lbs/sq mi' },
-  { value: 'superfund', label: 'Superfund Sites', unit: 'sites' },
-  { value: 'ces_score', label: 'CES Score', unit: 'percentile' },
-];
 
 function CorrelationScatterPlot({
   countyData,
   cesData,
   xVar,
+  yVar,
 }: {
   countyData: CountyData[];
   cesData: CalEnviroScreenData[];
-  xVar: ScatterXVar;
+  xVar: ScatterVar;
+  yVar: ScatterVar;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
 
+  const countyDataMap = useMemo(() => {
+    const m = new Map<string, CountyData>();
+    countyData.forEach(c => m.set(c.county.toLowerCase(), c));
+    return m;
+  }, [countyData]);
+
+  const cesMap = useMemo(
+    () => new Map(cesData.map(d => [d.county_name, d])),
+    [cesData],
+  );
+
+  // Build a set of all county names across data sources
+  const allCounties = useMemo(() => {
+    const names = new Set<string>();
+    countyData.forEach(c => names.add(c.county));
+    cesData.forEach(d => names.add(d.county_name));
+    MOCK_PESTICIDE_DATA.forEach(d => names.add(d.county));
+    HUMAN_CANCER_RATES.forEach(d => names.add(d.county));
+    return Array.from(names);
+  }, [countyData, cesData]);
+
   const points = useMemo(() => {
-    const cesMap = new Map(cesData.map(d => [d.county_name, d]));
-    return countyData.flatMap(c => {
-      let x: number | null = null;
-      if (xVar === 'pesticide') x = PESTICIDE_BY_COUNTY[c.county]?.lbs_per_sq_mile ?? null;
-      else if (xVar === 'superfund') x = SUPERFUND_BY_COUNTY[c.county]?.total ?? 0;
-      else if (xVar === 'ces_score') x = cesMap.get(c.county)?.ces_score ?? null;
-      if (x === null) return [];
-      return [{ county: c.county, x, y: c.count }];
+    return allCounties.flatMap(county => {
+      const x = getVarValue(county, xVar, countyDataMap, cesMap);
+      const y = getVarValue(county, yVar, countyDataMap, cesMap);
+      if (x === null || y === null) return [];
+      return [{ county, x, y }];
     });
-  }, [countyData, cesData, xVar]);
+  }, [allCounties, xVar, yVar, countyDataMap, cesMap]);
 
   const margin = { top: 20, right: 20, bottom: 50, left: 60 };
   const width = 520;
@@ -625,21 +810,23 @@ function CorrelationScatterPlot({
     const n = points.length;
     const meanX = points.reduce((s, p) => s + p.x, 0) / n;
     const meanY = points.reduce((s, p) => s + p.y, 0) / n;
+    const denom = points.reduce((s, p) => s + (p.x - meanX) ** 2, 0);
+    if (denom === 0) return null;
     const slope =
-      points.reduce((s, p) => s + (p.x - meanX) * (p.y - meanY), 0) /
-      points.reduce((s, p) => s + (p.x - meanX) ** 2, 0);
+      points.reduce((s, p) => s + (p.x - meanX) * (p.y - meanY), 0) / denom;
     const intercept = meanY - slope * meanX;
     const xMin = Math.min(...points.map(p => p.x));
     const xMax = Math.max(...points.map(p => p.x));
     return { x1: xMin, y1: slope * xMin + intercept, x2: xMax, y2: slope * xMax + intercept };
   }, [points]);
 
-  const xVarMeta = X_VAR_OPTIONS.find(o => o.value === xVar)!;
+  const xMeta = getVarMeta(xVar);
+  const yMeta = getVarMeta(yVar);
   const xTicks = xScale.ticks(5);
   const yTicks = yScale.ticks(5);
 
   if (points.length === 0) {
-    return <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">No overlapping county data for this variable.</div>;
+    return <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">No overlapping county data for these variables.</div>;
   }
 
   return (
@@ -656,9 +843,9 @@ function CorrelationScatterPlot({
               <circle cx={xScale(p.x)} cy={yScale(p.y)} r={hovered === p.county ? 7 : 5} fill={hovered === p.county ? '#E87722' : '#1A6B77'} opacity={0.8} style={{ cursor: 'pointer', transition: 'r 0.1s' }} />
               {hovered === p.county && (
                 <g>
-                  <rect x={xScale(p.x) + 8} y={yScale(p.y) - 30} width={140} height={38} rx={4} fill="white" stroke="#E5E7EB" strokeWidth={1} filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))" />
+                  <rect x={xScale(p.x) + 8} y={yScale(p.y) - 30} width={180} height={38} rx={4} fill="white" stroke="#E5E7EB" strokeWidth={1} filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))" />
                   <text x={xScale(p.x) + 14} y={yScale(p.y) - 14} fontSize={10} fontWeight="600" fill="#1F2937">{p.county}</text>
-                  <text x={xScale(p.x) + 14} y={yScale(p.y) + 2} fontSize={9} fill="#6B7280">{xVarMeta.label}: {p.x.toLocaleString()} · Cases: {p.y.toLocaleString()}</text>
+                  <text x={xScale(p.x) + 14} y={yScale(p.y) + 2} fontSize={9} fill="#6B7280">X: {p.x.toLocaleString()} · Y: {p.y.toLocaleString()}</text>
                 </g>
               )}
             </g>
@@ -670,7 +857,7 @@ function CorrelationScatterPlot({
               <text y={16} textAnchor="middle" fontSize={9} fill="#6B7280">{t.toLocaleString()}</text>
             </g>
           ))}
-          <text x={innerW / 2} y={innerH + 40} textAnchor="middle" fontSize={10} fill="#374151">{xVarMeta.label} ({xVarMeta.unit})</text>
+          <text x={innerW / 2} y={innerH + 40} textAnchor="middle" fontSize={10} fill="#374151">{xMeta.label} ({xMeta.unit})</text>
           <line x1={0} x2={0} y1={0} y2={innerH} stroke="#9CA3AF" strokeWidth={1} />
           {yTicks.map(t => (
             <g key={t} transform={`translate(0,${yScale(t)})`}>
@@ -678,10 +865,212 @@ function CorrelationScatterPlot({
               <text x={-8} textAnchor="end" dominantBaseline="middle" fontSize={9} fill="#6B7280">{t.toLocaleString()}</text>
             </g>
           ))}
-          <text transform={`translate(${-44},${innerH / 2}) rotate(-90)`} textAnchor="middle" fontSize={10} fill="#374151">Cancer Cases</text>
+          <text transform={`translate(${-44},${innerH / 2}) rotate(-90)`} textAnchor="middle" fontSize={10} fill="#374151">{yMeta.label} ({yMeta.unit})</text>
         </g>
       </svg>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pesticide Trend Line Chart (2015–2019)
+// ---------------------------------------------------------------------------
+
+const TREND_YEARS = [2015, 2016, 2017, 2018, 2019];
+const TREND_COLORS = ['#1A6B77', '#E87722', '#9C27B0', '#EF4444', '#2563EB', '#059669', '#D97706', '#6366F1'];
+
+function PesticideTrendChart() {
+  // Default: top 5 counties by lbs/sq mi
+  const sortedCounties = useMemo(
+    () => [...MOCK_PESTICIDE_DATA].sort((a, b) => b.lbs_per_sq_mile - a.lbs_per_sq_mile).map(d => d.county),
+    [],
+  );
+  const [selectedCounties, setSelectedCounties] = useState<string[]>(() => sortedCounties.slice(0, 5));
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  const toggleCounty = (county: string) => {
+    setSelectedCounties(prev =>
+      prev.includes(county) ? prev.filter(c => c !== county) : [...prev, county],
+    );
+  };
+
+  const margin = { top: 20, right: 120, bottom: 40, left: 60 };
+  const width = 600;
+  const height = 300;
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+
+  const selectedData = useMemo(
+    () => MOCK_PESTICIDE_DATA.filter(d => selectedCounties.includes(d.county)),
+    [selectedCounties],
+  );
+
+  const yMax = useMemo(() => {
+    let max = 0;
+    for (const d of selectedData) {
+      for (const yr of TREND_YEARS) {
+        const v = d.by_year[yr];
+        if (v > max) max = v;
+      }
+    }
+    return max || 1;
+  }, [selectedData]);
+
+  const xScale = useMemo(
+    () => scaleLinear().domain([2015, 2019]).range([0, innerW]),
+    [innerW],
+  );
+
+  const yScale = useMemo(
+    () => scaleLinear().domain([0, yMax * 1.1]).range([innerH, 0]).nice(),
+    [innerH, yMax],
+  );
+
+  const yTicks = yScale.ticks(5);
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+            Pesticide Use Trends (2015–2019)
+          </h3>
+          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Annual lbs/sq mi</p>
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setDropdownOpen(v => !v)}
+            className="text-xs border border-gray-300 rounded-md px-3 py-1.5 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+          >
+            Counties ({selectedCounties.length})
+            <svg className="inline-block w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+          </button>
+          {dropdownOpen && (
+            <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-48 max-h-60 overflow-y-auto">
+              {sortedCounties.map(county => (
+                <label key={county} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs">
+                  <input
+                    type="checkbox"
+                    checked={selectedCounties.includes(county)}
+                    onChange={() => toggleCounty(county)}
+                    className="rounded border-gray-300 text-[var(--color-teal)] focus:ring-[var(--color-teal)]"
+                  />
+                  <span className="text-[var(--color-text-primary)]">{county}</span>
+                  <span className="text-[var(--color-text-secondary)] ml-auto">{PESTICIDE_BY_COUNTY[county].lbs_per_sq_mile}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="p-4">
+        {selectedData.length === 0 ? (
+          <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">Select counties to view trends.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: `${width}px`, display: 'block', margin: '0 auto' }}>
+              <g transform={`translate(${margin.left},${margin.top})`}>
+                {/* Grid lines */}
+                {yTicks.map(t => <line key={t} x1={0} x2={innerW} y1={yScale(t)} y2={yScale(t)} stroke="#E5E7EB" strokeWidth={1} />)}
+                {TREND_YEARS.map(yr => <line key={yr} x1={xScale(yr)} x2={xScale(yr)} y1={0} y2={innerH} stroke="#E5E7EB" strokeWidth={1} />)}
+
+                {/* Lines */}
+                {selectedData.map((d, i) => {
+                  const color = TREND_COLORS[i % TREND_COLORS.length];
+                  const isHov = hovered === d.county;
+                  const pathD = TREND_YEARS.map((yr, j) => {
+                    const x = xScale(yr);
+                    const y = yScale(d.by_year[yr]);
+                    return `${j === 0 ? 'M' : 'L'}${x},${y}`;
+                  }).join(' ');
+                  return (
+                    <g key={d.county} onMouseEnter={() => setHovered(d.county)} onMouseLeave={() => setHovered(null)} style={{ cursor: 'pointer' }}>
+                      <path d={pathD} fill="none" stroke={color} strokeWidth={isHov ? 3 : 1.5} opacity={hovered && !isHov ? 0.3 : 1} />
+                      {TREND_YEARS.map(yr => (
+                        <circle key={yr} cx={xScale(yr)} cy={yScale(d.by_year[yr])} r={isHov ? 5 : 3} fill={color} opacity={hovered && !isHov ? 0.3 : 1} />
+                      ))}
+                      {/* Hover tooltip at 2019 point */}
+                      {isHov && (
+                        <g>
+                          <rect x={xScale(2019) + 8} y={yScale(d.by_year[2019]) - 18} width={100} height={24} rx={4} fill="white" stroke="#E5E7EB" strokeWidth={1} filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))" />
+                          <text x={xScale(2019) + 14} y={yScale(d.by_year[2019]) - 2} fontSize={10} fontWeight="600" fill="#1F2937">{d.county}: {d.by_year[2019]}</text>
+                        </g>
+                      )}
+                    </g>
+                  );
+                })}
+
+                {/* X axis */}
+                <line x1={0} x2={innerW} y1={innerH} y2={innerH} stroke="#9CA3AF" strokeWidth={1} />
+                {TREND_YEARS.map(yr => (
+                  <g key={yr} transform={`translate(${xScale(yr)},${innerH})`}>
+                    <line y2={4} stroke="#9CA3AF" />
+                    <text y={18} textAnchor="middle" fontSize={10} fill="#6B7280">{yr}</text>
+                  </g>
+                ))}
+                <text x={innerW / 2} y={innerH + 34} textAnchor="middle" fontSize={10} fill="#374151">Year</text>
+
+                {/* Y axis */}
+                <line x1={0} x2={0} y1={0} y2={innerH} stroke="#9CA3AF" strokeWidth={1} />
+                {yTicks.map(t => (
+                  <g key={t} transform={`translate(0,${yScale(t)})`}>
+                    <line x2={-4} stroke="#9CA3AF" />
+                    <text x={-8} textAnchor="end" dominantBaseline="middle" fontSize={9} fill="#6B7280">{t.toLocaleString()}</text>
+                  </g>
+                ))}
+                <text transform={`translate(${-44},${innerH / 2}) rotate(-90)`} textAnchor="middle" fontSize={10} fill="#374151">lbs/sq mi</text>
+
+                {/* Legend on the right */}
+                {selectedData.map((d, i) => (
+                  <g key={d.county} transform={`translate(${innerW + 12},${i * 18 + 4})`}>
+                    <line x1={0} x2={14} y1={0} y2={0} stroke={TREND_COLORS[i % TREND_COLORS.length]} strokeWidth={2} />
+                    <text x={18} dominantBaseline="middle" fontSize={9} fill="#374151">{d.county}</text>
+                  </g>
+                ))}
+              </g>
+            </svg>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Axis dropdown with optgroup support
+// ---------------------------------------------------------------------------
+
+function ScatterVarSelect({
+  value,
+  onChange,
+  label,
+}: {
+  value: ScatterVar;
+  onChange: (v: ScatterVar) => void;
+  label: string;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
+      <span className="font-medium">{label}:</span>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value as ScatterVar)}
+        className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent max-w-[180px]"
+      >
+        {SCATTER_VAR_GROUPS.map(group => {
+          const opts = SCATTER_VAR_OPTIONS.filter(o => o.group === group);
+          if (opts.length === 0) return null;
+          return (
+            <optgroup key={group} label={group}>
+              {opts.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </optgroup>
+          );
+        })}
+      </select>
+    </label>
   );
 }
 
@@ -699,21 +1088,43 @@ const MAP_OPTIONS: { id: MapId; label: string }[] = [
   { id: 'pesticide', label: 'Pesticide Use' },
 ];
 
-interface AnalysisViewProps {
-  countyData: CountyData[];
-  countRange: { min: number; max: number };
-}
+export function AnalysisView() {
+  // Cancer filters (independent from Overview page)
+  const [analysisFilters, setAnalysisFilters] = useState<FilterState>({
+    rateType: 'incidence',
+    sex: 'all',
+    cancerType: 'All Types',
+    breed: 'All Breeds',
+  });
+  const { countyData, countRange } = useFilteredData(analysisFilters);
 
-export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
-  const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
+  const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('pesticides');
   const [mapCount, setMapCount] = useState<MapCount>(3);
   const [twoMapSelection, setTwoMapSelection] = useState<[MapId, MapId]>(['vmth', 'enviro']);
   const [threeMapSelection, setThreeMapSelection] = useState<[MapId, MapId, MapId]>(['vmth', 'enviro', 'human']);
   const [showSuperfund, setShowSuperfund] = useState(false);
-  const [tractLevel, setTractLevel] = useState(false);
-  const [scatterXVar, setScatterXVar] = useState<ScatterXVar>('pesticide');
+  const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
+  const [scatterXVar, setScatterXVar] = useState<ScatterVar>('pesticides');
+  const [scatterYVar, setScatterYVar] = useState<ScatterVar>('cancer_cases');
+  const [autoSync, setAutoSync] = useState(true);
+  const [pesticideClass, setPesticideClass] = useState<PesticideClass | 'all'>('all');
 
   const { data: cesData } = useCalEnviroScreenData();
+
+  // Auto-sync handlers
+  const handleIndicatorChange = (newIndicator: CESIndicator) => {
+    setSelectedIndicator(newIndicator);
+    if (autoSync && isCesVar(scatterXVar)) {
+      setScatterXVar(newIndicator);
+    }
+  };
+
+  const handleScatterXChange = (newVar: ScatterVar) => {
+    setScatterXVar(newVar);
+    if (autoSync && isCesVar(newVar)) {
+      setSelectedIndicator(newVar as CESIndicator);
+    }
+  };
 
   const visibleMaps: MapId[] =
     mapCount === 2 ? twoMapSelection :
@@ -730,10 +1141,10 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
 
   const renderMap = (id: MapId) => {
     switch (id) {
-      case 'vmth':    return <CancerMap key={id} countyData={countyData} countRange={countRange} showSuperfund={showSuperfund} tractLevel={tractLevel} />;
-      case 'enviro':  return <EnviroScreenMap key={id} data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} tractLevel={tractLevel} onIndicatorChange={setSelectedIndicator} />;
-      case 'human':   return <HumanCancerMap key={id} showSuperfund={showSuperfund} tractLevel={tractLevel} />;
-      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} tractLevel={tractLevel} />;
+      case 'vmth':    return <CancerMap key={id} countyData={countyData} countRange={countRange} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
+      case 'enviro':  return <EnviroScreenMap key={id} data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} geoLevel={geoLevel} onIndicatorChange={handleIndicatorChange} />;
+      case 'human':   return <HumanCancerMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
+      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} selectedClass={pesticideClass} onClassChange={setPesticideClass} />;
     }
   };
 
@@ -778,16 +1189,50 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
             Superfund Sites
           </button>
 
-          <button
-            onClick={() => setTractLevel(v => !v)}
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${tractLevel ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
+          {/* Geo level segmented control */}
+          <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+            {GEO_LEVEL_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setGeoLevel(opt.value)}
+                className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 first:border-l-0 transition-colors ${geoLevel === opt.value ? 'bg-blue-500 text-white' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Vertical divider */}
+          <div className="w-px h-6 bg-gray-300" />
+
+          {/* Cancer filters */}
+          <select
+            value={analysisFilters.cancerType}
+            onChange={e => setAnalysisFilters(f => ({ ...f, cancerType: e.target.value }))}
+            className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
           >
-            <span className={`w-2 h-2 rounded-full ${tractLevel ? 'bg-blue-500' : 'bg-gray-400'}`} />
-            Census Tract Level
-          </button>
+            {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
+          </select>
+
+          <select
+            value={analysisFilters.breed}
+            onChange={e => setAnalysisFilters(f => ({ ...f, breed: e.target.value }))}
+            className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+          >
+            {BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+
+          <select
+            value={analysisFilters.sex}
+            onChange={e => setAnalysisFilters(f => ({ ...f, sex: e.target.value as FilterState['sex'] }))}
+            className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+          >
+            {SEX_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
 
           {mapCount < 4 && (
             <>
+              <div className="w-px h-6 bg-gray-300" />
               <span className="text-xs font-medium text-[var(--color-text-secondary)]">Show:</span>
               {Array.from({ length: mapCount }, (_, i) => (
                 <select
@@ -811,26 +1256,34 @@ export function AnalysisView({ countyData, countRange }: AnalysisViewProps) {
 
       {/* Scatter plot */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Environmental Correlation</h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Cancer cases vs. environmental exposure by county</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Pair-wise comparison by county</p>
           </div>
-          <select
-            value={scatterXVar}
-            onChange={e => setScatterXVar(e.target.value as ScatterXVar)}
-            className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-          >
-            {X_VAR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label} ({o.unit})</option>)}
-          </select>
+          <div className="flex flex-wrap items-center gap-3">
+            <ScatterVarSelect label="Y" value={scatterYVar} onChange={setScatterYVar} />
+            <ScatterVarSelect label="X" value={scatterXVar} onChange={handleScatterXChange} />
+            <button
+              onClick={() => setAutoSync(v => !v)}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${autoSync ? 'bg-teal-50 border-teal-300 text-teal-700' : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
+              title="When enabled, changing the CES map indicator also updates the scatter X axis (and vice versa)"
+            >
+              <span className={`w-2 h-2 rounded-full ${autoSync ? 'bg-teal-500' : 'bg-gray-400'}`} />
+              Sync
+            </button>
+          </div>
         </div>
         <div className="p-4">
-          <CorrelationScatterPlot countyData={countyData} cesData={cesData} xVar={scatterXVar} />
+          <CorrelationScatterPlot countyData={countyData} cesData={cesData} xVar={scatterXVar} yVar={scatterYVar} />
           <p className="text-xs text-[var(--color-text-secondary)] mt-3 text-center">
             Dashed line shows linear trend · Each dot is one county · Hover for details
           </p>
         </div>
       </div>
+
+      {/* Pesticide Trend Chart */}
+      <PesticideTrendChart />
     </div>
   );
 }

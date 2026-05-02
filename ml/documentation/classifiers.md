@@ -326,6 +326,24 @@ recall-precision trade-off via its training objective.
 **Run 8 (baseline, no gate):** GroupClassifier ran unconditionally; `PresenceClassifier` was a fallback
 for cases where no group cleared the threshold, not a gate.
 
+### Phase 25 Evaluation Results (2026-05-01) — CURRENT
+
+**3-stage pipeline (CasePresenceClassifier rw=0.85 + GroupClassifier Phase 24 + KW).**
+Phase 25 fixed FN=25% from Phase 24 by retraining CasePresenceClassifier with recall_weight=0.85.
+
+| Config | G+S | CO | FP | FN | Total |
+|--------|-----|----|----|-----|-------|
+| Ph24 3-stage rw=0.7 gate=0.5 | 49.1% | 22.1% | 3.7% | 25.0% | 6,748 |
+| Ph25 3-stage rw=0.85 gate=0.3 | 61.1% | 26.3% | 9.7% | 3.0% | 7,324 |
+| **Ph25 3-stage rw=0.85 gate=0.5** | **62.6%** | **26.2%** | **6.7%** | **4.5%** | **7,084** |
+
+Best config: `--case-presence-threshold 0.5 --group-classifier-threshold 0.90`.
+
+**Note:** PresenceClassifier cycles (binary mode) are NOT used in the 3-stage pipeline.
+Binary best (c14): 65.7% train G+S. 3-stage uses GroupClassifier + CasePresenceClassifier only.
+
+---
+
 ### Phase 23 Evaluation Results (2026-04-28)
 
 **Backbone:** Round 2 contrastive fine-tuned PetBERT (InfoNCE + hard-negative loss).

@@ -41,6 +41,8 @@ def build_training_data(
     expectation_csv_path: str,
     out_path: str,
     train_cases_txt: str = "",
+    uncommon_threshold: int = 200,
+    uncommon_groups_out: str = "",
 ) -> None:
     # --- Load embedding cache ------------------------------------------------
     print(f"Loading embedding cache: {cache_path}")
@@ -81,14 +83,33 @@ def build_training_data(
     kw = pd.read_csv(expectation_csv_path)
     kw = kw[kw["matched_group"].notna()].copy()
 
-    # --- Build sorted group list (deterministic ordering) --------------------
+    # --- Build sorted group list, split into common and uncommon -------------
     all_groups: list[str] = sorted(kw["matched_group"].unique())
-    G = len(all_groups)
-    group_idx = {g: i for i, g in enumerate(all_groups)}
-    print(f"Found {G} cancer groups across {kw['case_id'].nunique()} keyword-confirmed cases")
+    print(f"Found {len(all_groups)} cancer groups across {kw['case_id'].nunique()} keyword-confirmed cases")
+
+    if uncommon_threshold > 0:
+        in_cache = kw[kw["case_id"].astype(str).isin(case_idx)]
+        per_group = in_cache["matched_group"].value_counts()
+        common_groups = sorted(g for g in all_groups if per_group.get(g, 0) >= uncommon_threshold)
+        uncommon_group_names = sorted(g for g in all_groups if per_group.get(g, 0) < uncommon_threshold)
+    else:
+        common_groups = all_groups
+        uncommon_group_names = []
+
+    has_uncommon = len(uncommon_group_names) > 0
+    final_groups: list[str] = common_groups + (["Uncommon"] if has_uncommon else [])
+    G = len(final_groups)
+    group_idx = {g: i for i, g in enumerate(final_groups)}
+
+    if has_uncommon:
+        print(f"  Common groups  (>= {uncommon_threshold} cases): {len(common_groups)}")
+        print(f"  Uncommon groups (< {uncommon_threshold} cases): {len(uncommon_group_names)} → merged into 'Uncommon'")
+        for g in uncommon_group_names:
+            print(f"    - {g} ({per_group.get(g, 0)} cases)")
 
     # --- Build multi-hot targets (N, G) — default all zeros (non-cancer) ----
     targets = np.zeros((N, G), dtype=np.float32)
+    uncommon_idx = group_idx.get("Uncommon")
     skipped = 0
     for _, row in kw.iterrows():
         cid = str(row["case_id"])
@@ -98,6 +119,8 @@ def build_training_data(
             continue
         if group in group_idx:
             targets[case_idx[cid], group_idx[group]] = 1.0
+        elif uncommon_idx is not None:
+            targets[case_idx[cid], uncommon_idx] = 1.0
 
     if skipped > 0:
         print(f"  Note: {skipped} keyword rows had case_ids not found in the embedding cache")
@@ -124,8 +147,15 @@ def build_training_data(
     print()
     print(f"{'Group':<50} {'Cases':>6} {'Weight':>7}")
     print("-" * 65)
-    for g, group_name in enumerate(all_groups):
+    for g, group_name in enumerate(final_groups):
         print(f"{group_name:<50} {int(positive_counts[g]):>6} {class_weights[g]:>7.2f}")
+
+    # --- Write uncommon group list -------------------------------------------
+    if has_uncommon and uncommon_groups_out:
+        Path(uncommon_groups_out).parent.mkdir(parents=True, exist_ok=True)
+        with open(uncommon_groups_out, "w", encoding="utf-8") as f:
+            f.write("\n".join(uncommon_group_names) + "\n")
+        print(f"\nUncommon groups list: {uncommon_groups_out} ({len(uncommon_group_names)} groups)")
 
     # --- Save ----------------------------------------------------------------
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +164,7 @@ def build_training_data(
         embeddings=embeddings,
         targets=targets,
         case_ids=np.array(case_ids, dtype=object),
-        group_names=np.array(all_groups, dtype=object),
+        group_names=np.array(final_groups, dtype=object),
         class_weights=class_weights,
     )
     print(f"\nSaved: {out_path} ({N} cases, {G} groups)")
@@ -165,8 +195,24 @@ def main() -> int:
         help="Path to train_cases.txt. When provided, only those case IDs are included. "
              "Generate with ml/training/data/create_split.py.",
     )
+    parser.add_argument(
+        "--uncommon-threshold",
+        type=int,
+        default=200,
+        help="Groups with fewer cases than this are merged into a single 'Uncommon' output "
+             "class. Set to 0 to disable and keep all groups separate (default: 200).",
+    )
+    parser.add_argument(
+        "--uncommon-groups-out",
+        default=config.UNCOMMON_GROUPS_TXT,
+        help=f"Path to write the uncommon group names list (default: {config.UNCOMMON_GROUPS_TXT})",
+    )
     args = parser.parse_args()
-    build_training_data(args.embedding_cache, args.expectation_csv, args.out, args.train_cases)
+    build_training_data(
+        args.embedding_cache, args.expectation_csv, args.out, args.train_cases,
+        uncommon_threshold=args.uncommon_threshold,
+        uncommon_groups_out=args.uncommon_groups_out,
+    )
     return 0
 
 

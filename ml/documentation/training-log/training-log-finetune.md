@@ -1113,6 +1113,60 @@ excluding or reweighting "Unidentified Cancer" during GroupClassifier training w
 
 ---
 
+### Run 11 — 2026-05-01: Phase 25 — CasePresenceClassifier rw=0.85 + PresenceClassifier c11–c14
+
+**Context:** Phase 24 3-stage pipeline had FN=25.0% on the test set. Root cause: CasePresenceClassifier
+was trained with default recall_weight=0.7, making the gate too conservative at threshold=0.5.
+
+**Bug fixes applied:**
+- `ml/model/constants.py` — restored `DEFAULT_TEXT_COLS` (needed by `training/binary/build_training_pairs.py` and `train.py`)
+- `ml/training/binary/train.py` — default `out_dir` changed from missing `config.CHECKPOINT_BINARY_DIR` to `config.CHECKPOINT_CONTRASTIVE_DIR`
+
+#### CasePresenceClassifier Retraining (recall_weight=0.85)
+
+Config: epochs=25, recall_weight=0.85, pos_weight=1.0, device=xpu.
+Dataset: 46,652 cases (21,853 cancer / 24,799 non-cancer), 85/15 split.
+
+| Epoch | Loss  | F1    | P     | R     | Score |
+|-------|-------|-------|-------|-------|-------|
+| 1     | 0.239 | 0.920 | 0.945 | 0.897 | 0.904 |
+| 6     | 0.167 | 0.933 | 0.928 | 0.937 | 0.936 |
+| **10**| **0.152** | **0.934** | **0.927** | **0.941** | **0.939** ← best |
+| 15    | 0.139 | 0.937 | 0.938 | 0.935 | 0.936 |
+| 25    | 0.119 | 0.937 | 0.943 | 0.931 | 0.933 |
+
+Best score 0.939 at epoch 10 (P=92.7%, R=94.1%). Saved: `case_presence_classifier.pt`.
+
+#### Threshold Sweep (test set, with Phase 24 GroupClassifier)
+
+| Config | G+S | CO | FP | FN | Total |
+|--------|-----|----|----|-----|-------|
+| Ph24 rw=0.7 gate=0.5 | 49.1% | 22.1% | 3.7% | 25.0% | 6,748 |
+| Ph25 rw=0.85 gate=0.3 | 61.1% | 26.3% | 9.7% | 3.0% | 7,324 |
+| **Ph25 rw=0.85 gate=0.5** | **62.6%** | **26.2%** | **6.7%** | **4.5%** | **7,084** |
+
+**Key finding:** recall_weight=0.85 fixed the FN=25% problem. At gate=0.5, G+S=62.6% vs 49.1%
+(+13.5pp) and FN=4.5% vs 25.0% (−20.5pp). Threshold=0.3 has lower FN (3.0%) but higher FP (9.7%).
+
+**Best 3-stage config: gate=0.5 group-t=0.90** with rw=0.85 CasePresenceClassifier.
+
+#### PresenceClassifier Cycles c11–c14 (binary mode only)
+
+PresenceClassifier cycles improve binary predictions only — NOT used in the 3-stage pipeline.
+
+| Cycle | G+S | FP | CO | Notes |
+|-------|-----|----|----|-------|
+| c10 (prev best) | 63.8% | 19.2% | 16.9% | Phase 24 |
+| c11 | 55.2% | 30.0% | 14.8% | Odd cycle |
+| **c12** | **65.5%** | **17.7%** | **16.6%** | **New best** |
+| c13 | 53.9% | 31.6% | 14.4% | Odd cycle |
+| **c14** | **65.7%** | **17.1%** | **17.1%** | **New best** |
+
+Best checkpoint (binary): `presence_classifier_best.pt` (65.7%, c14).
+Odd/even alternation continues. Marginal gain c12→c14 (+0.2pp) suggests plateau approaching.
+
+---
+
 ## Approach B — End-to-end Group Classification (WIP, blocked)
 
 Fine-tunes PetBERT as a sequence classifier directly predicting Vet-ICD-O groups.

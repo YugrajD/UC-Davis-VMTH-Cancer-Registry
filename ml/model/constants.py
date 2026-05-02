@@ -3,3 +3,10 @@
 PETBERT_EMB_DIM: int = 768    # PetBERT mean-pooled embedding dimension
 DEFAULT_HIDDEN_DIM: int = 512  # MLP hidden layer size (Phase 17+ production default)
 DEFAULT_DROPOUT: float = 0.3   # MLP dropout probability
+
+# Report text columns used for merging/embedding (matches text_selector.SOURCE_COLS)
+DEFAULT_TEXT_COLS: tuple[str, ...] = (
+    "HISTOPATHOLOGICAL SUMMARY",
+    "FINAL COMMENT",
+    "COMMENT",
+)

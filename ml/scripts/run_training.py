@@ -112,6 +112,9 @@ def main() -> int:
                              "Prevents rare-group class weights (up to 3500x) from dominating training.")
     parser.add_argument("--weight-decay", type=float, default=1e-3,
                         help="[train-groups] Adam weight decay / L2 regularization (default: 1e-3).")
+    parser.add_argument("--uncommon-threshold", type=int, default=200,
+                        help="[train-groups] Groups with fewer training cases than this are merged "
+                             "into a single 'Uncommon' output class (default: 200). Set 0 to disable.")
 
     # ------------------------------------------------------------------
     # train-case-presence args
@@ -233,6 +236,8 @@ def main() -> int:
             expectation_csv_path=args.annotation_csv,
             out_path=config.GROUP_TRAINING_DATA_NPZ,
             train_cases_txt=args.train_cases,
+            uncommon_threshold=args.uncommon_threshold,
+            uncommon_groups_out=config.UNCOMMON_GROUPS_TXT,
         )
         print("\n=== Step 2b: Train group classifier ===")
         train_group(

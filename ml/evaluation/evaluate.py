@@ -32,7 +32,8 @@ def load_csv(path: Path) -> list[dict]:
 
 
 def score_prediction(predicted_term: str, predicted_group: str,
-                     matched_terms: set[str], matched_groups: set[str]) -> str:
+                     matched_terms: set[str], matched_groups: set[str],
+                     uncommon_groups: frozenset[str] = frozenset()) -> str:
     """Score one petbert prediction against the case's keyword label sets."""
     if not matched_terms:
         # Model correctly abstained on a non-cancer case → true negative, not FP.
@@ -46,13 +47,23 @@ def score_prediction(predicted_term: str, predicted_group: str,
         return "good"
     if predicted_group in matched_groups:
         return "slightly_off"
+    # Predicting "Uncommon" for a case whose true group is genuinely uncommon counts
+    # as slightly_off — the model got the right tier, just not the specific term.
+    if predicted_group == "Uncommon" and uncommon_groups and matched_groups & uncommon_groups:
+        return "slightly_off"
     return "completely_off"
 
 
 def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
-             cases_txt: str = "") -> None:
+             cases_txt: str = "", uncommon_groups_file: str = "") -> None:
     pb_rows = load_csv(prediction_csv)
     kw_rows = load_csv(expectation_csv)
+
+    uncommon_groups: frozenset[str] = frozenset()
+    if uncommon_groups_file and Path(uncommon_groups_file).exists():
+        with open(uncommon_groups_file, encoding="utf-8") as f:
+            uncommon_groups = frozenset(line.strip() for line in f if line.strip())
+        print(f"  Uncommon groups loaded: {len(uncommon_groups)} groups from {uncommon_groups_file}")
 
     if cases_txt and Path(cases_txt).exists():
         with open(cases_txt, encoding="utf-8") as f:
@@ -81,6 +92,7 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
         verdict = score_prediction(
             row["predicted_term"], row["predicted_group"],
             case_terms.get(cid, set()), case_groups.get(cid, set()),
+            uncommon_groups,
         )
         scored_row = {**row, "verdict": verdict}
         if verdict == "true_negative":
@@ -221,9 +233,16 @@ def main() -> int:
         help="Path to test_cases.txt (one case_id per line). When provided, only held-out "
              "test cases are evaluated. Generate with create_split.py.",
     )
+    parser.add_argument(
+        "--uncommon-groups",
+        default=config.UNCOMMON_GROUPS_TXT,
+        help="Path to uncommon_groups.txt (one group name per line). Groups listed here "
+             "are treated as correctly gated when the model predicts 'Uncommon', scoring "
+             "as slightly_off rather than completely_off.",
+    )
     args = parser.parse_args()
     evaluate(Path(args.prediction_csv), Path(args.expectation_csv), Path(args.out_dir),
-             cases_txt=args.test_cases)
+             cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups)
     return 0
 
 

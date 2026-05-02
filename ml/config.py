@@ -56,6 +56,7 @@ TEST_CASES_TXT  = "ml/output/splits/test_cases.txt"
 
 # Derived structured outputs
 GROUP_TRAINING_DATA_NPZ = "ml/output/training/group/group_training_data.npz"
+UNCOMMON_GROUPS_TXT = "ml/output/training/group/uncommon_groups.txt"
 CASE_PRESENCE_DATASET_NPZ = "ml/output/training/binary/case_presence_dataset.npz"
 CASE_PRESENCE_CLASSIFIER_PT = "ml/output/checkpoints/contrastive/case_presence_classifier.pt"
 

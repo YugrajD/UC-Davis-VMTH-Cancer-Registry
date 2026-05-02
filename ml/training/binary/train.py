@@ -137,7 +137,7 @@ def train(
     embedding_cache: str | None = None,
     report_csv: str = config.REPORTS_CSV,
     labels_csv: str = config.LABELS_CSV,
-    out_dir: str = config.CHECKPOINT_BINARY_DIR,
+    out_dir: str = config.CHECKPOINT_CONTRASTIVE_DIR,
     epochs: int = 20,
     batch_size: int = 256,
     lr: float = 1e-3,

@@ -12,7 +12,7 @@
     },
     "dependencies": {
         "@deck.gl/core": "^9.3.2",
-        "@deck.gl/layers": "^9.3.1",
+        "@deck.gl/layers": "^9.3.2",
         "@deck.gl/react": "^9.3.1",
         "@supabase/supabase-js": "^2.99.1",
         "@types/d3-array": "^3.2.2",

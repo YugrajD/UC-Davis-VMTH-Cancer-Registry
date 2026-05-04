@@ -75,9 +75,12 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
     # Build per-case label sets from keyword predictions
     case_terms: dict[str, set[str]] = defaultdict(set)
     case_groups: dict[str, set[str]] = defaultdict(set)
+    term_to_group: dict[str, str] = {}
     for row in kw_rows:
         if row["matched_term"].strip():
             case_terms[row["case_id"]].add(row["matched_term"])
+            if row["matched_group"].strip():
+                term_to_group[row["matched_term"]] = row["matched_group"]
         if row["matched_group"].strip():
             case_groups[row["case_id"]].add(row["matched_group"])
 
@@ -87,6 +90,7 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
     # Score every petbert prediction row
     out_rows: list[dict] = []
     true_negative_rows: list[dict] = []
+    uncategorized_cancer_case_ids: set[str] = set()
     for row in pb_rows:
         cid = row["case_id"]
         verdict = score_prediction(
@@ -94,41 +98,77 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
             case_terms.get(cid, set()), case_groups.get(cid, set()),
             uncommon_groups,
         )
-        scored_row = {**row, "verdict": verdict}
+        scored_row = {
+            **row,
+            "verdict": verdict,
+            "expected_term": " | ".join(sorted(case_terms.get(cid, set()))),
+            "expected_group": " | ".join(sorted(case_groups.get(cid, set()))),
+        }
         if verdict == "true_negative":
             true_negative_rows.append(scored_row)
         else:
             out_rows.append(scored_row)
+            if row["predicted_term"] == "Uncategorized" and verdict == "false_negative":
+                uncategorized_cancer_case_ids.add(cid)
 
-    # False negatives: confirmed cancer cases with no prediction row at all.
-    # Any case that appears in pb_rows already has its verdict (including false_negative
-    # for Uncategorized predictions) and must not receive a second synthesized row.
-    predicted_case_ids: set[str] = {row["case_id"] for row in pb_rows}
-    fn_case_ids: set[str] = cancer_case_ids - predicted_case_ids
+    # Determine which expected terms are covered by good or slightly_off predictions.
+    # A good prediction covers its exact term; a slightly_off prediction covers all
+    # expected terms whose group matches the predicted group.
+    covered_terms: dict[str, set[str]] = defaultdict(set)
+    for row in out_rows:
+        cid = row["case_id"]
+        if row["verdict"] == "good":
+            covered_terms[cid].add(row["predicted_term"])
+        elif row["verdict"] == "slightly_off":
+            pg = row["predicted_group"]
+            for term in case_terms.get(cid, set()):
+                if term_to_group.get(term) == pg:
+                    covered_terms[cid].add(term)
 
     # ── Write output CSV ──────────────────────────────────────────────────────
     out_path = out_dir / "evaluation.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = list(pb_rows[0].keys()) + ["verdict"]
-    # Blank template for prediction fields (FN cases have no petbert row)
+
+    # Build fieldnames: drop 'method', interleave expected_* after predicted_*
+    base_fields = [f for f in pb_rows[0].keys() if f not in ("method", "predicted_code")]
+    fieldnames: list[str] = []
+    for f in base_fields:
+        fieldnames.append(f)
+        if f == "predicted_term":
+            fieldnames.append("expected_term")
+        elif f == "predicted_group":
+            fieldnames.append("expected_group")
+    fieldnames.append("verdict")
+
+    # One FN row per uncovered expected term. Cases that predicted "Uncategorized"
+    # already have a FN prediction row and are excluded to avoid double-counting.
     blank_pred = {k: "" for k in pb_rows[0].keys()}
     fn_rows = [
-        {**blank_pred, "case_id": cid, "verdict": "false_negative"}
-        for cid in fn_case_ids
+        {
+            **blank_pred,
+            "case_id": cid,
+            "verdict": "false_negative",
+            "expected_term": term,
+            "expected_group": term_to_group.get(term, ""),
+        }
+        for cid, terms in case_terms.items()
+        if cid not in uncategorized_cancer_case_ids
+        for term in terms
+        if term not in covered_terms.get(cid, set())
     ]
     # true_negatives are excluded from evaluation.csv (correct abstentions add no signal)
     all_rows = sorted(out_rows + fn_rows, key=lambda r: int(r["case_id"].split("-")[-1]) if r["case_id"].split("-")[-1].isdigit() else r["case_id"])
     with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(all_rows)
 
     # ── Console summary ───────────────────────────────────────────────────────
     counts = Counter(r["verdict"] for r in out_rows)
-    # FN = cases scored false_negative from prediction rows + synthesized (no prediction row).
+    # FN = Uncategorized prediction rows + per-term FN rows for uncovered expected terms.
     # True negatives (correct abstentions on non-cancer cases) are excluded from total.
-    n_false_negatives = counts["false_negative"] + len(fn_case_ids)
-    total = len(out_rows) + len(fn_case_ids)
+    n_false_negatives = counts["false_negative"] + len(fn_rows)
+    total = len(out_rows) + len(fn_rows)
     n_true_negatives = len(true_negative_rows)
 
     print(f"\n=== Overall ({total} prediction-cases, {n_true_negatives} correct abstentions excluded) ===")

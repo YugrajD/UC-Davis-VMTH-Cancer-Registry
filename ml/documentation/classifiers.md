@@ -7,14 +7,11 @@ PresenceClassifier (Approach 3) is currently the production best.
 | Classifier | Status | Best result |
 |---|---|---|
 | Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
-| GroupClassifier | **Beats binary at threshold=0.90 (Phase 23)** | **50.1% Good+Slight (Phase 23, Round 2 backbone, threshold=0.90)** |
+| GroupClassifier | **Part of 3-stage pipeline (Phase 26)** | **54.6% Good+Slight (Phase 26, 3-stage, per-label eval, test set)** |
 | Contrastive fine-tuned PetBERT + PresenceClassifier | **Production best** | **86.5% Good+Slight (Phase 18, c16) — 56.5% Good with group-keyword mode** |
 | End-to-end fine-tuned PetBERT | WIP — see `production-pipeline.md` | Not benchmarked |
 
-> **Training ground truth:** All three approaches derive training labels from the keyword
-> pipeline (`keyword_annotation.csv`). The keyword pipeline maps diagnosis field text to
-> Vet-ICD-O labels. Cases with no keyword match are treated as non-cancer (Uncategorized).
-> In production, no diagnosis text is available — classifiers predict from report text alone.
+> **Training ground truth:** Training supervision comes from the annotation pipeline. The LLM pipeline (`llm_annotation.csv`) is the authoritative source for Phase 23+ — it handles negation, hedging, and abbreviations that keyword matching misses. The keyword pipeline (`keyword_annotation.csv`) is a fast fallback for testing or when the Ollama server is unavailable. In production, no diagnosis text is available — classifiers predict from report text alone.
 
 ---
 
@@ -117,7 +114,7 @@ new keyword data). Old bank pairs are anchored to the old cosine space and will 
 
 **Files to delete:**
 ```bash
-rm -f ml/data/embedding_cache.npz
+rm -f ml/output/training/embedding_cache.npz
 rm -f ml/output/training/contrastive/evaluation_co_bank.csv
 rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 ```
@@ -326,18 +323,29 @@ recall-precision trade-off via its training objective.
 **Run 8 (baseline, no gate):** GroupClassifier ran unconditionally; `PresenceClassifier` was a fallback
 for cases where no group cleared the threshold, not a gate.
 
-### Phase 25 Evaluation Results (2026-05-01) — CURRENT
+### Phase 26 Evaluation Results (2026-05-04) — CURRENT
 
-**3-stage pipeline (CasePresenceClassifier rw=0.85 + GroupClassifier Phase 24 + KW).**
-Phase 25 fixed FN=25% from Phase 24 by retraining CasePresenceClassifier with recall_weight=0.85.
+**3-stage pipeline (CasePresenceClassifier rw=0.85 + GroupClassifier Phase 26 + KW + argmax fallback + subtype KW).**
+
+> **Evaluation methodology change (2026-05-02):** FN now counts each uncovered expected label
+> separately (per-label FN), not just "Uncategorized on a cancer case". This inflates FN% for the
+> 3-stage pipeline (which makes fewer predictions per case) vs earlier per-case-FN numbers. The
+> Phase 25 per-label baseline was 51.8% G+S.
+
+| Config | G+S | CO | FP | FN | Total | Notes |
+|--------|-----|----|----|-----|-------|-------|
+| Ph25 3-stage gate=0.5 group-t=0.90 (per-label baseline) | 51.8% | 19.3% | 4.7% | 24.1% | 8,744 | Starting point |
+| + group-t=0.85 + argmax fallback + subtype KW | 53.6% | 23.4% | 4.9% | 18.1% | 9,255 | Tier 1+2 |
+| **+ GroupCLF Phase 26 (F1=0.4335, lr=5e-5, epoch 219)** | **54.6%** | **22.3%** | **5.0%** | **18.2%** | **9,127** | **Tier 3** |
+
+Phase 25 per-case-FN results (old methodology, not directly comparable):
 
 | Config | G+S | CO | FP | FN | Total |
 |--------|-----|----|----|-----|-------|
 | Ph24 3-stage rw=0.7 gate=0.5 | 49.1% | 22.1% | 3.7% | 25.0% | 6,748 |
-| Ph25 3-stage rw=0.85 gate=0.3 | 61.1% | 26.3% | 9.7% | 3.0% | 7,324 |
-| **Ph25 3-stage rw=0.85 gate=0.5** | **62.6%** | **26.2%** | **6.7%** | **4.5%** | **7,084** |
+| Ph25 3-stage rw=0.85 gate=0.5 | 62.6% | 26.2% | 6.7% | 4.5% | 7,084 |
 
-Best config: `--case-presence-threshold 0.5 --group-classifier-threshold 0.90`.
+Best config: `--case-presence-threshold 0.5 --group-classifier-threshold 0.85`.
 
 **Note:** PresenceClassifier cycles (binary mode) are NOT used in the 3-stage pipeline.
 Binary best (c14): 65.7% train G+S. 3-stage uses GroupClassifier + CasePresenceClassifier only.
@@ -680,9 +688,11 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
   --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt
   --case-presence-threshold 0.5
   --group-classifier ml/output/checkpoints/group/group_classifier_best.pt
-  --group-classifier-threshold 0.90
+  --group-classifier-threshold 0.85
   ```
-  Stage 1 filters non-cancer cases; Stage 2 assigns the ICD group; Stage 3 selects the specific term.
+  Stage 1 filters non-cancer cases; Stage 2 assigns the ICD group (with argmax fallback so no
+  gate-passed case is left as "Unidentified Cancer"); Stage 3 selects the specific term with
+  subtype keyword discriminators applied before cosine similarity.
   Train CasePresenceClassifier first with `--mode train-case-presence`.
 
 - **Phase 23 GroupClassifier alone (Run 8 baseline):** `--group-classifier` only, no gate — 50.1% G+S, 8.9% FP, 15.5% FN at threshold=0.90

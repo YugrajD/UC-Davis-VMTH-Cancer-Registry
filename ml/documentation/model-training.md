@@ -5,10 +5,12 @@ cancer labels (term, group, ICD code). Three classifier approaches have been exp
 
 | Approach | Status | Best result |
 |---|---|---|
-| Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
-| GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end |
-| Contrastive fine-tuning (InfoNCE) | **Production best** | **69.0% Good+Slight (Phase 17, c8)** |
+| Binary PresenceClassifier | Superseded | 41.9% G+S (Phase 16, `hidden_dim=512`) |
+| GroupClassifier | **Part of 3-stage pipeline (Phase 26)** | **54.6% G+S (Phase 26, 3-stage, per-label eval, test set)** |
+| Contrastive fine-tuned PetBERT + 3-stage pipeline | **Production best** | **54.6% G+S test set (Phase 26, per-label eval, gate=0.5, group-t=0.85)** |
 | End-to-end fine-tuned PetBERT | WIP, blocked on data volume | — |
+
+> For full current results and Phase 25 details see [classifiers.md](classifiers.md).
 
 ---
 
@@ -203,15 +205,15 @@ End-to-end results after fixing the pipeline to use 2304-dim `col_emb_concat`:
 | FP% | 27.2% | 33.3% |
 | FN% | 1.2% | 16.8% |
 
-The GroupClassifier overfits at current data volumes. Only 17 of 43 groups have ≥100
-training cases; the other 26 are unreachable at inference. Binary wins by a large
-margin. Expected crossover at ~15,000 confirmed cases.
+The results above are from Phase 16 (keyword annotation, 5,788 cases). GroupClassifier
+became competitive in Phase 23 with ~21,853 LLM-annotated train cases:
 
-| Confirmed cases | Expected outcome |
-|---|---|
-| ~5,788 (current) | Overfits — binary wins by large margin (41.9% vs 9.3%) |
-| ~10,000 | More groups cross 100-case threshold; GroupClassifier starts generalizing |
-| ~15,000+ | Meaningful CO reduction expected — GroupClassifier should pull ahead |
+| Phase | Train cases | GroupClassifier G+S @ t=0.90 | Notes |
+|-------|-------------|------------------------------|-------|
+| Phase 16 | 5,788 (keyword) | 9.3% | Severely overfits |
+| Phase 23 | 21,853 (LLM, 46,652 total) | **50.1%** | Beats binary (+2.9pp), FP −15.3pp |
+
+See [classifiers.md](classifiers.md) for Phase 23+ full results and the three-stage pipeline (Phase 25).
 
 ### Advantages
 
@@ -364,7 +366,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --device xpu --local-only
 
 # Step 2: Cold start
-rm -f ml/data/embedding_cache.npz
+rm -f ml/output/training/embedding_cache.npz
 rm -f ml/output/training/contrastive/evaluation_co_bank.csv
 rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 
@@ -397,23 +399,23 @@ GroupClassifier proves competitive.
 
 ## Comparison
 
-| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning | End-to-end fine-tuning |
+| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuned + 3-stage | End-to-end fine-tuning |
 |---|---|---|---|---|
-| **Status** | Superseded by Approach 3 | Not competitive | **Production best** | WIP, blocked |
-| **Best result** | 41.9% Good+Slight | 9.3% Good+Slight | **69.0% Good+Slight (Phase 17, c8)** | Not yet benchmarked |
-| **PetBERT** | Frozen | Frozen | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
+| **Status** | Superseded | **Competitive (Phase 23)** | **Production best** | WIP, blocked |
+| **Best result** | 41.9% G+S (Phase 16) | **50.1% G+S @ t=0.90 (Phase 23)** | **62.6% G+S test set (Phase 25, 3-stage)** | Not benchmarked |
+| **PetBERT** | Frozen | Contrastive fine-tuned | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
 | **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier | One-shot |
-| **Data requirement** | Works from ~1,273 cases | Needs ~15,000+ cases | Works at ~5,788 cases | Needs ~10,000+ cases |
+| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | Works at ~5,788 cases | Needs ~10,000+ cases |
 | **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative | Slow (full transformer) |
-| **Inference speed** | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) |
-| **CO floor** | ~30% | Designed to eliminate it | **~7%** — dramatically reduced | Designed to eliminate it |
-| **Main constraint** | CO floor eliminated by Approach 3 | Overfits at current volume | Keyword data ceiling | Compute cost, data volume |
+| **Inference speed** | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) | Fast (3-stage: gate + ~42 group scores) | Fast (~42 group scores + cosine) |
+| **CO floor** | ~30% | ~25.5% @ t=0.90 | **~26% (3-stage, Phase 25)** — backbone-level improvement | Designed to eliminate it |
+| **Main constraint** | Superseded | FN trade-off at high threshold | LLM annotation ceiling | Compute cost, data volume |
 
 ### Roadmap
 
-- **Now**: Use Phase 17 contrastive checkpoint as production best (69.0%)
-- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier; implement discriminating-keyword term selection; re-run contrastive fine-tuning
-- **After GroupClassifier proves competitive (~15,000 cases)**: Consider end-to-end fine-tuning (Approach 4)
+- **Now**: Three-stage pipeline (Phase 26) — CasePresenceClassifier + GroupClassifier (F1=0.4335) + KW correction with argmax fallback and subtype keyword discriminators. See [classifiers.md](classifiers.md) for full details.
+- **Next**: Reduce 3-stage CO% (22.3%) — backbone adaptation Round 3 with hard-negative mining from CO bank (Tier 4 in `training-ideas/ideas-to-try.md`)
+- **Later**: End-to-end fine-tuning (Approach 4) after ~10,000+ confirmed cases
 
 ---
 

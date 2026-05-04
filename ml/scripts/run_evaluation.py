@@ -52,11 +52,17 @@ def main() -> int:
         help="Path to test_cases.txt. When provided, only held-out test cases are "
              "evaluated. Generate with ml/training/data/create_split.py.",
     )
+    parser.add_argument(
+        "--uncommon-groups",
+        default=config.UNCOMMON_GROUPS_TXT,
+        help="Path to uncommon_groups.txt. 'Uncommon' predictions on cases whose true "
+             "group is listed here score as slightly_off instead of completely_off.",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
     evaluate(Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
-             cases_txt=args.test_cases)
+             cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups)
     log_evaluation(
         summary=str(out_dir / "evaluation_summary.csv"),
         history=str(out_dir / "evaluation_history.csv"),

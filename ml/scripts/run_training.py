@@ -115,6 +115,9 @@ def main() -> int:
     parser.add_argument("--uncommon-threshold", type=int, default=200,
                         help="[train-groups] Groups with fewer training cases than this are merged "
                              "into a single 'Uncommon' output class (default: 200). Set 0 to disable.")
+    parser.add_argument("--excluded-groups", default="Neoplasms, NOS",
+                        help="[train-groups] Pipe-separated group names forced into 'Uncommon' "
+                             "regardless of case count (use | not comma). Default: 'Neoplasms, NOS'.")
 
     # ------------------------------------------------------------------
     # train-case-presence args
@@ -231,6 +234,7 @@ def main() -> int:
         group_lr = args.lr if args.lr is not None else 5e-5
 
         print("\n=== Step 2a: Build group classifier training data ===")
+        excluded = [g.strip() for g in args.excluded_groups.split("|")] if args.excluded_groups else []
         build_training_data(
             cache_path=config.EMBEDDING_CACHE_NPZ,
             expectation_csv_path=args.annotation_csv,
@@ -238,6 +242,7 @@ def main() -> int:
             train_cases_txt=args.train_cases,
             uncommon_threshold=args.uncommon_threshold,
             uncommon_groups_out=config.UNCOMMON_GROUPS_TXT,
+            excluded_groups=excluded,
         )
         print("\n=== Step 2b: Train group classifier ===")
         train_group(

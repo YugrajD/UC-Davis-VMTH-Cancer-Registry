@@ -22,6 +22,8 @@ supported via `--presence-classifier` but is superseded by the three-stage desig
 
 ## Flow Chart
 
+> **Note:** This diagram depicts the legacy binary `PresenceClassifier` path (still available via `--presence-classifier`). The intended three-stage production path is described in the [Three-Stage Pipeline](#three-stage-pipeline-intended-production-path) section below.
+
 ```mermaid
 flowchart TD
     subgraph IN3["Input"]
@@ -245,7 +247,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt \
   --case-presence-threshold 0.5 \
   --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
-  --group-classifier-threshold 0.90 \
+  --group-classifier-threshold 0.85 \
   --embedding-cache ml/output/training/embedding_cache.npz \
   --device xpu --local-only
 ```
@@ -253,17 +255,20 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
 **Stage 1 — CasePresenceClassifier gate:**
 Takes the mean report embedding (768-dim) and outputs a cancer probability. Cases below
 `--case-presence-threshold` are predicted Uncategorized without reaching the GroupClassifier.
-Trained with `recall_weight=0.7` so it errs toward passing uncertain cases rather than
+Trained with `recall_weight=0.85` so it errs toward passing uncertain cases rather than
 missing cancer. Train with `--mode train-case-presence`.
 
 **Stage 2 — GroupClassifier:**
-For cases that passed the gate, predicts which of 42 cancer groups the case belongs to
-(sigmoid per group, threshold applied). Cases where no group clears the threshold become
-Uncategorized.
+For cases that passed the gate, predicts which of 25 cancer groups the case belongs to
+(sigmoid per group, threshold applied). When no group clears the threshold, argmax fallback
+is applied: the top-scoring group is used regardless of confidence, so gate-passed cases
+always receive a concrete group prediction rather than "Unidentified Cancer".
 
 **Stage 3 — KW correction:**
 Within each predicted group, ICD-O behavior keyword matching narrows candidates to the
-matching behavior digit, then cosine similarity selects the best specific term.
+matching behavior digit. A subtype keyword filter then applies group-specific histologic or
+topographic discriminators (Meningiomas, Osseous, Gliomas) before cosine similarity selects
+the best specific term.
 
 ## What Is Not The Intended Production Path
 

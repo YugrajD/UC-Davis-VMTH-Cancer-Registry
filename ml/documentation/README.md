@@ -134,6 +134,7 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 | `catalog.py` | Build a `LabelCatalog` (label strings + embedding texts) |
 | `projection.py` | Map predicted label indices → `(term, group, code)` output fields |
 | `behavior_keywords.py` | ICD-O behavior code keyword lists and scorer — used by `--categorization-mode group-keyword` |
+| `subtype_keywords.py` | Histologic/topographic subtype keyword discriminators — applied in 3-stage KW correction for Meningiomas, Osseous, Gliomas |
 | `labels.csv` | Vet-ICD-O-canine-1 taxonomy: ~857 terms across 44 cancer groups |
 
 ### `model/` — Neural network architectures
@@ -317,7 +318,12 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 
 **Train group classifier (one-shot):**
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-groups --device xpu
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode train-groups --epochs 300 --lr 5e-5 \
+  --max-class-weight 50 --weight-decay 1e-3 \
+  --device xpu --local-only \
+  --train-cases ml/output/splits/train_cases.txt \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv
 ```
 
 **Build KNN group lookup:**

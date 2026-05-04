@@ -30,8 +30,10 @@ class ScanConfig:
     embedding_cache_path: str | None = None
     group_classifier_path: str | None = None
     group_classifier_threshold: float = 0.3
+    group_classifier_fallback_to_argmax: bool = True
     case_presence_classifier_path: str | None = None
     case_presence_threshold: float = 0.5
+    uncommon_groups_path: str = _config.UNCOMMON_GROUPS_TXT
 
 
 @dataclass(frozen=True)

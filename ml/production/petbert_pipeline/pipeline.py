@@ -16,6 +16,7 @@ The high-level flow is:
 """
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -197,6 +198,17 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         # Gate-rejected cases have group_probs zeroed → fall through to Uncategorized.
         group_probs[~presence_gate_mask] = 0.0
 
+        # Load uncommon group list so "Uncommon" predictions route to KW correction
+        # across the pooled uncommon label indices rather than falling through to
+        # "Unidentified Group".
+        _uncommon_path = Path(config.uncommon_groups_path)
+        uncommon_groups: frozenset[str] = frozenset()
+        if _uncommon_path.exists():
+            uncommon_groups = frozenset(
+                line.strip() for line in _uncommon_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+
         # Stage 3: KW correction selects the best term within each predicted group.
         categorization = run_categorization_group(
             texts=texts,
@@ -209,6 +221,8 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             threshold=config.group_classifier_threshold,
             max_predictions=5,
             presence_mask=presence_gate_mask,
+            uncommon_groups=uncommon_groups,
+            fallback_to_argmax=config.group_classifier_fallback_to_argmax,
         )
 
     else:

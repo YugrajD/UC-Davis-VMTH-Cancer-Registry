@@ -1,6 +1,6 @@
-# Ideas Tried
+# Ideas Rejected
 
-Ideas that were implemented and evaluated. Each entry records what was tried, what happened, and when (if ever) to revisit.
+Ideas that were implemented and evaluated but caused regression or no improvement. Preserved to avoid repeating failed experiments. Each entry records what was tried, what happened, and when (if ever) to revisit.
 
 ---
 
@@ -102,6 +102,54 @@ Ideas that were implemented and evaluated. Each entry records what was tried, wh
 **Backups:** `model_phase20_round3_backup.safetensors` (weight=0.5), `model_phase19_round2_backup.safetensors` (Round 2, pre-hard-neg). Phase 18 best checkpoint remains `presence_classifier_best.pt` (70.4%).
 
 **When to retry:** Not before ~8,000+ confirmed cancer cases. The margin and weight values may need tuning based on label distribution at that scale.
+
+---
+
+## More LLM Annotation for Minority Groups
+
+**Status:** Not viable — **annotation pipeline is fixed; do not pursue**
+
+**Idea:** Re-run LLM annotation on cases where the current pipeline predicts "Unidentified Cancer" to add training signal for minority groups where GroupClassifier is weakest.
+
+**Why it won't work:** The annotation pipeline is already operating on all available data. There is no mechanism to generate additional ground-truth labels beyond what the existing pipeline produces — more annotation runs would not yield new cases, only re-annotate existing ones. The minority-group data ceiling is a fixed constraint of the current dataset size, not an annotation coverage gap.
+
+**Alternative:** Tier 4a (Round 3 backbone adaptation) addresses the same CO problem from the embedding side rather than the data side.
+
+---
+
+## GroupClassifier — Lower Learning Rate (lr=2e-5)
+
+**Status:** Tried (Phase 26, 2026-05-04) — **worse than lr=5e-5; do not use**
+
+**Idea:** After training GroupClassifier at lr=5e-5 (macro F1=0.4335 at epoch 219), try a lower lr=2e-5 to see if slower convergence finds a better minimum.
+
+**What happened:**
+
+| Run | Best epoch | Macro F1 |
+|-----|-----------|----------|
+| lr=5e-5 | 219 | **0.4335** |
+| lr=2e-5 | 278 | 0.4249 |
+
+Slower convergence did not find a better minimum — lr=5e-5 is better calibrated to the data volume. `group_classifier_best.pt` was not overwritten.
+
+**Conclusion:** Stick with `--lr 5e-5`. Hyperparameter sweep on weight-decay and max-class-weight are also unlikely to outperform Tier 3a given this F1 pattern.
+
+---
+
+## Lower Case Presence Threshold (gate=0.5 → 0.4)
+
+**Status:** Tried (Phase 26, 2026-05-04) — **FP increase outweighs FN gain; do not use**
+
+**Idea:** Lower the CasePresenceClassifier gate threshold from 0.5 to 0.4 to catch more cancer cases (reduce FN) at the cost of more false positives.
+
+**What happened (combined with group-t=0.85):**
+
+| Config | G+S | CO | FP | FN | Total |
+|--------|-----|----|----|-----|-------|
+| gate=0.5 group-t=0.85 | 52.3% | 24.0% | 4.9% | 18.8% | 9,335 |
+| gate=0.4 group-t=0.85 | 51.7% | 24.1% | **5.8%** | 18.4% | 9,467 |
+
+FP rises +0.9pp for only −0.4pp FN and G+S falls. Gate=0.5 remains better. The CasePresenceClassifier trained with recall_weight=0.85 already handles recall adequately at threshold=0.5.
 
 ---
 

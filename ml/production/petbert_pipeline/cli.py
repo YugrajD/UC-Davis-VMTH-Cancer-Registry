@@ -106,6 +106,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--no-group-classifier-fallback-to-argmax",
+        dest="group_classifier_fallback_to_argmax",
+        action="store_false",
+        default=True,
+        help=(
+            "Disable argmax fallback: cases where no group clears the threshold are "
+            "predicted 'Unidentified Cancer' instead of using the top-1 group. "
+            "Default: fallback is enabled."
+        ),
+    )
+    parser.add_argument(
         "--tfidf-vectorizer",
         default=config.TFIDF_VECTORIZER_PATH,
         help=(
@@ -138,6 +149,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         embedding_cache_path=args.embedding_cache,
         group_classifier_path=args.group_classifier,
         group_classifier_threshold=args.group_classifier_threshold,
+        group_classifier_fallback_to_argmax=args.group_classifier_fallback_to_argmax,
         case_presence_classifier_path=args.case_presence_classifier,
         case_presence_threshold=args.case_presence_threshold,
         tfidf_vectorizer_path=args.tfidf_vectorizer,

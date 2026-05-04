@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ICD_labels import ranked_behaviors
+from ICD_labels import filter_by_subtype, ranked_behaviors
 from .embedding import cosine_similarity_matrix
 
 
@@ -165,6 +165,8 @@ def run_categorization_group(
     threshold: float,
     max_predictions: int = 5,
     presence_mask: np.ndarray | None = None,  # (N,) bool — True if case passed presence gate
+    uncommon_groups: frozenset[str] = frozenset(),  # groups merged into the "Uncommon" bucket
+    fallback_to_argmax: bool = True,          # use argmax group when no group clears threshold
 ) -> CategorizationResult:
     """Production 3-stage categorization: CasePresenceClassifier → GroupClassifier → KW.
 
@@ -187,6 +189,11 @@ def run_categorization_group(
     group_to_label_indices: dict[str, list[int]] = {}
     for j, tl in enumerate(taxonomy_labels):
         group_to_label_indices.setdefault(tl.group, []).append(j)
+
+    # Pool of label indices for all uncommon groups — used when "Uncommon" fires.
+    uncommon_label_indices: list[int] = [
+        j for g in uncommon_groups for j in group_to_label_indices.get(g, [])
+    ]
 
     group_name_to_idx = {g: i for i, g in enumerate(group_names)}
     label_scores = np.zeros((N, M), dtype=np.float32)
@@ -229,25 +236,28 @@ def run_categorization_group(
 
         if not predicted:
             gate_passed = presence_mask is None or bool(presence_mask[i])
-            label_str = "Unidentified Cancer" if gate_passed else "Uncategorized"
-            method_str = "unidentified_cancer" if gate_passed else "low_confidence"
-            best_idxs = group_to_label_indices.get(group_names[top_group_idx], [])
-            if best_idxs:
-                emb_sims = cosine_similarity_matrix(
-                    mean_embeddings[i : i + 1], label_embeddings[best_idxs]
-                )[0]
-                best_within = int(np.argmax(emb_sims))
-                embedding_labels_list.append(labels[best_idxs[best_within]])
+            if fallback_to_argmax and gate_passed:
+                predicted = [top_group_idx]
             else:
-                embedding_labels_list.append(label_str)
-            final_labels.append(label_str)
-            final_indices.append(-1)
-            final_scores.append(float(case_probs[top_group_idx]))
-            methods.append(method_str)
-            top_k_indices.append([-1])
-            top_k_scores.append([float(case_probs[top_group_idx])])
-            top_k_methods.append([method_str])
-            continue
+                label_str = "Unidentified Cancer" if gate_passed else "Uncategorized"
+                method_str = "unidentified_cancer" if gate_passed else "low_confidence"
+                best_idxs = group_to_label_indices.get(group_names[top_group_idx], [])
+                if best_idxs:
+                    emb_sims = cosine_similarity_matrix(
+                        mean_embeddings[i : i + 1], label_embeddings[best_idxs]
+                    )[0]
+                    best_within = int(np.argmax(emb_sims))
+                    embedding_labels_list.append(labels[best_idxs[best_within]])
+                else:
+                    embedding_labels_list.append(label_str)
+                final_labels.append(label_str)
+                final_indices.append(-1)
+                final_scores.append(float(case_probs[top_group_idx]))
+                methods.append(method_str)
+                top_k_indices.append([-1])
+                top_k_scores.append([float(case_probs[top_group_idx])])
+                top_k_methods.append([method_str])
+                continue
 
         behavior_rank = ranked_behaviors(text)
         k_idxs: list[int] = []
@@ -257,7 +267,10 @@ def run_categorization_group(
 
         for g_idx in predicted[:max_predictions]:
             group_name = group_names[g_idx]
-            label_idxs = group_to_label_indices.get(group_name, [])
+            if group_name == "Uncommon":
+                label_idxs = uncommon_label_indices
+            else:
+                label_idxs = group_to_label_indices.get(group_name, [])
             if not label_idxs:
                 continue
             pool = label_idxs
@@ -266,6 +279,7 @@ def run_categorization_group(
                 if filtered:
                     pool = filtered
                     break
+            pool = filter_by_subtype(group_name, pool, labels, text)
             pool_embs = label_embeddings[pool]  # (k, 768)
             pool_sims = cosine_similarity_matrix(
                 mean_embeddings[i : i + 1], pool_embs

@@ -301,7 +301,7 @@ Both pipelines share common options. Run via `python -m annotation --method <key
 | `--id-col` | `case_id` | Case ID column name |
 | `--diag-num-col` | `diagnosis_number` | Diagnosis number column name (optional) |
 | `--text-col` | `diagnosis` | Column containing the diagnosis text |
-| `--labels-csv` | `ml/labels/labels.csv` | Path to Vet-ICD-O taxonomy CSV |
+| `--labels-csv` | `ml/ICD_labels/labels.csv` | Path to Vet-ICD-O taxonomy CSV |
 | `--max-rows` | all | Cap on input rows (for testing) |
 
 ### Keyword Pipeline Options
@@ -469,8 +469,8 @@ and top 20 terms.
 | File | Role |
 |------|------|
 | `ml/annotation/cli.py` | Unified entry point: `python -m annotation --method <keyword|llm>` |
-| `ml/labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser (`TaxonomyLabel`, `load_labels_taxonomy`) |
-| `ml/labels/labels.csv` | Vet-ICD-O-canine-1 taxonomy (~846 unique terms, 52 groups) |
+| `ml/ICD_labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser (`TaxonomyLabel`, `load_labels_taxonomy`) |
+| `ml/ICD_labels/labels.csv` | Vet-ICD-O-canine-1 taxonomy (~857 terms across 44 cancer groups) |
 
 ### Outputs
 

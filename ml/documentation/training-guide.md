@@ -204,7 +204,7 @@ the GroupClassifier runs.
 
 **Input:** mean report embedding (768-dim, from embedding cache).
 **Output:** scalar cancer probability per case.
-**Training objective:** recall-weighted (`recall_weight=0.7`) — errs toward letting
+**Training objective:** recall-weighted (`recall_weight=0.85`) — errs toward letting
 uncertain cases through rather than missing cancer.
 
 ```bash
@@ -226,7 +226,7 @@ Checkpoint saved to `ml/output/checkpoints/contrastive/case_presence_classifier.
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | `--epochs` | 20 | One-shot; no iterative cycling |
-| `--case-presence-recall-weight` | 0.7 | Prefer missing fewer cancer cases over reducing FP |
+| `--case-presence-recall-weight` | 0.85 | Prefer missing fewer cancer cases over reducing FP |
 | `--case-presence-pos-weight` | 1.0 | Increase if cancer-positive cases are heavily outnumbered |
 
 ---
@@ -243,18 +243,21 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-groups --dev
 This builds training data from the embedding cache and annotation file, trains for the
 configured number of epochs, and saves to `ml/output/checkpoints/group/group_classifier_best.pt`.
 
-> **Note:** The group classifier is not yet competitive at ~5,800 cases (9.3% vs 69.0%).
-> Re-train when annotation coverage reaches ~10,000 confirmed cases.
-
-### Options
+### Options (Phase 26 — current recommended hyperparameters)
 
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode train-groups \
-  --device xpu \
-  --epochs 50 \
-  --lr 1e-3
+  --epochs 300 --lr 5e-5 \
+  --max-class-weight 50 --weight-decay 1e-3 \
+  --device xpu --local-only \
+  --train-cases ml/output/splits/train_cases.txt \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv
 ```
+
+**Critical hyperparameters:** `--max-class-weight 50` caps BCE pos_weights (otherwise up to 3,587× on rare groups) and `--weight-decay 1e-3` prevents the model from predicting all groups for every case. Both are required.
+
+**Epoch count:** 300 epochs (Phase 26). The Phase 24 run used 150 epochs and best was at epoch 120 with loss still trending down. Phase 26 found the true best at epoch 219 (macro F1=0.4335 vs 0.3136). `lr=2e-5` was tested and found inferior (F1=0.4249).
 
 ---
 
@@ -320,7 +323,7 @@ First build the hard-negative triplets from the CO bank, then fine-tune:
 # Step 1: Build hard-negative triplets
 ml/.venv/Scripts/python.exe ml/training/contrastive/build_contrastive_dataset.py \
   --mode build-hard-neg \
-  --co-bank-csv ml/output/training/binary/evaluation_co_bank.csv
+  --co-bank-csv ml/output/training/contrastive/evaluation_co_bank.csv
 
 # Step 2: Fine-tune with both InfoNCE and hard-neg margin loss
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
@@ -333,7 +336,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --device xpu \
   --local-only \
   --skip-pair-build \
-  --hard-neg-csv ml/data/hard_neg_pairs.csv \
+  --hard-neg-csv ml/output/training/contrastive/hard_neg_pairs.csv \
   --hard-neg-weight 0.5 \
   --hard-neg-margin 0.3
 ```
@@ -346,7 +349,7 @@ This builds `(report_text, label_text)` pairs from the annotation file + report 
 then adapts PetBERT using contrastive loss. Saves a full checkpoint to
 `ml/output/checkpoints/contrastive/`.
 
-Use `--skip-pair-build` to reuse an existing `ml/data/contrastive_pairs.csv`.
+Use `--skip-pair-build` to reuse an existing `ml/output/training/contrastive/contrastive_pairs.csv`.
 
 ### Step 2 — Cold start
 
@@ -400,20 +403,23 @@ Known code issues must be resolved before running — see `training-log/training
 
 ## Running Production Inference
 
-After training, score all reports with the best checkpoint. `run_production.py`
-auto-detects the best available checkpoint (prefers `contrastive/`, falls back to `binary/`):
+After training, score all reports using the three-stage pipeline:
 
 ```bash
-# Auto-detects best checkpoint (recommended)
-ml/.venv/Scripts/python.exe ml/scripts/run_production.py --local-only
-
-# Explicit checkpoint
+# Three-stage pipeline (current production path — Phase 26)
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --presence-classifier ml/output/checkpoints/contrastive/presence_classifier_best.pt \
-  --embedding-cache ml/data/embedding_cache.npz \
-  --embedding-min-sim 0.05 \
-  --local-only
+  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt \
+  --case-presence-threshold 0.5 \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
+  --group-classifier-threshold 0.85 \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --device xpu --local-only
 ```
+
+The binary `PresenceClassifier` path (`--presence-classifier`) is still supported but superseded.
+`run_production.py` auto-detects `contrastive/presence_classifier_best.pt` as the default
+binary checkpoint when no `--case-presence-classifier` is given, but the three-stage command
+above is the intended production path.
 
 ---
 

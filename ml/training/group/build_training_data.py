@@ -43,6 +43,7 @@ def build_training_data(
     train_cases_txt: str = "",
     uncommon_threshold: int = 200,
     uncommon_groups_out: str = "",
+    excluded_groups: list[str] | None = None,
 ) -> None:
     # --- Load embedding cache ------------------------------------------------
     print(f"Loading embedding cache: {cache_path}")
@@ -87,14 +88,24 @@ def build_training_data(
     all_groups: list[str] = sorted(kw["matched_group"].unique())
     print(f"Found {len(all_groups)} cancer groups across {kw['case_id'].nunique()} keyword-confirmed cases")
 
+    force_uncommon: set[str] = set(excluded_groups) if excluded_groups else set()
+
     if uncommon_threshold > 0:
         in_cache = kw[kw["case_id"].astype(str).isin(case_idx)]
         per_group = in_cache["matched_group"].value_counts()
-        common_groups = sorted(g for g in all_groups if per_group.get(g, 0) >= uncommon_threshold)
-        uncommon_group_names = sorted(g for g in all_groups if per_group.get(g, 0) < uncommon_threshold)
+        common_groups = sorted(
+            g for g in all_groups
+            if per_group.get(g, 0) >= uncommon_threshold and g not in force_uncommon
+        )
+        uncommon_group_names = sorted(
+            g for g in all_groups
+            if per_group.get(g, 0) < uncommon_threshold or g in force_uncommon
+        )
     else:
-        common_groups = all_groups
-        uncommon_group_names = []
+        in_cache = kw[kw["case_id"].astype(str).isin(case_idx)]
+        per_group = in_cache["matched_group"].value_counts()
+        common_groups = sorted(g for g in all_groups if g not in force_uncommon)
+        uncommon_group_names = sorted(force_uncommon & set(all_groups))
 
     has_uncommon = len(uncommon_group_names) > 0
     final_groups: list[str] = common_groups + (["Uncommon"] if has_uncommon else [])
@@ -102,10 +113,17 @@ def build_training_data(
     group_idx = {g: i for i, g in enumerate(final_groups)}
 
     if has_uncommon:
+        threshold_moved = [g for g in uncommon_group_names if per_group.get(g, 0) < uncommon_threshold]
+        force_moved = [g for g in uncommon_group_names if g in force_uncommon]
         print(f"  Common groups  (>= {uncommon_threshold} cases): {len(common_groups)}")
-        print(f"  Uncommon groups (< {uncommon_threshold} cases): {len(uncommon_group_names)} → merged into 'Uncommon'")
-        for g in uncommon_group_names:
-            print(f"    - {g} ({per_group.get(g, 0)} cases)")
+        if threshold_moved:
+            print(f"  Below threshold (< {uncommon_threshold} cases): {len(threshold_moved)} -> merged into 'Uncommon'")
+            for g in threshold_moved:
+                print(f"    - {g} ({per_group.get(g, 0)} cases)")
+        if force_moved:
+            print(f"  Excluded groups (forced into 'Uncommon'): {len(force_moved)}")
+            for g in force_moved:
+                print(f"    - {g} ({per_group.get(g, 0)} cases)")
 
     # --- Build multi-hot targets (N, G) — default all zeros (non-cancer) ----
     targets = np.zeros((N, G), dtype=np.float32)
@@ -207,11 +225,20 @@ def main() -> int:
         default=config.UNCOMMON_GROUPS_TXT,
         help=f"Path to write the uncommon group names list (default: {config.UNCOMMON_GROUPS_TXT})",
     )
+    parser.add_argument(
+        "--excluded-groups",
+        default="Neoplasms, NOS",
+        help="Pipe-separated group names to force into the 'Uncommon' bucket regardless of "
+             "case count (use | not comma, as group names contain commas). "
+             "Default: 'Neoplasms, NOS'.",
+    )
     args = parser.parse_args()
+    excluded = [g.strip() for g in args.excluded_groups.split("|")] if args.excluded_groups else []
     build_training_data(
         args.embedding_cache, args.expectation_csv, args.out, args.train_cases,
         uncommon_threshold=args.uncommon_threshold,
         uncommon_groups_out=args.uncommon_groups_out,
+        excluded_groups=excluded,
     )
     return 0
 

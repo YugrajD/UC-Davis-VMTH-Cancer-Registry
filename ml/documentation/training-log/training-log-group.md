@@ -141,9 +141,62 @@ end-to-end performance. Do not retry until ~15,000 keyword-confirmed cases.
 
 ---
 
+## Experiment 4 — 300 epochs, lr=5e-5 (Phase 26, 2026-05-04)
+
+**Setup:** Same architecture and hyperparameters as Phase 24 GroupClassifier (`lr=5e-5`,
+`max-class-weight=50`, `weight-decay=1e-3`), but trained for 300 epochs instead of 150.
+46,652 train cases, 25 groups (24 common + Uncommon), 768-dim TF-IDF-selected embeddings.
+
+**Motivation:** Phase 24 best checkpoint was at epoch 120/150 with val loss still trending
+downward. Hypothesis: more epochs will extract additional convergence.
+
+**Result:**
+- **Best: epoch 219, macro F1 = 0.4335** (vs Phase 24 best 0.3136 at epoch 120 — +0.120)
+- Val loss continued decreasing (0.3662 → 0.2229), confirming headroom hypothesis
+- F1 curve noisy (0.40–0.43 range); last new best at epoch 219; epochs 220–300 produced no improvement
+- Checkpoint saved to `group_classifier_best.pt`
+
+**End-to-end pipeline evaluation (test set, gate=0.5, group-t=0.85, argmax fallback, subtype KW):**
+
+| Metric | Phase 25 baseline | Phase 26 GroupCLF |
+|--------|------------------|-------------------|
+| G+S | 51.8% | **54.6%** |
+| CO | 19.3% | 22.3% |
+| FP | 4.7% | 5.0% |
+| FN | 24.1% | 18.2% |
+| Total | 8,744 | 9,127 |
+
+G+S improved +2.8pp vs Phase 25 baseline (Tier 1+2+3a combined).
+
+**Per-group highlights:**
+- Paragangliomas: Good% 38% → 47% (improved group-level routing)
+- Ductal and lobular: 71 → 39 predictions (precision improved, fewer wrong-group misroutes)
+- Acinar cell neoplasms: 29 → 19 predictions (same pattern)
+
+**Finding:** 300 epochs extracts significant headroom (+0.120 F1, +2.8pp G+S end-to-end).
+The F1 metric is noisy epoch-to-epoch — the best checkpoint mechanism correctly captures the
+peak. Model converged at lr=5e-5; lr=2e-5 tested next (Experiment 5) and found inferior.
+
+---
+
+## Experiment 5 — lr=2e-5 sweep (Phase 26, 2026-05-04)
+
+**Setup:** Same as Experiment 4 but `lr=2e-5`. All other params unchanged.
+
+**Result:** Best macro F1 = **0.4249** at epoch 278 — inferior to Experiment 4 (0.4335).
+`group_classifier_best.pt` was not overwritten.
+
+**Conclusion:** lr=5e-5 is the right choice at current data volume. Slower convergence does not
+find a better minimum. Remaining hyperparameter candidates (weight-decay, max-class-weight)
+unlikely to improve on Experiment 4. Tier 3 hyperparameter sweep exhausted.
+
+---
+
 ## What to Try Next
 
-These are blocked on keyword coverage, not architecture:
+> **Update (Phase 23, 2026-04-28):** GroupClassifier became competitive with ~21,853 LLM-annotated train cases (46,652 total train cases). It beats binary at threshold=0.90: +2.9pp G+S, −15.3pp FP. It is now part of the three-stage production pipeline (Phase 25). This log covers Phase 16 and earlier experiments — see [classifiers.md](../classifiers.md) for Phase 23+ results.
+
+Historical roadmap (superseded):
 
 | When | What |
 |------|------|

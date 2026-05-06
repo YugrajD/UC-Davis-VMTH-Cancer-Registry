@@ -167,6 +167,7 @@ def main() -> int:
 
     # Load text_filters/gates without importing the package (avoids torch).
     text_filters = _load_module(REPO_ROOT / "ml/production/petbert_pipeline/text_filters.py")
+    ancillary_tests_support_neoplasia = text_filters.ancillary_tests_support_neoplasia
     looks_non_neoplastic = text_filters.looks_non_neoplastic
     qualifier_words_missing_from_text = text_filters.qualifier_words_missing_from_text
     qualifier_variants = text_filters._QUALIFIER_VARIANTS
@@ -221,8 +222,15 @@ def main() -> int:
 
     # Non-neoplastic gate.
     suppressed_ids: set[str] = set()
+    n_ancillary_vetoed = 0
     for cid, cols in reports.items():
-        if looks_non_neoplastic(cols.get("FINAL COMMENT", ""), cols.get("HISTOPATHOLOGICAL SUMMARY", "")):
+        fc = cols.get("FINAL COMMENT", "")
+        hp = cols.get("HISTOPATHOLOGICAL SUMMARY", "")
+        ancillary = cols.get("ANCILLARY TESTS", "")
+        if looks_non_neoplastic(fc, hp) and ancillary_tests_support_neoplasia(ancillary):
+            n_ancillary_vetoed += 1
+            continue
+        if looks_non_neoplastic(fc, hp, ancillary):
             suppressed_ids.add(cid)
     n_suppressed = 0
     for row in rows:
@@ -237,7 +245,8 @@ def main() -> int:
         n_suppressed += 1
     print(
         f"Non-neoplastic gate: flagged {len(suppressed_ids):,} cases, "
-        f"suppressed {n_suppressed:,} prediction rows"
+        f"suppressed {n_suppressed:,} prediction rows "
+        f"({n_ancillary_vetoed:,} ancillary tumor-evidence vetoes)"
     )
 
     # Write back.

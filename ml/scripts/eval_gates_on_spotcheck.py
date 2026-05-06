@@ -105,6 +105,7 @@ def main() -> int:
         group = r.get("predicted_group", "").strip()
         fc = r.get("FINAL COMMENT", "")
         hp = r.get("HISTOPATHOLOGICAL SUMMARY", "")
+        ancillary = r.get("ANCILLARY TESTS", "")
         verdict = normalize_verdict(r.get("verdict", ""))
 
         # 1. Tissue-list filter (informational — count cases where it would change HP)
@@ -116,7 +117,7 @@ def main() -> int:
         subtype_demote = bool(missing)
 
         # 3. Non-neoplastic gate
-        non_neo = looks_non_neoplastic(fc, hp)
+        non_neo = looks_non_neoplastic(fc, hp, ancillary)
 
         if stripped:
             n_strip_changed += 1

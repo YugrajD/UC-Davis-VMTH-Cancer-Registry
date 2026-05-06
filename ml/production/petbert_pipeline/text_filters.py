@@ -152,13 +152,77 @@ _NEOPLASTIC_PATTERNS = [
 _NEOPLASTIC_RE = re.compile("|".join(_NEOPLASTIC_PATTERNS), re.IGNORECASE)
 
 
-def looks_non_neoplastic(final_comment: str, hp_summary: str = "") -> bool:
+_ANCILLARY_MARKER_POSITIVE_RE = re.compile(
+    r"\b(positive|positivity|immunoreactive|immunolabel(?:ed|ing)?|"
+    r"immunoreactivity|label(?:ed|ing)|stain(?:ed|ing)?|express(?:es|ed|ion)|"
+    r"expression)\b",
+    re.IGNORECASE,
+)
+
+_ANCILLARY_NEGATIVE_RE = re.compile(
+    r"\b(negative|no immunoreactivity|not immunoreactive|"
+    r"non[- ]immunoreactive|non[- ]specific|"
+    r"failed to reveal|does not support|do not support|pending|inconclusive|"
+    r"none performed|not performed|rule(?:s|d)? out|ruled out|rule-out|"
+    r"exclude(?:s|d)?|without evidence|no evidence)\b",
+    re.IGNORECASE,
+)
+
+_ANCILLARY_TUMOR_EVIDENCE_RE = re.compile(
+    r"|".join(
+        [
+            # "neoplastic cells are positive/immunoreactive for ..."
+            r"\b(?:neoplastic|tumou?r)\s+(?:cells?|population|lymphocytes?|"
+            r"epithelial cells?|endothelial cells?|melanocytes?)\b.{0,100}"
+            r"\b(?:positive|positivity|immunoreactive|immunolabel(?:ed|ing)?|"
+            r"immunoreactivity|label(?:ed|ing)|stain(?:ed|ing)?|express(?:es|ed|ion)|"
+            r"expression)\b",
+            # "... positive/immunoreactive ... neoplastic/tumor cells"
+            r"\b(?:positive|positivity|immunoreactive|immunolabel(?:ed|ing)?|"
+            r"immunoreactivity|label(?:ed|ing)|stain(?:ed|ing)?|express(?:es|ed|ion)|"
+            r"expression)\b.{0,100}"
+            r"\b(?:neoplastic|tumou?r)\s+(?:cells?|population|lymphocytes?|"
+            r"epithelial cells?|endothelial cells?|melanocytes?)\b",
+            # Marker-positive neoplastic cells, e.g. "CD3-positive neoplastic lymphocytes".
+            r"\b[A-Z0-9][A-Za-z0-9/\- ]{1,25}[- ]positive\b.{0,80}"
+            r"\b(?:neoplastic|tumou?r)\s+(?:cells?|population|lymphocytes?|"
+            r"epithelial cells?|endothelial cells?|melanocytes?)\b",
+        ]
+    ),
+    re.IGNORECASE,
+)
+
+
+def ancillary_tests_support_neoplasia(ancillary_tests: str) -> bool:
+    """True when ancillary tests provide strong, positive tumor evidence.
+
+    This is intentionally conservative. Marker names alone do not count; the
+    evidence must connect positive marker language directly to neoplastic/tumor
+    cells. If the same ancillary section contains negation, rule-out, pending,
+    or inconclusive language, it does not veto non-neoplastic suppression.
+    """
+    text = ancillary_tests or ""
+    if not text.strip():
+        return False
+    if _ANCILLARY_NEGATIVE_RE.search(text):
+        return False
+    if not _ANCILLARY_MARKER_POSITIVE_RE.search(text):
+        return False
+    return bool(_ANCILLARY_TUMOR_EVIDENCE_RE.search(text))
+
+
+def looks_non_neoplastic(
+    final_comment: str,
+    hp_summary: str = "",
+    ancillary_tests: str = "",
+) -> bool:
     """Heuristic: True if the report's primary diagnosis appears non-neoplastic.
 
     Logic: a non-neoplastic indicator must be present in FINAL COMMENT, AND
-    no competing neoplastic primary indicator may be present in either field.
-    The HP summary is consulted only as a tie-breaker — if FINAL COMMENT is
-    ambiguous and HP summary describes a neoplasm, we keep the prediction.
+    no competing neoplastic primary indicator may be present. FINAL COMMENT and
+    HP summary are primary evidence; ANCILLARY TESTS is used only as a narrow
+    tumor-evidence veto so it can prevent unsafe suppression without creating a
+    new tumor diagnosis.
     """
     fc = final_comment or ""
     hp = hp_summary or ""
@@ -171,6 +235,10 @@ def looks_non_neoplastic(final_comment: str, hp_summary: str = "") -> bool:
     # the prediction. (HP often says "neoplastic cells infiltrate ..." even
     # when FINAL COMMENT focuses on the inflammatory secondary process.)
     if _NEOPLASTIC_RE.search(hp):
+        return False
+    # Ancillary tests can veto suppression when they strongly support a tumor,
+    # but marker names alone are deliberately ignored.
+    if ancillary_tests_support_neoplasia(ancillary_tests):
         return False
     return True
 

@@ -33,6 +33,7 @@ import pandas as pd
 
 from .text_filters import (
     _QUALIFIER_VARIANTS,
+    ancillary_tests_support_neoplasia,
     looks_non_neoplastic,
     qualifier_words_missing_from_text,
 )
@@ -203,6 +204,7 @@ def apply_non_neoplastic_gate(
     id_col: str = "case_id",
     final_comment_col: str = "FINAL COMMENT",
     hp_summary_col: str = "HISTOPATHOLOGICAL SUMMARY",
+    ancillary_tests_col: str = "ANCILLARY TESTS",
 ) -> None:
     """Suppress cancer predictions when the report's primary diagnosis is non-neoplastic.
 
@@ -214,12 +216,21 @@ def apply_non_neoplastic_gate(
     if not rows:
         return
     reports = _load_reports(
-        reports_csv_path, id_col, [final_comment_col, hp_summary_col]
+        reports_csv_path, id_col, [final_comment_col, hp_summary_col, ancillary_tests_col]
     )
 
     suppressed_ids: set[str] = set()
+    n_ancillary_vetoed = 0
     for cid, cols in reports.items():
-        if looks_non_neoplastic(cols.get(final_comment_col, ""), cols.get(hp_summary_col, "")):
+        fc = cols.get(final_comment_col, "")
+        hp = cols.get(hp_summary_col, "")
+        ancillary = cols.get(ancillary_tests_col, "")
+        # Count how often ancillary tests rescue a case that the FINAL COMMENT
+        # and HP summary alone would have suppressed.
+        if looks_non_neoplastic(fc, hp) and ancillary_tests_support_neoplasia(ancillary):
+            n_ancillary_vetoed += 1
+            continue
+        if looks_non_neoplastic(fc, hp, ancillary):
             suppressed_ids.add(cid)
 
     n_suppressed = 0
@@ -241,5 +252,6 @@ def apply_non_neoplastic_gate(
     _write_predictions(predictions_csv, rows, fieldnames)
     print(
         f"Non-neoplastic gate: suppressed {n_suppressed} predictions across "
-        f"{len(suppressed_ids)} flagged cases"
+        f"{len(suppressed_ids)} flagged cases "
+        f"({n_ancillary_vetoed} ancillary tumor-evidence vetoes)"
     )

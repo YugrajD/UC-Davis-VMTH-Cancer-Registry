@@ -205,7 +205,6 @@ class IngestionLog(Base):
 
     id = Column(Integer, primary_key=True)
     dataset_a_filename = Column(String(255))
-    dataset_b_filename = Column(String(255))
     started_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     rows_processed = Column(Integer, default=0)
@@ -223,7 +222,6 @@ class IngestionJob(Base):
     uploaded_by_email = Column(String(255), nullable=False)
     uploaded_by_sub = Column(String(255), nullable=False)
     dataset_a_filename = Column(String(255), nullable=False)
-    dataset_b_filename = Column(String(255), nullable=True)
     storage_path = Column(String(500), nullable=False)
     status = Column(String(20), nullable=False, default="pending_review")
     reviewed_by_email = Column(String(255))
@@ -252,3 +250,17 @@ class UserRole(Base):
     is_reviewer = Column(Boolean, nullable=False, server_default="false")
     updated_by_email = Column(String(255), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class RoleRequest(Base):
+    """User-submitted requests for uploader/reviewer roles."""
+    __tablename__ = "role_requests"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False)
+    requested_role = Column(String(20), nullable=False)
+    status = Column(String(20), nullable=False, server_default="pending")
+    reason = Column(Text, nullable=True)
+    resolved_by_email = Column(String(255), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

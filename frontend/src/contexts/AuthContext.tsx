@@ -11,6 +11,7 @@ interface AuthState {
   isUploader: boolean;
   isReviewer: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
 }
@@ -73,6 +74,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
   };
 
+  const signUp = async (email: string, password: string) => {
+    if (!supabaseConfigured) throw new Error('Auth is not configured');
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) throw error;
+  };
+
   const signOut = async () => {
     if (!supabaseConfigured) return;
     await supabase.auth.signOut();
@@ -88,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, signIn, signOut, getAccessToken }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, signIn, signUp, signOut, getAccessToken }}>
       {children}
     </AuthContext.Provider>
   );

@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 from app.config import settings
 from app.database import async_session
 from app.models.models import IngestionJob, UserRole
-from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review, admin_users
+from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review, admin_users, role_requests
 from app.routers import auth as auth_router
 from app.services.role_seed import seed_user_roles_from_env
 
@@ -91,6 +91,7 @@ app.include_router(ingest.router)
 app.include_router(diagnoses_review.router)
 app.include_router(admin_users.router)
 app.include_router(auth_router.router)
+app.include_router(role_requests.router)
 
 
 @app.get("/")

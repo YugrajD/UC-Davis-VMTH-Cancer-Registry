@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     GCP_BATCH_TIMEOUT_HOURS: int = 12
     GCP_BATCH_SERVICE_ACCOUNT: str = ""
 
+    # SMTP — email notifications for role requests (all default to empty = disabled)
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+
     # Per-diagnosis manual review thresholds (conservative defaults; tune
     # against a labeled validation set before relying on the auto-accept
     # band). A row is auto-confirmed at ingest only when *both* gates pass.

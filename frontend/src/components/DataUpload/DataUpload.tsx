@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   uploadCSV, fetchMyJobs, fetchMyRoleRequests, submitRoleRequest,
   fetchMyExportRequests, submitExportRequest, downloadExportCsv,
-  type IngestionJob, type RoleRequest, type ExportRequest,
+  fetchFilterOptions,
+  type IngestionJob, type RoleRequest, type ExportRequest, type ExportFilters,
 } from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginModal } from '../LoginModal/LoginModal';
@@ -349,6 +350,17 @@ export function DataUpload() {
   const [exportSubmitting, setExportSubmitting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportDownloading, setExportDownloading] = useState(false);
+  const [exportCancerType, setExportCancerType] = useState('');
+  const [exportCancerTypes, setExportCancerTypes] = useState<{ id: number; name: string }[]>([]);
+  const [exportCounty, setExportCounty] = useState('');
+  const [exportCounties, setExportCounties] = useState<{ id: number; name: string }[]>([]);
+  const [exportZipCode, setExportZipCode] = useState('');
+  const [exportSex, setExportSex] = useState('');
+  const [exportBreed, setExportBreed] = useState('');
+  const [exportBreeds, setExportBreeds] = useState<{ id: number; name: string }[]>([]);
+  const [exportYearStart, setExportYearStart] = useState('');
+  const [exportYearEnd, setExportYearEnd] = useState('');
+  const [exportYearRange, setExportYearRange] = useState<number[]>([]);
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -395,6 +407,17 @@ export function DataUpload() {
       loadExportRequests();
     }
   }, [user, loadMyJobs, loadRoleRequests, loadExportRequests]);
+
+  useEffect(() => {
+    fetchFilterOptions()
+      .then((opts) => {
+        setExportCancerTypes(opts.cancer_types);
+        setExportCounties(opts.counties);
+        setExportBreeds(opts.breeds);
+        setExportYearRange(opts.year_range);
+      })
+      .catch(() => {});
+  }, []);
 
   // Auto-poll every 10s while any job is processing
   useEffect(() => {
@@ -513,7 +536,16 @@ export function DataUpload() {
     try {
       const token = await getAccessToken();
       if (!token) return;
-      const blob = await downloadExportCsv(token);
+      const filters: ExportFilters = {
+        cancerType: exportCancerType || undefined,
+        county: exportCounty || undefined,
+        zipCode: exportZipCode || undefined,
+        sex: exportSex || undefined,
+        breed: exportBreed || undefined,
+        yearStart: exportYearStart ? Number(exportYearStart) : undefined,
+        yearEnd: exportYearEnd ? Number(exportYearEnd) : undefined,
+      };
+      const blob = await downloadExportCsv(token, filters);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -798,16 +830,125 @@ export function DataUpload() {
           </p>
 
           {isAdmin || approvedExport ? (
-            <button
-              onClick={handleExportDownload}
-              disabled={exportDownloading}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[var(--color-teal)] text-white rounded-md hover:bg-[var(--color-teal-dark)] disabled:opacity-50 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              {exportDownloading ? 'Downloading...' : 'Download Export CSV'}
-            </button>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="export-cancer-type" className="block text-xs font-medium text-gray-700 mb-1">
+                    Cancer Type
+                  </label>
+                  <select
+                    id="export-cancer-type"
+                    value={exportCancerType}
+                    onChange={(e) => setExportCancerType(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                  >
+                    <option value="">All Cancer Types</option>
+                    {exportCancerTypes.map((ct) => (
+                      <option key={ct.id} value={ct.name}>{ct.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="export-county" className="block text-xs font-medium text-gray-700 mb-1">
+                    County
+                  </label>
+                  <select
+                    id="export-county"
+                    value={exportCounty}
+                    onChange={(e) => setExportCounty(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                  >
+                    <option value="">All Counties</option>
+                    {exportCounties.map((c) => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="export-zip-code" className="block text-xs font-medium text-gray-700 mb-1">
+                    Zip Code
+                  </label>
+                  <input
+                    id="export-zip-code"
+                    type="text"
+                    value={exportZipCode}
+                    onChange={(e) => setExportZipCode(e.target.value)}
+                    placeholder="e.g. 95616"
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="export-sex" className="block text-xs font-medium text-gray-700 mb-1">
+                    Sex
+                  </label>
+                  <select
+                    id="export-sex"
+                    value={exportSex}
+                    onChange={(e) => setExportSex(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                  >
+                    <option value="">All</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Neutered Male">Neutered Male</option>
+                    <option value="Spayed Female">Spayed Female</option>
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="export-breed" className="block text-xs font-medium text-gray-700 mb-1">
+                    Breed
+                  </label>
+                  <select
+                    id="export-breed"
+                    value={exportBreed}
+                    onChange={(e) => setExportBreed(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                  >
+                    <option value="">All Breeds</option>
+                    {exportBreeds.map((b) => (
+                      <option key={b.id} value={b.name}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Year Range
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="export-year-start"
+                      type="number"
+                      value={exportYearStart}
+                      onChange={(e) => setExportYearStart(e.target.value)}
+                      placeholder={exportYearRange[0] ? String(exportYearRange[0]) : 'Start'}
+                      min={exportYearRange[0] || undefined}
+                      max={exportYearRange[1] || undefined}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                    />
+                    <input
+                      id="export-year-end"
+                      type="number"
+                      value={exportYearEnd}
+                      onChange={(e) => setExportYearEnd(e.target.value)}
+                      placeholder={exportYearRange[1] ? String(exportYearRange[1]) : 'End'}
+                      min={exportYearRange[0] || undefined}
+                      max={exportYearRange[1] || undefined}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                    />
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={handleExportDownload}
+                disabled={exportDownloading}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[var(--color-teal)] text-white rounded-md hover:bg-[var(--color-teal-dark)] disabled:opacity-50 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                {exportDownloading ? 'Downloading...' : 'Download Export CSV'}
+              </button>
+            </div>
           ) : pendingExport ? (
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200">

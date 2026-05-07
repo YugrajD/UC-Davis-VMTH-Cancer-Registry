@@ -31,7 +31,9 @@ CSV_COLUMNS = [
 ]
 
 
-async def generate_patient_export_csv(db: AsyncSession) -> str:
+async def generate_patient_export_csv(
+    db: AsyncSession, cancer_type: str | None = None
+) -> str:
     """Build a CSV string with one row per patient-diagnosis (confirmed/corrected only)."""
 
     visible = review_status_sql_in()
@@ -61,6 +63,9 @@ async def generate_patient_export_csv(db: AsyncSession) -> str:
         .where(CaseDiagnosis.review_status.in_(["confirmed", "corrected"]))
         .order_by(Patient.diagnosis_date, Patient.id)
     )
+
+    if cancer_type:
+        stmt = stmt.where(CancerType.name == cancer_type)
 
     result = await db.execute(stmt)
     rows = result.all()

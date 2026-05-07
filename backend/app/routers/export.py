@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -149,6 +149,7 @@ async def resolve_export_request(
 
 @router.get("/download")
 async def download_export_csv(
+    cancer_type: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -178,7 +179,7 @@ async def download_export_csv(
 
     from app.services.export_service import generate_patient_export_csv
 
-    csv_content = await generate_patient_export_csv(db)
+    csv_content = await generate_patient_export_csv(db, cancer_type=cancer_type)
 
     return StreamingResponse(
         iter([csv_content]),

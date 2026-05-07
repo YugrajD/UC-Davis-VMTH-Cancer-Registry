@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   uploadCSV, fetchMyJobs, fetchMyRoleRequests, submitRoleRequest,
   fetchMyExportRequests, submitExportRequest, downloadExportCsv,
+  fetchFilterOptions,
   type IngestionJob, type RoleRequest, type ExportRequest,
 } from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
@@ -349,6 +350,8 @@ export function DataUpload() {
   const [exportSubmitting, setExportSubmitting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportDownloading, setExportDownloading] = useState(false);
+  const [exportCancerType, setExportCancerType] = useState('');
+  const [exportCancerTypes, setExportCancerTypes] = useState<{ id: number; name: string }[]>([]);
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -395,6 +398,12 @@ export function DataUpload() {
       loadExportRequests();
     }
   }, [user, loadMyJobs, loadRoleRequests, loadExportRequests]);
+
+  useEffect(() => {
+    fetchFilterOptions()
+      .then((opts) => setExportCancerTypes(opts.cancer_types))
+      .catch(() => {});
+  }, []);
 
   // Auto-poll every 10s while any job is processing
   useEffect(() => {
@@ -513,7 +522,7 @@ export function DataUpload() {
     try {
       const token = await getAccessToken();
       if (!token) return;
-      const blob = await downloadExportCsv(token);
+      const blob = await downloadExportCsv(token, exportCancerType || undefined);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -798,16 +807,34 @@ export function DataUpload() {
           </p>
 
           {isAdmin || approvedExport ? (
-            <button
-              onClick={handleExportDownload}
-              disabled={exportDownloading}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[var(--color-teal)] text-white rounded-md hover:bg-[var(--color-teal-dark)] disabled:opacity-50 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              {exportDownloading ? 'Downloading...' : 'Download Export CSV'}
-            </button>
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="export-cancer-type" className="block text-xs font-medium text-gray-700 mb-1">
+                  Cancer Type
+                </label>
+                <select
+                  id="export-cancer-type"
+                  value={exportCancerType}
+                  onChange={(e) => setExportCancerType(e.target.value)}
+                  className="w-full max-w-xs px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                >
+                  <option value="">All Cancer Types</option>
+                  {exportCancerTypes.map((ct) => (
+                    <option key={ct.id} value={ct.name}>{ct.name}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={handleExportDownload}
+                disabled={exportDownloading}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[var(--color-teal)] text-white rounded-md hover:bg-[var(--color-teal-dark)] disabled:opacity-50 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                {exportDownloading ? 'Downloading...' : 'Download Export CSV'}
+              </button>
+            </div>
           ) : pendingExport ? (
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200">

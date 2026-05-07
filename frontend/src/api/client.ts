@@ -536,3 +536,83 @@ export async function resolveRoleRequest(
 
   return response.json();
 }
+
+// --- Export Requests ---
+
+export interface ExportRequest {
+  id: number;
+  email: string;
+  status: string;
+  reason: string | null;
+  resolved_by_email: string | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
+export async function submitExportRequest(
+  token: string,
+  reason?: string,
+): Promise<ExportRequest> {
+  const response = await fetch('/api/v1/export-requests/', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ reason: reason || null }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchMyExportRequests(token: string): Promise<ExportRequest[]> {
+  return fetchJsonAuth('/api/v1/export-requests/mine', token);
+}
+
+export async function fetchPendingExportRequests(token: string): Promise<ExportRequest[]> {
+  return fetchJsonAuth('/api/v1/export-requests/pending', token);
+}
+
+export async function fetchPendingExportRequestCount(token: string): Promise<{ count: number }> {
+  return fetchJsonAuth('/api/v1/export-requests/pending/count', token);
+}
+
+export async function resolveExportRequest(
+  token: string,
+  requestId: number,
+  action: 'approve' | 'deny',
+): Promise<ExportRequest> {
+  const response = await fetch(`/api/v1/export-requests/${requestId}/resolve`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Resolve failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function downloadExportCsv(token: string): Promise<Blob> {
+  const response = await fetch('/api/v1/export-requests/download', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Download failed: ${response.status}`);
+  }
+
+  return response.blob();
+}

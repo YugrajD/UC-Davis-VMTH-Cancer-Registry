@@ -152,7 +152,12 @@ async def download_export_csv(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Download county export CSV. Admins always allowed; others need an approved request."""
+    """Download patient export CSV.
+
+    Admins can always download. Other users must have an approved (unused)
+    export request — the approval is consumed on download so the user must
+    request again for subsequent exports.
+    """
     if not user.is_admin:
         result = await db.execute(
             select(ExportRequest).where(
@@ -160,20 +165,25 @@ async def download_export_csv(
                 ExportRequest.status == "approved",
             )
         )
-        if not result.scalar_one_or_none():
+        approved_req = result.scalar_one_or_none()
+        if not approved_req:
             raise HTTPException(
                 status_code=403,
                 detail="You need an approved export request to download data",
             )
 
-    from app.services.export_service import generate_county_export_csv
+        # Consume the approval — mark as downloaded so it cannot be reused
+        approved_req.status = "downloaded"
+        await db.commit()
 
-    csv_content = await generate_county_export_csv(db)
+    from app.services.export_service import generate_patient_export_csv
+
+    csv_content = await generate_patient_export_csv(db)
 
     return StreamingResponse(
         iter([csv_content]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=vmth_county_export.csv"},
+        headers={"Content-Disposition": "attachment; filename=vmth_patient_export.csv"},
     )
 
 

@@ -87,6 +87,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not fix role_requests constraint: %s", e)
 
+    # Widen the export_requests status CHECK to include 'downloaded'.
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE export_requests "
+                "DROP CONSTRAINT IF EXISTS export_requests_status_check"
+            ))
+            await db.execute(text(
+                "ALTER TABLE export_requests "
+                "ADD CONSTRAINT export_requests_status_check "
+                "CHECK (status IN ('pending', 'approved', 'denied', 'downloaded'))"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not update export_requests status constraint: %s", e)
+
     yield
 
 

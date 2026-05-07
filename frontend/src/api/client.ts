@@ -604,8 +604,11 @@ export async function resolveExportRequest(
   return response.json();
 }
 
-export async function downloadExportCsv(token: string): Promise<Blob> {
-  const response = await fetch('/api/v1/export-requests/download', {
+export async function downloadExportCsv(token: string, cancerType?: string): Promise<Blob> {
+  const url = cancerType
+    ? `/api/v1/export-requests/download?cancer_type=${encodeURIComponent(cancerType)}`
+    : '/api/v1/export-requests/download';
+  const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
 

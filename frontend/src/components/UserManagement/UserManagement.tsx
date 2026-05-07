@@ -83,7 +83,7 @@ export function UserManagement() {
   }, [getAccessToken]);
 
   useEffect(() => {
-    loadPendingRequests();
+    loadPendingRequests(); // eslint-disable-line react-hooks/set-state-in-effect
     loadPendingExportRequests();
   }, [loadPendingRequests, loadPendingExportRequests]);
 

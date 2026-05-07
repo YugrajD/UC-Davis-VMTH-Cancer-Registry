@@ -251,7 +251,7 @@ export function DiagnosisReview() {
   }, [getAccessToken, page]);
 
   useEffect(() => {
-    load();
+    load(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [load]);
 
   const loadDetail = useCallback(
@@ -272,7 +272,7 @@ export function DiagnosisReview() {
   );
 
   useEffect(() => {
-    if (selectedId !== null) loadDetail(selectedId);
+    if (selectedId !== null) loadDetail(selectedId); // eslint-disable-line react-hooks/set-state-in-effect
     else setDetail(null);
   }, [selectedId, loadDetail]);
 

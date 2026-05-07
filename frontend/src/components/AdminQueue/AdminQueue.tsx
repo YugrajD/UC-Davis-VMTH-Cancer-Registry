@@ -351,7 +351,7 @@ export function AdminQueue() {
   }, [getAccessToken]);
 
   useEffect(() => {
-    loadJobs();
+    loadJobs(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [loadJobs]);
 
   // Auto-poll when any job is processing

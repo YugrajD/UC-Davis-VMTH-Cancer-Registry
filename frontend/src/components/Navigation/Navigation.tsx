@@ -3,7 +3,7 @@ import type { TabType } from '../../types';
 import { TABS } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginModal } from '../LoginModal/LoginModal';
-import { fetchPendingCount, fetchPendingRoleRequestCount } from '../../api/client';
+import { fetchPendingCount, fetchPendingRoleRequestCount, fetchPendingExportRequestCount } from '../../api/client';
 
 const PENDING_POLL_MS = 30_000;
 
@@ -17,6 +17,7 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
   const [showLogin, setShowLogin] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [pendingRoleCount, setPendingRoleCount] = useState<number | null>(null);
+  const [pendingExportCount, setPendingExportCount] = useState<number | null>(null);
 
   // Poll pending diagnosis count for the badge (admins + reviewers). Users
   // without review access never see the tab so we leave stale state alone.
@@ -51,6 +52,28 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
       try {
         const r = await fetchPendingRoleRequestCount(token);
         if (!cancelled) setPendingRoleCount(r.count);
+      } catch {
+        // Silent — badge is non-critical UI.
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, PENDING_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [isAdmin, getAccessToken]);
+
+  // Poll pending export request count for the User Management badge (admin-only).
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    const tick = async () => {
+      const token = await getAccessToken();
+      if (!token || cancelled) return;
+      try {
+        const r = await fetchPendingExportRequestCount(token);
+        if (!cancelled) setPendingExportCount(r.count);
       } catch {
         // Silent — badge is non-critical UI.
       }
@@ -143,13 +166,13 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
                 tab.id === 'diagnosis-review' &&
                 pendingCount !== null &&
                 pendingCount > 0;
+              const userMgmtTotal = (pendingRoleCount ?? 0) + (pendingExportCount ?? 0);
               const showRoleBadge =
                 isAdmin &&
                 tab.id === 'user-management' &&
-                pendingRoleCount !== null &&
-                pendingRoleCount > 0;
+                userMgmtTotal > 0;
               const showBadge = showDiagnosisBadge || showRoleBadge;
-              const badgeCount = showDiagnosisBadge ? pendingCount : showRoleBadge ? pendingRoleCount : null;
+              const badgeCount = showDiagnosisBadge ? pendingCount : showRoleBadge ? userMgmtTotal : null;
               return (
                 <button
                   key={tab.id}

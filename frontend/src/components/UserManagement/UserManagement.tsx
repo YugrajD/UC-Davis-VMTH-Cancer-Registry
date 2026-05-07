@@ -4,10 +4,13 @@ import {
   fetchUserRoles,
   fetchPendingRoleRequests,
   resolveRoleRequest,
+  fetchPendingExportRequests,
+  resolveExportRequest,
   isValidEmail,
   updateUserRoles,
   type UserRoles,
   type RoleRequest,
+  type ExportRequest,
 } from '../../api/client';
 
 function StatusBadge({ value, label }: { value: boolean; label: string }) {
@@ -39,6 +42,11 @@ export function UserManagement() {
   const [pendingLoading, setPendingLoading] = useState(false);
   const [resolvingId, setResolvingId] = useState<number | null>(null);
 
+  // Pending export requests
+  const [pendingExportRequests, setPendingExportRequests] = useState<ExportRequest[]>([]);
+  const [pendingExportLoading, setPendingExportLoading] = useState(false);
+  const [resolvingExportId, setResolvingExportId] = useState<number | null>(null);
+
   // Form state for the toggles. Synced from `roles` whenever a new
   // record is loaded.
   const [formAdmin, setFormAdmin] = useState(false);
@@ -59,9 +67,24 @@ export function UserManagement() {
     }
   }, [getAccessToken]);
 
+  const loadPendingExportRequests = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setPendingExportLoading(true);
+    try {
+      const reqs = await fetchPendingExportRequests(token);
+      setPendingExportRequests(reqs);
+    } catch {
+      // silently fail
+    } finally {
+      setPendingExportLoading(false);
+    }
+  }, [getAccessToken]);
+
   useEffect(() => {
     loadPendingRequests();
-  }, [loadPendingRequests]);
+    loadPendingExportRequests();
+  }, [loadPendingRequests, loadPendingExportRequests]);
 
   const handleResolve = useCallback(async (requestId: number, action: 'approve' | 'deny') => {
     const token = await getAccessToken();
@@ -76,6 +99,20 @@ export function UserManagement() {
       setResolvingId(null);
     }
   }, [getAccessToken, loadPendingRequests]);
+
+  const handleResolveExport = useCallback(async (requestId: number, action: 'approve' | 'deny') => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setResolvingExportId(requestId);
+    try {
+      await resolveExportRequest(token, requestId, action);
+      await loadPendingExportRequests();
+    } catch {
+      // silently fail
+    } finally {
+      setResolvingExportId(null);
+    }
+  }, [getAccessToken, loadPendingExportRequests]);
 
   const isSelf =
     user?.email && roles?.email && roles.email.toLowerCase() === user.email.toLowerCase();
@@ -208,6 +245,62 @@ export function UserManagement() {
       )}
 
       {pendingLoading && pendingRequests.length === 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4 flex justify-center">
+          <div className="w-5 h-5 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+        </div>
+      )}
+
+      {/* Pending Export Requests */}
+      {pendingExportRequests.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              Pending Export Requests
+            </h3>
+            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded-full bg-amber-500 text-white">
+              {pendingExportRequests.length}
+            </span>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {pendingExportRequests.map((req) => (
+              <div key={req.id} className="px-4 py-3 flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">{req.email}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      data export
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {new Date(req.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  {req.reason && (
+                    <p className="text-xs text-gray-600 mt-1">{req.reason}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => handleResolveExport(req.id, 'approve')}
+                    disabled={resolvingExportId === req.id}
+                    className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleResolveExport(req.id, 'deny')}
+                    disabled={resolvingExportId === req.id}
+                    className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  >
+                    Deny
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pendingExportLoading && pendingExportRequests.length === 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 flex justify-center">
           <div className="w-5 h-5 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
         </div>

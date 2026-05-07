@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from app.config import settings
-from app.database import async_session
-from app.models.models import IngestionJob, UserRole
+from app.database import async_session, engine, Base
+from app.models.models import ExportRequest, IngestionJob, UserRole
 from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review, admin_users, role_requests, export
 from app.routers import auth as auth_router
 from app.services.role_seed import seed_user_roles_from_env
@@ -63,6 +63,29 @@ async def lifespan(app: FastAPI):
             await db.commit()
     except Exception as e:
         logger.warning("Could not seed user_roles from env: %s", e)
+
+    # Ensure export_requests table exists (idempotent).
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=[ExportRequest.__table__],
+            )
+    except Exception as e:
+        logger.warning("Could not ensure export_requests table: %s", e)
+
+    # Drop the overly-restrictive UNIQUE(email, requested_role, status)
+    # constraint on role_requests.  It prevents denying a second request
+    # for the same user+role because (email, role, 'denied') already exists.
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE role_requests "
+                "DROP CONSTRAINT IF EXISTS role_requests_email_requested_role_status_key"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not fix role_requests constraint: %s", e)
 
     yield
 

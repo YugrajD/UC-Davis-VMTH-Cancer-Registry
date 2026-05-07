@@ -41,6 +41,7 @@ export function UserManagement() {
   const [pendingRequests, setPendingRequests] = useState<RoleRequest[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [resolvingId, setResolvingId] = useState<number | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
 
   // Pending export requests
   const [pendingExportRequests, setPendingExportRequests] = useState<ExportRequest[]>([]);
@@ -89,12 +90,13 @@ export function UserManagement() {
   const handleResolve = useCallback(async (requestId: number, action: 'approve' | 'deny') => {
     const token = await getAccessToken();
     if (!token) return;
+    setResolveError(null);
     setResolvingId(requestId);
     try {
       await resolveRoleRequest(token, requestId, action);
       await loadPendingRequests();
-    } catch {
-      // silently fail
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : 'Failed to resolve request');
     } finally {
       setResolvingId(null);
     }
@@ -103,12 +105,13 @@ export function UserManagement() {
   const handleResolveExport = useCallback(async (requestId: number, action: 'approve' | 'deny') => {
     const token = await getAccessToken();
     if (!token) return;
+    setResolveError(null);
     setResolvingExportId(requestId);
     try {
       await resolveExportRequest(token, requestId, action);
       await loadPendingExportRequests();
-    } catch {
-      // silently fail
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : 'Failed to resolve request');
     } finally {
       setResolvingExportId(null);
     }
@@ -303,6 +306,12 @@ export function UserManagement() {
       {pendingExportLoading && pendingExportRequests.length === 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 flex justify-center">
           <div className="w-5 h-5 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+        </div>
+      )}
+
+      {resolveError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+          <p className="text-sm text-red-700">{resolveError}</p>
         </div>
       )}
 

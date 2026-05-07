@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { AuthProvider } from './contexts/AuthContext';
+import { useEffect, useMemo, useState } from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue, DiagnosisReview, UserManagement } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
@@ -11,6 +11,7 @@ import {
 } from './data/vetIcdOCategories';
 
 function AppContent() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
@@ -20,6 +21,11 @@ function AppContent() {
     cancerType: 'All Types',
     breed: 'All Breeds',
   });
+
+  // Reset to overview when the user signs out
+  useEffect(() => {
+    if (!user) setActiveTab('overview');
+  }, [user]);
 
   const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);

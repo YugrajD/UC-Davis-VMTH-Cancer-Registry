@@ -604,9 +604,28 @@ export async function resolveExportRequest(
   return response.json();
 }
 
-export async function downloadExportCsv(token: string, cancerType?: string): Promise<Blob> {
-  const url = cancerType
-    ? `/api/v1/export-requests/download?cancer_type=${encodeURIComponent(cancerType)}`
+export interface ExportFilters {
+  cancerType?: string;
+  county?: string;
+  zipCode?: string;
+  sex?: string;
+  breed?: string;
+  yearStart?: number;
+  yearEnd?: number;
+}
+
+export async function downloadExportCsv(token: string, filters?: ExportFilters): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (filters?.cancerType) params.append('cancer_type', filters.cancerType);
+  if (filters?.county) params.append('county', filters.county);
+  if (filters?.zipCode) params.append('zip_code', filters.zipCode);
+  if (filters?.sex) params.append('sex', filters.sex);
+  if (filters?.breed) params.append('breed', filters.breed);
+  if (filters?.yearStart) params.append('year_start', String(filters.yearStart));
+  if (filters?.yearEnd) params.append('year_end', String(filters.yearEnd));
+
+  const url = params.toString()
+    ? `/api/v1/export-requests/download?${params}`
     : '/api/v1/export-requests/download';
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },

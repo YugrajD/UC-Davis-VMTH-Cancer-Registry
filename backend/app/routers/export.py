@@ -150,6 +150,12 @@ async def resolve_export_request(
 @router.get("/download")
 async def download_export_csv(
     cancer_type: str | None = Query(None),
+    county: str | None = Query(None),
+    zip_code: str | None = Query(None),
+    sex: str | None = Query(None),
+    breed: str | None = Query(None),
+    year_start: int | None = Query(None),
+    year_end: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -179,7 +185,16 @@ async def download_export_csv(
 
     from app.services.export_service import generate_patient_export_csv
 
-    csv_content = await generate_patient_export_csv(db, cancer_type=cancer_type)
+    csv_content = await generate_patient_export_csv(
+        db,
+        cancer_type=cancer_type,
+        county=county,
+        zip_code=zip_code,
+        sex=sex,
+        breed=breed,
+        year_start=year_start,
+        year_end=year_end,
+    )
 
     return StreamingResponse(
         iter([csv_content]),

@@ -41,7 +41,8 @@ export const VET_ICD_O_CATEGORIES: VetIcdOCategory[] = [
 
 // Keyword rules: the first rule whose keyword is a substring of the cancer
 // type name (case-insensitive) wins. Order matters — more specific terms
-// must come before more general ones.
+// must come before more general ones, and anatomical-site keywords win
+// over cell-type keywords (e.g. "ocular melanoma" → ocular_otic, not skin).
 const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   // Hematopoietic (check before 'cell' / 'sarcoma' rules)
   { keyword: 'lymphoma', category: 'hematopoietic' },
@@ -57,6 +58,14 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'urothelial', category: 'urinary' },
   { keyword: 'bladder', category: 'urinary' },
   { keyword: 'renal', category: 'urinary' },
+
+  // Anatomical-site overrides — these must come BEFORE skin / soft-tissue /
+  // alimentary cell-type rules so e.g. "ocular melanoma" → ocular_otic and
+  // "oral squamous cell carcinoma" → alimentary.
+  { keyword: 'ocular', category: 'ocular_otic' },
+  { keyword: 'uveal', category: 'ocular_otic' },
+  { keyword: 'ceruminous', category: 'ocular_otic' },
+  { keyword: 'oral', category: 'alimentary' },
 
   // Bone & hard tissues
   { keyword: 'osteosarcoma', category: 'bone' },
@@ -109,12 +118,7 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'bronchial', category: 'respiratory' },
   { keyword: 'tracheal', category: 'respiratory' },
 
-  // Ocular & otic
-  { keyword: 'ocular', category: 'ocular_otic' },
-  { keyword: 'uveal', category: 'ocular_otic' },
-  { keyword: 'ceruminous', category: 'ocular_otic' },
-
-  // Alimentary
+  // Alimentary (note: 'oral' moved up to anatomical-site overrides above)
   { keyword: 'hepatocellular', category: 'alimentary' },
   { keyword: 'hepatic', category: 'alimentary' },
   { keyword: 'pancreatic', category: 'alimentary' },
@@ -122,7 +126,6 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'intestinal', category: 'alimentary' },
   { keyword: 'colonic', category: 'alimentary' },
   { keyword: 'salivary', category: 'alimentary' },
-  { keyword: 'oral', category: 'alimentary' },
 
   // Endocrine
   { keyword: 'thyroid', category: 'endocrine' },

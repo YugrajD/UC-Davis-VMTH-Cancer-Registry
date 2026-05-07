@@ -10,13 +10,13 @@ import {
   type SuperfundSite,
 } from '../../data/superfundData';
 import {
-  COUNTY_GEO_URL,
-  TRACT_GEO_URL,
+  GEO_URLS,
   INITIAL_VIEW_STATE,
   HOVER_COLOR,
   hexToRgba,
   countyFromFeature,
   hoverKeyFromFeature,
+  type GeoLevel,
 } from '../../lib/mapUtils';
 
 // Local NO_DATA_COLOR — slightly transparent so the map background shows through.
@@ -26,6 +26,12 @@ const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
 const MAP_BG_CSS = '#f1f5f9';
 
 const EXPANDED_VIEW_STATE = { ...INITIAL_VIEW_STATE, zoom: 4.9 };
+
+const GEO_LEVEL_OPTIONS: { value: GeoLevel; label: string }[] = [
+  { value: 'county', label: 'County' },
+  { value: 'tract', label: 'Tract' },
+  { value: 'zcta', label: 'ZCTA' },
+];
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -41,6 +47,33 @@ function makeCountyDataMap(data: CountyData[]) {
   const m = new Map<string, CountyData>();
   data.forEach(c => m.set(c.county.toLowerCase(), c));
   return m;
+}
+
+function tooltipHeader(props: Record<string, unknown>, geoLevel: GeoLevel, county: string): string {
+  switch (geoLevel) {
+    case 'county':
+      return `<strong style="font-size:13px">${county}</strong>`;
+    case 'tract':
+      return `<strong style="font-size:13px">Tract ${props.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`;
+    case 'zcta':
+      return `<strong style="font-size:13px">ZIP ${props.ZCTA5CE20 as string}</strong><br/><span style="color:#6b7280">${county} County</span>`;
+  }
+}
+
+function GeoLevelSelector({ value, onChange }: { value: GeoLevel; onChange: (v: GeoLevel) => void }) {
+  return (
+    <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+      {GEO_LEVEL_OPTIONS.map(opt => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          className={`px-2 py-1 text-[10px] font-medium border-l border-gray-300 first:border-l-0 transition-colors ${value === opt.value ? 'bg-blue-500 text-white' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function MapLegend({
@@ -92,7 +125,7 @@ interface ExpandedMapProps {
 
 function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
   const [showSuperfund, setShowSuperfund] = useState(false);
-  const [tractLevel, setTractLevel] = useState(false);
+  const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
@@ -109,29 +142,30 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
     () =>
       new GeoJsonLayer({
         id: 'expanded-choropleth-counties',
-        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
+        data: GEO_URLS[geoLevel],
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
-          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           if (key && key === localHovered) return HOVER_COLOR;
           const info = countyDataMap.get(county.toLowerCase());
           const count = info?.count ?? 0;
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
-        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
-        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) => {
           const props = object?.properties as Record<string, unknown> | null ?? null;
-          setLocalHovered(props ? hoverKeyFromFeature(props, tractLevel) : null);
+          setLocalHovered(props ? hoverKeyFromFeature(props, geoLevel) : null);
         },
         updateTriggers: {
-          getFillColor: [countyDataMap, colorScale, localHovered, tractLevel],
+          getFillColor: [countyDataMap, colorScale, localHovered, geoLevel],
+          data: [geoLevel],
         },
       }),
-    [countyDataMap, colorScale, localHovered, tractLevel],
+    [countyDataMap, colorScale, localHovered, geoLevel],
   );
 
   const superfundLayer = useMemo(() => {
@@ -164,15 +198,14 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
     if (!info.object) return null;
 
     if (info.layer?.id === 'expanded-choropleth-counties') {
-      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
+      const props = info.object.properties as Record<string, unknown>;
+      const county = countyFromFeature(props, geoLevel);
       const countyInfo = countyDataMap.get(county.toLowerCase());
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf
         ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>`
         : '';
-      const header = tractLevel
-        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
-        : `<strong style="font-size:13px">${county}</strong>`;
+      const header = tooltipHeader(props, geoLevel, county);
       const body = countyInfo
         ? `${countyInfo.count.toLocaleString()} cases${sfStr}`
         : `<span style="color:#6b7280">No data</span>`;
@@ -201,6 +234,12 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
     return null;
   };
 
+  const subtitleText = geoLevel === 'county'
+    ? 'Case counts by county (expanded view)'
+    : geoLevel === 'tract'
+      ? 'Case count by county · census tract boundaries'
+      : 'Case count by county · ZCTA boundaries';
+
   return (
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
       <div className="bg-white rounded-lg shadow-xl border border-gray-200 max-w-5xl w-full mx-4 max-h-[90vh] flex flex-col overflow-hidden">
@@ -210,7 +249,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
               California County Map
             </h3>
             <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-              {tractLevel ? 'Case count by county · census tract boundaries' : 'Case counts by county (expanded view)'}
+              {subtitleText}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -222,13 +261,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
                 <span className={`w-1.5 h-1.5 rounded-full ${showSuperfund ? 'bg-red-500' : 'bg-gray-400'}`} />
                 Superfund
               </button>
-              <button
-                onClick={() => setTractLevel(v => !v)}
-                className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-full border font-medium transition-colors ${tractLevel ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${tractLevel ? 'bg-blue-500' : 'bg-gray-400'}`} />
-                Census Tracts
-              </button>
+              <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
             </div>
             <button
               type="button"
@@ -278,7 +311,7 @@ export function ChoroplethMap({
 }: ChoroplethMapProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showSuperfund, setShowSuperfund] = useState(false);
-  const [tractLevel, setTractLevel] = useState(false);
+  const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
@@ -288,13 +321,13 @@ export function ChoroplethMap({
     () =>
       new GeoJsonLayer({
         id: 'choropleth-counties',
-        data: tractLevel ? TRACT_GEO_URL : COUNTY_GEO_URL,
+        data: GEO_URLS[geoLevel],
         pickable: true,
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
-          const county = countyFromFeature(feature.properties as Record<string, unknown>, tractLevel);
+          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
+          const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           const isHovered =
             (key && key === localHovered) ||
             (hoveredCounty != null && county.toLowerCase() === hoveredCounty.toLowerCase());
@@ -303,25 +336,26 @@ export function ChoroplethMap({
           const count = info?.count ?? 0;
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
-        getLineColor: tractLevel ? [255, 255, 255, 100] : [255, 255, 255, 255],
-        lineWidthMinPixels: tractLevel ? 0.3 : 0.5,
+        getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
+        lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) => {
           const props = object?.properties as Record<string, unknown> | null ?? null;
-          const key = props ? hoverKeyFromFeature(props, tractLevel) : null;
-          const county = props ? countyFromFeature(props, tractLevel) : null;
+          const key = props ? hoverKeyFromFeature(props, geoLevel) : null;
+          const county = props ? countyFromFeature(props, geoLevel) : null;
           setLocalHovered(key);
           onCountyHover?.(county ?? null);
         },
         onClick: ({ object }) => {
           if (!object) return;
-          const county = countyFromFeature(object.properties as Record<string, unknown>, tractLevel);
+          const county = countyFromFeature(object.properties as Record<string, unknown>, geoLevel);
           if (county) onCountyClick?.(county);
         },
         updateTriggers: {
-          getFillColor: [countyDataMap, colorScale, localHovered, hoveredCounty, tractLevel],
+          getFillColor: [countyDataMap, colorScale, localHovered, hoveredCounty, geoLevel],
+          data: [geoLevel],
         },
       }),
-    [countyDataMap, colorScale, localHovered, hoveredCounty, tractLevel, onCountyHover, onCountyClick],
+    [countyDataMap, colorScale, localHovered, hoveredCounty, geoLevel, onCountyHover, onCountyClick],
   );
 
   const superfundLayer = useMemo(() => {
@@ -354,15 +388,14 @@ export function ChoroplethMap({
     if (!info.object) return null;
 
     if (info.layer?.id === 'choropleth-counties') {
-      const county = countyFromFeature(info.object.properties as Record<string, unknown>, tractLevel);
+      const props = info.object.properties as Record<string, unknown>;
+      const county = countyFromFeature(props, geoLevel);
       const countyInfo = countyDataMap.get(county.toLowerCase());
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf
         ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>`
         : '';
-      const header = tractLevel
-        ? `<strong style="font-size:13px">Tract ${info.object.properties?.NAME as string}</strong><br/><span style="color:#6b7280">${county} County</span>`
-        : `<strong style="font-size:13px">${county}</strong>`;
+      const header = tooltipHeader(props, geoLevel, county);
       const body = countyInfo
         ? `${countyInfo.count.toLocaleString()} cases${sfStr}`
         : `<span style="color:#6b7280">No data</span>`;
@@ -391,6 +424,12 @@ export function ChoroplethMap({
     return null;
   };
 
+  const subtitleText = geoLevel === 'county'
+    ? 'Case count by county'
+    : geoLevel === 'tract'
+      ? 'Case count by county · census tract boundaries'
+      : 'Case count by county · ZCTA boundaries';
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative">
       {/* Header */}
@@ -400,7 +439,7 @@ export function ChoroplethMap({
             California County Map
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            {tractLevel ? 'Case count by county · census tract boundaries' : 'Case count by county'}
+            {subtitleText}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -412,13 +451,7 @@ export function ChoroplethMap({
               <span className={`w-1.5 h-1.5 rounded-full ${showSuperfund ? 'bg-red-500' : 'bg-gray-400'}`} />
               Superfund
             </button>
-            <button
-              onClick={() => setTractLevel(v => !v)}
-              className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-full border font-medium transition-colors ${tractLevel ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${tractLevel ? 'bg-blue-500' : 'bg-gray-400'}`} />
-              Census Tracts
-            </button>
+            <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
           </div>
           <button
             type="button"

@@ -1,8 +1,18 @@
 // Shared constants and helpers for all Deck.gl map components.
 
+export type GeoLevel = 'county' | 'tract' | 'zcta';
+
 export const COUNTY_GEO_URL = '/california-counties.geojson';
 
 export const TRACT_GEO_URL = '/california-tracts.geojson';
+
+export const ZCTA_GEO_URL = '/california-zctas.geojson';
+
+export const GEO_URLS: Record<GeoLevel, string> = {
+  county: COUNTY_GEO_URL,
+  tract: TRACT_GEO_URL,
+  zcta: ZCTA_GEO_URL,
+};
 
 export const INITIAL_VIEW_STATE = {
   longitude: -119.5,
@@ -62,28 +72,40 @@ export const CA_COUNTY_FIPS: Record<string, string> = {
  * Get the county name from a GeoJSON feature.
  * County GeoJSON: feature.properties.name
  * Tract  GeoJSON: CA_COUNTY_FIPS[feature.properties.COUNTYFP]
+ * ZCTA   GeoJSON: feature.properties.COUNTY_NAME
  */
 export function countyFromFeature(
   props: Record<string, unknown> | null,
-  tractLevel: boolean,
+  geoLevel: GeoLevel,
 ): string {
   if (!props) return '';
-  return tractLevel
-    ? (CA_COUNTY_FIPS[props.COUNTYFP as string] ?? '')
-    : ((props.name as string) ?? '');
+  switch (geoLevel) {
+    case 'county':
+      return (props.name as string) ?? '';
+    case 'tract':
+      return CA_COUNTY_FIPS[props.COUNTYFP as string] ?? '';
+    case 'zcta':
+      return (props.COUNTY_NAME as string) ?? '';
+  }
 }
 
 /**
  * Hover tracking key for a feature.
- * Tract mode: GEOID (unique per tract)
- * County mode: county name
+ * County: county name
+ * Tract:  GEOID (unique per tract)
+ * ZCTA:   ZCTA5CE20 (zip code)
  */
 export function hoverKeyFromFeature(
   props: Record<string, unknown> | null,
-  tractLevel: boolean,
+  geoLevel: GeoLevel,
 ): string {
   if (!props) return '';
-  return tractLevel
-    ? ((props.GEOID as string) ?? '')
-    : ((props.name as string) ?? '');
+  switch (geoLevel) {
+    case 'county':
+      return (props.name as string) ?? '';
+    case 'tract':
+      return (props.GEOID as string) ?? '';
+    case 'zcta':
+      return (props.ZCTA5CE20 as string) ?? '';
+  }
 }

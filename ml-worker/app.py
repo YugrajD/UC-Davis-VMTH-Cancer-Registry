@@ -26,8 +26,8 @@ async def health():
 async def predict(file: UploadFile = File(...)):
     """Run PetBERT categorization on an uploaded CSV.
 
-    Expects CSV with columns: anon_id, Clinical Diagnoses (+ optional others).
-    PetBERT processes the Clinical Diagnoses column. Returns structured predictions JSON.
+    Expects CSV with columns: anon_id, Text (+ optional others).
+    PetBERT processes the Text column (pathology report). Returns structured predictions JSON.
     """
     if not file.filename or not file.filename.lower().endswith((".csv", ".xlsx")):
         raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")
@@ -45,8 +45,8 @@ async def predict(file: UploadFile = File(...)):
 
         # Import pipeline at call time (heavy torch import)
         try:
-            from petbert_scan.pipeline import run_scan
-            from petbert_scan.types import ScanConfig
+            from production.petbert_pipeline.pipeline import run_scan
+            from production.petbert_pipeline.types import ScanConfig
         except ImportError as e:
             raise HTTPException(
                 status_code=500,
@@ -56,8 +56,8 @@ async def predict(file: UploadFile = File(...)):
         config = ScanConfig(
             csv_path=csv_path,
             id_col="anon_id",
-            text_cols=("Clinical Diagnoses",),
-            col_weights={"Clinical Diagnoses": 1.0},
+            text_cols=("Text",),
+            col_weights={"Text": 1.0},
             model_name=os.environ.get("PETBERT_MODEL_PATH", "/ml/models/petbert"),
             local_only=True,
             out_dir=out_dir,

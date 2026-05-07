@@ -7,11 +7,14 @@ interface LoginModalProps {
 }
 
 export function LoginModal({ onClose }: LoginModalProps) {
-  const { signIn } = useAuth();
+  const { signIn, signUp } = useAuth();
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [signupSuccess, setSignupSuccess] = useState(false);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -22,15 +25,33 @@ export function LoginModal({ onClose }: LoginModalProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (mode === 'signup' && password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
     setLoading(true);
     try {
-      await signIn(email, password);
-      onClose();
+      if (mode === 'signin') {
+        await signIn(email, password);
+        onClose();
+      } else {
+        await signUp(email, password);
+        setSignupSuccess(true);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign in failed');
+      setError(err instanceof Error ? err.message : `${mode === 'signin' ? 'Sign in' : 'Sign up'} failed`);
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleMode = () => {
+    setMode(mode === 'signin' ? 'signup' : 'signin');
+    setError(null);
+    setSignupSuccess(false);
+    setConfirmPassword('');
   };
 
   return (
@@ -41,7 +62,9 @@ export function LoginModal({ onClose }: LoginModalProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">Sign In</h2>
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
+            {mode === 'signin' ? 'Sign In' : 'Create Account'}
+          </h2>
           <button
             onClick={onClose}
             className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
@@ -60,6 +83,21 @@ export function LoginModal({ onClose }: LoginModalProps) {
               <code className="bg-yellow-100 px-1 rounded text-xs">VITE_SUPABASE_ANON_KEY</code> environment
               variables, then restart the frontend.
             </p>
+          </div>
+        ) : signupSuccess ? (
+          <div className="space-y-4">
+            <div className="bg-green-50 border border-green-200 rounded-md p-4">
+              <p className="text-sm font-medium text-green-800 mb-1">Account created</p>
+              <p className="text-sm text-green-700">
+                Check your email for a confirmation link. Once confirmed, you can sign in.
+              </p>
+            </div>
+            <button
+              onClick={toggleMode}
+              className="w-full py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md hover:bg-[var(--color-teal-dark)] transition-colors"
+            >
+              Back to Sign In
+            </button>
           </div>
         ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -81,10 +119,26 @@ export function LoginModal({ onClose }: LoginModalProps) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              minLength={6}
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
               placeholder="Password"
             />
           </div>
+
+          {mode === 'signup' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                minLength={6}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                placeholder="Confirm password"
+              />
+            </div>
+          )}
 
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-md p-3">
@@ -97,8 +151,27 @@ export function LoginModal({ onClose }: LoginModalProps) {
             disabled={loading}
             className="w-full py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md hover:bg-[var(--color-teal-dark)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading
+              ? (mode === 'signin' ? 'Signing in...' : 'Creating account...')
+              : (mode === 'signin' ? 'Sign In' : 'Create Account')
+            }
           </button>
+
+          <p className="text-center text-sm text-gray-600">
+            {mode === 'signin' ? (
+              <>Don&apos;t have an account?{' '}
+                <button type="button" onClick={toggleMode} className="text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium">
+                  Sign up
+                </button>
+              </>
+            ) : (
+              <>Already have an account?{' '}
+                <button type="button" onClick={toggleMode} className="text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium">
+                  Sign in
+                </button>
+              </>
+            )}
+          </p>
         </form>
         )}
       </div>

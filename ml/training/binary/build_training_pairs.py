@@ -1,10 +1,10 @@
 """Build training pairs for the binary presence classifier.
 
-Produces ml/data/training_pairs.csv — one row per (case, taxonomy label) pair
+Produces ml/output/training/binary/training_pairs.csv — one row per (case, taxonomy label) pair
 with a binary target: 1 if the label is a confirmed diagnosis, 0 otherwise.
 
 Five sources of examples:
-  Positives      — rows in keyword_predictions.csv where matched_term is non-blank
+  Positives      — rows in keyword_annotation.csv where matched_term is non-blank
   Hard negatives — rows in evaluation.csv with verdict="false_positive"
                    (high cosine similarity but the case has no keyword label at all;
                    these are the most valuable training signal)
@@ -24,14 +24,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from labels.taxonomy import load_labels_taxonomy
-from petbert_pipeline.utils import clean_text, merge_report_columns
-
-_TEXT_COLS = [
-    "HISTOPATHOLOGICAL SUMMARY",
-    "FINAL COMMENT",
-    "ANCILLARY TESTS",
-]
+import config
+from ICD_labels import load_labels_taxonomy
+from model.constants import DEFAULT_TEXT_COLS
+from production.petbert_pipeline import clean_text, merge_report_columns
 
 
 def load_csv(path: Path) -> list[dict]:
@@ -41,11 +37,11 @@ def load_csv(path: Path) -> list[dict]:
 
 def build_pairs(
     *,
-    report_csv: str = "ml/data/report.csv",
-    keyword_csv: str = "ml/output/diagnoses/keyword_predictions.csv",
-    evaluation_csv: str = "ml/output/evaluation/evaluation.csv",
-    labels_csv: str = "ml/labels/labels.csv",
-    out: str = "ml/data/training_pairs.csv",
+    report_csv: str = config.REPORTS_CSV,
+    expectation_csv: str = config.KEYWORD_ANNOTATION_CSV,
+    evaluation_csv: str = f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation.csv",
+    labels_csv: str = config.LABELS_CSV,
+    out: str = config.TRAINING_PAIRS_CSV,
     easy_neg_per_pos: int = 3,
     fp_neg_per_case: int = 10,
     co_neg_per_case: int = 3,
@@ -53,15 +49,22 @@ def build_pairs(
     co_neg_bank_csv: str = "",
     seed: int = 42,
     max_pos_per_group: int = 0,
+    train_cases_txt: str = "",
 ) -> None:
     random.seed(seed)
+
+    train_ids: set[str] | None = None
+    if train_cases_txt and Path(train_cases_txt).exists():
+        with open(train_cases_txt, encoding="utf-8") as f:
+            train_ids = {line.strip() for line in f if line.strip()}
+        print(f"  Train/test split active — restricting to {len(train_ids)} train cases.")
 
     # --- Load report text ------------------------------------------------
     df = pd.read_csv(report_csv, encoding="latin-1")
     df.columns = [col.lstrip("\ufeff").lstrip("ï»¿") for col in df.columns]
-    available_cols = [c for c in _TEXT_COLS if c in df.columns]
+    available_cols = [c for c in DEFAULT_TEXT_COLS if c in df.columns]
     if not available_cols:
-        print(f"Warning: none of {_TEXT_COLS} found in report CSV. Found: {df.columns.tolist()}")
+        print(f"Warning: none of {DEFAULT_TEXT_COLS} found in report CSV. Found: {df.columns.tolist()}")
     df["_merged"] = df.apply(lambda row: merge_report_columns(row, available_cols), axis=1)
     case_to_text: dict[str, str] = {
         clean_text(row["case_id"]): row["_merged"]
@@ -75,12 +78,15 @@ def build_pairs(
     all_term_group = [(t.term, t.group) for t in taxonomy]
 
     # --- Load keyword positives ------------------------------------------
-    kw_rows = load_csv(Path(keyword_csv))
+    kw_rows = load_csv(Path(expectation_csv))
     case_pos_terms: dict[str, set[str]] = {}
     for row in kw_rows:
         term = row["matched_term"].strip()
         if term:
             case_pos_terms.setdefault(row["case_id"], set()).add(term)
+
+    if train_ids is not None:
+        case_pos_terms = {cid: t for cid, t in case_pos_terms.items() if cid in train_ids}
 
     # --- Build output rows -----------------------------------------------
     out_rows: list[dict] = []
@@ -107,7 +113,12 @@ def build_pairs(
             })
 
     # Hard negatives — false positive predictions from evaluation
-    eval_rows = load_csv(Path(evaluation_csv))
+    eval_path = Path(evaluation_csv)
+    if eval_path.exists():
+        eval_rows = load_csv(eval_path)
+    else:
+        print(f"  No evaluation file found at {evaluation_csv} — skipping FP/CO negatives (first cycle?)")
+        eval_rows = []
 
     # CO negatives — completely-off predictions (case has keyword labels but wrong group)
     # These are the specific (case, wrong-label) pairs that fool the cosine similarity step.
@@ -135,6 +146,8 @@ def build_pairs(
         for row in co_rows:
             if row["verdict"] != "completely_off":
                 continue
+            if train_ids is not None and row["case_id"] not in train_ids:
+                continue
             text = case_to_text.get(row["case_id"], "")
             if not text:
                 continue
@@ -154,6 +167,8 @@ def build_pairs(
     fp_case_covered: dict[str, set[str]] = {}  # case_id -> terms already added
     for row in eval_rows:
         if row["verdict"] != "false_positive":
+            continue
+        if train_ids is not None and row["case_id"] not in train_ids:
             continue
         text = case_to_text.get(row["case_id"], "")
         if not text:
@@ -229,11 +244,12 @@ def build_pairs(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build training pairs for the presence classifier.")
-    parser.add_argument("--report-csv", default="ml/data/report.csv")
-    parser.add_argument("--keyword-csv", default="ml/output/diagnoses/keyword_predictions.csv")
-    parser.add_argument("--evaluation-csv", default="ml/output/evaluation/evaluation.csv")
-    parser.add_argument("--labels-csv", default="ml/labels/labels.csv")
-    parser.add_argument("--out", default="ml/data/training_pairs.csv")
+    parser.add_argument("--report-csv", default=config.REPORTS_CSV)
+    parser.add_argument("--expectation-csv", default=config.KEYWORD_ANNOTATION_CSV)
+    parser.add_argument("--evaluation-csv",
+                        default=f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation.csv")
+    parser.add_argument("--labels-csv", default=config.LABELS_CSV)
+    parser.add_argument("--out", default=config.TRAINING_PAIRS_CSV)
     parser.add_argument(
         "--easy-neg-per-pos",
         type=int,
@@ -272,6 +288,12 @@ def main() -> int:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--train-cases",
+        default="",
+        help="Path to train_cases.txt (one case_id per line). When provided, only train "
+             "cases contribute to training pairs. Generate with create_split.py.",
+    )
+    parser.add_argument(
         "--max-pos-per-group",
         type=int,
         default=0,
@@ -282,7 +304,7 @@ def main() -> int:
     args = parser.parse_args()
     build_pairs(
         report_csv=args.report_csv,
-        keyword_csv=args.keyword_csv,
+        expectation_csv=args.expectation_csv,
         evaluation_csv=args.evaluation_csv,
         labels_csv=args.labels_csv,
         out=args.out,
@@ -293,6 +315,7 @@ def main() -> int:
         co_neg_bank_csv=args.co_neg_bank_csv,
         seed=args.seed,
         max_pos_per_group=args.max_pos_per_group,
+        train_cases_txt=args.train_cases,
     )
     return 0
 

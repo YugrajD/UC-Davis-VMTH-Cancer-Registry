@@ -17,11 +17,13 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.models import (
     Breed,
     CancerType,
     CaseDiagnosis,
     County,
+    DiagnosisReviewEvent,
     IngestionLog,
     Patient,
     Species,
@@ -139,52 +141,6 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
 # Parse demographics CSV
 # ---------------------------------------------------------------------------
 
-def parse_demographics_csv(csv_bytes: bytes) -> dict[str, dict]:
-    """Parse Dataset B (demographics) CSV.
-
-    Expects columns: anon_id, Sex, and a zip column (any column with 'zip' in name).
-    Takes first non-empty sex/zip per anon_id.
-
-    Returns: {anon_id: {"sex": str|None, "zip": str|None}}
-    """
-    text = csv_bytes.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
-
-    # Find zip column
-    fieldnames = reader.fieldnames or []
-    zip_col = None
-    for col in fieldnames:
-        if "zip" in col.lower():
-            zip_col = col
-            break
-
-    result: dict[str, dict] = {}
-    for row in reader:
-        anon_id = normalize_anon_id(row.get("anon_id", ""))
-        if not anon_id:
-            continue
-
-        raw_sex = str(row.get("Sex", "")).strip().upper()
-        if raw_sex == "NAN" or raw_sex == "":
-            raw_sex = ""
-
-        raw_zip = str(row.get(zip_col, "")).strip() if zip_col else ""
-        if raw_zip.lower() == "nan":
-            raw_zip = ""
-        raw_zip = raw_zip.split(".")[0]
-
-        if anon_id not in result:
-            result[anon_id] = {"sex": None, "zip": None}
-
-        if result[anon_id]["sex"] is None and raw_sex:
-            result[anon_id]["sex"] = SEX_MAP.get(raw_sex)
-
-        if result[anon_id]["zip"] is None and raw_zip:
-            result[anon_id]["zip"] = raw_zip
-
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Parse Dataset A demographics
 # ---------------------------------------------------------------------------
@@ -285,10 +241,9 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
 async def ingest_upload(
     db: AsyncSession,
     predictions: list[dict],
-    demographics_csv: Optional[bytes],
     dataset_a_filename: str,
-    dataset_b_filename: Optional[str],
     dataset_a_csv: Optional[bytes] = None,
+    ingestion_job_id: int | None = None,
 ) -> IngestionResponse:
     """Ingest ML worker predictions + optional demographics into the database.
 
@@ -311,28 +266,9 @@ async def ingest_upload(
     total_diag = sum(len(v) for v in petbert.values())
 
     # --- Parse Dataset A demographics ---
-    dataset_a_demo: dict[str, dict] = {}
-    if dataset_a_csv:
-        dataset_a_demo = parse_dataset_a_demographics(dataset_a_csv)
-
-    # --- Parse Dataset B demographics (zip codes) ---
-    dataset_b_demo: dict[str, dict] = {}
-    if demographics_csv:
-        dataset_b_demo = parse_demographics_csv(demographics_csv)
-
-    # --- Merge demographics: Dataset A primary, Dataset B adds zip ---
     demographics: dict[str, dict] = {}
-    all_demo_ids = set(dataset_a_demo.keys()) | set(dataset_b_demo.keys())
-    for aid in all_demo_ids:
-        a = dataset_a_demo.get(aid, {})
-        b = dataset_b_demo.get(aid, {})
-        demographics[aid] = {
-            "sex": a.get("sex") or b.get("sex"),
-            "zip": a.get("zip") or b.get("zip"),
-            "breed": a.get("breed"),
-            "diagnosis_date": a.get("diagnosis_date"),
-            "species": a.get("species"),
-        }
+    if dataset_a_csv:
+        demographics = parse_dataset_a_demographics(dataset_a_csv)
 
     # --- Determine which IDs to process ---
     # Process all patients with predictions; demographics are optional enrichment
@@ -455,11 +391,20 @@ async def ingest_upload(
         if not patient_id:
             continue
 
+        # Top-1 vs top-2 margin is computed once per case_id and only
+        # attached to the rank-1 row (it is not meaningful for lower ranks).
+        conf_by_rank = {d["diagnosis_index"]: (d["confidence"] or 0.0) for d in petbert[anon_id]}
+        top1_conf = conf_by_rank.get(1, 0.0)
+        top2_conf = conf_by_rank.get(2, 0.0)
+        margin = top1_conf - top2_conf if top1_conf and top2_conf else None
+
         for diag in petbert[anon_id]:
             group = diag["predicted_group"] or "Unknown"
 
             if group not in cancer_type_map:
-                # Upsert cancer type
+                # Upsert cancer type. PetBERT-introduced types are accepted
+                # as confirmed; reviewer-introduced types go in unconfirmed
+                # (see review router).
                 ct_stmt = pg_insert(CancerType.__table__).values(
                     name=group,
                 ).on_conflict_do_nothing(index_elements=["name"])
@@ -473,25 +418,61 @@ async def ingest_upload(
 
             cancer_type_id = cancer_type_map[group]
 
+            conf = diag["confidence"] or 0.0
+            method = diag["method"]
+            rank = diag["diagnosis_index"]
+
+            # Review gate: flag pending when confidence is below the auto-
+            # accept threshold OR (rank-1 only) the margin to the next
+            # candidate is too tight OR the pipeline already labelled the
+            # row low_confidence.
+            row_margin = margin if rank == 1 else None
+            margin_too_tight = (
+                row_margin is not None
+                and row_margin < settings.REVIEW_AUTO_ACCEPT_MARGIN
+            )
+            needs_review = (
+                method == "low_confidence"
+                or conf < settings.REVIEW_AUTO_ACCEPT_CONFIDENCE
+                or margin_too_tight
+            )
+            review_status = "pending" if needs_review else "confirmed"
+
             diagnosis = CaseDiagnosis(
                 patient_id=patient_id,
                 cancer_type_id=cancer_type_id,
                 icd_o_code=diag["icd_o_code"] or None,
                 predicted_term=diag["predicted_term"] or None,
-                confidence=round(diag["confidence"], 2) if diag["confidence"] else None,
-                prediction_method=diag["method"] or None,
+                confidence=round(conf, 2) if conf else None,
+                prediction_method=method or None,
                 source_row_index=diag["row_index"],
-                diagnosis_index=diag["diagnosis_index"],
+                diagnosis_index=rank,
+                review_status=review_status,
+                top2_margin=round(row_margin, 2) if row_margin is not None else None,
+                ingestion_job_id=ingestion_job_id,
             )
             db.add(diagnosis)
             diagnoses_inserted += 1
+
+            if needs_review:
+                # Audit-log the auto-flag so the queue can show "flagged at
+                # ingest" alongside subsequent reviewer actions.
+                db.add(DiagnosisReviewEvent(
+                    case_diagnosis=diagnosis,
+                    actor_email="system",
+                    action="flagged",
+                    from_status=None,
+                    to_status="pending",
+                    cancer_type_id_after=cancer_type_id,
+                    icd_o_code_after=diag["icd_o_code"] or None,
+                ))
 
             row_results.append(IngestionRowResult(
                 row_number=diag["row_index"],
                 anon_id=anon_id,
                 status="inserted",
                 cancer_type=group,
-                confidence=round(diag["confidence"], 2) if diag["confidence"] else None,
+                confidence=round(conf, 2) if conf else None,
             ))
 
     await db.flush()
@@ -514,7 +495,6 @@ async def ingest_upload(
     # --- Log the ingestion ---
     log = IngestionLog(
         dataset_a_filename=dataset_a_filename,
-        dataset_b_filename=dataset_b_filename,
         started_at=started_at,
         completed_at=datetime.now(timezone.utc),
         rows_processed=total_diag,

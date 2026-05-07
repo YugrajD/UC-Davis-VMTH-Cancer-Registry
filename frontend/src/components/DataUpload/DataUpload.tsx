@@ -390,7 +390,7 @@ export function DataUpload() {
 
   useEffect(() => {
     if (user) {
-      loadMyJobs();
+      loadMyJobs(); // eslint-disable-line react-hooks/set-state-in-effect
       loadRoleRequests();
       loadExportRequests();
     }

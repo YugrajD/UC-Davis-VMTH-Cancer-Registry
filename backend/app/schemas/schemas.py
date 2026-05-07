@@ -242,7 +242,6 @@ class IngestionJobOut(BaseModel):
     id: int
     uploaded_by_email: str
     dataset_a_filename: str
-    dataset_b_filename: str
     status: str
     reviewed_by_email: Optional[str] = None
     reviewed_at: Optional[str] = None

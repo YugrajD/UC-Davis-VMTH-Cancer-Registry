@@ -38,8 +38,8 @@ def main() -> None:
         # reports), so we repeat the single column 3 times to produce the
         # expected (N, 2304) col_emb_concat shape.  The pipeline dict-deduplicates
         # embeddings, so the column is only embedded once.
-        text_cols=("Clinical Diagnoses", "Clinical Diagnoses", "Clinical Diagnoses"),
-        col_weights={"Clinical Diagnoses": 1.0},
+        text_cols=("Text", "Text", "Text"),
+        col_weights={"Text": 1.0},
         model_name=model_path,
         local_only=True,
         out_dir=scan_out_dir,

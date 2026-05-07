@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
 
 import httpx
@@ -114,7 +113,6 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
 
         storage_path = job.storage_path
         dataset_a_filename = job.dataset_a_filename
-        dataset_b_filename = job.dataset_b_filename
 
         job.status = "processing"
         job.processing_stage = "reading_files"
@@ -122,17 +120,11 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
         await db.commit()
 
     try:
-        # --- Phase 2: read files from disk (no DB needed) ---------------
+        # --- Phase 2: read file from disk (no DB needed) ----------------
         dataset_a_path = f"{storage_path}/dataset_a.csv"
-        dataset_b_path = f"{storage_path}/dataset_b.csv"
 
         with open(dataset_a_path, "rb") as f:
             dataset_a_bytes = f.read()
-
-        dataset_b_bytes = b""
-        if os.path.exists(dataset_b_path):
-            with open(dataset_b_path, "rb") as f:
-                dataset_b_bytes = f.read()
 
         # --- Phase 3: call ML worker (long-running, no DB session) ------
         await _update_job(job_id, processing_stage="running_ml_worker")
@@ -170,9 +162,7 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
             ingestion_result = await ingest_upload(
                 db=db,
                 predictions=predictions,
-                demographics_csv=dataset_b_bytes if dataset_b_bytes else None,
                 dataset_a_filename=dataset_a_filename,
-                dataset_b_filename=dataset_b_filename,
                 dataset_a_csv=dataset_a_bytes,
                 ingestion_job_id=job_id,
             )
@@ -232,7 +222,6 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
         storage_path = job.storage_path
         dataset_a_filename = job.dataset_a_filename
-        dataset_b_filename = job.dataset_b_filename
 
         job.status = "processing"
         job.processing_stage = "uploading_to_gcs"
@@ -240,17 +229,11 @@ async def _process_via_gcp_batch(job_id: int) -> None:
         await db.commit()
 
     try:
-        # --- Phase 2: read files and upload to GCS (no long DB hold) ----
+        # --- Phase 2: read file and upload to GCS (no long DB hold) -----
         dataset_a_path = f"{storage_path}/dataset_a.csv"
-        dataset_b_path = f"{storage_path}/dataset_b.csv"
 
         with open(dataset_a_path, "rb") as f:
             dataset_a_bytes = f.read()
-
-        dataset_b_bytes = b""
-        if os.path.exists(dataset_b_path):
-            with open(dataset_b_path, "rb") as f:
-                dataset_b_bytes = f.read()
 
         logger.info("Job %d: uploading dataset_a.csv to GCS", job_id)
         await loop.run_in_executor(
@@ -316,9 +299,7 @@ async def _process_via_gcp_batch(job_id: int) -> None:
             ingestion_result = await ingest_upload(
                 db=db,
                 predictions=predictions,
-                demographics_csv=dataset_b_bytes if dataset_b_bytes else None,
                 dataset_a_filename=dataset_a_filename,
-                dataset_b_filename=dataset_b_filename,
                 dataset_a_csv=dataset_a_bytes,
                 ingestion_job_id=job_id,
             )

@@ -141,52 +141,6 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
 # Parse demographics CSV
 # ---------------------------------------------------------------------------
 
-def parse_demographics_csv(csv_bytes: bytes) -> dict[str, dict]:
-    """Parse Dataset B (demographics) CSV.
-
-    Expects columns: anon_id, Sex, and a zip column (any column with 'zip' in name).
-    Takes first non-empty sex/zip per anon_id.
-
-    Returns: {anon_id: {"sex": str|None, "zip": str|None}}
-    """
-    text = csv_bytes.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
-
-    # Find zip column
-    fieldnames = reader.fieldnames or []
-    zip_col = None
-    for col in fieldnames:
-        if "zip" in col.lower():
-            zip_col = col
-            break
-
-    result: dict[str, dict] = {}
-    for row in reader:
-        anon_id = normalize_anon_id(row.get("anon_id", ""))
-        if not anon_id:
-            continue
-
-        raw_sex = str(row.get("Sex", "")).strip().upper()
-        if raw_sex == "NAN" or raw_sex == "":
-            raw_sex = ""
-
-        raw_zip = str(row.get(zip_col, "")).strip() if zip_col else ""
-        if raw_zip.lower() == "nan":
-            raw_zip = ""
-        raw_zip = raw_zip.split(".")[0]
-
-        if anon_id not in result:
-            result[anon_id] = {"sex": None, "zip": None}
-
-        if result[anon_id]["sex"] is None and raw_sex:
-            result[anon_id]["sex"] = SEX_MAP.get(raw_sex)
-
-        if result[anon_id]["zip"] is None and raw_zip:
-            result[anon_id]["zip"] = raw_zip
-
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Parse Dataset A demographics
 # ---------------------------------------------------------------------------
@@ -287,9 +241,7 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
 async def ingest_upload(
     db: AsyncSession,
     predictions: list[dict],
-    demographics_csv: Optional[bytes],
     dataset_a_filename: str,
-    dataset_b_filename: Optional[str],
     dataset_a_csv: Optional[bytes] = None,
     ingestion_job_id: int | None = None,
 ) -> IngestionResponse:
@@ -314,28 +266,9 @@ async def ingest_upload(
     total_diag = sum(len(v) for v in petbert.values())
 
     # --- Parse Dataset A demographics ---
-    dataset_a_demo: dict[str, dict] = {}
-    if dataset_a_csv:
-        dataset_a_demo = parse_dataset_a_demographics(dataset_a_csv)
-
-    # --- Parse Dataset B demographics (zip codes) ---
-    dataset_b_demo: dict[str, dict] = {}
-    if demographics_csv:
-        dataset_b_demo = parse_demographics_csv(demographics_csv)
-
-    # --- Merge demographics: Dataset A primary, Dataset B adds zip ---
     demographics: dict[str, dict] = {}
-    all_demo_ids = set(dataset_a_demo.keys()) | set(dataset_b_demo.keys())
-    for aid in all_demo_ids:
-        a = dataset_a_demo.get(aid, {})
-        b = dataset_b_demo.get(aid, {})
-        demographics[aid] = {
-            "sex": a.get("sex") or b.get("sex"),
-            "zip": a.get("zip") or b.get("zip"),
-            "breed": a.get("breed"),
-            "diagnosis_date": a.get("diagnosis_date"),
-            "species": a.get("species"),
-        }
+    if dataset_a_csv:
+        demographics = parse_dataset_a_demographics(dataset_a_csv)
 
     # --- Determine which IDs to process ---
     # Process all patients with predictions; demographics are optional enrichment
@@ -562,7 +495,6 @@ async def ingest_upload(
     # --- Log the ingestion ---
     log = IngestionLog(
         dataset_a_filename=dataset_a_filename,
-        dataset_b_filename=dataset_b_filename,
         started_at=started_at,
         completed_at=datetime.now(timezone.utc),
         rows_processed=total_diag,

@@ -264,3 +264,16 @@ class RoleRequest(Base):
     resolved_by_email = Column(String(255), nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ExportRequest(Base):
+    """User-submitted requests for data export access."""
+    __tablename__ = "export_requests"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False)
+    status = Column(String(20), nullable=False, server_default="pending")
+    reason = Column(Text, nullable=True)
+    resolved_by_email = Column(String(255), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

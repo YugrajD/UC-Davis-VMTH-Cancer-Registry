@@ -3,7 +3,7 @@
 import csv
 import io
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import (
@@ -32,7 +32,14 @@ CSV_COLUMNS = [
 
 
 async def generate_patient_export_csv(
-    db: AsyncSession, cancer_type: str | None = None
+    db: AsyncSession,
+    cancer_type: str | None = None,
+    county: str | None = None,
+    zip_code: str | None = None,
+    sex: str | None = None,
+    breed: str | None = None,
+    year_start: int | None = None,
+    year_end: int | None = None,
 ) -> str:
     """Build a CSV string with one row per patient-diagnosis (confirmed/corrected only)."""
 
@@ -66,6 +73,18 @@ async def generate_patient_export_csv(
 
     if cancer_type:
         stmt = stmt.where(CancerType.name == cancer_type)
+    if county:
+        stmt = stmt.where(County.name == county)
+    if zip_code:
+        stmt = stmt.where(Patient.zip_code == zip_code)
+    if sex:
+        stmt = stmt.where(Patient.sex == sex)
+    if breed:
+        stmt = stmt.where(Breed.name == breed)
+    if year_start is not None:
+        stmt = stmt.where(func.extract("year", Patient.diagnosis_date) >= year_start)
+    if year_end is not None:
+        stmt = stmt.where(func.extract("year", Patient.diagnosis_date) <= year_end)
 
     result = await db.execute(stmt)
     rows = result.all()

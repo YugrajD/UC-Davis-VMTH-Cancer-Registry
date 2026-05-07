@@ -517,11 +517,13 @@ export function DataUpload() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'vmth_county_export.csv';
+      a.download = 'vmth_patient_export.csv';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      // Reload requests so the consumed approval is reflected in the UI
+      await loadExportRequests();
     } catch (err) {
       setExportError(err instanceof Error ? err.message : 'Download failed');
     } finally {
@@ -792,7 +794,7 @@ export function DataUpload() {
       {subTab === 'export' && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-            Download county-level analysis data as CSV, including VMTH cancer cases, CalEnviroScreen, pesticide use, superfund sites, and human cancer rates.
+            Download patient-level disease and demographic data as CSV. Each approved request grants a single download.
           </p>
 
           {isAdmin || approvedExport ? (
@@ -849,6 +851,7 @@ export function DataUpload() {
                   <div key={req.id} className="flex items-center gap-2 text-xs">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium border ${
                       req.status === 'approved' ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                      : req.status === 'downloaded' ? 'bg-blue-100 text-blue-800 border-blue-200'
                       : req.status === 'denied' ? 'bg-red-100 text-red-800 border-red-200'
                       : 'bg-yellow-100 text-yellow-800 border-yellow-200'
                     }`}>

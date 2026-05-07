@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS export_requests (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'approved', 'denied')),
+        CHECK (status IN ('pending', 'approved', 'denied', 'downloaded')),
     reason TEXT,
     resolved_by_email VARCHAR(255),
     resolved_at TIMESTAMPTZ,

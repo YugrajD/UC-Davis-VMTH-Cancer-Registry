@@ -62,7 +62,7 @@ function AppContent() {
         ) : activeTab === 'breed-disparities' ? (
           <BreedDisparitiesView />
         ) : activeTab === 'analysis' ? (
-          <AnalysisView countyData={countyData} countRange={countRange} />
+          <AnalysisView />
         ) : activeTab === 'cancer-types' ? (
           <div className="space-y-6">
             <div className="bg-white rounded-lg border border-gray-200 p-4">

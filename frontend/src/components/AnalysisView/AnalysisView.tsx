@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import DeckGL from '@deck.gl/react';
 import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { PickingInfo } from '@deck.gl/core';
@@ -7,7 +7,14 @@ import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import { useFilteredData } from '../../hooks/useFilteredData';
 import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState } from '../../types';
 import { CES_INDICATORS, CANCER_TYPES, BREEDS, SEX_OPTIONS } from '../../types';
-import { HUMAN_CANCER_RATES } from '../../data/humanCancerRates';
+import {
+  HUMAN_CANCER_RATES,
+  HUMAN_CANCER_SITES,
+  HUMAN_CANCER_SEX_OPTIONS,
+  getHumanCancerRateMap,
+  type HumanCancerSite,
+  type HumanCancerSex,
+} from '../../data/humanCancerRates';
 import {
   MOCK_SUPERFUND_SITES,
   SUPERFUND_BY_COUNTY,
@@ -105,8 +112,8 @@ function getVarValue(
     case 'superfund_sites':
       return SUPERFUND_BY_COUNTY[county]?.total ?? 0;
     case 'human_cancer_rate': {
-      const hr = HUMAN_CANCER_RATES.find(h => h.county === county);
-      return hr?.rate ?? null;
+      const hrMap = getHumanCancerRateMap('All Cancer Sites', 'Both Sexes');
+      return hrMap.get(county.toLowerCase())?.rate ?? null;
     }
     default:
       // CES indicator
@@ -134,6 +141,45 @@ function tooltipHeader(props: Record<string, unknown>, geoLevel: GeoLevel, count
     case 'zcta':
       return `<strong style="font-size:13px">ZIP ${props.ZCTA5CE20 as string}</strong><br/><span style="color:#6b7280">${county} County</span>`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Filter popover button — small icon button that toggles a dropdown panel
+// ---------------------------------------------------------------------------
+
+function MapFilterButton({ children, label }: { children: React.ReactNode; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium border transition-colors ${open ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]' : 'border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
+        title={label ?? 'Filters'}
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+        </svg>
+        <span className="hidden sm:inline">Filters</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[200px] space-y-2">
+          {children}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -255,16 +301,20 @@ const GEO_LEVEL_OPTIONS: { value: GeoLevel; label: string }[] = [
 // ---------------------------------------------------------------------------
 
 function CancerMap({
-  countyData,
-  countRange,
   showSuperfund,
   geoLevel,
 }: {
-  countyData: CountyData[];
-  countRange: { min: number; max: number };
   showSuperfund: boolean;
   geoLevel: GeoLevel;
 }) {
+  const [filters, setFilters] = useState<FilterState>({
+    rateType: 'incidence',
+    sex: 'all',
+    cancerType: 'All Types',
+    breed: 'All Breeds',
+  });
+  const { countyData, countRange } = useFilteredData(filters);
+
   const countyDataMap = useMemo(() => {
     const m = new Map<string, CountyData>();
     countyData.forEach(c => m.set(c.county.toLowerCase(), c));
@@ -348,6 +398,28 @@ function CancerMap({
       getTooltip={getTooltip}
       title="Cancer Incidence"
       subtitle={subtitle}
+      headerRight={
+        <MapFilterButton>
+          <label className="block">
+            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Type</span>
+            <select value={filters.cancerType} onChange={e => setFilters(f => ({ ...f, cancerType: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+              {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Breed</span>
+            <select value={filters.breed} onChange={e => setFilters(f => ({ ...f, breed: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+              {BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
+            <select value={filters.sex} onChange={e => setFilters(f => ({ ...f, sex: e.target.value as FilterState['sex'] }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+              {SEX_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </label>
+        </MapFilterButton>
+      }
       legend={
         <GradientLegend
           label="Cases"
@@ -471,15 +543,20 @@ function EnviroScreenMap({
       title="CalEnviroScreen 4.0"
       subtitle="Environmental health percentile"
       headerRight={
-        <select
-          value={indicator}
-          onChange={(e) => onIndicatorChange(e.target.value as CESIndicator)}
-          className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-        >
-          {CES_INDICATORS.map((ind) => (
-            <option key={ind.value} value={ind.value}>{ind.label}</option>
-          ))}
-        </select>
+        <MapFilterButton>
+          <label className="block">
+            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Indicator</span>
+            <select
+              value={indicator}
+              onChange={(e) => onIndicatorChange(e.target.value as CESIndicator)}
+              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+            >
+              {CES_INDICATORS.map((ind) => (
+                <option key={ind.value} value={ind.value}>{ind.label}</option>
+              ))}
+            </select>
+          </label>
+        </MapFilterButton>
       }
       legend={
         <GradientLegend
@@ -498,16 +575,33 @@ function EnviroScreenMap({
 // ---------------------------------------------------------------------------
 
 function HumanCancerMap({ showSuperfund, geoLevel }: { showSuperfund: boolean; geoLevel: GeoLevel }) {
-  const rateMap = useMemo(() => {
-    const m = new Map<string, { rate: number | null; cases: number | null }>();
-    HUMAN_CANCER_RATES.forEach(d => m.set(d.county.toLowerCase(), { rate: d.rate, cases: d.cases }));
-    return m;
-  }, []);
+  const [selectedSite, setSelectedSite] = useState<HumanCancerSite>('All Cancer Sites');
+  const [selectedSex, setSelectedSex] = useState<HumanCancerSex>('Both Sexes');
+
+  // Filter out sex options that are invalid for the selected cancer site
+  const availableSexOptions = useMemo(() => {
+    if (selectedSite === 'Prostate') return HUMAN_CANCER_SEX_OPTIONS.filter(o => o.value === 'Male');
+    if (selectedSite === 'Breast (Female)' || selectedSite === 'Cervix' || selectedSite === 'Ovary' || selectedSite === 'Uterus (Corpus & Uterus, NOS)')
+      return HUMAN_CANCER_SEX_OPTIONS.filter(o => o.value === 'Female');
+    return HUMAN_CANCER_SEX_OPTIONS;
+  }, [selectedSite]);
+
+  // Auto-correct sex when site changes to a sex-specific cancer
+  const effectiveSex = useMemo(() => {
+    if (availableSexOptions.some(o => o.value === selectedSex)) return selectedSex;
+    return availableSexOptions[0].value;
+  }, [availableSexOptions, selectedSex]);
+
+  const rateMap = useMemo(
+    () => getHumanCancerRateMap(selectedSite, effectiveSex),
+    [selectedSite, effectiveSex],
+  );
 
   const rateRange = useMemo(() => {
-    const vals = HUMAN_CANCER_RATES.map(d => d.rate).filter((v): v is number => v !== null);
+    const vals = Array.from(rateMap.values()).map(d => d.rate).filter((v): v is number => v !== null);
+    if (vals.length === 0) return { min: 0, max: 500 };
     return { min: Math.min(...vals), max: Math.max(...vals) };
-  }, []);
+  }, [rateMap]);
 
   const colorScale = useMemo(
     () =>
@@ -584,6 +678,34 @@ function HumanCancerMap({ showSuperfund, geoLevel }: { showSuperfund: boolean; g
           Age-adjusted rate per 100K (2017–2021) &middot;{' '}
           <a href="https://statecancerprofiles.cancer.gov/" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">Source</a>
         </>
+      }
+      headerRight={
+        <MapFilterButton>
+          <label className="block">
+            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Site</span>
+            <select
+              value={selectedSite}
+              onChange={e => setSelectedSite(e.target.value as HumanCancerSite)}
+              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+            >
+              {HUMAN_CANCER_SITES.map(s => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
+            <select
+              value={effectiveSex}
+              onChange={e => setSelectedSex(e.target.value as HumanCancerSex)}
+              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+            >
+              {availableSexOptions.map(s => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </label>
+        </MapFilterButton>
       }
       legend={
         <GradientLegend
@@ -719,16 +841,21 @@ function PesticideMap({
         </>
       }
       headerRight={
-        <select
-          value={selectedClass}
-          onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
-          className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-        >
-          <option value="all">All Classes</option>
-          {PESTICIDE_CLASSES.map(cls => (
-            <option key={cls.value} value={cls.value}>{cls.label}</option>
-          ))}
-        </select>
+        <MapFilterButton>
+          <label className="block">
+            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Pesticide Class</span>
+            <select
+              value={selectedClass}
+              onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
+              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+            >
+              <option value="all">All Classes</option>
+              {PESTICIDE_CLASSES.map(cls => (
+                <option key={cls.value} value={cls.value}>{cls.label}</option>
+              ))}
+            </select>
+          </label>
+        </MapFilterButton>
       }
       legend={
         <GradientLegend
@@ -1089,17 +1216,16 @@ const MAP_OPTIONS: { id: MapId; label: string }[] = [
 ];
 
 export function AnalysisView() {
-  // Cancer filters (independent from Overview page)
-  const [analysisFilters, setAnalysisFilters] = useState<FilterState>({
+  // Unfiltered VMTH data for scatter plot (CancerMap owns its own filters now)
+  const { countyData: unfilteredCountyData } = useFilteredData({
     rateType: 'incidence',
     sex: 'all',
     cancerType: 'All Types',
     breed: 'All Breeds',
   });
-  const { countyData, countRange } = useFilteredData(analysisFilters);
 
   const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('pesticides');
-  const [mapCount, setMapCount] = useState<MapCount>(3);
+  const [mapCount, setMapCount] = useState<MapCount>(4);
   const [twoMapSelection, setTwoMapSelection] = useState<[MapId, MapId]>(['vmth', 'enviro']);
   const [threeMapSelection, setThreeMapSelection] = useState<[MapId, MapId, MapId]>(['vmth', 'enviro', 'human']);
   const [showSuperfund, setShowSuperfund] = useState(false);
@@ -1141,7 +1267,7 @@ export function AnalysisView() {
 
   const renderMap = (id: MapId) => {
     switch (id) {
-      case 'vmth':    return <CancerMap key={id} countyData={countyData} countRange={countRange} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
+      case 'vmth':    return <CancerMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
       case 'enviro':  return <EnviroScreenMap key={id} data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} geoLevel={geoLevel} onIndicatorChange={handleIndicatorChange} />;
       case 'human':   return <HumanCancerMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
       case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} selectedClass={pesticideClass} onClassChange={setPesticideClass} />;
@@ -1202,34 +1328,6 @@ export function AnalysisView() {
             ))}
           </div>
 
-          {/* Vertical divider */}
-          <div className="w-px h-6 bg-gray-300" />
-
-          {/* Cancer filters */}
-          <select
-            value={analysisFilters.cancerType}
-            onChange={e => setAnalysisFilters(f => ({ ...f, cancerType: e.target.value }))}
-            className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-          >
-            {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
-          </select>
-
-          <select
-            value={analysisFilters.breed}
-            onChange={e => setAnalysisFilters(f => ({ ...f, breed: e.target.value }))}
-            className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-          >
-            {BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
-          </select>
-
-          <select
-            value={analysisFilters.sex}
-            onChange={e => setAnalysisFilters(f => ({ ...f, sex: e.target.value as FilterState['sex'] }))}
-            className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-          >
-            {SEX_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
-
           {mapCount < 4 && (
             <>
               <div className="w-px h-6 bg-gray-300" />
@@ -1275,7 +1373,7 @@ export function AnalysisView() {
           </div>
         </div>
         <div className="p-4">
-          <CorrelationScatterPlot countyData={countyData} cesData={cesData} xVar={scatterXVar} yVar={scatterYVar} />
+          <CorrelationScatterPlot countyData={unfilteredCountyData} cesData={cesData} xVar={scatterXVar} yVar={scatterYVar} />
           <p className="text-xs text-[var(--color-text-secondary)] mt-3 text-center">
             Dashed line shows linear trend · Each dot is one county · Hover for details
           </p>

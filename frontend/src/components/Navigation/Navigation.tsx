@@ -113,7 +113,7 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
                     <span className="text-xs bg-white/20 px-1.5 py-0.5 rounded">Admin</span>
                   )}
                   <button
-                    onClick={() => signOut()}
+                    onClick={() => { signOut(); onTabChange('overview'); }}
                     className="text-sm opacity-80 hover:opacity-100 underline transition-opacity"
                   >
                     Sign Out

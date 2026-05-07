@@ -189,6 +189,22 @@ describe('TABS', () => {
     expect(ids).toContain('analysis');
   });
 
+  it('contains the data upload tab', () => {
+    const ids = TABS.map(t => t.id);
+    expect(ids).toContain('data-upload');
+  });
+
+  it('contains the review and admin tabs', () => {
+    const ids = TABS.map(t => t.id);
+    expect(ids).toContain('review-queue');
+    expect(ids).toContain('diagnosis-review');
+    expect(ids).toContain('user-management');
+  });
+
+  it('contains exactly 8 tabs', () => {
+    expect(TABS.length).toBe(8);
+  });
+
   it('every tab has a non-empty label', () => {
     for (const t of TABS) {
       expect(typeof t.label).toBe('string');

@@ -13,8 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from typing import Optional
-from app.auth import CurrentUser, get_current_user, get_optional_user, require_admin, require_reviewer
+from app.auth import CurrentUser, get_current_user, require_admin, require_reviewer
 from app.config import settings
 from app.database import get_db
 from app.models.models import IngestionJob
@@ -42,11 +41,7 @@ def _ensure_csv(raw_bytes: bytes, filename: str) -> bytes:
 
 # Column name mapping: uploaded name → name expected by GCP Batch image
 _COLUMN_RENAMES = {
-    "diagnoses (labels)": "Clinical Diagnoses",
-    "diagnoses": "Clinical Diagnoses",
-    "clinical diagnoses": "Clinical Diagnoses",
     "text (pathology report)": "Text",
-    "text": "Text",
 }
 
 
@@ -54,7 +49,7 @@ _COLUMN_RENAMES = {
 _HEADER_SENTINEL_COLS = ["Date of Birth", "Sex", "Species", "Breed"]
 
 # Columns concatenated from continuation rows into the preceding header.
-_CONTINUATION_COLS = ["Text", "Clinical Diagnoses"]
+_CONTINUATION_COLS = ["Text"]
 
 # HTML tag pattern for stripping markup from pathology text.
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -171,35 +166,30 @@ async def ingestion_status():
 @router.post("/upload")
 async def upload_datasets(
     dataset_a: UploadFile = File(...),
-    dataset_b: Optional[UploadFile] = None,
     db: AsyncSession = Depends(get_db),
-    user: Optional[CurrentUser] = Depends(get_optional_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
-    """Upload Dataset A and optionally Dataset B. Creates a job in pending_review status.
+    """Upload a dataset CSV/XLSX. Creates a job in pending_review status.
 
-    Authentication is optional — anonymous uploads are allowed.
+    Requires authentication.
     """
     if not dataset_a.filename:
-        raise HTTPException(status_code=400, detail="Dataset A file is required")
+        raise HTTPException(status_code=400, detail="Dataset file is required")
 
     dataset_a_bytes = await dataset_a.read()
-    dataset_b_bytes = (await dataset_b.read()) if dataset_b and dataset_b.filename else b""
 
     if not dataset_a_bytes:
-        raise HTTPException(status_code=400, detail="Dataset A file is empty")
+        raise HTTPException(status_code=400, detail="Dataset file is empty")
 
     # Convert XLSX → CSV if needed, then normalize columns for GCP Batch image
     dataset_a_bytes = _normalize_columns(_ensure_csv(dataset_a_bytes, dataset_a.filename))
-    if dataset_b_bytes:
-        dataset_b_bytes = _normalize_columns(_ensure_csv(dataset_b_bytes, dataset_b.filename))
 
     # Rate limit: 3 uploads per day. Admins and uploader-role users bypass.
-    if not user or not (user.is_admin or user.is_uploader):
-        uploader_id = user.email if user else "anonymous"
+    if not (user.is_admin or user.is_uploader):
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         count_result = await db.execute(
             select(func.count(IngestionJob.id)).where(
-                IngestionJob.uploaded_by_email == uploader_id,
+                IngestionJob.uploaded_by_email == user.email,
                 IngestionJob.created_at >= today_start,
             )
         )
@@ -211,12 +201,10 @@ async def upload_datasets(
             )
 
     # Create job record first to get an ID
-    dataset_b_filename = dataset_b.filename if dataset_b and dataset_b.filename else None
     job = IngestionJob(
-        uploaded_by_email=user.email if user else "anonymous",
-        uploaded_by_sub=user.sub if user else "anonymous",
+        uploaded_by_email=user.email,
+        uploaded_by_sub=user.sub,
         dataset_a_filename=dataset_a.filename,
-        dataset_b_filename=dataset_b_filename,
         storage_path="",  # will update after we know the ID
         status="pending_review",
         created_at=datetime.now(timezone.utc),
@@ -225,15 +213,12 @@ async def upload_datasets(
     db.add(job)
     await db.flush()
 
-    # Save files to disk
+    # Save file to disk
     storage_path = os.path.join(settings.UPLOAD_DIR, str(job.id))
     os.makedirs(storage_path, exist_ok=True)
 
     with open(os.path.join(storage_path, "dataset_a.csv"), "wb") as f:
         f.write(dataset_a_bytes)
-    if dataset_b_bytes:
-        with open(os.path.join(storage_path, "dataset_b.csv"), "wb") as f:
-            f.write(dataset_b_bytes)
 
     job.storage_path = storage_path
     await db.commit()
@@ -289,23 +274,18 @@ async def get_job(
     return _job_to_dict(job)
 
 
-@router.get("/jobs/{job_id}/preview/{dataset}")
+@router.get("/jobs/{job_id}/preview")
 async def preview_job_dataset(
     job_id: int,
-    dataset: str,
     db: AsyncSession = Depends(get_db),
     _reviewer: CurrentUser = Depends(require_reviewer),
 ):
-    """Stream a stored CSV file for reviewer preview."""
-    if dataset not in ("a", "b"):
-        raise HTTPException(status_code=400, detail="dataset must be 'a' or 'b'")
-
+    """Stream the stored CSV file for reviewer preview."""
     job = await _get_job_or_404(db, job_id)
-    filename = "dataset_a.csv" if dataset == "a" else "dataset_b.csv"
-    filepath = os.path.join(job.storage_path, filename)
+    filepath = os.path.join(job.storage_path, "dataset_a.csv")
 
     if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+        raise HTTPException(status_code=404, detail="File not found")
 
     def iter_file():
         with open(filepath, "rb") as f:
@@ -314,7 +294,7 @@ async def preview_job_dataset(
     return StreamingResponse(
         iter_file(),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="dataset_a.csv"'},
     )
 
 
@@ -415,7 +395,6 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "id": job.id,
         "uploaded_by_email": job.uploaded_by_email,
         "dataset_a_filename": job.dataset_a_filename,
-        "dataset_b_filename": job.dataset_b_filename,
         "status": job.status,
         "processing_stage": job.processing_stage,
         "reviewed_by_email": job.reviewed_by_email,

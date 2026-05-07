@@ -217,7 +217,7 @@ function JobCard({
   onRejectConfirm: (id: number) => void;
   onRejectCancel: () => void;
   onRejectReasonChange: (v: string) => void;
-  onPreview: (id: number, dataset: 'a' | 'b', filename: string) => void;
+  onPreview: (id: number, filename: string) => void;
   onCancel: (id: number) => void;
 }) {
   return (
@@ -233,8 +233,7 @@ function JobCard({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-[var(--color-text-secondary)]">
             <p>Uploaded by: <span className="font-medium text-[var(--color-text-primary)]">{job.uploaded_by_email}</span></p>
             <p>Date: {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}</p>
-            <p>Dataset A: <span className="font-mono">{job.dataset_a_filename}</span></p>
-            <p>Dataset B: <span className="font-mono">{job.dataset_b_filename}</span></p>
+            <p>File: <span className="font-mono">{job.dataset_a_filename}</span></p>
             {job.reviewed_by_email && <p>Reviewed by: {job.reviewed_by_email}</p>}
             {job.reviewed_at && <p>Reviewed: {new Date(job.reviewed_at).toLocaleString()}</p>}
             {job.rejection_reason && <p className="text-red-600">Reason: {job.rejection_reason}</p>}
@@ -244,24 +243,14 @@ function JobCard({
 
         <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={() => onPreview(job.id, 'a', job.dataset_a_filename)}
-            disabled={previewLoading === `${job.id}-a`}
+            onClick={() => onPreview(job.id, job.dataset_a_filename)}
+            disabled={previewLoading === `${job.id}`}
             className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
           >
-            {previewLoading === `${job.id}-a` && (
+            {previewLoading === `${job.id}` && (
               <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
             )}
-            Preview A
-          </button>
-          <button
-            onClick={() => onPreview(job.id, 'b', job.dataset_b_filename)}
-            disabled={previewLoading === `${job.id}-b`}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
-          >
-            {previewLoading === `${job.id}-b` && (
-              <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-            )}
-            Preview B
+            Preview
           </button>
 
           {job.status === 'pending_review' && (
@@ -419,13 +408,13 @@ export function AdminQueue() {
     }
   };
 
-  const handlePreview = async (jobId: number, dataset: 'a' | 'b', filename: string) => {
-    const key = `${jobId}-${dataset}`;
+  const handlePreview = async (jobId: number, filename: string) => {
+    const key = `${jobId}`;
     setPreviewLoading(key);
     try {
       const token = await getAccessToken();
       if (!token) return;
-      const content = await fetchJobPreview(token, jobId, dataset);
+      const content = await fetchJobPreview(token, jobId);
       setPreview({ content, filename });
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Preview failed');

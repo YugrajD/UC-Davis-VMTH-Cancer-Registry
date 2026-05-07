@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { uploadCSV, fetchMyJobs, type IngestionJob } from '../../api/client';
+import { uploadCSV, fetchMyJobs, fetchMyRoleRequests, submitRoleRequest, type IngestionJob, type RoleRequest } from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
+import { LoginModal } from '../LoginModal/LoginModal';
 import { STAGE_LABELS } from '../shared/pipelineStages';
 
 interface CsvPreview {
@@ -184,18 +185,156 @@ const REQUIRED_COLUMNS = [
   'Zipcode Zipcode',
   'RfrrVtrn Zipcode Zipcode',
   'DtOfRq',
-  'Diagnoses',
   'Text',
 ];
 
+// Aliases that map alternate column names to their canonical required name
+const COLUMN_ALIASES: Record<string, string> = {
+  'text (pathology report)': 'Text',
+};
+
+/**
+ * Validates that a CSV file contains all required columns.
+ * Returns a list of missing column names, or empty array if valid.
+ */
+function validateCsvColumns(fileText: string): string[] {
+  const firstLine = fileText.split(/\r?\n/).find(l => l.trim());
+  if (!firstLine) return [...REQUIRED_COLUMNS];
+
+  // Parse the header line using the same logic as parseCsv
+  const headers: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < firstLine.length; i++) {
+    const ch = firstLine[i];
+    if (inQuotes) {
+      if (ch === '"' && firstLine[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      headers.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  headers.push(current.trim());
+
+  // Normalize headers: lowercase and apply aliases
+  const normalizedHeaders = headers.map(h => {
+    const lower = h.toLowerCase();
+    const alias = COLUMN_ALIASES[lower];
+    return alias ? alias.toLowerCase() : lower;
+  });
+
+  return REQUIRED_COLUMNS.filter(
+    col => !normalizedHeaders.includes(col.toLowerCase())
+  );
+}
+
+interface SignInPromptProps {
+  onSignIn: () => void;
+}
+
+function SignInPrompt({ onSignIn }: SignInPromptProps) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+      <svg className="w-12 h-12 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+      </svg>
+      <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-2">
+        Sign in to upload data
+      </h3>
+      <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+        You need to be signed in to upload datasets for processing.
+      </p>
+      <button
+        onClick={onSignIn}
+        className="px-6 py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md hover:bg-[var(--color-teal-dark)] transition-colors"
+      >
+        Sign In
+      </button>
+    </div>
+  );
+}
+
+function RoleRequestCard({
+  role,
+  hasRole,
+  pendingRequest,
+  onSubmit,
+  submitting,
+}: {
+  role: string;
+  hasRole: boolean;
+  pendingRequest: RoleRequest | undefined;
+  onSubmit: (role: string, reason: string) => void;
+  submitting: boolean;
+}) {
+  const [reason, setReason] = useState('');
+  const label = role.charAt(0).toUpperCase() + role.slice(1);
+
+  if (hasRole) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+          {label}
+        </span>
+      </div>
+    );
+  }
+
+  if (pendingRequest) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200">
+          {label}: pending
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <textarea
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder={`Why do you need ${role} access? (optional)`}
+        rows={2}
+        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent resize-none"
+      />
+      <button
+        onClick={() => onSubmit(role, reason)}
+        disabled={submitting}
+        className="px-4 py-2 text-sm font-medium bg-[var(--color-teal)] text-white rounded-md hover:bg-[var(--color-teal-dark)] disabled:opacity-50 transition-colors"
+      >
+        {submitting ? 'Requesting...' : `Request ${label} Role`}
+      </button>
+    </div>
+  );
+}
+
 export function DataUpload() {
-  const { user, getAccessToken } = useAuth();
+  const { user, isUploader, isReviewer, isAdmin, getAccessToken } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [myJobs, setMyJobs] = useState<IngestionJob[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+
+  // Role requests
+  const [roleRequests, setRoleRequests] = useState<RoleRequest[]>([]);
+  const [roleSubmitting, setRoleSubmitting] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -213,9 +352,23 @@ export function DataUpload() {
     }
   }, [getAccessToken]);
 
+  const loadRoleRequests = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    try {
+      const reqs = await fetchMyRoleRequests(token);
+      setRoleRequests(reqs);
+    } catch {
+      // silently fail
+    }
+  }, [getAccessToken]);
+
   useEffect(() => {
-    if (user) loadMyJobs();
-  }, [user, loadMyJobs]);
+    if (user) {
+      loadMyJobs();
+      loadRoleRequests();
+    }
+  }, [user, loadMyJobs, loadRoleRequests]);
 
   // Auto-poll every 10s while any job is processing
   useEffect(() => {
@@ -225,9 +378,48 @@ export function DataUpload() {
     return () => clearInterval(interval);
   }, [myJobs, loadMyJobs]);
 
+  const validateFile = useCallback((f: File): Promise<string[]> => {
+    return new Promise((resolve) => {
+      // Skip validation for non-CSV files (xlsx handled by backend)
+      if (!f.name.toLowerCase().endsWith('.csv')) {
+        resolve([]);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        resolve(validateCsvColumns(text));
+      };
+      reader.onerror = () => resolve([]); // Don't block upload on read error
+      // Only read the first 4KB to get headers
+      reader.readAsText(f.slice(0, 4096));
+    });
+  }, []);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0] ?? null;
+    setFile(selected);
+    setError(null);
+    setSubmitted(false);
+
+    if (selected) {
+      const missing = await validateFile(selected);
+      if (missing.length > 0) {
+        setError(`Missing required columns: ${missing.join(', ')}`);
+      }
+    }
+  };
+
   const handleUpload = async () => {
     if (!file) {
       setError('Please select a dataset file.');
+      return;
+    }
+
+    // Re-validate before upload
+    const missing = await validateFile(file);
+    if (missing.length > 0) {
+      setError(`Missing required columns: ${missing.join(', ')}`);
       return;
     }
 
@@ -237,9 +429,13 @@ export function DataUpload() {
 
     try {
       const token = await getAccessToken();
+      if (!token) {
+        setError('Not signed in');
+        return;
+      }
       await uploadCSV(file, token);
       setSubmitted(true);
-      if (user) await loadMyJobs();
+      await loadMyJobs();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
@@ -254,6 +450,36 @@ export function DataUpload() {
     if (fileRef.current) fileRef.current.value = '';
   };
 
+  const handleRoleRequest = async (role: string, reason: string) => {
+    setRoleError(null);
+    setRoleSubmitting(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) return;
+      await submitRoleRequest(token, role, reason || undefined);
+      await loadRoleRequests();
+    } catch (err) {
+      setRoleError(err instanceof Error ? err.message : 'Request failed');
+    } finally {
+      setRoleSubmitting(false);
+    }
+  };
+
+  const pendingUploader = roleRequests.find(r => r.requested_role === 'uploader' && r.status === 'pending');
+  const pendingReviewer = roleRequests.find(r => r.requested_role === 'reviewer' && r.status === 'pending');
+
+  // Not signed in — show sign-in prompt
+  if (!user) {
+    return (
+      <div className="space-y-6">
+        <SignInPrompt onSignIn={() => setShowLogin(true)} />
+        {showLogin && (
+          <LoginModal onClose={() => setShowLogin(false)} />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* File Input */}
@@ -264,20 +490,30 @@ export function DataUpload() {
         <p className="text-xs text-[var(--color-text-secondary)] mb-3">
           Upload a CSV (.csv) or Excel (.xlsx) file containing patient visit data. Required columns:
         </p>
-        <div className="flex flex-wrap gap-1.5 mb-4">
+        <div className="flex flex-wrap gap-1.5 mb-3">
           {REQUIRED_COLUMNS.map(col => (
             <code key={col} className="bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded text-xs">
               {col}
             </code>
           ))}
         </div>
+        <a
+          href="/upload_template.csv"
+          download="upload_template.csv"
+          className="inline-flex items-center gap-1 text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium transition-colors mb-4"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          Download template CSV
+        </a>
         <label className="block">
           <span className="sr-only">Choose dataset file</span>
           <input
             ref={fileRef}
             type="file"
             accept=".csv,.xlsx"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={handleFileChange}
             className="block w-full text-sm text-gray-500
               file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
               file:text-sm file:font-semibold
@@ -344,77 +580,118 @@ export function DataUpload() {
       )}
 
       {/* My Uploads */}
-      {user && (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">My Uploads</h3>
-            <button
-              onClick={loadMyJobs}
-              className="text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium"
-            >
-              Refresh
-            </button>
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">My Uploads</h3>
+          <button
+            onClick={loadMyJobs}
+            className="text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium"
+          >
+            Refresh
+          </button>
+        </div>
+
+        {jobsLoading ? (
+          <div className="p-8 flex justify-center">
+            <div className="w-6 h-6 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+          </div>
+        ) : myJobs.length === 0 ? (
+          <div className="p-8 text-center">
+            <p className="text-sm text-[var(--color-text-secondary)]">No uploads yet.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">File</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Submitted</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {myJobs.map((job) => (
+                  <tr key={job.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-2.5 text-gray-600">#{job.id}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs">{job.dataset_a_filename}</td>
+                    <td className="px-4 py-2.5">
+                      <StatusBadge status={job.status} />
+                      {job.status === 'processing' && job.processing_stage && (
+                        <div className="flex items-center gap-1 mt-1">
+                          <div className="w-2.5 h-2.5 border-2 border-gray-300 border-t-[var(--color-teal)] rounded-full animate-spin shrink-0" />
+                          <span className="text-xs text-[var(--color-teal)]">
+                            {STAGE_LABELS[job.processing_stage] ?? job.processing_stage}
+                          </span>
+                        </div>
+                      )}
+                      {job.status === 'completed' && job.result_summary && (
+                        <div className="mt-1 space-y-0.5">
+                          <p className="text-xs text-gray-500">
+                            {job.result_summary.patients} records · {job.result_summary.diagnoses} diagnoses
+                          </p>
+                          {job.result_summary.avg_confidence !== null && (
+                            <p className="text-xs font-medium text-green-700">
+                              {job.result_summary.avg_confidence}% avg confidence
+                            </p>
+                          )}
+                          {job.result_summary.top_cancer_types[0] && (
+                            <p className="text-xs text-gray-500 truncate max-w-[180px]" title={job.result_summary.top_cancer_types[0].name}>
+                              Top: {job.result_summary.top_cancer_types[0].name}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-gray-500">
+                      {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Role Requests */}
+      {!isAdmin && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-1">
+            Request Roles
+          </h3>
+          <p className="text-xs text-[var(--color-text-secondary)] mb-4">
+            Request additional permissions. An admin will review your request.
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">Uploader</p>
+              <p className="text-xs text-gray-500 mb-2">Bypasses the 3-uploads-per-day rate limit.</p>
+              <RoleRequestCard
+                role="uploader"
+                hasRole={isUploader}
+                pendingRequest={pendingUploader}
+                onSubmit={handleRoleRequest}
+                submitting={roleSubmitting}
+              />
+            </div>
+            <div className="border-t border-gray-200 pt-4">
+              <p className="text-sm font-medium text-gray-700 mb-2">Reviewer</p>
+              <p className="text-xs text-gray-500 mb-2">Access to the Review Queue and Diagnosis Review tabs.</p>
+              <RoleRequestCard
+                role="reviewer"
+                hasRole={isReviewer}
+                pendingRequest={pendingReviewer}
+                onSubmit={handleRoleRequest}
+                submitting={roleSubmitting}
+              />
+            </div>
           </div>
 
-          {jobsLoading ? (
-            <div className="p-8 flex justify-center">
-              <div className="w-6 h-6 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
-            </div>
-          ) : myJobs.length === 0 ? (
-            <div className="p-8 text-center">
-              <p className="text-sm text-[var(--color-text-secondary)]">No uploads yet.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">File</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Submitted</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {myJobs.map((job) => (
-                    <tr key={job.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-2.5 text-gray-600">#{job.id}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs">{job.dataset_a_filename}</td>
-                      <td className="px-4 py-2.5">
-                        <StatusBadge status={job.status} />
-                        {job.status === 'processing' && job.processing_stage && (
-                          <div className="flex items-center gap-1 mt-1">
-                            <div className="w-2.5 h-2.5 border-2 border-gray-300 border-t-[var(--color-teal)] rounded-full animate-spin shrink-0" />
-                            <span className="text-xs text-[var(--color-teal)]">
-                              {STAGE_LABELS[job.processing_stage] ?? job.processing_stage}
-                            </span>
-                          </div>
-                        )}
-                        {job.status === 'completed' && job.result_summary && (
-                          <div className="mt-1 space-y-0.5">
-                            <p className="text-xs text-gray-500">
-                              {job.result_summary.patients} records · {job.result_summary.diagnoses} diagnoses
-                            </p>
-                            {job.result_summary.avg_confidence !== null && (
-                              <p className="text-xs font-medium text-green-700">
-                                {job.result_summary.avg_confidence}% avg confidence
-                              </p>
-                            )}
-                            {job.result_summary.top_cancer_types[0] && (
-                              <p className="text-xs text-gray-500 truncate max-w-[180px]" title={job.result_summary.top_cancer_types[0].name}>
-                                Top: {job.result_summary.top_cancer_types[0].name}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-gray-500">
-                        {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {roleError && (
+            <div className="mt-4 bg-red-50 border border-red-200 rounded-md p-3">
+              <p className="text-sm text-red-700">{roleError}</p>
             </div>
           )}
         </div>
@@ -422,3 +699,4 @@ export function DataUpload() {
     </div>
   );
 }
+

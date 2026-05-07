@@ -236,7 +236,6 @@ export interface IngestionJob {
   id: number;
   uploaded_by_email: string;
   dataset_a_filename: string;
-  dataset_b_filename: string;
   status: string;
   processing_stage?: string | null;
   reviewed_by_email?: string | null;
@@ -277,17 +276,14 @@ export interface IngestionResponse {
 
 export async function uploadCSV(
   dataset: File,
-  token?: string | null,
+  token: string,
 ): Promise<IngestionJob> {
   const formData = new FormData();
   formData.append('dataset_a', dataset);
 
-  const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
   const response = await fetch('/api/v1/ingest/upload', {
     method: 'POST',
-    headers,
+    headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
 
@@ -316,8 +312,8 @@ export async function fetchJob(token: string, jobId: number): Promise<IngestionJ
   return fetchJsonAuth(`/api/v1/ingest/jobs/${jobId}`, token);
 }
 
-export async function fetchJobPreview(token: string, jobId: number, dataset: 'a' | 'b'): Promise<string> {
-  const response = await fetch(`/api/v1/ingest/jobs/${jobId}/preview/${dataset}`, {
+export async function fetchJobPreview(token: string, jobId: number): Promise<string> {
+  const response = await fetch(`/api/v1/ingest/jobs/${jobId}/preview`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -466,6 +462,76 @@ export async function reviewDiagnosis(
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
     throw new Error(err.detail || `Review failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+
+// --- Role Requests ---
+
+export interface RoleRequest {
+  id: number;
+  email: string;
+  requested_role: string;
+  status: string;
+  reason: string | null;
+  resolved_by_email: string | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
+export async function submitRoleRequest(
+  token: string,
+  requested_role: string,
+  reason?: string,
+): Promise<RoleRequest> {
+  const response = await fetch('/api/v1/role-requests/', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ requested_role, reason: reason || null }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchMyRoleRequests(token: string): Promise<RoleRequest[]> {
+  return fetchJsonAuth('/api/v1/role-requests/mine', token);
+}
+
+export async function fetchPendingRoleRequests(token: string): Promise<RoleRequest[]> {
+  return fetchJsonAuth('/api/v1/role-requests/pending', token);
+}
+
+export async function fetchPendingRoleRequestCount(token: string): Promise<{ count: number }> {
+  return fetchJsonAuth('/api/v1/role-requests/pending/count', token);
+}
+
+export async function resolveRoleRequest(
+  token: string,
+  requestId: number,
+  action: 'approve' | 'deny',
+): Promise<RoleRequest> {
+  const response = await fetch(`/api/v1/role-requests/${requestId}/resolve`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Resolve failed: ${response.status}`);
   }
 
   return response.json();

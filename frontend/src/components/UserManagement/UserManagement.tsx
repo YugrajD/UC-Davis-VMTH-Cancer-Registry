@@ -1,10 +1,13 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchUserRoles,
+  fetchPendingRoleRequests,
+  resolveRoleRequest,
   isValidEmail,
   updateUserRoles,
   type UserRoles,
+  type RoleRequest,
 } from '../../api/client';
 
 function StatusBadge({ value, label }: { value: boolean; label: string }) {
@@ -31,11 +34,48 @@ export function UserManagement() {
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
+  // Pending role requests
+  const [pendingRequests, setPendingRequests] = useState<RoleRequest[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [resolvingId, setResolvingId] = useState<number | null>(null);
+
   // Form state for the toggles. Synced from `roles` whenever a new
   // record is loaded.
   const [formAdmin, setFormAdmin] = useState(false);
   const [formUploader, setFormUploader] = useState(false);
   const [formReviewer, setFormReviewer] = useState(false);
+
+  const loadPendingRequests = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setPendingLoading(true);
+    try {
+      const reqs = await fetchPendingRoleRequests(token);
+      setPendingRequests(reqs);
+    } catch {
+      // silently fail
+    } finally {
+      setPendingLoading(false);
+    }
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    loadPendingRequests();
+  }, [loadPendingRequests]);
+
+  const handleResolve = useCallback(async (requestId: number, action: 'approve' | 'deny') => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setResolvingId(requestId);
+    try {
+      await resolveRoleRequest(token, requestId, action);
+      await loadPendingRequests();
+    } catch {
+      // silently fail
+    } finally {
+      setResolvingId(null);
+    }
+  }, [getAccessToken, loadPendingRequests]);
 
   const isSelf =
     user?.email && roles?.email && roles.email.toLowerCase() === user.email.toLowerCase();
@@ -116,6 +156,62 @@ export function UserManagement() {
           no effect. You cannot remove your own admin role.
         </p>
       </div>
+
+      {/* Pending Role Requests */}
+      {pendingRequests.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              Pending Role Requests
+            </h3>
+            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded-full bg-amber-500 text-white">
+              {pendingRequests.length}
+            </span>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {pendingRequests.map((req) => (
+              <div key={req.id} className="px-4 py-3 flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">{req.email}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      {req.requested_role}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {new Date(req.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  {req.reason && (
+                    <p className="text-xs text-gray-600 mt-1">{req.reason}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => handleResolve(req.id, 'approve')}
+                    disabled={resolvingId === req.id}
+                    className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleResolve(req.id, 'deny')}
+                    disabled={resolvingId === req.id}
+                    className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  >
+                    Deny
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pendingLoading && pendingRequests.length === 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4 flex justify-center">
+          <div className="w-5 h-5 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+        </div>
+      )}
 
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <label htmlFor="email-input" className="block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-primary)] mb-2">

@@ -1,34 +1,34 @@
-"""Top-level orchestration for reading input, running categorization, and writing outputs.
+"""Top-level orchestration for the 4-stage PetBERT scan pipeline.
 
-The high-level flow is:
+  1.  Load and clean clinical report text from reportText.csv.
+  2.  Select text using TF-IDF multi-column selector (or explicit --text-cols
+      for debugging).
+  3.  Embed the selected text with PetBERT (768-dim vector).
+  4.  Run the 4-stage pipeline:
+        Stage 1 — CasePresenceClassifier gates non-cancer cases.
+        Stage 2 — GroupClassifier predicts which cancer group(s).
+        Stage 3a — Per-group LabelPresenceClassifier scores within-group labels.
+        Stage 3b — ICD-O behavior + subtype keyword correction.
+  5.  Map the chosen label indices back to ICD-O code, group, and term.
+  6.  Write all results to CSV / NPZ / JSON output files.
 
-  1.   Load and clean clinical report text from reportText.csv.
-  2.   Select text using TF-IDF multi-column selector (or explicit --text-cols for debugging).
-  3.   Embed the selected text with PetBERT (768-dim vector).
-  4.   Production path — 3-stage:
-         (a) CasePresenceClassifier gates non-cancer cases.
-         (b) GroupClassifier predicts which cancer group(s) each case belongs to.
-         (c) ICD-O behavior keyword matching selects the specific term within each group.
-       Training-cycle path — binary (run_cycle.py only):
-         PresenceClassifier scores all (case, label) pairs; argmax selects winner.
-  5.   Map the chosen label indices back to ICD-O code, group, and term.
-  6.   Write all results to CSV / NPZ / JSON output files.
+Each stage lives in its own module under ``stages/``; this file only handles
+data prep, output writing, and stage dispatch.
 """
 
-import json
 from pathlib import Path
+
+# Import torch first — on Windows + Intel XPU, c10.dll load can fail if
+# numpy/scipy/sklearn DLLs initialise before torch's.
+import torch  # noqa: F401
 
 import pandas as pd
 import numpy as np
-import torch
 from sklearn.decomposition import PCA
 
-from .categorization import run_categorization, run_categorization_group
 from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
-from .text_selector import get_selector, SOURCE_COLS as _TFIDF_SOURCE_COLS
-from model.presence_classifier import PresenceClassifier
-from model.group_classifier import GroupClassifier
-from model.case_presence_classifier import CasePresenceClassifier
+from text_selection import SOURCE_COLS as _TFIDF_SOURCE_COLS, get_selector
+from utils.csv_io import strip_bom_from_columns
 from .io import (
     build_outputs,
     write_embeddings_npz,
@@ -40,6 +40,12 @@ from .io import (
     write_visualization_csv,
 )
 from ICD_labels import label_catalog_for_config, resolve_taxonomy_matches
+from .stages import (
+    categorize_per_case,
+    load_label_presence_models,
+    run_case_presence_classifier,
+    run_group_classifier,
+)
 from .types import ScanConfig, ScanOutputs
 from .utils import clean_text, device_from_arg, merge_report_columns
 
@@ -58,15 +64,27 @@ def _validate_columns(
         )
 
 
+def _load_uncommon_groups(path: str) -> frozenset[str]:
+    p = Path(path)
+    if not p.exists():
+        return frozenset()
+    return frozenset(
+        line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()
+    )
+
+
 def run_scan(config: ScanConfig) -> ScanOutputs:
     """Execute the full categorization pipeline end-to-end."""
+
+    if config.group_classifier_path is None:
+        raise ValueError("--group-classifier is required (the legacy binary path was removed)")
 
     # --- Step 0: Prepare output file paths -----------------------------------
     outputs = build_outputs(config.out_dir, config.task)
 
     # --- Step 1: Load input data ---------------------------------------------
     dataframe = pd.read_csv(config.csv_path, encoding='latin-1')
-    dataframe.columns = [col.lstrip('﻿').lstrip('ï»¿') for col in dataframe.columns]
+    dataframe.columns = strip_bom_from_columns(dataframe.columns)
     if config.max_rows is not None:
         dataframe = dataframe.head(config.max_rows).copy()
     _validate_columns(dataframe, config.id_col, config.text_cols)
@@ -94,7 +112,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
     char_lens = np.array([len(t) for t in texts], dtype=np.int32)
 
-    # --- Steps 3: Embed with PetBERT (or load from cache) --------------------
+    # --- Step 3: Embed with PetBERT (or load from cache) ---------------------
     torch_device = device_from_arg(config.device)
     cache = None
     if config.embedding_cache_path:
@@ -129,7 +147,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             max_length=config.max_length,
         )
 
-        col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)  # (C, N, 768)
+        col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)
         content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)
         col_emb_masked = col_emb_stack * content_mask[:, :, None]
         content_counts = np.maximum(content_mask.sum(axis=0), 1.0)
@@ -161,94 +179,51 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 labels_csv_path=config.labels_csv_path,
             )
 
-    # --- Step 4: Categorize --------------------------------------------------
+    # --- Step 4: Run the 4-stage pipeline ------------------------------------
     col_emb_concat = np.concatenate(
         [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
          for col in cols],
         axis=1,
     ).astype(np.float32)
 
-    if config.group_classifier_path is not None:
-        # --- Production 3-stage path -----------------------------------------
-        # Stage 1: CasePresenceClassifier gate — rejects non-cancer cases.
-        if config.case_presence_classifier_path is not None:
-            print(f"Loading case presence classifier from {config.case_presence_classifier_path}...")
-            case_clf = CasePresenceClassifier.load(config.case_presence_classifier_path)
-            case_clf.to(torch_device)
-            cancer_probs = case_clf.predict_proba(torch.from_numpy(embeddings)).numpy()
-            case_clf.cpu()
-            del case_clf
-            presence_gate_mask = cancer_probs >= config.case_presence_threshold
-            print(
-                f"  Case presence gate (threshold={config.case_presence_threshold:.2f}): "
-                f"{int(presence_gate_mask.sum())}/{n} cases pass "
-                f"({presence_gate_mask.mean() * 100:.1f}%)"
-            )
-        else:
-            presence_gate_mask = np.ones(n, dtype=bool)
+    # Stage 1: CasePresenceClassifier gate.
+    presence_gate_mask = run_case_presence_classifier(
+        embeddings=embeddings,
+        classifier_path=config.case_presence_classifier_path,
+        threshold=config.case_presence_threshold,
+        device=torch_device,
+    )
 
-        # Stage 2: GroupClassifier predicts which cancer group(s) each case belongs to.
-        print(f"Loading group classifier from {config.group_classifier_path}...")
-        group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
-        group_clf.to(torch_device)
-        group_probs = group_clf.predict_proba(torch.from_numpy(col_emb_concat)).numpy()
-        group_clf.cpu()
-        del group_clf
+    # Stage 2: GroupClassifier.
+    group_probs, group_names = run_group_classifier(
+        col_emb_concat=col_emb_concat,
+        classifier_path=config.group_classifier_path,
+        presence_gate_mask=presence_gate_mask,
+        device=torch_device,
+    )
 
-        # Gate-rejected cases have group_probs zeroed → fall through to Uncategorized.
-        group_probs[~presence_gate_mask] = 0.0
+    # Stage 3a: load per-group LabelPresenceClassifiers (None disables the stage).
+    label_presence_models = load_label_presence_models(
+        config.label_presence_classifier_dir, group_names
+    )
 
-        # Load uncommon group list so "Uncommon" predictions route to KW correction
-        # across the pooled uncommon label indices rather than falling through to
-        # "Unidentified Group".
-        _uncommon_path = Path(config.uncommon_groups_path)
-        uncommon_groups: frozenset[str] = frozenset()
-        if _uncommon_path.exists():
-            uncommon_groups = frozenset(
-                line.strip() for line in _uncommon_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            )
-
-        # Stage 3: KW correction selects the best term within each predicted group.
-        categorization = run_categorization_group(
-            texts=texts,
-            mean_embeddings=embeddings,
-            label_embeddings=label_embeddings,
-            taxonomy_labels=label_catalog.taxonomy_labels,
-            labels=label_catalog.labels,
-            group_probs=group_probs,
-            group_names=group_names,
-            threshold=config.group_classifier_threshold,
-            max_predictions=5,
-            presence_mask=presence_gate_mask,
-            uncommon_groups=uncommon_groups,
-            fallback_to_argmax=config.group_classifier_fallback_to_argmax,
-        )
-
-    else:
-        # --- Training-cycle binary path (run_cycle.py only) ------------------
-        if config.presence_classifier_path is None:
-            raise ValueError("--presence-classifier is required")
-        print(f"Loading presence classifier from {config.presence_classifier_path}...")
-        classifier = PresenceClassifier.load(config.presence_classifier_path)
-        classifier.to(torch_device)
-        presence_score_matrix = classifier.score_matrix(
-            torch.from_numpy(col_emb_concat),
-            torch.from_numpy(label_embeddings),
-        ).numpy()
-        classifier.cpu()
-        del classifier
-
-        categorization = run_categorization(
-            texts=texts,
-            text_embeddings=[col_embeddings[col] for col in cols],
-            label_embeddings=label_embeddings,
-            labels=label_catalog.labels,
-            embedding_min_sim=config.embedding_min_sim,
-            col_has_content=[col_has_content[col] for col in cols],
-            max_predictions=5,
-            score_matrix=presence_score_matrix,
-        )
+    # Stage 3b: keyword correction lives inside the per-case dispatcher.
+    categorization = categorize_per_case(
+        texts=texts,
+        mean_embeddings=embeddings,
+        label_embeddings=label_embeddings,
+        taxonomy_labels=label_catalog.taxonomy_labels,
+        labels=label_catalog.labels,
+        group_probs=group_probs,
+        group_names=group_names,
+        threshold=config.group_classifier_threshold,
+        max_predictions=5,
+        presence_mask=presence_gate_mask,
+        uncommon_groups=_load_uncommon_groups(config.uncommon_groups_path),
+        fallback_to_argmax=config.group_classifier_fallback_to_argmax,
+        label_presence_models=label_presence_models,
+        label_presence_threshold=config.label_presence_threshold,
+    )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------
     all_k_terms: list[list[str]] = []

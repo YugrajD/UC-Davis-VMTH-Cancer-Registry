@@ -26,10 +26,17 @@ Use `--local-only` if the model is already cached and you want to avoid network 
 
 ## Architecture
 
-- `ml/production/petbert_pipeline/pipeline.py`: orchestration of loading, embedding, classifier scoring, and writing outputs
-- `ml/production/petbert_pipeline/embedding.py`: model/tokenizer loading and per-column mean-pooled embedding
-- `ml/production/petbert_pipeline/categorization.py`: classifier-driven label selection and group-keyword term correction
-- `ml/production/petbert_pipeline/utils.py`: text cleaning, section merging, device selection
+- `pipeline.py`: thin orchestrator — load → text-select → embed → call each stage → write outputs
+- `embedding.py`: model/tokenizer loading and per-column mean-pooled embedding
+- `text_selector.py`: TF-IDF multi-column text selection
+- `embedding_cache.py`: save/load cached embeddings
+- `stages/case_presence_classifier.py`: Stage 1 — CasePresenceClassifier gate
+- `stages/group_classifier.py`: Stage 2 — GroupClassifier
+- `stages/label_presence_classifier.py`: Stage 3a — per-group LabelPresenceClassifier
+- `stages/keyword_correction.py`: Stage 3b — ICD-O behavior + subtype keyword filter
+- `stages/__init__.py`: per-case dispatcher (`categorize_per_case`)
+- `io.py`: write all output files
+- `utils.py`: text cleaning, section merging, device selection
 - `ml/ICD_labels/taxonomy.py`: reads `labels.csv` into typed taxonomy records
 - `ml/ICD_labels/catalog.py`: builds label catalog used for embedding comparison
 - `ml/ICD_labels/projection.py`: maps selected label indices to term/group/code output fields

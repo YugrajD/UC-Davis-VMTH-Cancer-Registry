@@ -25,7 +25,7 @@ Diagnostic signal in secondary columns was lost.
 - 73.3% of cases: HIST + FINAL COMMENT + COMMENT fit within 512 tokens (return as-is)
 - 26.7% of cases: combined overflows → TF-IDF sentence scoring to fit budget
 
-**Implementation:** `TextSelector` in `ml/production/petbert_pipeline/text_selector.py`.
+**Implementation:** `TextSelector` in `ml/text_selection/text_selector.py`.
 Concatenates HIST + FINAL COMMENT + COMMENT with section markers; compresses via TF-IDF sentence
 scoring when combined > 512 tokens. Vectorizer saved at `ml/output/training/tfidf_selector.joblib`.
 Applied identically in training and inference to keep backbone embedding space aligned.

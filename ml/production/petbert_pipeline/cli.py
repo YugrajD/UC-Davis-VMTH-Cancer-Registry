@@ -117,6 +117,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--label-presence-classifier-dir",
+        default=None,
+        help=(
+            "Directory of per-group LabelPresenceClassifier checkpoints (one .pt per group). "
+            "When set, enables Stage 3a: per-group within-group label scoring. "
+            "Pass an empty string to disable and fall back to KW correction directly."
+        ),
+    )
+    parser.add_argument(
+        "--label-presence-threshold",
+        type=float,
+        default=0.5,
+        help=(
+            "Probability threshold for LabelPresenceClassifier within-group label selection "
+            "(default: 0.5). Only used when --label-presence-classifier-dir is set."
+        ),
+    )
+    parser.add_argument(
         "--tfidf-vectorizer",
         default=config.TFIDF_VECTORIZER_PATH,
         help=(
@@ -130,6 +148,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def build_config(args: argparse.Namespace) -> ScanConfig:
     text_cols = tuple(c.strip() for c in args.text_cols.split(",") if c.strip())
+    label_presence_dir = getattr(args, "label_presence_classifier_dir", None)
+    if label_presence_dir == "":
+        label_presence_dir = None
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
@@ -145,13 +166,14 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
         labels_csv_path=args.labels_csv,
-        presence_classifier_path=None,
         embedding_cache_path=args.embedding_cache,
         group_classifier_path=args.group_classifier,
         group_classifier_threshold=args.group_classifier_threshold,
         group_classifier_fallback_to_argmax=args.group_classifier_fallback_to_argmax,
         case_presence_classifier_path=args.case_presence_classifier,
         case_presence_threshold=args.case_presence_threshold,
+        label_presence_classifier_dir=label_presence_dir,
+        label_presence_threshold=args.label_presence_threshold,
         tfidf_vectorizer_path=args.tfidf_vectorizer,
     )
 

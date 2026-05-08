@@ -16,7 +16,7 @@ After training, the full AutoModelForMaskedLM checkpoint is saved to
 
 A cold start is required after fine-tuning: delete the embedding cache,
 CO bank, and current classifier checkpoint before retraining the
-PresenceClassifier from scratch with the new backbone.
+LabelPresenceClassifier from scratch with the new backbone.
 """
 
 import argparse
@@ -93,6 +93,21 @@ def _infonce_loss(
 
 
 # ---------------------------------------------------------------------------
+# Dataset helpers
+# ---------------------------------------------------------------------------
+
+def _load_csv_rows(path: str, fields: list[str]) -> list[tuple[str, ...]]:
+    """Read rows from a CSV, keeping only rows where every field is non-empty."""
+    rows: list[tuple[str, ...]] = []
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            vals = tuple(row.get(fld, "").strip() for fld in fields)
+            if all(vals):
+                rows.append(vals)
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 
@@ -102,21 +117,14 @@ class ContrastivePairDataset(Dataset):
     so that each batch can be padded to its own maximum length."""
 
     def __init__(self, pairs_csv: str) -> None:
-        self.pairs: list[tuple[str, str]] = []
-        with open(pairs_csv, encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rt = row.get("report_text", "").strip()
-                lt = row.get("label_text", "").strip()
-                if rt and lt:
-                    self.pairs.append((rt, lt))
+        self.pairs = _load_csv_rows(pairs_csv, ["report_text", "label_text"])
         print(f"  Loaded {len(self.pairs)} pairs from {pairs_csv}")
 
     def __len__(self) -> int:
         return len(self.pairs)
 
     def __getitem__(self, idx: int) -> tuple[str, str]:
-        return self.pairs[idx]
+        return self.pairs[idx]  # type: ignore[return-value]
 
 
 class HardNegPairDataset(Dataset):
@@ -127,22 +135,16 @@ class HardNegPairDataset(Dataset):
     predict the wrong label for a report that has a known correct label."""
 
     def __init__(self, hard_neg_csv: str) -> None:
-        self.triplets: list[tuple[str, str, str]] = []
-        with open(hard_neg_csv, encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rt = row.get("report_text", "").strip()
-                cl = row.get("correct_label_text", "").strip()
-                wl = row.get("wrong_label_text", "").strip()
-                if rt and cl and wl:
-                    self.triplets.append((rt, cl, wl))
+        self.triplets = _load_csv_rows(
+            hard_neg_csv, ["report_text", "correct_label_text", "wrong_label_text"]
+        )
         print(f"  Loaded {len(self.triplets)} hard-negative triplets from {hard_neg_csv}")
 
     def __len__(self) -> int:
         return len(self.triplets)
 
     def __getitem__(self, idx: int) -> tuple[str, str, str]:
-        return self.triplets[idx]
+        return self.triplets[idx]  # type: ignore[return-value]
 
 
 def _make_collator(tokenizer: AutoTokenizer, max_length: int):
@@ -302,12 +304,13 @@ def train(
         return F.normalize(_mean_pool(hidden, attention_mask), dim=-1)
 
     global_step = 0
-    for epoch in range(1, epochs + 1):
+    epoch_pbar = tqdm(range(1, epochs + 1), desc="Contrastive training", unit="epoch")
+    for epoch in epoch_pbar:
         epoch_loss = 0.0
         epoch_hn_loss = 0.0
         n_batches = 0
 
-        pbar = tqdm(loader, desc=f"Epoch {epoch}/{epochs}", unit="batch")
+        pbar = tqdm(loader, desc=f"  Epoch {epoch}/{epochs}", unit="batch", leave=False)
         for batch in pbar:
             report_input_ids      = batch["report_input_ids"].to(device)
             report_attention_mask = batch["report_attention_mask"].to(device)
@@ -357,10 +360,13 @@ def train(
             )
 
         avg = epoch_loss / max(1, n_batches)
+        postfix: dict = {"avg_loss": f"{avg:.4f}"}
         hn_suffix = ""
         if hn_iter_box:
             avg_hn = epoch_hn_loss / max(1, n_batches)
             hn_suffix = f", avg hard-neg loss: {avg_hn:.4f}"
+            postfix["avg_hn_loss"] = f"{avg_hn:.4f}"
+        epoch_pbar.set_postfix(postfix)
         print(f"Epoch {epoch}/{epochs} complete — avg loss: {avg:.4f}{hn_suffix}")
 
     # --- Save checkpoint ----------------------------------------------------
@@ -373,9 +379,8 @@ def train(
     print("\nDone.")
     print("Next steps (cold start required — embedding space has changed):")
     print("  1. rm -f ml/output/training/embedding_cache.npz")
-    print("  2. rm -f ml/output/training/contrastive/evaluation_co_bank.csv")
-    print("  3. rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt")
-    print(f"  4. Add --model {out_dir} --local-only to all pipeline/training calls.")
+    print("  2. Retrain in order: --mode train-case-presence, --mode train-groups,")
+    print(f"     --mode train-label-presence (each with --model {out_dir} --local-only).")
 
 
 # ---------------------------------------------------------------------------

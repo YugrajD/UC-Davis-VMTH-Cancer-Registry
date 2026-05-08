@@ -1190,3 +1190,140 @@ needs to prove competitive (~10,000 cases) before this is worth the compute cost
 1. Resolve bugs above
 2. Wait until GroupClassifier proves competitive with binary (~10,000 confirmed cases)
 3. Benchmark against GroupClassifier
+
+---
+
+## Approach B — Phase A/B/Sweep — End-to-end FinetuneGroupClassifier (2026-05-07/08, ABANDONED)
+
+**Verdict:** integrated, benchmarked, reverted. End-to-end fine-tuning lifted standalone val macro F1 from 0.4475 (Phase 27 GroupCLF) to 0.5774, but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9%. The F1 win was absorbed by LP coupling: LabelPresenceClassifiers were trained on Phase 27 GroupCLF outputs and don't realign without Phase C (cache regeneration + Stage 1/3a retrain). The cost of Phase C (~5h compute, embedding-cache invalidation, ~30× slower inference forever after) wasn't justified by the projected ~+1–3pp ceiling.
+
+**Hypothesis tested:** end-to-end finetuning of PetBERT (backbone + linear head) would produce better per-group probabilities than the Phase 27 frozen-embedding GroupClassifier MLP, and the gain would carry through to test-set G+S.
+
+### Code added (now reverted)
+
+| File | Purpose |
+|---|---|
+| `ml/model/finetune_group_classifier.py` | Backbone + linear head; tokenizes raw text at inference |
+| `ml/training/finetune/{__init__,build_dataset,train}.py` | 25-group multi-label trainer with BCE-with-logits + pos_weights |
+| `ml/production/finetune_pipeline/{__init__,cli,pipeline,categorization,types}.py` | Standalone inference pipeline (Phase A benchmark harness) |
+| `ml/scripts/run_{training,production}_finetune.py` | Standalone entry points |
+| `ml/production/petbert_pipeline/{cli,pipeline,types}.py` modifications | Stage 2 conditional dispatch via `--finetune-group-classifier`; `--uncommon-groups` flag; mutex with `--group-classifier` |
+
+### Phase A — standalone benchmark (3 epochs)
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training_finetune.py --mode build-dataset \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv \
+  --train-cases ml/output/splits/train_cases.txt
+# 46,626 cases written (21,851 cancer / 24,775 non-cancer)
+
+ml/.venv/Scripts/python.exe ml/scripts/run_training_finetune.py --mode train \
+  --model ml/output/checkpoints/contrastive \
+  --epochs 3 --batch-size 8 --lr 2e-5 --device xpu --local-only
+
+ml/.venv/Scripts/python.exe ml/scripts/run_production_finetune.py --local-only
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
+  --prediction-csv ml/output/production/finetune/finetune_predictions.csv \
+  --out-dir ml/output/evaluation/finetune \
+  --test-cases ml/output/splits/test_cases.txt \
+  --uncommon-groups ml/output/training/finetune/uncommon_groups.txt \
+  --label "Phase A — finetune benchmark vs Phase 28"
+```
+
+**Train**: 37,301 / **Val**: 9,325 / **Groups**: 25 (24 common + Uncommon)
+
+| Epoch | Train Loss | Val Loss | Macro F1 |
+|---|---|---|---|
+| 1 | 0.520 | 0.450 | 0.4071 |
+| 2 | 0.374 | 0.417 | 0.3946 |
+| 3 | 0.290 | 0.452 | **0.4789** |
+
+Standalone test G+S: 32.2% (Good 3.3%, CO 27.0%, FP 36.3%, FN 4.5%). Note: standalone benchmark has no CasePresenceClassifier gate, no LP, no KW correction — not directly comparable to 4-stage results.
+
+### Phase B — 4-stage swap-in (CLI defaults: group-t=0.5, lp-t=0.5)
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --finetune-group-classifier ml/output/checkpoints/finetune/finetune_group_classifier_best.pt \
+  --group-classifier "" \
+  --uncommon-groups ml/output/training/finetune/uncommon_groups.txt \
+  --group-classifier-threshold 0.5 --label-presence-threshold 0.5 \
+  --device xpu --local-only
+```
+
+**Result**: G+S 42.8% (Good 18.4%, Slight 24.4%, CO 44.9%, FP 8.5%, FN 3.8%) — 15pp behind Phase 28.
+
+**Diagnosis**: threshold mismatch (Phase 28 uses group-t=0.85, not 0.5) + LP coupling (only 17/25 LPs match the finetune classifier's group set; 8 fall back to cosine).
+
+### Threshold sweep (3-epoch model, group-t=0.85)
+
+| Config | Good | Slight | G+S | CO | FP | FN |
+|---|---|---|---|---|---|---|
+| lp-t=0.5 | 25.4% | 30.2% | **55.6%** | 26.4% | 8.8% | 9.3% |
+| lp-t=0.9 | 35.1% | 20.6% | **55.7%** | 23.1% | 7.5% | 13.7% |
+
+Threshold change recovered ~13pp. Remaining ~2pp gap to Phase 28 is the LP coupling penalty.
+
+### 8-epoch retrain + re-sweep
+
+| Epoch | Train Loss | Val Loss | Macro F1 |
+|---|---|---|---|
+| 1 | 0.564 | 0.422 | 0.2932 |
+| 2 | 0.405 | 0.442 | 0.4169 |
+| 3 | 0.332 | 0.491 | 0.4700 |
+| 4 | 0.266 | 0.549 | 0.4982 |
+| 5 | 0.203 | 0.612 | 0.4922 |
+| 6 | 0.152 | 0.737 | 0.5507 |
+| 7 | 0.113 | 0.844 | 0.5729 |
+| 8 | 0.084 | 0.870 | **0.5774** |
+
+Val loss climbed monotonically while train loss fell — typical loss/F1 paradox in imbalanced multi-label BCE. F1 (the metric that matters here) was still climbing at epoch 8.
+
+| Config | Good | Slight | G+S | CO | FP | FN |
+|---|---|---|---|---|---|---|
+| 8ep, lp-t=0.5 | 26.2% | 30.2% | **56.4%** | 23.0% | 9.1% | 11.6% |
+| 8ep, lp-t=0.9 | **35.6%** | 20.3% | **55.9%** | **19.7%** | 7.8% | 16.7% |
+| Phase 28 lp-t=0.5 (baseline) | — | — | **57.9%** | 25.3% | — | — |
+| Phase 28 lp-t=0.9 (baseline) | — | — | **55.9%** | 22.9% | — | — |
+
+**+0.10 absolute F1 (3ep→8ep) → only +0.8pp G+S.** CO% dropped (good) but FN% climbed (sharper, more confident probs reject more cases below threshold).
+
+At lp-t=0.9, 8-epoch finetune **ties Phase 28** on G+S with qualitatively better predictions (Good +0.5pp absolute, CO −3.2pp), but loses on FN (+3.0pp).
+
+### Why F1 didn't translate to G+S
+
+The LPs in `ml/production/petbert_pipeline/pipeline.py` use cached embeddings from the contrastive backbone (via `embedding_cache.npz`), NOT the finetune backbone's outputs. The finetune Stage 2 chooses which LPs to consult, but the LPs themselves see the same text embeddings as before. Two consequences:
+
+1. **LP coverage gap**: 8 of 25 finetune-classifier groups have no matching LP `.pt` file → cosine fallback produces high CO% on those groups (Acinar cell 84%, Mature T/NK 85%, Lymphoid leukemias 67% in the 8ep-lp-t=0.5 run).
+2. **Embedding-space mismatch**: even on covered groups, LPs were trained on (case, group, label) triplets where the group came from Phase 27 GroupCLF — calibration drift when the group choice comes from a different distribution.
+
+### What would close the gap (Phase C, not run)
+
+1. Regenerate `embedding_cache.npz` against the finetune backbone (~30–60 min)
+2. Retrain CasePresenceCLF on new embeddings (~30 min)
+3. Retrain all 25 LPs on new embeddings (~2h)
+4. Add LPs for the 8 missing groups (lower uncommon_threshold or train on smaller positive sets)
+
+Estimated probability of beating Phase 28 after Phase C: ~60% with expected gain +1–3pp G+S in the win case.
+
+### Why we abandoned
+
+1. **Inference cost is permanent**: ~9 min/run vs ~10 sec for the embedding path. Even with the gate-before-tokenize fix (cuts to ~4.5 min), still ~30× slower forever.
+2. **Iteration speed cost**: every Stage 2 retrain becomes a 90-min job (vs lightweight MLP fits). Phase 23→28 progress depended on fast iteration.
+3. **Expected-value math is poor**: 60% × +2pp ≈ +1.2pp G+S expected gain, against permanent operational tax + ~5h compute commitment now plus cache invalidation cascade.
+4. **F1→G+S conversion is weak**: +0.10 F1 → only +0.8pp G+S. Suggests the upstream gain doesn't compound through the pipeline as cleanly as we hoped.
+
+### Resurrection notes
+
+If revisited:
+- (a) Apply the **gate-before-tokenize fix** in `pipeline.py` first — index `texts` by `presence_gate_mask` before tokenizing/predicting, then scatter results into a full `(n, num_groups)` array. Cuts inference roughly in half for free.
+- (b) Train ≥10 epochs (val F1 still climbing at epoch 8; ceiling not yet observed).
+- (c) Phase C is **non-optional** for closing the LP gap — don't waste time on threshold sweeps without it.
+- (d) Worth doing if there's a *separate* motivation for owning a finetune backbone (e.g., embeddings for similar-case retrieval, dataset deduplication, or other downstream tasks). Stage-2-only swap is not enough motivation.
+
+### Archived artifacts
+
+Moved to `ml/output/archive/2026-05-08_finetune-stage2-abandoned/`:
+- `checkpoints/` — 3-epoch and 8-epoch best/current `.pt` files
+- `training/` — `finetune_dataset.csv`, `uncommon_groups.txt`
+- `evaluation_phase_a/`, `evaluation_phase_b/`, `evaluation_sweep_3ep_lp{50,90}/`, `evaluation_sweep_8ep_lp{50,90}/`

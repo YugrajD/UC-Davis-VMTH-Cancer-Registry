@@ -4,7 +4,11 @@ How to run each training approach from prerequisites through to a trained checkp
 For architectural details, approach comparisons, and pros/cons see [classifiers.md](classifiers.md).
 
 > **Prerequisites for all approaches:**
-> - `ml/output/annotation/keyword/keyword_annotation.csv` must exist (run annotation first if not)
+> - An annotation CSV must exist. The default is `ml/output/annotation/annotation.csv`
+>   (`config.ANNOTATION_CSV`); production training uses the LLM annotation at
+>   `ml/output/annotation/llm/llm_annotation.csv`. `run_training.py` auto-runs the keyword
+>   pipeline only when the missing file is exactly the default keyword path; for any
+>   other missing path it errors out and asks you to run annotation first.
 > - `ml/data/report.csv` must exist
 > - Use `ml/.venv/Scripts/python.exe` (Windows) or `ml/.venv/bin/python3` (macOS/Linux)
 
@@ -67,19 +71,10 @@ between training runs — a new random seed invalidates comparisons with previou
 ### Training with the split active
 
 Pass `--train-cases` to any training command. Training data is automatically restricted
-to train cases only — test cases are excluded from positives, CO negatives, and FP negatives.
+to train cases only — test cases are excluded from positives and negatives.
 
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-classifier \
-  --model ml/output/checkpoints/contrastive \
-  --label "c1" \
-  --train-cases ml/output/splits/train_cases.txt \
-  --co-neg-per-case 5 --fp-neg-per-case 10 \
-  --embedding-min-sim 0.05 --epochs 25 \
-  --recall-weight 0.25 --hidden-dim 512 \
-  --device xpu --local-only
-```
+See the per-stage sections below — Group Classifier, Case Presence Classifier, Label
+Presence Classifier — for the actual training commands.
 
 ### Evaluating on held-out test cases
 
@@ -92,107 +87,40 @@ ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
   --label "held-out test"
 ```
 
-> **Note:** When `--train-cases` is active, the within-cycle evaluation (Step 4) filters
-> to train cases only. This keeps the CO bank and checkpoint selection entirely within
-> the training set — test cases never influence the training feedback loop.
+> **Note:** Training-time validation uses a held-out slice of the train set; test cases
+> never influence checkpoint selection.
+
+### Per-stage evaluation (4-stage pipeline)
+
+When the end-to-end metric moves between training cycles, `--stage all` writes
+isolated metrics for each classifier so you can attribute the change to a single stage:
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
+  --stage all \
+  --test-cases ml/output/splits/test_cases.txt \
+  --out-dir ml/output/evaluation/contrastive_test \
+  --label "phase XX"
+```
+
+This writes (alongside the existing `evaluation*.csv`):
+- `case_presence_evaluation*.csv` — Stage 1 (cancer vs non-cancer; P/R/F1/AUC)
+- `groups_evaluation*.csv` — Stage 2 on cancer cases only (per-group + macro/micro + top-k)
+- `label_presence_evaluation*.csv` — Stage 3 per-LP (per-LP + macro/micro)
+
+Each stage appends one row to its own `*_history.csv`. Run with one stage at a time
+(`--stage case-presence`, `--stage groups`, `--stage label-presence`) to skip the others.
 
 ---
 
-## Label Presence Classifier (iterative)
+## Legacy iterative LabelPresenceClassifier (removed)
 
-The recommended approach. Trains an MLP on cached PetBERT embeddings using a rolling
-bank of hard negatives. Each cycle takes ~10 minutes; run 6–8 cycles to reach plateau.
-
-### First run (cold start)
-
-A cold start is required after any architecture change, new annotation data, or after
-adapting the embedding backbone. Deletes the stale cache, feedback bank, and checkpoint:
-
-```bash
-rm -f ml/output/training/embedding_cache.npz
-rm -f ml/output/training/contrastive/evaluation_co_bank.csv
-rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
-```
-
-Then run cycle 1 — Step 0 will embed all reports automatically (takes several minutes):
-
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-classifier \
-  --model ml/output/checkpoints/contrastive \
-  --label "cold-start c1" \
-  --co-neg-per-case 5 \
-  --fp-neg-per-case 10 \
-  --embedding-min-sim 0.05 \
-  --epochs 25 \
-  --recall-weight 0.25 \
-  --hidden-dim 512 \
-  --device xpu \
-  --local-only
-```
-
-### Subsequent cycles
-
-Continue with the same command, updating `--label` each time:
-
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-classifier \
-  --model ml/output/checkpoints/contrastive \
-  --label "c2" \
-  --co-neg-per-case 5 \
-  --fp-neg-per-case 10 \
-  --embedding-min-sim 0.05 \
-  --epochs 25 \
-  --recall-weight 0.25 \
-  --hidden-dim 512 \
-  --device xpu \
-  --local-only
-```
-
-Do **not** raise `--co-neg-per-case` above 5 — causes regression with the per-column architecture.
-
-### What each cycle does
-
-1. Embed all reports into vector space (Step 0 — skipped if cache exists)
-2. Assemble `training_pairs.csv` from positives + wrong-group feedback bank + FP negatives
-3. Train `PresenceClassifier` for 25 epochs; save best checkpoint by validation score
-4. Score all reports with the new checkpoint → `petbert_predictions.csv`
-5. Score predictions against verified labels → `evaluation.csv` (train cases only when `--train-cases` is active)
-6. Record wrong-group predictions in the feedback bank (train cases only)
-7. Log results to `evaluation_history.csv`; promote checkpoint if new best
-
-### Expected trajectory
-
-**With adapted backbone** (`--model ml/output/checkpoints/contrastive`, Phase 17 results):
-
-| Cycle | Expected Good+Slight | Notes |
-|-------|---------------------|-------|
-| c1 (cold start) | ~49–50% | Reports re-embedded with adapted backbone |
-| c2 | ~54% | Steady climb |
-| c3–c4 | ~64–68% | Large jump as feedback bank fills |
-| c5–c8 | ~68–69% | Plateau with oscillation |
-| c9+ | oscillates ~67–69% | Stop when no new best for 2–3 cycles |
-
-**With frozen PetBERT** (no `--model` flag, Phase 16 baseline):
-
-| Cycle | Expected Good+Slight | Notes |
-|-------|---------------------|-------|
-| c1 (cold start) | ~28–30% | Reports embedded with base PetBERT |
-| c2 | ~26% | May dip — continue |
-| c3–c4 | ~38–39% | Large jump |
-| c5–c6 | ~39–42% | Plateau |
-| c7+ | may regress | Stop here |
-
-### Key parameters
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| `--co-neg-per-case` | `5` | Do NOT raise above 5 |
-| `--fp-neg-per-case` | `10` | Keep at 10 |
-| `--recall-weight` | `0.25` | Prevents degenerate checkpoints winning on recall alone |
-| `--epochs` | `25` | Beyond 25 shows diminishing returns |
-| `--embedding-min-sim` | `0.05` | Scores are mean-subtracted — not raw cosine |
+The single-classifier `--mode train-classifier` cycle (Phases 1–22) was replaced
+in Phase 28 by four one-shot stages: `train-case-presence`, `train-groups`,
+`train-label-presence`, and `adapt-backbone`. The `binary/` cycle scripts
+(`build_training_pairs.py`, `run_cycle.py`, `update_co_bank.py`,
+`train.py`) and `model/presence_classifier.py` were deleted. See
+`training-log/training-log-binary.md` for the historical phase log.
 
 ---
 
@@ -219,7 +147,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 Checkpoint saved to `ml/output/checkpoints/contrastive/case_presence_classifier.pt`.
 
 > **Prerequisite:** the embedding cache must already exist. Run `run_production.py` once
-> (or complete a `train-classifier` cycle) to build it.
+> (which embeds all reports on first run) to build it.
 
 ### Key parameters
 
@@ -261,11 +189,64 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 
 ---
 
+## Per-Group Label Presence Classifier (train-label-presence)
+
+Trains one `LabelPresenceClassifier` per ICD group, plus one shared model for all
+uncommon groups combined. This is Stage 3 of the four-stage production pipeline —
+it scores all labels within each active group and selects those above a threshold,
+enabling within-group multi-diagnosis prediction.
+
+**Prerequisites:**
+- Embedding cache must exist (`ml/output/training/embedding_cache.npz`).
+- GroupClassifier must be trained (`ml/output/checkpoints/group/group_classifier_best.pt`).
+- Uncommon group list must exist (`ml/output/training/group/uncommon_groups.txt`).
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode train-label-presence \
+  --group-classifier-path ml/output/checkpoints/group/group_classifier_best.pt \
+  --train-cases ml/output/splits/train_cases.txt \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --label-presence-epochs 25 \
+  --label-presence-negs-per-pos 5 \
+  --device xpu --local-only
+```
+
+Checkpoints saved to `ml/output/checkpoints/label_presence/{safe_group_name}.pt`.
+The "Uncommon" model saves to `ml/output/checkpoints/label_presence/uncommon.pt`.
+
+**Use in production:**
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --label-presence-classifier-dir ml/output/checkpoints/label_presence \
+  --label-presence-threshold 0.5 \
+  --group-classifier-threshold 0.85 \
+  --local-only
+```
+
+Run a threshold sweep (`--label-presence-threshold` at 0.3, 0.4, 0.5, 0.6, 0.7) on
+the test set to find the operating point — lower threshold = more predictions per group
+(lower FN, higher FP); higher threshold = fewer predictions (lower FP, higher FN).
+
+### Key parameters
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `--label-presence-epochs` | 25 | One-shot per group |
+| `--label-presence-negs-per-pos` | 5 | Within-group negatives per positive pair |
+| `--label-presence-recall-weight` | 0.5 | F1 for checkpoint selection; raise to prefer recall |
+| `--label-presence-threshold` | 0.5 | Inference threshold — sweep on test set |
+
+---
+
 ## Backbone Adaptation (adapt-backbone)
 
 Adapts PetBERT's embedding space so that report text and cancer label text land
 closer together. The adapted backbone is then used as the starting point for
-`train-classifier` cycles. A cold start is required after adaptation.
+the downstream classifiers (`train-case-presence`, `train-groups`,
+`train-label-presence`). A cold start is required after adaptation.
 
 ### Step 0 — Fit the TF-IDF vectorizer (run once, or after report.csv changes significantly)
 
@@ -353,29 +334,19 @@ Use `--skip-pair-build` to reuse an existing `ml/output/training/contrastive/con
 
 ### Step 2 — Cold start
 
-The embedding space has changed. Delete the stale cache, feedback bank, and checkpoint:
+The embedding space has changed. Delete the stale cache:
 
 ```bash
 rm -f ml/output/training/embedding_cache.npz
-rm -f ml/output/training/contrastive/evaluation_co_bank.csv
-rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 ```
 
-### Step 3 — Retrain the label classifier with the adapted backbone
+### Step 3 — Retrain the downstream classifiers in order
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-classifier \
-  --model ml/output/checkpoints/contrastive \
-  --label "adapted backbone c1" \
-  --co-neg-per-case 5 \
-  --fp-neg-per-case 10 \
-  --embedding-min-sim 0.05 \
-  --epochs 25 \
-  --recall-weight 0.25 \
-  --hidden-dim 512 \
-  --device xpu \
-  --local-only
+# Pass --model ml/output/checkpoints/contrastive --local-only to each invocation
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-case-presence ...
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-groups        ...
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-label-presence ...
 ```
 
 Step 0 of the cycle will re-embed all reports using the adapted model.
@@ -392,34 +363,25 @@ Continue with subsequent cycles (update `--label` each time) as normal.
 
 ---
 
-## End-to-end Fine-tuned PetBERT (WIP, blocked)
-
-Fine-tunes PetBERT as a group sequence classifier. Architecturally the same as the
-group classifier but replaces the frozen-embedding MLP with a full transformer.
-Not recommended until the group classifier proves competitive (~10,000 confirmed cases).
-Known code issues must be resolved before running — see `training-log/training-log-finetune.md`.
+> **End-to-end fine-tuned PetBERT** was attempted in 2026-05 and reverted — it didn't beat the Phase 28 4-stage pipeline. See `training-log/training-log-finetune.md` Approach B for findings, cost analysis, and the resurrection path.
 
 ---
 
 ## Running Production Inference
 
-After training, score all reports using the three-stage pipeline:
+After training, score all reports using the 4-stage pipeline:
 
 ```bash
-# Three-stage pipeline (current production path — Phase 26)
+# 4-stage pipeline (current production path — Phase 28+)
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt \
-  --case-presence-threshold 0.5 \
-  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
   --group-classifier-threshold 0.85 \
-  --embedding-cache ml/output/training/embedding_cache.npz \
+  --label-presence-threshold 0.5 \
   --device xpu --local-only
 ```
 
-The binary `PresenceClassifier` path (`--presence-classifier`) is still supported but superseded.
-`run_production.py` auto-detects `contrastive/presence_classifier_best.pt` as the default
-binary checkpoint when no `--case-presence-classifier` is given, but the three-stage command
-above is the intended production path.
+`run_production.py` pre-wires all four stage checkpoints by default — you only need to
+override the path flags if you've moved them. Pass `--label-presence-classifier-dir ""`
+to fall back to the 3-stage pipeline (KW correction directly within each predicted group).
 
 ---
 

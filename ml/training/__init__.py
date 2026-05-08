@@ -1,1 +1,1 @@
-"""Training pipeline for the binary PresenceClassifier and GroupClassifier."""
+"""Training pipeline for the LabelPresenceClassifier and GroupClassifier."""

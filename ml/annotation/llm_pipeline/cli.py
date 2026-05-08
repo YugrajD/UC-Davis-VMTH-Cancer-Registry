@@ -10,7 +10,7 @@ from .pipeline import LLMConfig, LLMOutputs, run_llm_scan
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Annotate diagnosis text with Vet-ICD-O cancer labels using a tiered cascade "
-                    "(keyword → fuzzy → Ollama LLM). Handles negation, hedged language, "
+                    "(keyword -> fuzzy -> Ollama LLM). Handles negation, hedged language, "
                     "and abbreviations. This is the authoritative annotation source."
     )
     parser.add_argument("--list-models", action="store_true", help="List available Ollama models and exit.")

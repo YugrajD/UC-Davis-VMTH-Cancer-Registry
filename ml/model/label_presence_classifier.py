@@ -1,4 +1,4 @@
-"""Binary presence classifier head for the PetBERT training pipeline.
+"""Label presence classifier head for the PetBERT pipeline.
 
 Takes the concatenated PetBERT embeddings of a case report and a taxonomy label
 and predicts whether that label is a confirmed diagnosis for that case.
@@ -38,7 +38,7 @@ import torch.nn as nn
 from model.constants import DEFAULT_DROPOUT, DEFAULT_HIDDEN_DIM, PETBERT_EMB_DIM
 
 
-class PresenceClassifier(nn.Module):
+class LabelPresenceClassifier(nn.Module):
     """Lightweight binary classifier head on top of frozen PetBERT embeddings."""
 
     def __init__(
@@ -141,7 +141,7 @@ class PresenceClassifier(nn.Module):
         *,
         hidden_dim: int = DEFAULT_HIDDEN_DIM,
         dropout: float = DEFAULT_DROPOUT,
-    ) -> "PresenceClassifier":
+    ) -> "LabelPresenceClassifier":
         data = torch.load(path, map_location="cpu", weights_only=True)
         if isinstance(data, dict) and "state_dict" in data:
             n_cols = int(data.get("n_cols", torch.tensor(1)).item())

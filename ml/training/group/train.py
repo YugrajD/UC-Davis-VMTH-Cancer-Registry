@@ -19,6 +19,18 @@ After training, run the PetBERT pipeline with:
 
 Note: group_classifier_current.pt is overwritten each run (best epoch within the run).
       group_classifier_best.pt is only updated when val macro F1 beats all prior runs.
+
+Improvement flags (added Phase 27):
+  --dropout           Try 0.05 or 0.1 -- Phase 26 train/val gap is tight (0.247/0.258),
+                      suggesting 0.3 over-regularises. Experiment 3 found 0.3→0.05
+                      gave +0.18 macro F1 at lower data volumes.
+  --lr-schedule cosine  CosineAnnealingWarmRestarts(T_0=100) -- addresses the fixed-LR
+                      plateau seen at epoch 219 in Phase 26.
+  --focal-loss        Replace BCEWithLogitsLoss with Focal Loss (gamma=2 default).
+                      Down-weights easy non-cancer examples; focuses gradient on hard
+                      group assignments. Better for imbalanced multi-label.
+  --focal-gamma       Focal loss focusing parameter (default: 2.0). Higher = more focus
+                      on hard examples. Typical range: 1.0 -- 5.0.
 """
 
 import argparse
@@ -30,7 +42,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import config
@@ -96,6 +108,105 @@ def _per_group_stats(
         print(f"{name:<50} {p:>6.3f} {r:>6.3f} {f1:>6.3f} {support:>8}")
 
 
+def _stratified_split(
+    targets: np.ndarray,
+    val_frac: float,
+    seed: int = 42,
+) -> tuple[list[int], list[int]]:
+    """Train/val split that preserves per-group case distribution.
+
+    Each case is assigned to the stratum of its first positive group
+    (or -1 for non-cancer). Indices within each stratum are shuffled,
+    then the first val_frac are held out for validation.
+
+    Returns (train_indices, val_indices).
+    """
+    rng = np.random.default_rng(seed)
+    strata = np.array([
+        int(np.where(row > 0)[0][0]) if row.sum() > 0 else -1
+        for row in targets
+    ])
+    train_indices: list[int] = []
+    val_indices: list[int] = []
+    for stratum in np.unique(strata):
+        idx = np.where(strata == stratum)[0]
+        rng.shuffle(idx)
+        n_val = max(1, int(len(idx) * val_frac))
+        val_indices.extend(idx[:n_val].tolist())
+        train_indices.extend(idx[n_val:].tolist())
+    return train_indices, val_indices
+
+
+class _FocalBCEWithLogitsLoss(nn.Module):
+    """Focal loss for multi-label binary classification.
+
+    FL(p_t) = -(1 - p_t)^gamma * log(p_t)
+
+    Down-weights easy examples (high p_t) so training focuses on the
+    hard group assignments that the model currently gets wrong.
+    pos_weight mirrors BCEWithLogitsLoss semantics for class imbalance.
+    """
+
+    def __init__(self, pos_weight: torch.Tensor, gamma: float = 2.0) -> None:
+        super().__init__()
+        self.register_buffer("pos_weight", pos_weight)
+        self.gamma = gamma
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce = nn.functional.binary_cross_entropy_with_logits(
+            logits, targets, pos_weight=self.pos_weight, reduction="none"
+        )
+        p_t = torch.exp(-bce)
+        return ((1 - p_t) ** self.gamma * bce).mean()
+
+
+class _ASLLoss(nn.Module):
+    """Asymmetric Loss for multi-label classification (Ridnik et al., 2021).
+
+    Applies separate focusing for positives (gamma_pos) and negatives (gamma_neg),
+    with a probability floor `margin` that shifts easy negatives down before the log
+    so they contribute near-zero gradient. This avoids the collapse seen with focal
+    loss (gamma=2) while still suppressing precision-killing easy-negative gradients.
+
+    Recommended starting point: gamma_pos=1.0, gamma_neg=4.0, margin=0.05.
+    pos_weight mirrors BCEWithLogitsLoss semantics for class imbalance.
+    """
+
+    def __init__(
+        self,
+        pos_weight: torch.Tensor,
+        gamma_pos: float = 1.0,
+        gamma_neg: float = 4.0,
+        margin: float = 0.05,
+    ) -> None:
+        super().__init__()
+        self.register_buffer("pos_weight", pos_weight)
+        self.gamma_pos = gamma_pos
+        self.gamma_neg = gamma_neg
+        self.margin = margin
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        p = torch.sigmoid(logits)
+
+        # Shift negatives down by margin and clamp to [0, 1] before log
+        p_neg = (p - self.margin).clamp(min=0.0)
+
+        # Per-element log-probabilities for positives and shifted negatives
+        xs_pos = torch.log(p.clamp(min=1e-8))
+        xs_neg = torch.log((1.0 - p_neg).clamp(min=1e-8))
+
+        # Weighted BCE using pos_weight for the positive term
+        pw = self.pos_weight.unsqueeze(0)  # (1, G) broadcast over batch
+        loss = -(pw * targets * xs_pos + (1.0 - targets) * xs_neg)
+
+        # Asymmetric focusing
+        p_t = targets * p + (1.0 - targets) * (1.0 - p_neg)
+        gamma = targets * self.gamma_pos + (1.0 - targets) * self.gamma_neg
+        loss = loss * (1.0 - p_t) ** gamma
+
+        return loss.mean()
+
+
 def train(
     *,
     training_data_path: str,
@@ -111,6 +222,13 @@ def train(
     min_group_cases: int,
     max_group_cases: int,
     dropout: float,
+    lr_schedule: str,
+    focal_loss: bool,
+    focal_gamma: float,
+    asl: bool = False,
+    asl_gamma_pos: float = 1.0,
+    asl_gamma_neg: float = 4.0,
+    asl_margin: float = 0.05,
 ) -> None:
     # --- Load training data --------------------------------------------------
     print(f"Loading training data: {training_data_path}")
@@ -173,34 +291,62 @@ def train(
     emb_dim = embeddings.shape[1]
     device = _resolve_device(device_arg)
 
-    val_size = max(1, int(N * val_frac))
-    train_size = N - val_size
-
+    # sizes resolved after stratified split below
     print(f"Device: {device} | Cases: {N} | Groups: {G} | Emb dim: {emb_dim}")
-    print(f"Train: {train_size} | Val: {val_size} | Threshold: {threshold}")
+    print(f"Val fraction: {val_frac} | Threshold: {threshold}")
     print(f"Cancer cases: {int((targets.sum(dim=1) > 0).sum())}")
     print()
 
     # --- Data loaders --------------------------------------------------------
-    dataset = TensorDataset(embeddings, targets)
-    train_ds, val_ds = random_split(
-        dataset, [train_size, val_size],
-        generator=torch.Generator().manual_seed(42),
-    )
+    train_idx, val_idx = _stratified_split(targets.numpy(), val_frac)
+    train_size = len(train_idx)
+    val_size   = len(val_idx)
+    train_ds = torch.utils.data.Subset(TensorDataset(embeddings, targets), train_idx)
+    val_ds   = torch.utils.data.Subset(TensorDataset(embeddings, targets), val_idx)
     train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=256, shuffle=False)
+    val_loader   = DataLoader(val_ds,   batch_size=256, shuffle=False)
+    print(f"Train: {train_size} | Val: {val_size} (stratified)")
 
     # --- Model, optimizer, loss ----------------------------------------------
     model = GroupClassifier(num_groups=G, emb_dim=emb_dim, hidden_dim=hidden_dim, dropout=dropout).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    # BCEWithLogitsLoss applies sigmoid internally — use raw logits from model.net
-    criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights.to(device))
+
+    # Criterion: focal loss focuses gradient on hard examples; BCE is the standard baseline.
+    # Both use raw logits — sigmoid is applied internally.
+    pw = class_weights.to(device)
+    if asl:
+        # ASL handles class imbalance via gamma_neg — do not also apply pos_weight or the
+        # two corrections compound (pos_weight up to 50x * easy-negative suppression →
+        # recall=1 / precision≈0 collapse). Pass ones so ASL's focusing is the sole lever.
+        criterion: nn.Module = _ASLLoss(
+            pos_weight=torch.ones_like(pw),
+            gamma_pos=asl_gamma_pos,
+            gamma_neg=asl_gamma_neg,
+            margin=asl_margin,
+        )
+        print(f"Loss: ASL (gamma_pos={asl_gamma_pos}, gamma_neg={asl_gamma_neg}, margin={asl_margin}, pos_weight=1)")
+    elif focal_loss:
+        criterion = _FocalBCEWithLogitsLoss(pos_weight=pw, gamma=focal_gamma)
+        print(f"Loss: Focal BCE (gamma={focal_gamma})")
+    else:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
+        print("Loss: BCE with pos_weight")
+
+    # LR scheduler: cosine warm restarts help escape fixed-LR plateaus.
+    if lr_schedule == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=100, T_mult=1
+        )
+        print("LR schedule: CosineAnnealingWarmRestarts(T_0=100)")
+    else:
+        scheduler = None
+        print("LR schedule: none (fixed)")
 
     best_f1 = -1.0
     best_epoch = 0
 
-    print(f"{'Epoch':>5}  {'Train Loss':>10}  {'Val Loss':>9}  {'Macro F1':>9}  {'Best':>5}")
-    print("-" * 50)
+    print(f"{'Epoch':>5}  {'Train Loss':>10}  {'Val Loss':>9}  {'Macro F1':>9}  {'LR':>9}  {'Best':>5}")
+    print("-" * 60)
 
     for epoch in range(1, epochs + 1):
         # --- Train -----------------------------------------------------------
@@ -241,7 +387,11 @@ def train(
             best_epoch = epoch
             model.save(out_path, group_names)
 
-        print(f"{epoch:>5}  {train_loss:>10.4f}  {val_loss:>9.4f}  {macro_f1:>9.4f}  {'*' if is_best else ''}")
+        current_lr = optimizer.param_groups[0]["lr"]
+        print(f"{epoch:>5}  {train_loss:>10.4f}  {val_loss:>9.4f}  {macro_f1:>9.4f}  {current_lr:>9.2e}  {'*' if is_best else ''}")
+
+        if scheduler is not None:
+            scheduler.step()
 
     print(f"\nBest: epoch {best_epoch}, macro F1 = {best_f1:.4f}")
     print(f"Saved: {out_path}")
@@ -325,6 +475,55 @@ def main() -> int:
         help="Cap positive training samples per group at this value (default: 0 = no cap). "
              "Rows are removed entirely (not label-zeroed) to avoid false negatives.",
     )
+    parser.add_argument(
+        "--lr-schedule",
+        default="none",
+        choices=["none", "cosine"],
+        help="LR schedule (default: none). 'cosine' uses CosineAnnealingWarmRestarts(T_0=100) "
+             "to escape fixed-LR plateaus. Recommended: try with --epochs 600.",
+    )
+    parser.add_argument(
+        "--focal-loss",
+        action="store_true",
+        default=False,
+        help="Use Focal Loss instead of BCEWithLogitsLoss. Down-weights easy non-cancer "
+             "examples and focuses gradient on hard group assignments. See --focal-gamma.",
+    )
+    parser.add_argument(
+        "--focal-gamma",
+        type=float,
+        default=2.0,
+        help="Focal loss focusing parameter (default: 2.0). Higher = more focus on hard "
+             "examples. Typical range: 1.0-5.0. Only used when --focal-loss is set.",
+    )
+    parser.add_argument(
+        "--asl",
+        action="store_true",
+        default=False,
+        help="Use Asymmetric Loss (ASL) instead of BCEWithLogitsLoss. Applies separate "
+             "focusing for positives (--asl-gamma-pos) and negatives (--asl-gamma-neg), "
+             "with a probability floor (--asl-margin) to suppress easy-negative gradients.",
+    )
+    parser.add_argument(
+        "--asl-gamma-pos",
+        type=float,
+        default=1.0,
+        help="ASL focusing exponent for positives (default: 1.0).",
+    )
+    parser.add_argument(
+        "--asl-gamma-neg",
+        type=float,
+        default=4.0,
+        help="ASL focusing exponent for negatives (default: 4.0). Higher = stronger "
+             "suppression of easy negatives.",
+    )
+    parser.add_argument(
+        "--asl-margin",
+        type=float,
+        default=0.05,
+        help="ASL probability floor: negative probabilities are shifted down by this "
+             "amount before the log, zeroing gradient for very confident negatives (default: 0.05).",
+    )
     args = parser.parse_args()
     train(
         training_data_path=args.training_data,
@@ -340,6 +539,13 @@ def main() -> int:
         min_group_cases=args.min_group_cases,
         max_group_cases=args.max_group_cases,
         dropout=args.dropout,
+        lr_schedule=args.lr_schedule,
+        focal_loss=args.focal_loss,
+        focal_gamma=args.focal_gamma,
+        asl=args.asl,
+        asl_gamma_pos=args.asl_gamma_pos,
+        asl_gamma_neg=args.asl_gamma_neg,
+        asl_margin=args.asl_margin,
     )
     return 0
 

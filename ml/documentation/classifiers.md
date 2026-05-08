@@ -1,17 +1,17 @@
 # Classifiers
 
 The classifier layer sits on top of PetBERT embeddings and decides which cancer
-label(s) a report belongs to. Four approaches exist; contrastive fine-tuning +
-PresenceClassifier (Approach 3) is currently the production best.
+label(s) a report belongs to. The 4-stage pipeline
+(CasePresenceCLF → GroupCLF → per-group LabelPresenceCLF → KW correction) is the **current production design** (Phase 28).
 
 | Classifier | Status | Best result |
 |---|---|---|
-| Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
-| GroupClassifier | **Part of 3-stage pipeline (Phase 26)** | **54.6% Good+Slight (Phase 26, 3-stage, per-label eval, test set)** |
-| Contrastive fine-tuned PetBERT + PresenceClassifier | **Production best** | **86.5% Good+Slight (Phase 18, c16) — 56.5% Good with group-keyword mode** |
-| End-to-end fine-tuned PetBERT | WIP — see `production-pipeline.md` | Not benchmarked |
+| CasePresenceClassifier | Stage 1 gate of 4-stage pipeline | val score=0.939 (P=0.927, R=0.941) at recall_weight=0.85 |
+| GroupClassifier | Stage 2 of 4-stage pipeline | macro F1=0.4475 (Phase 27, dropout=0.1, epoch 192/300) |
+| Per-group LabelPresenceClassifier | **Stage 3a of 4-stage pipeline (Phase 28)** | **57.9% G+S (group-t=0.85, lp-t=0.5) — +2.6pp vs 3-stage Phase 27 baseline** |
+| LabelPresenceClassifier (whole-corpus, all-label binary) | Removed during 4-stage refactor; preserved in `training-log/training-log-binary.md` | 65.7% G+S train (Phase 25 c14, contrastive backbone) |
 
-> **Training ground truth:** Training supervision comes from the annotation pipeline. The LLM pipeline (`llm_annotation.csv`) is the authoritative source for Phase 23+ — it handles negation, hedging, and abbreviations that keyword matching misses. The keyword pipeline (`keyword_annotation.csv`) is a fast fallback for testing or when the Ollama server is unavailable. In production, no diagnosis text is available — classifiers predict from report text alone.
+> **Training ground truth:** Training supervision comes from the LLM annotation pipeline (`llm_annotation.csv`). It uses a three-tier cascade — exact keyword match (with negation masking) → fuzzy token overlap (behavior-code aware) → LLM resolution (group + anatomic-site aware) — to map diagnosis text to Vet-ICD-O labels. In production, no diagnosis text is available — classifiers predict from report text alone.
 
 ---
 
@@ -30,181 +30,26 @@ All approaches are evaluated by `ml/evaluation/evaluate.py`:
 
 ---
 
-## Approach 1 — Binary PresenceClassifier
+## Approach 1 — LabelPresenceClassifier (all-label binary, removed in Phase 28)
 
-### Architecture
+The single all-label binary classifier with iterative CO-bank training was the
+production design from Phase 1 through Phase 25 (best: 65.7% G+S train, 5,788
+cases). It was replaced in Phase 28 by per-group LabelPresenceClassifier
+(see Approach 4 below). Architecture summary: 3 × 768 PetBERT column embeddings
+concatenated with each label embedding (3072-dim → 512 → 1), with an iterative
+CO bank of completely-off predictions accumulating across cycles to push the
+hard-negative floor down.
 
-```
-report text
-    ↓
-PetBERT (frozen)
-    ↓
-per-column embeddings (3 × 768)
-    ↓
-for each of ~857 taxonomy labels:
-    concat(col1_emb ‖ col2_emb ‖ col3_emb ‖ label_emb)
-    → 3072-dim → Linear(3072 → 512) → ReLU → Dropout → Linear(512 → 1)
-    ↓
-argmax across all label scores
-    ↓
-predicted label
-```
+**Why removed:** the implicit argmax across all ~857 labels created a hard CO
+floor (~30%) — labels could only reject individual pairs, never redirect a
+wrong-group match. The 4-stage pipeline solves this by gating on group first
+(GroupClassifier) and scoring within-group (per-group LabelPresenceClassifier),
+which removed the need for a global CO bank entirely.
 
-The three column embeddings and the label embedding are concatenated into a 3072-dim
-vector and scored by an MLP with a 512-dim hidden layer. Empty columns are zeroed
-before concatenation. Labels compete implicitly through argmax.
-
-**Why hidden_dim=512 (Phase 16):** The Phase 13 architecture used hidden_dim=256,
-creating a 12:1 compression bottleneck (3072→256). Widening to 512 (6:1 ratio)
-recovered +1.9pp (40.0% → 41.9%). The bottleneck was confirmed real.
-
-Two modes are stored in the checkpoint (`col_pair_mode`):
-
-| `col_pair_mode` | Input dim | Notes |
-|---|---|---|
-| `False` (current) | 4 × 768 = 3072 | Phase 13, 16 — production |
-| `True` (experimental) | 2 × 768 = 1536 per pair | Phase 14–15 — regressions, not used |
-
-`n_cols`, `col_pair_mode`, and `hidden_dim` are saved into the checkpoint. Legacy
-checkpoints without these keys fall back to safe defaults and load without modification.
-
-### Training Data Sources
-
-| Source | Description |
-|--------|-------------|
-| `positive` | Keyword-confirmed (case, term) pairs |
-| `hard_negative` | False-positive predictions from previous eval cycle |
-| `fp_extra_negative` | Additional random labels sampled for FP cases |
-| `co_negative` | Completely-off predictions from the rolling CO bank |
-| `easy_negative` | Random wrong labels for keyword-confirmed cases |
-
-Training is **iterative**: each cycle runs the pipeline, evaluates, accumulates
-completely-off predictions into a rolling bank, and retrains. The CO bank is the key
-mechanism — it ensures the classifier always trains on the specific wrong-group pairs
-that fool cosine similarity, accumulated across all previous cycles.
-
-### How to Run
-
-> **Windows:** use `ml/.venv/Scripts/python.exe`. Adjust `--device` to your hardware (`xpu`, `cuda`, `mps`, `cpu`).
-
-**Continuing from an existing bank (standard — adapted backbone):**
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-classifier \
-  --model ml/output/checkpoints/contrastive \
-  --label "cycle N" \
-  --co-neg-per-case 5 \
-  --fp-neg-per-case 10 \
-  --embedding-min-sim 0.05 \
-  --epochs 25 \
-  --recall-weight 0.25 \
-  --hidden-dim 512 \
-  --device xpu \
-  --local-only
-```
-
-### Cold Start
-
-Required any time the embedding space changes (PetBERT update, architecture change,
-new keyword data). Old bank pairs are anchored to the old cosine space and will add noise.
-
-**Prerequisites:**
-1. `ml/output/annotation/keyword/keyword_annotation.csv` must exist. If not, run annotation first.
-2. `ml/data/report.csv` must exist.
-
-**Files to delete:**
-```bash
-rm -f ml/output/training/embedding_cache.npz
-rm -f ml/output/training/contrastive/evaluation_co_bank.csv
-rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
-```
-
-**Cold-start c1 command** (same as standard, label it clearly):
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-classifier \
-  --model ml/output/checkpoints/contrastive \
-  --label "cold-start c1" \
-  --co-neg-per-case 5 \
-  --fp-neg-per-case 10 \
-  --embedding-min-sim 0.05 \
-  --epochs 25 \
-  --recall-weight 0.25 \
-  --hidden-dim 512 \
-  --device xpu \
-  --local-only
-```
-
-Step 0 detects the missing cache and runs PetBERT on all reports and labels — the only
-time PetBERT runs. All subsequent cycles load from cache.
-
-Continue all subsequent cycles with `--co-neg-per-case 5`. Do **not** switch to 10.
-
-### Expected Trajectory (5,788 cancer cases, per-column architecture)
-
-| Cycles completed | Expected Good+Slight | Notes |
-|-----------------|---------------------|-------|
-| c1 (co=5, cold start) | ~28–30% | Cache rebuilt; bank ~15k |
-| c2 (co=5) | ~26% | May dip slightly — continue |
-| c3–c4 (co=5) | ~38–39% | Large jump |
-| c5–c6 (co=5) | ~39–40% | Plateau; CO floor ~30% |
-| c7+ | may regress | Confirm plateau and stop |
-
-### Key Parameters
-
-| Parameter | Recommended | Notes |
-|-----------|-------------|-------|
-| `--embedding-min-sim` | `0.05` | Scores are mean-subtracted — use 0.05, not 0.5 |
-| `--hidden-dim` | `512` | Phase 16 standard; widening from 256 resolved 12:1 bottleneck |
-| `--co-neg-per-case` | `5` | Do NOT raise to 10 with per-column architecture — causes regression |
-| `--fp-neg-per-case` | `10` | Keep at 10; reducing to 5 weakens FP rejection |
-| `--epochs` | `25` | Beyond 25 shows diminishing returns |
-| `--pos-weight` | `1.0` | Do not increase; sampler already balances training |
-| `--recall-weight` | `0.25` | Prevents epoch-1 degenerate checkpoints winning. Do not raise above 0.5 |
-| `--max-pos-per-group` | `0` (no cap) | Do not cap — removes signal from already-good groups |
-
-### Advantages
-
-- Works at low data volumes — competitive from ~1,273 confirmed cases upward
-- Stable training with the rolling CO bank and `--recall-weight 0.25`
-- Fast — trains on cached embeddings, no PetBERT inference needed per cycle
-
-### Disadvantages
-
-- **Hard CO floor (~30%)**: labels compete implicitly via argmax. Cannot redirect a
-  wrong-group match — only reject individual pairs.
-- Pairwise scoring scales with number of labels (~857 scores per report at inference)
-- Enrichment attempts (Fix 6, Fix 9) caused regressions — off by default
-
-### Known Limitations
-
-- CO floor is data-limited, not architecture-limited. Further reduction requires more
-  keyword-confirmed cases or a group-level architecture.
-- `hidden_dim=512` (Phase 16) resolved the 12:1 compression bottleneck — confirmed +1.9pp gain.
-  Trying `hidden_dim=768` may recover additional signal.
-
-### Phase 14 Experiment — Per-pair architecture (`col_pair_mode=True`) ❌
-
-Tested 2026-03-21: score each `[colN | label]` pair (1536-dim) independently with a shared
-MLP, then max-pool across columns. Plateaued at **32.7%** Good+Slight (c6) vs Phase 13's
-**40.0%** — a −7.3pp regression. Reverted. See training-log-binary.md Phase 14 for analysis.
-
-Per-pair experiment backed up as `presence_classifier_best_phase14_perpair.pt`.
-
-### Phase 16 Experiment — Wider hidden layer (`hidden_dim=512`) ✅
-
-Tested 2026-03-22: same concat architecture as Phase 13 (`col_pair_mode=False`, `n_cols=3`) but
-`hidden_dim=512` instead of 256, reducing the input compression ratio from 12:1 to 6:1.
-
-Plateaued at **41.9%** Good+Slight (c2) — **+1.9pp over Phase 13 (40.0%)**.
-- c1 already beat Phase 13 at 40.6% with no cold start
-- c2–c4 held at ~41.7–41.9%; c5 regressed — plateau confirmed
-- FP% also improved: 27.1% vs 28.5% in Phase 13
-
-**The 12:1 compression bottleneck was real and is resolved.** `hidden_dim` is now saved in the
-checkpoint so `load()` reconstructs the correct size automatically.
-
-**Phase 16 best: `presence_classifier_best_phase16_hd512.pt` (41.9%). Superseded by Phase 17 contrastive fine-tuning (69.0%).**
+The full training-cycle history (Phases 1–22) lives in
+`training-log/training-log-binary.md`. The training entry point
+(`--mode train-classifier`), the `binary/` build/cycle scripts, and
+`model/presence_classifier.py` were deleted in Phase 28.
 
 ---
 
@@ -287,33 +132,42 @@ Critical hyperparameters:
 
 Best checkpoint saved to `ml/output/checkpoints/group/group_classifier_best.pt`.
 
-### Intended Pipeline Design
+### Intended Pipeline Design (4-stage, Phase 28+)
 
-Three sequential stages, each with a single distinct responsibility:
+Four sequential stages, each with a single distinct responsibility:
 
 1. **CasePresenceClassifier gate** — case-level binary classifier (`mean_report_emb → cancer probability`).
    Cases below `--case-presence-threshold` are rejected → Uncategorized without reaching GroupClassifier.
-   Trained with `recall_weight=0.7` to err toward letting uncertain cases through rather than missing cancer.
+   Trained with `recall_weight=0.85` to err toward letting uncertain cases through rather than missing cancer.
    **Responsibility: filter non-cancer cases → reduce FP.**
 
-2. **GroupClassifier** — for cases that passed the gate, `report_emb → 42 group probabilities`.
-   Apply `--group-classifier-threshold` → predicted group(s); if none → Uncategorized.
+2. **GroupClassifier** — for cases that passed the gate, `report_emb → group probabilities` (sigmoid per group).
+   Apply `--group-classifier-threshold`; argmax fallback ensures gate-passed cases always receive a concrete group.
+   Groups below `--uncommon-threshold` cases are merged into a single "Uncommon" output class.
    **Responsibility: assign cancer to the correct ICD group → reduce CO.**
 
-3. **KW correction** — for each predicted group, ICD-O behavior keyword matching narrows candidates
-   to the matching behavior digit, then cosine similarity selects the best specific term within that pool.
-   **Responsibility: pick the right term within the group → convert Slight → Good.**
+3a. **Per-group LabelPresenceClassifier (Stage 3a — Phase 28+, optional)** — for each active group, a learned binary
+   `[report_emb (768) ‖ label_emb (768)] → 1 logit` model scores all labels in that group.
+   Labels above `--label-presence-threshold` are selected; argmax fallback applies otherwise.
+   Multiple labels per group can be selected, enabling within-group multi-diagnosis prediction.
+   Groups without a corresponding `.pt` file fall through directly to KW correction.
+   **Responsibility: pick the right specific term(s) within the group → convert Slight → Good.**
 
-**Run command:**
+3b. **KW correction (post-filter)** — within the label pool selected by Stage 3a (or the full group pool when 3a is absent),
+   ICD-O behavior keyword matching narrows candidates to the matching behavior digit, then a subtype keyword filter
+   (Mast cell, Blood vessel, Melanomas, Meningiomas, Osseous, Gliomas) applies group-specific discriminators
+   before cosine similarity selects the final term.
+
+**Run command (4-stage, current production):**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt \
-  --case-presence-threshold 0.5 \
-  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
-  --group-classifier-threshold 0.90 \
-  --embedding-cache ml/output/training/embedding_cache.npz \
+  --group-classifier-threshold 0.85 \
+  --label-presence-threshold 0.5 \
   --device xpu --local-only
 ```
+
+`run_production.py` sets all four stages by default — `--case-presence-classifier`, `--group-classifier`,
+and `--label-presence-classifier-dir` are pre-wired to the production checkpoint paths.
 
 **Run 9 (2026-04-29, superseded):** Used the label-level `PresenceClassifier` score matrix (N × M)
 as the gate instead of `CasePresenceClassifier`. Replaced because `CasePresenceClassifier` is simpler
@@ -323,7 +177,43 @@ recall-precision trade-off via its training objective.
 **Run 8 (baseline, no gate):** GroupClassifier ran unconditionally; `PresenceClassifier` was a fallback
 for cases where no group cleared the threshold, not a gate.
 
-### Phase 26 Evaluation Results (2026-05-04) — CURRENT
+### Phase 28 Evaluation Results (2026-05-07) — CURRENT
+
+**4-stage pipeline: CasePresenceClassifier (rw=0.85) → GroupClassifier (Ph27, F1=0.4475) → LabelPresenceClassifier (Stage 3a) → KW correction.**
+
+`--group-classifier-threshold 0.85`, `--label-presence-threshold` swept 0.5–0.9 on held-out test set.
+
+| lp-threshold | G+S | Good% | Slight% | CO% | FP% | FN% | Total rows |
+|---|---|---|---|---|---|---|---|
+| Ph27 baseline (3-stage) | 55.3% | 12.9% | 42.4% | 21.6% | 5.0% | 18.2% | 9,127 |
+| **0.5** | **57.9%** | 28.8% | 29.1% | 25.3% | 5.7% | 11.1% | 15,100 |
+| 0.6 | 57.6% | 30.7% | 26.9% | 24.7% | 5.7% | 12.0% | 14,111 |
+| 0.7 | 57.2% | 32.7% | 24.5% | 24.3% | 5.6% | 12.9% | 13,185 |
+| 0.8 | 56.6% | 35.2% | 21.4% | 23.8% | 5.5% | 14.1% | 12,105 |
+| 0.9 | 55.9% | **38.3%** | 17.6% | **22.9%** | **5.4%** | 15.8% | 10,923 |
+
+**All thresholds beat Phase 27 on G+S. No threshold simultaneously beats Phase 27 on both G+S and CO.**
+
+**Why CO increases:** Lower thresholds emit multiple labels per group (all scoring ≥ threshold become
+separate top-k rows). When the GroupClassifier assigns the wrong group, each extra row is CO.
+Raising the threshold narrows the pool, reducing multi-row CO inflation at the cost of recall (↑FN).
+
+**Two operating points:**
+- **lp-t=0.5** — best G+S (57.9%), lowest FN (11.1%). Best for completeness/recall.
+- **lp-t=0.9** — minimum CO regression (+1.3pp over baseline), G+S=55.9% (+0.6pp). Best for coding precision.
+
+**Recommended: `--label-presence-threshold 0.5`** (best overall G+S). Switch to 0.9 if exact-term coding accuracy matters more than completeness.
+
+**Notable per-group results at lp-t=0.5:**
+- Mast cell: 90% Good — near-perfect term selection
+- Squamous: 68%, Blood vessel: 64%, Paragangliomas: 64%, Neoplasms of histiocytes: 63%
+- Weakest: Ductal/lobular (1%), Mature B-cell (1%), Acinar cell (2%) — uncommon groups with limited training signal
+
+Full training and threshold sweep details: [training-log-label-presence.md](training-log/training-log-label-presence.md)
+
+---
+
+### Phase 26 Evaluation Results (2026-05-04)
 
 **3-stage pipeline (CasePresenceClassifier rw=0.85 + GroupClassifier Phase 26 + KW + argmax fallback + subtype KW).**
 
@@ -472,63 +362,38 @@ by giving marginal groups more training signal.
 - [x] `ml/training/binary/build_case_presence_dataset.py` — case-level cancer/no-cancer dataset builder
 - [x] `ml/training/binary/train_case_presence.py` — CasePresenceClassifier training script
 - [x] `ml/scripts/run_training.py --mode train-case-presence` — orchestrates dataset build + training
-- [x] `ml/production/petbert_pipeline/categorization.py` — KW correction within predicted groups
-- [x] `ml/production/petbert_pipeline/pipeline.py` — three-stage gate: `--case-presence-classifier` → `--group-classifier` → KW
+- [x] `ml/production/petbert_pipeline/stages/keyword_correction.py` — KW correction within predicted groups
+- [x] `ml/production/petbert_pipeline/pipeline.py` — orchestrates `stages/case_presence_classifier.py` → `stages/group_classifier.py` → `stages/label_presence_classifier.py` → `stages/keyword_correction.py`
 - [x] `ml/production/petbert_pipeline/cli.py` — `--case-presence-classifier`, `--case-presence-threshold` flags
 
 ### Behavior-Keyword Term Selection — Implemented ✅ (2026-03-28)
 
-The "group-keyword" categorization mode is now available via `--categorization-mode group-keyword`
-in `run_production.py`. It replaces within-group cosine similarity with ICD-O behavior code
-keyword matching to convert "slightly off" predictions (right group, wrong term) into "good".
+ICD-O behavior code keyword matching is applied in **Stage 4 (KW correction)** of
+the 4-stage pipeline by default — there is no `--categorization-mode` flag. It runs
+on every prediction with no opt-out.
 
 **Design:**
 
-Stage 1 is identical to the default mode — the PresenceClassifier's top-scoring label
-determines the predicted ICD group, and the same threshold decides whether to predict
-at all. CO, FP, and FN are therefore unchanged.
+After Stage 3a (per-group LabelPresenceClassifier) selects within-group candidates,
+Stage 4 narrows further by ICD-O behavior digit (the digit after `/`):
+`/0`=benign, `/1`=borderline, `/2`=in situ, `/3`=malignant, `/6`=metastatic.
+This is matched to weighted clinical vocabulary in the report text (e.g. `malignant`
+→ `/3`, `metastatic` → `/6`). When a behavior signal is present the candidate pool is
+filtered to that digit; when no signal is found, all in-group candidates remain.
+Subtype-keyword discriminators (Meningiomas, Osseous, Gliomas, +3 others as of
+Phase 27) further refine the pool topographically/histologically.
 
-Stage 2 only runs when Stage 1 would have made a prediction. Within the predicted group,
-the ICD-O behavior digit (the digit after `/` in the code) directly encodes the key
-disambiguator: `/0`=benign, `/1`=borderline, `/2`=in situ, `/3`=malignant, `/6`=metastatic.
-This is matched to weighted clinical vocabulary in the report text (e.g. `malignant` → `/3`,
-`metastatic` → `/6`). Candidates are filtered to the matched behavior digit, then the
-highest raw PresenceClassifier score within that pool wins. If no keyword signal is found,
-all candidates in the group compete by raw score.
+**Keyword module:** `ml/ICD_labels/behavior_keywords.py` (behavior code) +
+`ml/ICD_labels/subtype_keywords.py` (topographic/histologic). Pure Python, no model
+dependencies.
 
-**Keyword module:** `ml/ICD_labels/behavior_keywords.py` — pure Python, no model dependencies.
-Uses pre-compiled whole-word regex patterns. Weights: 1.0 = strong signal, 0.5 = contextual.
+**Phase 18 result (legacy single-classifier, 5,788 cases):** 86.5% G+S — 56.5% Good /
+30.0% Slight with KW correction vs 30.6% / 55.9% without. KW correction lifted Good%
++25.9pp with no change to G+S, CO, FP, or FN. See `training-log-finetune.md` for the
+full Phase 18 evaluation.
 
-**Evaluation results (Phase 18 best checkpoint, corrected evaluation, 2026-03-28):**
-
-Both modes write up to 5 top-k rows per case — percentages are directly comparable.
-
-| Metric | Default mode (top-k) | **Group-keyword mode (top-k) — PRODUCTION** |
-|---|---|---|
-| Good% | 30.6% | **56.5%** |
-| Slightly off% | 55.9% | **30.0%** |
-| **Good + Slight** | **86.5%** | **86.5%** |
-| Completely off% | 9.4% | 9.3% |
-| False positive% | 1.9% | **1.9%** |
-| False negative% | 2.2% | 2.2% |
-| True negatives (excluded from CSV) | 6,329 | 6,330 |
-
-Stage 2 runs per-row: Good% rose +25.9pp with no change to G+S total, CO, FP, or FN.
-
-**Remaining Slight:** Groups where terms differ by something other than behavior code —
-Meningiomas (80% Slight — topography), Osseous neoplasms (46%), Gliomas (46%) — need
-topographic or histologic keyword discriminators beyond the current behavior-code vocabulary.
-
-**Usage (production):**
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --categorization-mode group-keyword \
-  --out-dir ml/output/production/contrastive_kw \
-  --local-only --device xpu
-```
-
-This idea applies equally to Approach 2 (GroupClassifier) since both share the same
-within-group term selection step.
+This was generalised from Approach 1 to Approach 2 (GroupClassifier) and now runs as
+Stage 4 of the production 4-stage pipeline against any in-group candidate set.
 
 ### Advantages
 
@@ -551,7 +416,7 @@ within-group term selection step.
 InfoNCE fine-tuning of PetBERT on `(report_text, label_text)` pairs, then retraining
 the PresenceClassifier from scratch on the improved embedding space.
 
-- **Result:** 86.5% Good+Slight (Phase 18, c16) — 56.5% Good / 30.0% Slight with `--categorization-mode group-keyword` (production); 30.6% Good / 55.9% Slight with default mode
+- **Result:** 86.5% Good+Slight (Phase 18, c16, legacy single-classifier on 5,788 cases) — 56.5% Good / 30.0% Slight with KW correction; 30.6% Good / 55.9% Slight without. Note: Phase 18 (keyword annotation, 5,788 cases) and Phase 28 (LLM annotation, 46,652 cases, 4-stage) are different datasets and architectures — not directly comparable.
 - **CO floor shattered:** ~30% → ~7% — contrastive training directly fixed wrong-group assignments
 - **Scripts:** `ml/training/contrastive/` — see [training-log-finetune.md](training-log/training-log-finetune.md) for full details
 - **Backbone checkpoint:** `ml/output/checkpoints/contrastive/`
@@ -599,87 +464,28 @@ is the mechanism. Revisit if the annotation pipeline cannot scale to ~10,000+ ca
 
 ---
 
-## Approach 4 — End-to-end Fine-tuned PetBERT (WIP)
+## Approach 4 — End-to-end Fine-tuned PetBERT (attempted, reverted)
 
-Fine-tunes PetBERT end-to-end as a sequence classifier, removing the frozen-embedding
-bottleneck. See `production-pipeline.md` for the live production path and `training-log/training-log-finetune.md` for scripts, usage, and known code issues.
+End-to-end fine-tuning of PetBERT as a Stage 2 group classifier was attempted in 2026-05 and reverted. The val macro F1 ceiling lifted to 0.5774 (vs Phase 27 GroupCLF's 0.4475), but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9%. The F1 win was absorbed by LP coupling (LPs trained against Phase 27 GroupCLF outputs), and closing the gap would have required regenerating the embedding cache and retraining Stages 1 and 3a — a substantial commitment for an uncertain ~+1–3pp ceiling, against ~30× slower inference.
 
-### Architecture
-
-```
-Training:
-    diagnosis text
-        ↓
-    keyword pipeline
-        ↓
-    group label
-        ↓
-    fine-tune PetBERT (AutoModelForSequenceClassification) on (report text, group label)
-        ↓
-    save HuggingFace checkpoint
-
-Inference:
-    report text
-        ↓
-    fine-tuned PetBERT
-        ↓
-    softmax over 45 groups
-        ↓
-    predicted group probabilities
-        ↓
-    cosine similarity within predicted group (base PetBERT for label embeddings)
-        ↓
-    best term + ICD code
-```
-
-PetBERT is fine-tuned end-to-end. The keyword pipeline still generates training labels
-from the diagnosis text — at inference, the diagnosis field is not needed. Within-group
-term selection still uses cosine similarity against base (unfinetuned) PetBERT embeddings.
-
-### Advantages
-
-- **No frozen-embedding bottleneck**: weights adapt to the task, potentially learning
-  clinical vocabulary that generic masked-LM pre-training did not
-- A single model replaces PetBERT + GroupClassifier — simpler inference pipeline
-- HuggingFace Trainer handles mixed precision, gradient accumulation, and checkpoint selection
-- Mirrors the GroupClassifier training strategy but with more expressive capacity
-
-### Disadvantages
-
-- **Computationally expensive**: full transformer fine-tuning requires significantly more
-  GPU time and memory than training an MLP head on cached embeddings
-- **Risk of catastrophic forgetting**: may degrade PetBERT's veterinary language
-  representations if learning rate or epoch count is not carefully managed
-- **No cached embeddings**: cannot reuse `embedding_cache.npz` — every run requires a full
-  PetBERT forward pass
-- Still shares the group-level ceiling: term selection within the predicted group is cosine-based
-
-### Constraints
-
-- Known code issues to resolve before a full training run (see `training-log/training-log-finetune.md`):
-  - `WeightedTrainer` constructor argument order is fragile
-  - Class weights tensor moved to device during `__init__` before device is resolved
-  - No stratified val split in `build_dataset.py`
-  - No guard against `--presence-classifier` and `--finetuned-model-path` set simultaneously
-- Needs ~10,000+ confirmed cases to fine-tune reliably without memorisation
-- MPS (Apple Silicon) fallback must be enabled: `PYTORCH_ENABLE_MPS_FALLBACK=1`
+See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sweep/8-epoch results, the cost analysis, and the resurrection path.
 
 ---
 
 ## Comparison
 
-| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning | End-to-end fine-tuning |
-|---|---|---|---|---|
-| **Status** | Superseded by Approach 3 | **Competitive (Phase 23)** | **Production best** | WIP, blocked |
-| **Best result** | 41.9% G+S (Phase 16) | **50.1% G+S at threshold=0.90 (Phase 23, Round 2 backbone)** | **86.5% G+S, 56.5% Good / 30.0% Slight (Phase 18, c16, group-keyword mode)** | Not benchmarked |
-| **PetBERT** | Frozen | Contrastive fine-tuned | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
-| **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier | One-shot |
-| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | Works at ~5,788 cases | Needs ~10,000+ cases |
-| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative | Slow (full transformer) |
-| **Inference speed** | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) |
-| **CO floor** | ~28.6% (Phase 23) | ~25.5% @ t=0.90 | **~7%** — dramatically reduced | Designed to eliminate it |
-| **FP rate** | 24.2% (Phase 23) | **8.9% @ t=0.90** | ~1.9% (Phase 18) | Unknown |
-| **Main constraint** | CO floor; FP from implicit argmax | FN trade-off at high threshold | LLM annotation ceiling | Compute cost, data volume |
+| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning |
+|---|---|---|---|
+| **Status** | Superseded by Approach 3 | **Competitive (Phase 23)** | **Production best** |
+| **Best result** | 41.9% G+S (Phase 16) | **50.1% G+S at threshold=0.90 (Phase 23, Round 2 backbone)** | **86.5% G+S, 56.5% Good / 30.0% Slight (Phase 18, c16, group-keyword mode)** |
+| **PetBERT** | Frozen | Contrastive fine-tuned | Fine-tuned (InfoNCE) |
+| **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier |
+| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | Works at ~5,788 cases |
+| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative |
+| **Inference speed** | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) | Slow (~857 pair scores/report) |
+| **CO floor** | ~28.6% (Phase 23) | ~25.5% @ t=0.90 | **~7%** — dramatically reduced |
+| **FP rate** | 24.2% (Phase 23) | **8.9% @ t=0.90** | ~1.9% (Phase 18) |
+| **Main constraint** | CO floor; FP from implicit argmax | FN trade-off at high threshold | LLM annotation ceiling |
 
 ### When to Use Each
 
@@ -696,7 +502,7 @@ term selection still uses cosine similarity against base (unfinetuned) PetBERT e
   Train CasePresenceClassifier first with `--mode train-case-presence`.
 
 - **Phase 23 GroupClassifier alone (Run 8 baseline):** `--group-classifier` only, no gate — 50.1% G+S, 8.9% FP, 15.5% FN at threshold=0.90
-- **Phase 23 binary**: standard `--mode train-classifier` cycles — 47.2% G+S, higher FP, lower FN
+- **Phase 23 binary**: legacy iterative LabelPresenceClassifier (since deleted) — 47.2% G+S, higher FP, lower FN
 - **Phase 18 contrastive (keyword annotation)**: highest overall G+S (86.5%) but evaluated on a smaller dataset — not directly comparable to Phase 23 LLM ground truth
 - **End-to-end fine-tuning**: after three-stage pipeline proves stable and bugs are resolved
 

@@ -1,6 +1,6 @@
 """Multi-class group classifier for the PetBERT pipeline.
 
-Replaces the binary PresenceClassifier pair-wise approach with a single global
+Replaces the LabelPresenceClassifier pair-wise approach with a single global
 group decision per report. Instead of scoring each (report, label) pair
 independently, this classifier takes a report mean embedding and outputs
 independent sigmoid probabilities for each of the cancer groups.
@@ -92,7 +92,7 @@ class GroupClassifier(nn.Module):
     @classmethod
     def load(cls, path: str | Path) -> tuple["GroupClassifier", list[str]]:
         """Load model and return (model, group_names)."""
-        data = torch.load(path, map_location="cpu", weights_only=False)
+        data = torch.load(path, map_location="cpu", weights_only=True)
         model = cls(
             num_groups=data["num_groups"],
             emb_dim=data["emb_dim"],

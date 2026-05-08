@@ -4,23 +4,26 @@ No env PYTHONPATH needed — this script adds ml/ to sys.path automatically.
 
 Modes
 -----
-  train-classifier   Iterative cycle: embed reports → build training data → train
-                     label presence classifier → score reports → evaluate → repeat.
-                     Run 6–8 cycles; each takes ~10 minutes after the first.
+  train-groups          Train the multi-label GroupClassifier (Stage 2).
+                        Predicts cancer group from a single report embedding.
+                        Run after adapt-backbone; requires --train-cases.
 
-  train-groups       One-shot: train a multi-label group classifier.
-                     Predicts cancer group (44 classes) from a single report embedding.
-                     Use after adapt-backbone; requires --train-cases for a clean split.
+  train-case-presence   Train the CasePresenceClassifier (Stage 1 gate).
 
-  adapt-backbone     Fine-tune the embedding model (PetBERT) so that report text
-                     and cancer label text land closer together in vector space.
-                     Run once; then cold-start and retrain with train-classifier.
+  train-label-presence  Train per-group LabelPresenceClassifier checkpoints
+                        (Stage 3a), one .pt per group.
+
+  adapt-backbone        Fine-tune the embedding model (PetBERT) so that report
+                        text and cancer-label text land closer together in
+                        vector space. Run once; then cold-start downstream
+                        classifiers.
 
 Usage
 -----
-  python ml/scripts/run_training.py --mode train-classifier --label "c1"
-  python ml/scripts/run_training.py --mode adapt-backbone --device xpu --local-only
   python ml/scripts/run_training.py --mode train-groups --device xpu
+  python ml/scripts/run_training.py --mode adapt-backbone --device xpu --local-only
+  python ml/scripts/run_training.py --mode train-case-presence --device xpu
+  python ml/scripts/run_training.py --mode train-label-presence --device xpu
 """
 
 import argparse
@@ -32,14 +35,239 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from model.constants import DEFAULT_HIDDEN_DIM
-from annotation import annotate_keyword
-from training.binary.run_cycle import main as run_classifier_cycle
 from training.group.build_training_data import build_training_data
 from training.group.train import train as train_group
 from training.contrastive.build_contrastive_dataset import build_contrastive_pairs
 from training.contrastive.train_contrastive import train as train_contrastive
 from training.binary.build_case_presence_dataset import build_dataset as build_case_presence_dataset
 from training.binary.train_case_presence import train as train_case_presence
+from training.label_presence.build_training_pairs import build_label_presence_pairs
+from training.label_presence.train import train_label_presence
+from utils.encoding import safe_filename
+
+
+def _train_groups(args: argparse.Namespace) -> None:
+    epochs = args.epochs if args.epochs is not None else 50
+    group_lr = args.lr if args.lr is not None else 5e-5
+
+    print("\n=== Step 2a: Build group classifier training data ===")
+    excluded = [g.strip() for g in args.excluded_groups.split("|")] if args.excluded_groups else []
+    build_training_data(
+        cache_path=config.EMBEDDING_CACHE_NPZ,
+        expectation_csv_path=args.annotation_csv,
+        out_path=config.GROUP_TRAINING_DATA_NPZ,
+        train_cases_txt=args.train_cases,
+        uncommon_threshold=args.uncommon_threshold,
+        uncommon_groups_out=config.UNCOMMON_GROUPS_TXT,
+        excluded_groups=excluded,
+    )
+    print("\n=== Step 2b: Train group classifier ===")
+    train_group(
+        training_data_path=config.GROUP_TRAINING_DATA_NPZ,
+        out_path=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_current.pt",
+        epochs=epochs,
+        lr=group_lr,
+        hidden_dim=DEFAULT_HIDDEN_DIM,
+        val_frac=0.2,
+        threshold=0.3,
+        device_arg=args.device,
+        weight_decay=args.weight_decay,
+        max_class_weight=args.max_class_weight,
+        min_group_cases=10,
+        max_group_cases=0,
+        dropout=args.dropout,
+        lr_schedule=args.lr_schedule,
+        focal_loss=args.focal_loss,
+        focal_gamma=args.focal_gamma,
+        asl=args.asl,
+        asl_gamma_pos=args.asl_gamma_pos,
+        asl_gamma_neg=args.asl_gamma_neg,
+        asl_margin=args.asl_margin,
+    )
+
+
+def _adapt_backbone(args: argparse.Namespace) -> None:
+    epochs = args.epochs if args.epochs is not None else 3
+    backbone_lr = args.lr if args.lr is not None else 2e-5
+
+    if not args.skip_pair_build:
+        print("\n=== Step 2a: Build (report, label) training pairs ===")
+        build_contrastive_pairs(
+            reports_csv=args.reports_csv,
+            annotation_csv=args.annotation_csv,
+            out_csv=args.pairs_csv,
+            train_cases_txt=args.train_cases,
+        )
+    else:
+        print("\n=== Step 2a: Skipped — reusing existing pairs CSV ===")
+
+    print("\n=== Step 2b: Adapt embedding backbone ===")
+    train_contrastive(
+        pairs_csv=args.pairs_csv,
+        out_dir=args.backbone_out_dir,
+        model_name=args.model,
+        epochs=epochs,
+        batch_size=args.batch_size,
+        lr=backbone_lr,
+        temperature=args.temperature,
+        max_length=args.max_length,
+        device_arg=args.device,
+        local_only=args.local_only,
+        hard_neg_csv=args.hard_neg_csv,
+        hard_neg_weight=args.hard_neg_weight,
+        hard_neg_margin=args.hard_neg_margin,
+    )
+
+    print("\n=== Cold-start required ===")
+    print("The embedding space has changed. Before retraining downstream classifiers:")
+    print(f"  rm -f {config.EMBEDDING_CACHE_NPZ}")
+    print(
+        f"Then retrain in order: --mode train-case-presence, --mode train-groups, "
+        f"--mode train-label-presence (each --model {args.backbone_out_dir} --local-only)."
+    )
+
+
+def _train_case_presence(args: argparse.Namespace) -> None:
+    epochs = args.epochs if args.epochs is not None else 20
+
+    print("\n=== Step 2a: Build case-level presence dataset ===")
+    build_case_presence_dataset(
+        annotation_csv=args.annotation_csv,
+        embedding_cache=args.embedding_cache,
+        out=config.CASE_PRESENCE_DATASET_NPZ,
+        train_cases_txt=args.train_cases,
+    )
+    print("\n=== Step 2b: Train case presence classifier ===")
+    train_case_presence(
+        dataset_npz=config.CASE_PRESENCE_DATASET_NPZ,
+        out_dir=config.CHECKPOINT_CASE_PRESENCE_DIR,
+        epochs=epochs,
+        device=args.device,
+        recall_weight=args.case_presence_recall_weight,
+        pos_weight=args.case_presence_pos_weight,
+    )
+    print(
+        f"\nCheckpoint: {config.CASE_PRESENCE_CLASSIFIER_PT}\n"
+        "Use with: --case-presence-classifier "
+        f"{config.CASE_PRESENCE_CLASSIFIER_PT} "
+        "--case-presence-threshold 0.5"
+    )
+
+
+def _train_label_presence(args: argparse.Namespace) -> None:
+    from model.group_classifier import GroupClassifier
+
+    print("\n=== Step 2: Train per-group LabelPresenceClassifier ===")
+
+    _, group_names = GroupClassifier.load(args.group_classifier_path)
+    print(f"GroupClassifier groups ({len(group_names)}): {group_names}")
+
+    uncommon_group_names: list[str] = []
+    uncommon_path = Path(config.UNCOMMON_GROUPS_TXT)
+    if uncommon_path.exists():
+        uncommon_group_names = [
+            l.strip() for l in uncommon_path.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        print(f"Uncommon groups ({len(uncommon_group_names)}): {uncommon_group_names}")
+
+    out_dir = Path(args.label_presence_out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    training_pairs_dir = Path(config.OUTPUT_TRAINING_DIR) / "label_presence"
+    training_pairs_dir.mkdir(parents=True, exist_ok=True)
+
+    allowed_groups: set[str] = set()
+    if args.label_presence_groups:
+        allowed_groups = {g.strip() for g in args.label_presence_groups.split("|")}
+        print(f"Filtering to groups: {sorted(allowed_groups)}")
+
+    trained, skipped = 0, 0
+
+    common_groups = [g for g in group_names if g != "Uncommon"]
+    if allowed_groups:
+        common_groups = [g for g in common_groups if g in allowed_groups]
+    for group_name in common_groups:
+        print(f"\n--- Group: {group_name!r} ---")
+        safe = safe_filename(group_name)
+        pairs_csv = str(training_pairs_dir / f"{safe}_pairs.csv")
+        out_pt = str(out_dir / f"{safe}.pt")
+
+        n_rows = build_label_presence_pairs(
+            annotation_csv=args.annotation_csv,
+            labels_csv=config.LABELS_CSV,
+            out_csv=pairs_csv,
+            group_name=group_name,
+            train_cases_txt=args.train_cases,
+            within_group_negs_per_pos=args.label_presence_negs_per_pos,
+        )
+        if n_rows == 0:
+            skipped += 1
+            continue
+
+        score = train_label_presence(
+            pairs_csv=pairs_csv,
+            embedding_cache=args.embedding_cache,
+            out_path=out_pt,
+            epochs=args.label_presence_epochs,
+            recall_weight=args.label_presence_recall_weight,
+            device=args.device,
+            model_name=args.model,
+            labels_csv=config.LABELS_CSV,
+            report_csv=config.REPORTS_CSV,
+        )
+        if score > 0:
+            trained += 1
+        else:
+            skipped += 1
+
+    if uncommon_group_names and (not allowed_groups or "Uncommon" in allowed_groups):
+        print(f"\n--- Group: 'Uncommon' (union of {len(uncommon_group_names)} groups) ---")
+        pairs_csv = str(training_pairs_dir / "uncommon_pairs.csv")
+        out_pt = str(out_dir / "uncommon.pt")
+
+        n_rows = build_label_presence_pairs(
+            annotation_csv=args.annotation_csv,
+            labels_csv=config.LABELS_CSV,
+            out_csv=pairs_csv,
+            group_name="Uncommon",
+            uncommon_group_names=uncommon_group_names,
+            train_cases_txt=args.train_cases,
+            within_group_negs_per_pos=args.label_presence_negs_per_pos,
+        )
+        if n_rows > 0:
+            score = train_label_presence(
+                pairs_csv=pairs_csv,
+                embedding_cache=args.embedding_cache,
+                out_path=out_pt,
+                epochs=args.label_presence_epochs,
+                recall_weight=args.label_presence_recall_weight,
+                device=args.device,
+                model_name=args.model,
+                labels_csv=config.LABELS_CSV,
+                report_csv=config.REPORTS_CSV,
+            )
+            if score > 0:
+                trained += 1
+            else:
+                skipped += 1
+        else:
+            skipped += 1
+
+    print(
+        f"\n=== train-label-presence complete ===\n"
+        f"  Trained: {trained}  Skipped: {skipped}\n"
+        f"  Checkpoints: {out_dir}\n"
+        f"Use with: --label-presence-classifier-dir {out_dir}"
+    )
+
+
+_MODE_DISPATCH = {
+    "train-groups":         _train_groups,
+    "adapt-backbone":       _adapt_backbone,
+    "train-case-presence":  _train_case_presence,
+    "train-label-presence": _train_label_presence,
+}
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -48,23 +276,16 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=["train-classifier", "train-groups", "adapt-backbone", "train-case-presence"],
-        default="train-classifier",
+        choices=["train-groups", "adapt-backbone", "train-case-presence", "train-label-presence"],
+        default="train-groups",
         help=(
             "What to train: "
-            "train-classifier (label presence model, iterative — default), "
-            "train-groups (group classifier, one-shot), "
+            "train-groups (Stage 2 GroupClassifier — default), "
             "adapt-backbone (fine-tune embedding model), "
-            "train-case-presence (case-level cancer/no-cancer gate, one-shot)."
+            "train-case-presence (Stage 1 gate), "
+            "train-label-presence (Stage 3a per-group label scorer)."
         ),
     )
-    parser.add_argument(
-        "--force-reannotate",
-        action="store_true",
-        help="Re-run label annotation even if the annotation file already exists. "
-             "Only applies when using the default keyword annotation file.",
-    )
-
     # ------------------------------------------------------------------
     # Shared args
     # ------------------------------------------------------------------
@@ -75,8 +296,7 @@ def main() -> int:
                         help="Use only locally cached model files (no HuggingFace download)")
     parser.add_argument(
         "--epochs", type=int, default=None,
-        help="Training epochs. "
-             "Defaults: train-classifier=25, adapt-backbone=3, train-groups=50.",
+        help="Training epochs. Defaults: adapt-backbone=3, train-groups=50.",
     )
     parser.add_argument(
         "--annotation-csv", default=config.ANNOTATION_CSV,
@@ -84,27 +304,8 @@ def main() -> int:
              "ground truth. Accepts any annotation CSV in the shared format. "
              f"(default: {config.ANNOTATION_CSV})",
     )
-
-    # ------------------------------------------------------------------
-    # train-classifier args
-    # ------------------------------------------------------------------
-    parser.add_argument("--label", default="",
-                        help="[train-classifier] Label for the evaluation history row")
-    parser.add_argument("--recall-weight", type=float, default=0.25,
-                        help="[train-classifier] Recall weight for checkpoint selection (default: 0.25)")
-    parser.add_argument("--co-neg-per-case", type=int, default=5,
-                        help="[train-classifier] Wrong-group negatives per case (default: 5)")
-    parser.add_argument("--fp-neg-per-case", type=int, default=10,
-                        help="[train-classifier] Extra negatives per false-positive case (default: 10)")
-    parser.add_argument("--embedding-min-sim", type=float, default=0.05,
-                        help="[train-classifier] Minimum score threshold for predictions (default: 0.05)")
-    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM,
-                        help=f"[train-classifier] MLP hidden layer size (default: {DEFAULT_HIDDEN_DIM})")
-    parser.add_argument("--co-neg-bank-csv", default=None,
-                        help="[train-classifier] Path to rolling wrong-label feedback bank "
-                             "(default: auto-derived from --model). Pass empty string to disable.")
     parser.add_argument("--train-cases", default="",
-                        help="[train-classifier, train-groups, adapt-backbone] Path to train_cases.txt. "
+                        help="[all modes] Path to train_cases.txt. "
                              "When provided, only train cases are used during training. "
                              "Generate with ml/training/data/create_split.py.")
     parser.add_argument("--max-class-weight", type=float, default=50.0,
@@ -118,6 +319,24 @@ def main() -> int:
     parser.add_argument("--excluded-groups", default="Neoplasms, NOS",
                         help="[train-groups] Pipe-separated group names forced into 'Uncommon' "
                              "regardless of case count (use | not comma). Default: 'Neoplasms, NOS'.")
+    parser.add_argument("--dropout", type=float, default=0.3,
+                        help="[train-groups] MLP dropout probability (default: 0.3). "
+                             "Try 0.1 or 0.05 — Phase 26 train/val gap suggests over-regularisation.")
+    parser.add_argument("--lr-schedule", default="none", choices=["none", "cosine"],
+                        help="[train-groups] LR schedule (default: none). "
+                             "'cosine' uses CosineAnnealingWarmRestarts(T_0=100).")
+    parser.add_argument("--focal-loss", action="store_true", default=False,
+                        help="[train-groups] Use Focal Loss instead of BCEWithLogitsLoss.")
+    parser.add_argument("--focal-gamma", type=float, default=2.0,
+                        help="[train-groups] Focal loss focusing parameter (default: 2.0).")
+    parser.add_argument("--asl", action="store_true", default=False,
+                        help="[train-groups] Use Asymmetric Loss (ASL) instead of BCEWithLogitsLoss.")
+    parser.add_argument("--asl-gamma-pos", type=float, default=1.0,
+                        help="[train-groups] ASL focusing exponent for positives (default: 1.0).")
+    parser.add_argument("--asl-gamma-neg", type=float, default=4.0,
+                        help="[train-groups] ASL focusing exponent for negatives (default: 4.0).")
+    parser.add_argument("--asl-margin", type=float, default=0.05,
+                        help="[train-groups] ASL probability floor for negatives (default: 0.05).")
 
     # ------------------------------------------------------------------
     # train-case-presence args
@@ -144,6 +363,48 @@ def main() -> int:
     )
 
     # ------------------------------------------------------------------
+    # train-label-presence args
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--group-classifier-path",
+        default=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_best.pt",
+        help="[train-label-presence] Path to trained GroupClassifier checkpoint. "
+             "Used to read group_names and identify common vs. uncommon groups. "
+             f"(default: {config.CHECKPOINT_GROUP_DIR}/group_classifier_best.pt)",
+    )
+    parser.add_argument(
+        "--label-presence-out-dir",
+        default=config.CHECKPOINT_LABEL_PRESENCE_DIR,
+        help="[train-label-presence] Directory to save per-group LabelPresenceClassifier checkpoints. "
+             f"(default: {config.CHECKPOINT_LABEL_PRESENCE_DIR})",
+    )
+    parser.add_argument(
+        "--label-presence-epochs",
+        type=int,
+        default=25,
+        help="[train-label-presence] Training epochs per group (default: 25).",
+    )
+    parser.add_argument(
+        "--label-presence-negs-per-pos",
+        type=int,
+        default=5,
+        help="[train-label-presence] Within-group negatives per positive pair (default: 5).",
+    )
+    parser.add_argument(
+        "--label-presence-recall-weight",
+        type=float,
+        default=0.5,
+        help="[train-label-presence] Recall weight for checkpoint selection (default: 0.5 = F1).",
+    )
+    parser.add_argument(
+        "--label-presence-groups",
+        default="",
+        help="[train-label-presence] Pipe-separated group names to train. "
+             "Empty = train all groups. Include 'Uncommon' to retrain the Uncommon bucket. "
+             "Example: 'Thymic epithelial neoplasms|Myxomatous neoplasms|Uncommon'",
+    )
+
+    # ------------------------------------------------------------------
     # adapt-backbone args
     # ------------------------------------------------------------------
     parser.add_argument("--reports-csv", default=config.REPORTS_CSV,
@@ -155,8 +416,8 @@ def main() -> int:
     parser.add_argument(
         "--model", default="SAVSNET/PetBERT",
         help="HuggingFace model name or local checkpoint path. "
-             "[train-classifier] embedding model; "
-             "[adapt-backbone] starting weights. "
+             "[adapt-backbone] starting weights; "
+             "[train-label-presence] embedding backbone for label/report encoding. "
              "Default: SAVSNET/PetBERT",
     )
     parser.add_argument("--batch-size", type=int, default=32,
@@ -173,8 +434,7 @@ def main() -> int:
     parser.add_argument("--hard-neg-csv", default=None,
                         help="[adapt-backbone] Path to hard-negative triplets CSV. "
                              "If omitted, only InfoNCE loss is used. "
-                             f"Build with: build_contrastive_dataset.py --mode build-hard-neg "
-                             f"(default: {config.HARD_NEG_PAIRS_CSV})")
+                             "Build with: build_contrastive_dataset.py --mode build-hard-neg")
     parser.add_argument("--hard-neg-weight", type=float, default=0.5,
                         help="[adapt-backbone] Weight for the hard-negative margin loss (default: 0.5)")
     parser.add_argument("--hard-neg-margin", type=float, default=0.3,
@@ -185,147 +445,19 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Step 1: Ensure verified labels are available
     # ------------------------------------------------------------------
-    # Three cases:
-    #   1. Annotation file already exists → skip (unless --force-reannotate).
-    #   2. Default keyword annotation file is missing → auto-run keyword annotation.
-    #   3. A custom annotation file is missing → error (user must annotate first).
-    if args.mode in ("train-classifier", "train-groups", "adapt-backbone", "train-case-presence"):
-        annotation_path = Path(args.annotation_csv)
-        is_default_keyword_file = (
-            annotation_path.resolve() == Path(config.KEYWORD_ANNOTATION_CSV).resolve()
-        )
-
-        if annotation_path.exists() and not args.force_reannotate:
-            print(f"\n=== Step 1: Verified labels found — skipping annotation ({args.annotation_csv}) ===")
-        elif is_default_keyword_file:
-            print("\n=== Step 1: Annotating diagnoses with labels (keyword method) ===")
-            annotate_keyword()
-        else:
-            print(f"\nError: annotation file not found: {args.annotation_csv}")
-            print("Run annotation first, e.g.:")
-            print("  python ml/scripts/run_annotation.py --method llm")
-            return 1
+    annotation_path = Path(args.annotation_csv)
+    if annotation_path.exists():
+        print(f"\n=== Step 1: Verified labels found — skipping annotation ({args.annotation_csv}) ===")
+    else:
+        print(f"\nError: annotation file not found: {args.annotation_csv}")
+        print("Run annotation first:")
+        print("  python ml/scripts/run_annotation.py")
+        return 1
 
     # ------------------------------------------------------------------
     # Step 2: Mode-specific training
     # ------------------------------------------------------------------
-
-    if args.mode == "train-classifier":
-        print("\n=== Step 2: Train label presence classifier ===")
-        epochs = args.epochs if args.epochs is not None else 25
-        cycle_argv = [
-            "--label", args.label,
-            "--epochs", str(epochs),
-            "--device", args.device,
-            "--recall-weight", str(args.recall_weight),
-            "--co-neg-per-case", str(args.co_neg_per_case),
-            "--fp-neg-per-case", str(args.fp_neg_per_case),
-            "--embedding-min-sim", str(args.embedding_min_sim),
-            "--hidden-dim", str(args.hidden_dim),
-            "--model", args.model,
-            "--annotation-csv", args.annotation_csv,
-        ] + (["--local-only"] if args.local_only else []) \
-          + (["--co-neg-bank-csv", args.co_neg_bank_csv] if args.co_neg_bank_csv is not None else []) \
-          + (["--train-cases", args.train_cases] if args.train_cases else [])
-        run_classifier_cycle(argv=cycle_argv)
-
-    elif args.mode == "train-groups":
-        epochs = args.epochs if args.epochs is not None else 50
-        group_lr = args.lr if args.lr is not None else 5e-5
-
-        print("\n=== Step 2a: Build group classifier training data ===")
-        excluded = [g.strip() for g in args.excluded_groups.split("|")] if args.excluded_groups else []
-        build_training_data(
-            cache_path=config.EMBEDDING_CACHE_NPZ,
-            expectation_csv_path=args.annotation_csv,
-            out_path=config.GROUP_TRAINING_DATA_NPZ,
-            train_cases_txt=args.train_cases,
-            uncommon_threshold=args.uncommon_threshold,
-            uncommon_groups_out=config.UNCOMMON_GROUPS_TXT,
-            excluded_groups=excluded,
-        )
-        print("\n=== Step 2b: Train group classifier ===")
-        train_group(
-            training_data_path=config.GROUP_TRAINING_DATA_NPZ,
-            out_path=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_current.pt",
-            epochs=epochs,
-            lr=group_lr,
-            hidden_dim=DEFAULT_HIDDEN_DIM,
-            val_frac=0.2,
-            threshold=0.3,
-            device_arg=args.device,
-            weight_decay=args.weight_decay,
-            max_class_weight=args.max_class_weight,
-            min_group_cases=10,
-            max_group_cases=0,
-            dropout=0.3,
-        )
-
-    elif args.mode == "adapt-backbone":
-        epochs = args.epochs if args.epochs is not None else 3
-        backbone_lr = args.lr if args.lr is not None else 2e-5
-
-        if not args.skip_pair_build:
-            print("\n=== Step 2a: Build (report, label) training pairs ===")
-            build_contrastive_pairs(
-                reports_csv=args.reports_csv,
-                annotation_csv=args.annotation_csv,
-                out_csv=args.pairs_csv,
-                train_cases_txt=args.train_cases,
-            )
-        else:
-            print("\n=== Step 2a: Skipped — reusing existing pairs CSV ===")
-
-        print("\n=== Step 2b: Adapt embedding backbone ===")
-        train_contrastive(
-            pairs_csv=args.pairs_csv,
-            out_dir=args.backbone_out_dir,
-            model_name=args.model,
-            epochs=epochs,
-            batch_size=args.batch_size,
-            lr=backbone_lr,
-            temperature=args.temperature,
-            max_length=args.max_length,
-            device_arg=args.device,
-            local_only=args.local_only,
-            hard_neg_csv=args.hard_neg_csv,
-            hard_neg_weight=args.hard_neg_weight,
-            hard_neg_margin=args.hard_neg_margin,
-        )
-
-        print("\n=== Cold-start required ===")
-        print("The embedding space has changed. Before retraining the label classifier:")
-        print(f"  rm -f {config.EMBEDDING_CACHE_NPZ}")
-        print(f"  rm -f {config.OUTPUT_TRAINING_DIR}/contrastive/evaluation_co_bank.csv")
-        print(f"  rm -f {args.backbone_out_dir}/presence_classifier_current.pt")
-        print(f"Then retrain with: --mode train-classifier --model {args.backbone_out_dir} --local-only")
-
-    elif args.mode == "train-case-presence":
-        epochs = args.epochs if args.epochs is not None else 20
-
-        print("\n=== Step 2a: Build case-level presence dataset ===")
-        build_case_presence_dataset(
-            annotation_csv=args.annotation_csv,
-            embedding_cache=args.embedding_cache,
-            out=config.CASE_PRESENCE_DATASET_NPZ,
-            train_cases_txt=args.train_cases,
-        )
-        print("\n=== Step 2b: Train case presence classifier ===")
-        train_case_presence(
-            dataset_npz=config.CASE_PRESENCE_DATASET_NPZ,
-            out_dir=config.CHECKPOINT_CONTRASTIVE_DIR,
-            epochs=epochs,
-            device=args.device,
-            recall_weight=args.case_presence_recall_weight,
-            pos_weight=args.case_presence_pos_weight,
-        )
-        print(
-            f"\nCheckpoint: {config.CASE_PRESENCE_CLASSIFIER_PT}\n"
-            "Use with: --case-presence-classifier "
-            f"{config.CASE_PRESENCE_CLASSIFIER_PT} "
-            "--case-presence-threshold 0.5"
-        )
-
+    _MODE_DISPATCH[args.mode](args)
     return 0
 
 

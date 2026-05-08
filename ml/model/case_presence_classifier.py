@@ -6,7 +6,7 @@ Output: scalar sigmoid probability in [0, 1]
 Used as the first gate in the sequential pipeline:
   CasePresenceClassifier → GroupClassifier → KW term selection
 
-Unlike PresenceClassifier (which scores (case, label) pairs), this
+Unlike LabelPresenceClassifier (which scores (case, label) pairs), this
 classifier operates at the case level only — no label embedding required.
 A case below the threshold is predicted Uncategorized without reaching
 the GroupClassifier.

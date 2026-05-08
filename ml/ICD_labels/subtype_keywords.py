@@ -4,7 +4,10 @@ Applied after behavior-code filtering in the Stage 3 KW correction step.
 Narrows the candidate pool for groups where the main "Slightly off" source is
 histologic or topographic ambiguity rather than behavior-code mismatch.
 
-Currently covers three groups identified as high-Slightly-off:
+Groups covered (ordered by slightly_off rate on Phase 26 test set):
+  - Mast cell neoplasms    (leukemia, subcutaneous, systemic/visceral, Kiupel grade)
+  - Blood vessel tumors    (hemangiosarcoma vs hemangioma vs hemangioendothelioma)
+  - Melanocytoma and Melanomas  (melanocytoma vs melanoma subtypes)
   - Meningiomas            (histologic subtype: meningothelial, fibrous, etc.)
   - Osseous and chondromatous neoplasms  (osteosarcoma vs chondrosarcoma)
   - Gliomas                (glioblastoma vs astrocytoma vs oligodendroglioma …)
@@ -17,6 +20,33 @@ import re
 # produces a non-empty subset of the pool is applied.  If no rule matches, the
 # pool is returned unchanged.
 _RULES: dict[str, list[tuple[re.Pattern[str], str]]] = {
+    "Mast cell neoplasms": [
+        (re.compile(r"\bmast cell leukemia\b", re.I), "leukemia"),
+        (re.compile(r"\bsubcutaneous\b", re.I), "Subcutaneous"),
+        (re.compile(r"\bvisceral\b", re.I), "isceral"),
+        (re.compile(r"\bsystemic\b|\bextracutaneous\b|\bmastocytosis\b", re.I), "ystemic"),
+        (re.compile(r"\bkiupel\b.*\bhigh\b|\bhigh\b.*\bkiupel\b", re.I), "Kiupel high"),
+        (re.compile(r"\bkiupel\b.*\blow\b|\blow\b.*\bkiupel\b", re.I), "Kiupel low"),
+    ],
+    "Blood vessel tumors": [
+        (re.compile(r"\bhemangiosarcoma\b", re.I), "hemangiosarcoma"),
+        (re.compile(r"\bhemangioendothelioma\b", re.I), "hemangioendothelioma"),
+        (re.compile(r"\bhemangioma\b", re.I), "hemangioma"),
+        (re.compile(r"\bpyogenic granuloma\b", re.I), "granuloma"),
+        (re.compile(r"\bangiofibroma\b", re.I), "angiofibroma"),
+        (re.compile(r"\bangiokeratoma\b", re.I), "angiokeratoma"),
+    ],
+    "Melanocytoma and Melanomas": [
+        (re.compile(r"\bmelanoac", re.I), "melanoacanthoma"),
+        (re.compile(r"\bamelano", re.I), "amelanotic"),
+        (re.compile(r"\bsignet[\s-]ring\b", re.I), "signet ring"),
+        (re.compile(r"\bballoon cell\b", re.I), "balloon"),
+        (re.compile(r"\bclear cell melanoma\b", re.I), "clear cell"),
+        (re.compile(r"\bmelanocy", re.I), "melanocytoma"),
+        (re.compile(r"\bjunctional\b", re.I), "junctional"),
+        (re.compile(r"\bcompound\b", re.I), "compound"),
+        (re.compile(r"\bdermal melanoma\b", re.I), "Melanoma, dermal"),
+    ],
     "Meningiomas": [
         (re.compile(r"\bmeningothelial\b", re.I), "meningothelial"),
         (re.compile(r"\bpsammomatous\b", re.I), "psammomatous"),

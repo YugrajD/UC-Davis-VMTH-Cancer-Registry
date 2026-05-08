@@ -1,14 +1,14 @@
 # Model Training — Approaches and Architecture
 
 The goal is to map veterinary pathology report text to standardized Vet-ICD-O-canine-1
-cancer labels (term, group, ICD code). Three classifier approaches have been explored.
+cancer labels (term, group, ICD code). Several classifier approaches have been explored.
 
 | Approach | Status | Best result |
 |---|---|---|
-| Binary PresenceClassifier | Superseded | 41.9% G+S (Phase 16, `hidden_dim=512`) |
-| GroupClassifier | **Part of 3-stage pipeline (Phase 26)** | **54.6% G+S (Phase 26, 3-stage, per-label eval, test set)** |
-| Contrastive fine-tuned PetBERT + 3-stage pipeline | **Production best** | **54.6% G+S test set (Phase 26, per-label eval, gate=0.5, group-t=0.85)** |
-| End-to-end fine-tuned PetBERT | WIP, blocked on data volume | — |
+| Binary PresenceClassifier (single all-label) | Removed in Phase 28 | 65.7% G+S train (Phase 25 c14, contrastive backbone, 5,788 cases) |
+| GroupClassifier | **Stage 2 of 4-stage pipeline (Phase 28)** | macro F1=0.4475 (Phase 27, dropout=0.1) |
+| Per-group LabelPresenceClassifier | **Stage 3a of 4-stage pipeline (Phase 28)** | — |
+| Contrastive fine-tuned PetBERT + 4-stage pipeline | **Production best** | **57.9% G+S test set (Phase 28, lp-t=0.5, group-t=0.85)** |
 
 > For full current results and Phase 25 details see [classifiers.md](classifiers.md).
 
@@ -286,8 +286,7 @@ pushed away from all other labels in the batch. The fine-tuned backbone then pro
 better per-column embeddings, which the PresenceClassifier (retrained from scratch
 after a cold start) uses as input.
 
-Unlike Approach 4 (end-to-end group classification), this does not require group-level
-generalization and works at current data volumes.
+Unlike end-to-end group classification (attempted and reverted in 2026-05; see `training-log/training-log-finetune.md` Approach B), this does not require group-level generalization and works at current data volumes.
 
 ### Architecture
 
@@ -306,8 +305,8 @@ Inference (after cold start + PresenceClassifier retraining):
     identical to current pipeline — pass --model <checkpoint> --local-only
 ```
 
-Training data: keyword-confirmed `(case_id, matched_term, matched_group)` pairs from
-`keyword_annotation.csv` joined with report text from `report.csv`.
+Training data: confirmed `(case_id, matched_term, matched_group)` pairs from
+`llm_annotation.csv` joined with report text from `report.csv`.
 
 Label text format: `"{term} {group}"` — exactly what the pipeline uses for label embeddings.
 
@@ -367,55 +366,39 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 
 # Step 2: Cold start
 rm -f ml/output/training/embedding_cache.npz
-rm -f ml/output/training/contrastive/evaluation_co_bank.csv
-rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
 
-# Step 3: Retrain label classifier with the adapted backbone
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-classifier \
-  --model ml/output/checkpoints/contrastive \
-  --label "adapted backbone c1" \
-  --co-neg-per-case 5 --fp-neg-per-case 10 \
-  --embedding-min-sim 0.05 --epochs 25 \
-  --recall-weight 0.25 --hidden-dim 512 \
-  --device xpu --local-only
+# Step 3: Retrain downstream classifiers in order — pass --model and --local-only
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-case-presence ...
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-groups        ...
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-label-presence ...
 ```
 
 ---
 
-## Approach 4 — End-to-end Fine-tuned PetBERT (WIP)
+## End-to-end fine-tuning (attempted, reverted 2026-05)
 
-Fine-tunes PetBERT as a group sequence classifier — architecturally the same two-stage
-design as the GroupClassifier (group prediction → within-group cosine term selection),
-but replaces the frozen-embedding MLP with a full transformer fine-tuned end-to-end.
-
-This approach shares the GroupClassifier's data ceiling: it needs ~10,000+ confirmed
-cases before it can generalize across the 44 groups. It is not recommended until the
-GroupClassifier proves competitive.
-
-> **Known code issues** must be resolved before running. See [training-log/training-log-finetune.md](training-log/training-log-finetune.md) for the full list.
+End-to-end fine-tuning of PetBERT as a Stage 2 classifier was integrated and benchmarked in 2026-05. Standalone val macro F1 reached 0.5774 (vs Phase 27 GroupCLF's 0.4475), but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9%. Reverted. See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sweep/8-epoch findings, the cost analysis, and the resurrection path.
 
 ---
 
 ## Comparison
 
-| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuned + 3-stage | End-to-end fine-tuning |
-|---|---|---|---|---|
-| **Status** | Superseded | **Competitive (Phase 23)** | **Production best** | WIP, blocked |
-| **Best result** | 41.9% G+S (Phase 16) | **50.1% G+S @ t=0.90 (Phase 23)** | **62.6% G+S test set (Phase 25, 3-stage)** | Not benchmarked |
-| **PetBERT** | Frozen | Contrastive fine-tuned | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
-| **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier | One-shot |
-| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | Works at ~5,788 cases | Needs ~10,000+ cases |
-| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative | Slow (full transformer) |
-| **Inference speed** | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) | Fast (3-stage: gate + ~42 group scores) | Fast (~42 group scores + cosine) |
-| **CO floor** | ~30% | ~25.5% @ t=0.90 | **~26% (3-stage, Phase 25)** — backbone-level improvement | Designed to eliminate it |
-| **Main constraint** | Superseded | FN trade-off at high threshold | LLM annotation ceiling | Compute cost, data volume |
+| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuned + 3-stage |
+|---|---|---|---|
+| **Status** | Superseded | **Competitive (Phase 23)** | **Production best** |
+| **Best result** | 41.9% G+S (Phase 16) | **50.1% G+S @ t=0.90 (Phase 23)** | **62.6% G+S test set (Phase 25, 3-stage)** |
+| **PetBERT** | Frozen | Contrastive fine-tuned | Fine-tuned (InfoNCE) |
+| **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier |
+| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | Works at ~5,788 cases |
+| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative |
+| **Inference speed** | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) | Fast (3-stage: gate + ~42 group scores) |
+| **CO floor** | ~30% | ~25.5% @ t=0.90 | **~26% (3-stage, Phase 25)** — backbone-level improvement |
+| **Main constraint** | Superseded | FN trade-off at high threshold | LLM annotation ceiling |
 
 ### Roadmap
 
 - **Now**: Three-stage pipeline (Phase 26) — CasePresenceClassifier + GroupClassifier (F1=0.4335) + KW correction with argmax fallback and subtype keyword discriminators. See [classifiers.md](classifiers.md) for full details.
 - **Next**: Reduce 3-stage CO% (22.3%) — backbone adaptation Round 3 with hard-negative mining from CO bank (Tier 4 in `training-ideas/ideas-to-try.md`)
-- **Later**: End-to-end fine-tuning (Approach 4) after ~10,000+ confirmed cases
 
 ---
 

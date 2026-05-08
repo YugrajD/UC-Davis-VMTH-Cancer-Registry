@@ -5,76 +5,74 @@ Implementation-based description of what `ml/scripts/run_production.py` does tod
 This is the authoritative source for current production inference behavior. Older
 architectural experiments are preserved in the training logs and idea docs, not here.
 
-The intended production path is a three-stage sequential pipeline where each stage has
+The production path is a four-stage sequential pipeline where each stage has
 one distinct responsibility:
 
 ```text
 report.csv
   -> PetBERT embedding (cached or fresh)
-  -> CasePresenceClassifier gate   — filters non-cancer cases        (reduces FP)
-  -> GroupClassifier               — assigns cancer to ICD group      (reduces CO)
-  -> KW correction                 — picks best term within group     (converts Slight → Good)
+  -> CasePresenceClassifier gate   — filters non-cancer cases               (reduces FP)
+  -> GroupClassifier               — assigns cancer to ICD group(s)          (reduces CO)
+  -> LabelPresenceClassifier       — picks specific label(s) within group    (learned, optional)
+  -> KW correction                 — behavior + subtype keyword post-filter  (converts Slight → Good)
   -> (term, group, code) predictions + debug artifacts
 ```
 
-The binary `PresenceClassifier` + `group-keyword` mode (earlier production path) is still
-supported via `--presence-classifier` but is superseded by the three-stage design above.
+Stage 3 (LabelPresenceClassifier) is optional: when `--label-presence-classifier-dir` is
+not set, the pipeline falls back directly to KW correction within each active group. Stages 1
+and 2 are unchanged regardless.
+
+Each stage lives in its own module under `ml/production/petbert_pipeline/stages/`:
+
+| Stage | Module | Entry function |
+|---|---|---|
+| 1 — CasePresence gate | `stages/case_presence_classifier.py` | `run_case_presence_classifier()` |
+| 2 — GroupClassifier | `stages/group_classifier.py` | `run_group_classifier()` |
+| 3a — LabelPresence (optional) | `stages/label_presence_classifier.py` | `load_label_presence_models()`, `score_within_group()` |
+| 3b — KW correction | `stages/keyword_correction.py` | `apply_keyword_correction()` |
+
+`pipeline.py::run_scan()` is the thin orchestrator: load → text-select → embed → call each
+stage in order → write outputs. The Stage 3 per-case dispatcher is `stages/__init__.py::categorize_per_case()`.
 
 ## Flow Chart
 
-> **Note:** This diagram depicts the legacy binary `PresenceClassifier` path (still available via `--presence-classifier`). The intended three-stage production path is described in the [Three-Stage Pipeline](#three-stage-pipeline-intended-production-path) section below.
-
 ```mermaid
 flowchart TD
-    subgraph IN3["Input"]
-        A["report.csv<br/>Report text columns"]
-        C["labels.csv<br/>Taxonomy labels"]
-    end
+    A["report.csv<br/>Report text columns"]
+    C["labels.csv<br/>Taxonomy labels"]
+    B["TF-IDF text selection (≤512 tokens)"]
+    D["PetBERT embedding (cached or fresh)"]
+    S1["Stage 1 — CasePresenceClassifier gate"]
+    S2["Stage 2 — GroupClassifier"]
+    S3a["Stage 3a — per-group LabelPresenceClassifier (optional)"]
+    S3b["Stage 3b — KW correction (behavior + subtype)"]
+    R["Resolve term, group, ICD code"]
+    K["predictions.csv + provenance, similarity, embeddings"]
 
-    subgraph P3["Process"]
-        B["Embed each report column with adapted PetBERT"]
-        D["Embed each label with adapted PetBERT"]
-        E["Concatenate report-column embeddings"]
-        F["Prepare label embeddings"]
-        G["PresenceClassifier scores each case-label pair"]
-        H["Rank labels by score"]
-        I["Select top predictions"]
-        J["Project label index to term, group, ICD code"]
-    end
-
-    subgraph OUT3["Output"]
-        K["predictions.csv"]
-    end
-
-    A --> B
+    A --> B --> D
     C --> D
-    B --> E
-    D --> F
-    E --> G
-    F --> G
-    G --> H
-    H --> I
-    I --> J
-    J --> K
+    D --> S1 --> S2 --> S3a --> S3b --> R --> K
 ```
 
-## Entry Point And Auto-Selection
+## Entry Point And Defaults
 
-`ml/scripts/run_production.py` is the production launcher.
+`ml/scripts/run_production.py` is the production launcher. It pre-wires the 4-stage
+pipeline before calling `run_scan`:
 
-Before it calls the pipeline, it:
+| Default | Source |
+|---|---|
+| `--model` | `ml/output/checkpoints/contrastive/` (adapted PetBERT backbone) |
+| `--embedding-cache` | `ml/output/training/embedding_cache.npz` |
+| `--case-presence-classifier` | `config.CASE_PRESENCE_CLASSIFIER_PT` (Stage 1 gate) |
+| `--group-classifier` | `ml/output/checkpoints/group/group_classifier_best.pt` (Stage 2) |
+| `--label-presence-classifier-dir` | `ml/output/checkpoints/label_presence/` (Stage 3a, optional) |
+| `--out-dir` | `ml/output/production/contrastive/` |
+| `--text-cols` | empty (TF-IDF text selection — production default) |
+| `--local-only` | True |
 
-1. Looks for the best saved classifier checkpoint.
-2. Prefers `ml/output/checkpoints/contrastive/presence_classifier_best.pt`.
-3. Falls back to `ml/output/checkpoints/binary/presence_classifier_best.pt`.
-4. Uses the matching embedding model for that checkpoint:
-   - `ml/output/checkpoints/contrastive/` if the chosen classifier is contrastive-backed
-   - `SAVSNET/PetBERT` otherwise
-5. Sets the default embedding cache to `ml/output/training/embedding_cache.npz`.
-6. Writes production outputs to `ml/output/production/{contrastive|binary}/`.
-
-This means the code treats the contrastive-backed PresenceClassifier stack as the
-default production path whenever that checkpoint exists.
+These defaults can be overridden via CLI flags. To disable Stage 3a, pass
+`--label-presence-classifier-dir ""`. To disable Stage 1 (gate), pass
+`--case-presence-classifier ""`.
 
 ## Input Format
 
@@ -95,7 +93,7 @@ Important columns:
 Production uses TF-IDF-based text selection: it concatenates HISTOPATHOLOGICAL SUMMARY +
 FINAL COMMENT + COMMENT with section markers, then compresses to a 512-token budget if
 needed using TF-IDF sentence scoring. This replaces the old fallback-chain approach (single
-column) as the default input path. See `production/petbert_pipeline/text_selector.py`.
+column) as the default input path. See `text_selection/text_selector.py`.
 
 ## Step-by-Step Runtime Flow
 
@@ -108,20 +106,18 @@ column names, and normalizes missing values to empty strings.
 
 ### 1b. TF-IDF text selection (default production path)
 
-When `--text-cols` is empty (the production default), `TextSelector` builds a single
-combined string per case from HISTOPATHOLOGICAL SUMMARY + FINAL COMMENT + COMMENT:
+When `--text-cols` is empty (the production default), `TextSelector` walks
+`SOURCE_COLS` in order — `HISTOPATHOLOGICAL SUMMARY`, `ANCILLARY TESTS`, `COMMENT`,
+`FINAL COMMENT`, `ADDENDUM`, `GROSS DESCRIPTION`, `CLINICAL ABSTRACT` — and packs each
+column whole into the 512-token (≈2048-char) budget if it fits. When a column overflows
+the remaining budget, that column's sentences are scored by **its own** TF-IDF
+vectorizer (one vectorizer per column, fitted on the corresponding column corpus) and
+the highest-scoring sentences that fit are selected. The order of selected sentences
+within a column is preserved in the output.
 
-```text
-[HISTOPATHOLOGICAL SUMMARY] ... [FINAL COMMENT] ... [COMMENT] ...
-```
-
-If the combined text fits within 512 tokens (≈2048 chars), it is used as-is.
-If it overflows, the selector scores each sentence by its TF-IDF L1 norm and greedily
-picks the highest-scoring sentences that fit within the budget. The order of selected
-sentences is preserved in the output.
-
-The fitted vectorizer must exist at `ml/output/training/tfidf_selector.joblib` before
-the first run. Build it with `fit_text_selector.py`.
+Per-column vectorizers must exist at `ml/output/training/tfidf_selector.joblib` before
+the first run. Build them with `fit_text_selector.py` (writes a single dict mapping
+column name → fitted `TfidfVectorizer`).
 
 ### 2. Reuse embedding cache when possible
 
@@ -174,38 +170,12 @@ The taxonomy is loaded from `ml/ICD_labels/labels.csv`.
 Each label is converted to display text and embedded through the same PetBERT base model,
 producing a label embedding matrix aligned with the report embedding space.
 
-### 6. Concatenate report columns for classifier scoring
+### 6. Concatenate report columns for Stage 2 input
 
-For classifier inference, the pipeline concatenates the per-column report embeddings into
-one wide vector per case, zeroing out empty columns first.
-
-This `col_emb_concat` tensor is what the `PresenceClassifier` consumes.
-
-### 7. Score all labels with the PresenceClassifier
-
-In the default production path:
-
-1. The pipeline loads the selected `PresenceClassifier` checkpoint.
-2. It scores every `(case, label)` pair.
-3. The result is an `(N, M)` score matrix over all taxonomy labels.
-
-This is the key production decision point. The live production path is
-classifier-driven scoring on top of PetBERT embeddings.
-
-### 8. Apply group-keyword term correction
-
-If production is run with `--categorization-mode group-keyword`, the code uses a
-two-stage post-processing strategy on top of the score matrix:
-
-1. Mean-center label scores and choose the top Stage 1 label.
-2. Use that label's ICD group as the predicted group.
-3. Infer an ICD behavior digit from report text using behavior keywords.
-4. Restrict candidates within the predicted group to matching behavior codes when possible.
-5. Pick the best term in that filtered pool using the raw classifier scores.
-
-This stage is designed to improve term selection inside the already-predicted group.
-It changes Good vs Slightly Off behavior without changing the core Stage 1
-predict-vs-Uncategorized decision.
+For Stage 2 inference, the pipeline concatenates the per-column report embeddings into
+one wide vector per case, zeroing out empty columns first. This `col_emb_concat` tensor
+is what the `GroupClassifier` consumes; the per-case mean embedding feeds Stage 1 and
+Stage 3a.
 
 ## Output Files
 
@@ -225,32 +195,33 @@ Optional neighbor output:
 
 - `petbert_neighbors.csv` when `--task neighbors` or `--task both` is used
 
-These files are written under `ml/output/production/{contrastive|binary}/` when launched
+These files are written under `ml/output/production/contrastive/` when launched
 through `run_production.py`.
 
 ## Current CLI Behaviors That Matter
 
-The production CLI still supports multiple modes, but the important current behaviors are:
-
-- `run_production.py` auto-selects the best available classifier checkpoint.
-- `--presence-classifier` can explicitly override that checkpoint choice.
+- `run_production.py` pre-wires all four stage checkpoints by default (see "Entry Point And Defaults").
+- `--label-presence-classifier-dir` enables Stage 3a; default is the production directory.
+  Pass an empty string to disable and fall back to KW correction directly.
+- `--label-presence-threshold` (default 0.5) sets the within-group label selection threshold.
+- `--no-group-classifier-fallback-to-argmax` turns off the GroupClassifier argmax fallback
+  (gate-passed cases with no group above threshold then become "Unidentified Cancer").
 - `--embedding-cache` reuses `ml/output/training/embedding_cache.npz` when provided.
 - `--task neighbors` or `--task both` adds nearest-neighbor output alongside categorization.
 - `--local-only` keeps model loading offline when the files are already cached locally.
 
-## Three-Stage Pipeline (Intended Production Path)
+## Four-Stage Pipeline (Intended Production Path)
 
-Run after training `CasePresenceClassifier` and `GroupClassifier`:
+Run after training `CasePresenceClassifier`, `GroupClassifier`, and per-group `LabelPresenceClassifier`s:
 
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt \
-  --case-presence-threshold 0.5 \
-  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
   --group-classifier-threshold 0.85 \
-  --embedding-cache ml/output/training/embedding_cache.npz \
+  --label-presence-threshold 0.5 \
   --device xpu --local-only
 ```
+
+(Defaults from `run_production.py` cover the three checkpoint paths.)
 
 **Stage 1 — CasePresenceClassifier gate:**
 Takes the mean report embedding (768-dim) and outputs a cancer probability. Cases below
@@ -259,26 +230,33 @@ Trained with `recall_weight=0.85` so it errs toward passing uncertain cases rath
 missing cancer. Train with `--mode train-case-presence`.
 
 **Stage 2 — GroupClassifier:**
-For cases that passed the gate, predicts which of 25 cancer groups the case belongs to
+For cases that passed the gate, predicts which cancer group(s) the case belongs to
 (sigmoid per group, threshold applied). When no group clears the threshold, argmax fallback
 is applied: the top-scoring group is used regardless of confidence, so gate-passed cases
-always receive a concrete group prediction rather than "Unidentified Cancer".
+always receive a concrete group prediction rather than "Unidentified Cancer". MLP on
+cached `col_emb_concat` from the contrastive backbone. Phase 28 production: macro F1=0.4475.
 
-**Stage 3 — KW correction:**
-Within each predicted group, ICD-O behavior keyword matching narrows candidates to the
-matching behavior digit. A subtype keyword filter then applies group-specific histologic or
-topographic discriminators (Meningiomas, Osseous, Gliomas) before cosine similarity selects
-the best specific term.
+**Stage 3 — LabelPresenceClassifier (optional):**
+When `--label-presence-classifier-dir` is set, one per-group `LabelPresenceClassifier`
+model scores all labels within each active group. Labels whose score exceeds
+`--label-presence-threshold` (default 0.5) are selected; argmax fallback applies when
+nothing passes. Multiple labels per group can be selected, enabling within-group
+multi-diagnosis prediction. Groups without a corresponding `.pt` file in the directory
+fall through to KW correction directly. Train with `--mode train-label-presence`.
 
-## What Is Not The Intended Production Path
+**Stage 4 — KW correction (post-filter):**
+Within the label pool selected by Stage 3 (or the full group pool when Stage 3 is absent),
+ICD-O behavior keyword matching narrows candidates to the matching behavior digit. A subtype
+keyword filter (Mast cell, Blood vessel, Melanomas, Meningiomas, Osseous, Gliomas) then
+applies group-specific discriminators before cosine similarity selects the final term.
 
-The following code paths exist as alternatives or fallbacks:
+## Notes on Past Experiments
 
-- `--presence-classifier` (without `--case-presence-classifier`)
-  Uses the label-level PresenceClassifier score matrix (N × M) as a gate. Superseded by
-  `--case-presence-classifier` which is simpler and purpose-trained.
-- `--finetuned-model-path`
-  Uses a sequence-classification checkpoint to predict groups directly. WIP, blocked.
+> **End-to-end FinetuneGroupClassifier** was integrated as a Stage 2 swap and benchmarked in 2026-05, then reverted. See `training-log/training-log-finetune.md` Approach B for findings and the resurrection path.
+
+> **Whole-corpus LabelPresenceClassifier** (`--presence-classifier`) was the original
+> production path through Phase 25. Removed during the 4-stage refactor; preserved in the
+> training-log/training-log-binary.md history.
 
 Older experimental and deprecated paths are preserved in the training logs and idea docs,
 not in this file.
@@ -290,5 +268,6 @@ If this file and an older architecture doc disagree, trust the implementation in
 - `ml/scripts/run_production.py`
 - `ml/config.py`
 - `ml/production/petbert_pipeline/pipeline.py`
-- `ml/production/petbert_pipeline/categorization.py`
+- `ml/production/petbert_pipeline/stages/` (one file per stage)
 - `ml/production/petbert_pipeline/embedding.py`
+- `ml/text_selection/text_selector.py`

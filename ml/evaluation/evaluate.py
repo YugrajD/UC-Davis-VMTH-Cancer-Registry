@@ -47,9 +47,12 @@ def score_prediction(predicted_term: str, predicted_group: str,
         return "good"
     if predicted_group in matched_groups:
         return "slightly_off"
-    # Predicting "Uncommon" for a case whose true group is genuinely uncommon counts
+    # Predicting any uncommon group for a case whose true group is genuinely uncommon counts
     # as slightly_off — the model got the right tier, just not the specific term.
-    if predicted_group == "Uncommon" and uncommon_groups and matched_groups & uncommon_groups:
+    # This covers both: predicted_group == "Uncommon" (training bucket) and any specific
+    # uncommon group name resolved by keyword matching at inference time.
+    if uncommon_groups and matched_groups & uncommon_groups and \
+            (predicted_group == "Uncommon" or predicted_group in uncommon_groups):
         return "slightly_off"
     return "completely_off"
 
@@ -121,8 +124,12 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
             covered_terms[cid].add(row["predicted_term"])
         elif row["verdict"] == "slightly_off":
             pg = row["predicted_group"]
+            is_uncommon_pred = pg == "Uncommon" or (uncommon_groups and pg in uncommon_groups)
             for term in case_terms.get(cid, set()):
-                if term_to_group.get(term) == pg:
+                term_grp = term_to_group.get(term)
+                if term_grp == pg:
+                    covered_terms[cid].add(term)
+                elif is_uncommon_pred and uncommon_groups and term_grp in uncommon_groups:
                     covered_terms[cid].add(term)
 
     # ── Write output CSV ──────────────────────────────────────────────────────

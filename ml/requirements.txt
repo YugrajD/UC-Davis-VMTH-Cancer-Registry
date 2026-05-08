@@ -16,6 +16,7 @@ datasets>=4.8.4
 tqdm==4.67.3
 requests>=2.32.0
 python-dotenv>=1.0.0
+matplotlib>=3.10.0
 
 # TUI
 textual>=0.47.0

@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import config
-from production.petbert_pipeline.text_selector import get_selector, SOURCE_COLS as _TFIDF_SOURCE_COLS
+from text_selection import get_selector, SOURCE_COLS as _TFIDF_SOURCE_COLS
 
 
 def build_contrastive_pairs(

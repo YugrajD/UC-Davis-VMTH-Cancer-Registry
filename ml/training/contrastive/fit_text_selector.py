@@ -1,4 +1,4 @@
-"""Fit and save the TF-IDF vectorizer for multi-column text selection.
+"""Fit and save the TF-IDF vectorizers for multi-column text selection.
 
 Run once before building contrastive pairs with the TF-IDF selector:
 
@@ -13,42 +13,39 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import config
-from production.petbert_pipeline.text_selector import TextSelector, SOURCE_COLS
+from text_selection import TextSelector, SOURCE_COLS
+from utils.csv_io import strip_bom_from_columns
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Fit TF-IDF vectorizer on the report corpus for text selection."
+        description="Fit per-column TF-IDF vectorizers on the report corpus for text selection."
     )
     parser.add_argument("--reports-csv", default=config.REPORTS_CSV)
     parser.add_argument("--out", default=config.TFIDF_VECTORIZER_PATH)
     args = parser.parse_args()
 
     print(f"Reading reports from {args.reports_csv}...")
-    texts: list[str] = []
+    col_to_texts: dict[str, list[str]] = {col: [] for col in SOURCE_COLS}
     with open(args.reports_csv, encoding="latin-1") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames:
-            reader.fieldnames = [
-                c.lstrip("﻿").lstrip("ï»¿") for c in reader.fieldnames
-            ]
+            reader.fieldnames = strip_bom_from_columns(reader.fieldnames)
         for row in reader:
-            parts: list[str] = []
             for col in SOURCE_COLS:
                 val = row.get(col, "").strip()
                 if len(val) >= 10:
-                    parts.append(val)
-            if parts:
-                texts.append(" ".join(parts))
+                    col_to_texts[col].append(val)
 
-    print(f"  {len(texts)} documents loaded.")
+    for col, texts in col_to_texts.items():
+        print(f"  {col}: {len(texts)} documents")
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     selector = TextSelector()
-    print("Fitting TF-IDF vectorizer (max_features=20000, sublinear_tf=True)...")
-    selector.fit(texts)
+    print("Fitting per-column TF-IDF vectorizers (max_features=20000, sublinear_tf=True)...")
+    selector.fit(col_to_texts)
     selector.save(args.out)
     print(f"Saved to {args.out}")
     return 0

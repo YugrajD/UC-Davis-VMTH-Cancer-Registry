@@ -106,8 +106,6 @@ services:
     volumes:
       - ./ml-worker:/worker
       - ./ml:/ml
-    ports:
-      - "8001:8001"
     environment:
       HF_HOME: /ml/.cache/huggingface
       PETBERT_MODEL_PATH: ${PETBERT_MODEL_PATH:-/ml/models/petbert}

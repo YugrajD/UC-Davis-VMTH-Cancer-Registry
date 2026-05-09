@@ -54,6 +54,18 @@ async def _is_cancelled(job_id: int) -> bool:
         return status == "cancelled"
 
 
+def _safe_error_message(e: Exception) -> str:
+    """Return an API-safe error message from an exception.
+
+    RuntimeError messages are ones we control (e.g. "ML worker returned 500").
+    For all other exception types, only expose the class name to avoid leaking
+    file paths, connection strings, or stack details.
+    """
+    if isinstance(e, RuntimeError):
+        return str(e)[:500]
+    return type(e).__name__
+
+
 async def _mark_failed(job_id: int, error_msg: str) -> None:
     """Mark a job as failed with the given error message."""
     async with async_session() as db:
@@ -64,7 +76,7 @@ async def _mark_failed(job_id: int, error_msg: str) -> None:
         if job and job.status == "processing":
             job.status = "failed"
             job.processing_stage = None
-            job.processing_error = error_msg[:2000]
+            job.processing_error = error_msg[:500]
             job.updated_at = datetime.now(timezone.utc)
             await db.commit()
 
@@ -85,7 +97,7 @@ async def process_approved_job(job_id: int) -> None:
         # error handlers run (e.g. import errors, missing config).
         logger.exception("Job %d crashed before inner error handler", job_id)
         try:
-            await _mark_failed(job_id, str(e))
+            await _mark_failed(job_id, _safe_error_message(e))
         except Exception:
             logger.exception("Job %d: failed to mark job as failed in last-resort handler", job_id)
 
@@ -183,7 +195,7 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
 
     except Exception as e:
         logger.exception("Job %d failed", job_id)
-        await _mark_failed(job_id, str(e))
+        await _mark_failed(job_id, _safe_error_message(e))
 
 
 # ---------------------------------------------------------------------------
@@ -326,4 +338,4 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
     except Exception as e:
         logger.exception("Job %d failed (GCP Batch path)", job_id)
-        await _mark_failed(job_id, str(e))
+        await _mark_failed(job_id, _safe_error_message(e))

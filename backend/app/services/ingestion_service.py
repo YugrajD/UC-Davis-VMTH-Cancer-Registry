@@ -486,7 +486,8 @@ async def ingest_upload(
     ))
 
     # --- Refresh materialized views ---
-    for view in ("mv_county_cancer_incidence", "mv_yearly_trends"):
+    _ALLOWED_VIEWS = frozenset({"mv_county_cancer_incidence", "mv_yearly_trends"})
+    for view in _ALLOWED_VIEWS:
         try:
             await db.execute(text(f"REFRESH MATERIALIZED VIEW {view}"))
         except Exception as e:

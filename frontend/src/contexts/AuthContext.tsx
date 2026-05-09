@@ -30,6 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const inflightRef = useRef(false);
   const backoffRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const refreshRolesRef = useRef<(accessToken: string) => Promise<void>>();
 
   const refreshRoles = useCallback(async (accessToken: string) => {
     // Skip if a request is already in-flight
@@ -55,11 +56,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Exponential backoff: 2s, 4s, 8s, 16s, 30s cap
       backoffRef.current = Math.min(backoffRef.current + 1, 5);
       const delay = Math.min(1000 * 2 ** backoffRef.current, 30_000);
-      retryTimerRef.current = setTimeout(() => refreshRoles(accessToken), delay);
+      retryTimerRef.current = setTimeout(() => refreshRolesRef.current?.(accessToken), delay);
     } finally {
       inflightRef.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    refreshRolesRef.current = refreshRoles;
+  }, [refreshRoles]);
 
   useEffect(() => {
     if (!supabaseConfigured) return;

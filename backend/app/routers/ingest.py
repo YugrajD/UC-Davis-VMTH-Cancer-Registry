@@ -394,9 +394,19 @@ async def review_job(
     await db.commit()
     await db.refresh(job)
 
-    asyncio.create_task(process_approved_job(job.id))
+    task = asyncio.create_task(process_approved_job(job.id))
+    task.add_done_callback(_log_task_exception)
 
     return _job_to_dict(job)
+
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Log unhandled exceptions from fire-and-forget background tasks."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.error(
+            "Background job task failed with unhandled exception",
+            exc_info=task.exception(),
+        )
 
 
 # --- Helpers ---

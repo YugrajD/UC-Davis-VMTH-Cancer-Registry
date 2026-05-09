@@ -54,6 +54,9 @@ _CONTINUATION_COLS = ["Text"]
 # HTML tag pattern for stripping markup from pathology text.
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
+# Characters allowed in a stored filename (strip everything else).
+_SAFE_FILENAME_RE = re.compile(r"[^\w\-. ]")
+
 
 def _is_na(value) -> bool:
     """Return True if the value is missing, empty, or the string 'NA'."""
@@ -157,6 +160,17 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
 
 
+def _sanitize_filename(filename: str) -> str:
+    """Strip path separators, control chars, and truncate for safe DB storage."""
+    # Take only the basename (strip directory components).
+    name = os.path.basename(filename)
+    # Remove any characters that aren't word chars, hyphens, dots, or spaces.
+    name = _SAFE_FILENAME_RE.sub("_", name)
+    # Collapse runs of underscores and truncate.
+    name = re.sub(r"_+", "_", name).strip("_")
+    return name[:255] or "upload"
+
+
 @router.get("/status")
 async def ingestion_status():
     """Health check for the ingestion module."""
@@ -181,6 +195,9 @@ async def upload_datasets(
     if not dataset_a_bytes:
         raise HTTPException(status_code=400, detail="Dataset file is empty")
 
+    if len(dataset_a_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
+
     # Convert XLSX → CSV if needed, then normalize columns for GCP Batch image
     dataset_a_bytes = _normalize_columns(_ensure_csv(dataset_a_bytes, dataset_a.filename))
 
@@ -204,7 +221,7 @@ async def upload_datasets(
     job = IngestionJob(
         uploaded_by_email=user.email,
         uploaded_by_sub=user.sub,
-        dataset_a_filename=dataset_a.filename,
+        dataset_a_filename=_sanitize_filename(dataset_a.filename),
         storage_path="",  # will update after we know the ID
         status="pending_review",
         created_at=datetime.now(timezone.utc),
@@ -232,7 +249,7 @@ async def list_jobs(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
     mine: bool = Query(False),
-    status: list[str] = Query(default=[]),
+    status: list[str] = Query(default=[], max_length=10),
 ):
     """List jobs. Admins see all (unless mine=true); regular users always see only their own.
 
@@ -268,8 +285,9 @@ async def get_job(
     job = await _get_job_or_404(db, job_id)
 
     # Reviewers and admins see all jobs; uploaders see only their own.
+    # Return 404 (not 403) to avoid leaking whether a job ID exists.
     if not (user.is_admin or user.is_reviewer) and job.uploaded_by_email != user.email:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=404, detail="Job not found")
 
     return _job_to_dict(job)
 
@@ -283,6 +301,12 @@ async def preview_job_dataset(
     """Stream the stored CSV file for reviewer preview."""
     job = await _get_job_or_404(db, job_id)
     filepath = os.path.join(job.storage_path, "dataset_a.csv")
+
+    # Defense-in-depth: ensure the resolved path stays inside UPLOAD_DIR.
+    allowed_base = os.path.abspath(settings.UPLOAD_DIR)
+    resolved = os.path.abspath(filepath)
+    if not resolved.startswith(allowed_base + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found")
@@ -351,9 +375,6 @@ async def review_job(
             status_code=400,
             detail=f"Job is '{job.status}', can only review 'pending_review' jobs",
         )
-
-    if review.action not in ("approve", "reject"):
-        raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
 
     now = datetime.now(timezone.utc)
     job.reviewed_by_email = reviewer.email

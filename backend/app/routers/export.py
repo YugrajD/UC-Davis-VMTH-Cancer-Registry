@@ -2,11 +2,11 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,11 +23,11 @@ router = APIRouter(prefix="/api/v1/export-requests", tags=["export-requests"])
 
 
 class ExportRequestCreate(BaseModel):
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ExportRequestResolve(BaseModel):
-    action: str  # "approve" or "deny"
+    action: Literal["approve", "deny"]
 
 
 class ExportRequestOut(BaseModel):
@@ -125,9 +125,6 @@ async def resolve_export_request(
     admin: CurrentUser = Depends(require_admin),
 ):
     """Approve or deny an export request (admin-only)."""
-    if body.action not in ("approve", "deny"):
-        raise HTTPException(status_code=400, detail="action must be 'approve' or 'deny'")
-
     result = await db.execute(
         select(ExportRequest).where(ExportRequest.id == request_id)
     )
@@ -149,13 +146,13 @@ async def resolve_export_request(
 
 @router.get("/download")
 async def download_export_csv(
-    cancer_type: str | None = Query(None),
-    county: str | None = Query(None),
-    zip_code: str | None = Query(None),
-    sex: str | None = Query(None),
-    breed: str | None = Query(None),
-    year_start: int | None = Query(None),
-    year_end: int | None = Query(None),
+    cancer_type: str | None = Query(None, max_length=200),
+    county: str | None = Query(None, max_length=200),
+    zip_code: str | None = Query(None, max_length=10),
+    sex: str | None = Query(None, max_length=50),
+    breed: str | None = Query(None, max_length=200),
+    year_start: int | None = Query(None, ge=1900, le=2100),
+    year_end: int | None = Query(None, ge=1900, le=2100),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -165,6 +162,7 @@ async def download_export_csv(
     export request — the approval is consumed on download so the user must
     request again for subsequent exports.
     """
+    approved_req = None
     if not user.is_admin:
         result = await db.execute(
             select(ExportRequest).where(
@@ -179,10 +177,6 @@ async def download_export_csv(
                 detail="You need an approved export request to download data",
             )
 
-        # Consume the approval — mark as downloaded so it cannot be reused
-        approved_req.status = "downloaded"
-        await db.commit()
-
     from app.services.export_service import generate_patient_export_csv
 
     csv_content = await generate_patient_export_csv(
@@ -195,6 +189,12 @@ async def download_export_csv(
         year_start=year_start,
         year_end=year_end,
     )
+
+    # Consume the approval *after* CSV generation succeeds so the user
+    # doesn't lose their approval if generation fails.
+    if approved_req is not None:
+        approved_req.status = "downloaded"
+        await db.commit()
 
     return StreamingResponse(
         iter([csv_content]),

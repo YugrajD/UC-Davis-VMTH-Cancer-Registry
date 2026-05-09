@@ -28,11 +28,11 @@ SEX_MAP = {
 
 @router.get("/counties", response_model=GeoJSONResponse)
 async def get_counties_geojson(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     # Build dynamic WHERE clause

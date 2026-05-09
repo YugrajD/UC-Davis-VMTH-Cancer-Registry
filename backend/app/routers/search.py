@@ -28,10 +28,10 @@ async def classify_report(request: ClassifyRequest):
 
 @router.get("/reports", response_model=ReportSearchResponse)
 async def search_reports(
-    keyword: Optional[str] = None,
-    classification: Optional[str] = None,
+    keyword: Optional[str] = Query(default=None, max_length=500),
+    classification: Optional[str] = Query(default=None, max_length=200),
     limit: int = Query(default=20, le=100),
-    offset: int = 0,
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(PathologyReport)

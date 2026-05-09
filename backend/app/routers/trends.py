@@ -23,10 +23,10 @@ SEX_MAP = {
 
 @router.get("/yearly", response_model=TrendsResponse)
 async def get_yearly_trends(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -73,9 +73,9 @@ async def get_yearly_trends(
 
 @router.get("/by-cancer-type", response_model=TrendsResponse)
 async def get_trends_by_cancer_type(
-    species: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (

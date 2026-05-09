@@ -45,12 +45,12 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
 
 @router.get("", response_model=IncidenceResponse)
 async def get_incidence(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -96,11 +96,11 @@ async def get_incidence(
 
 @router.get("/by-cancer-type", response_model=IncidenceResponse)
 async def get_incidence_by_cancer_type(
-    species: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -129,11 +129,11 @@ async def get_incidence_by_cancer_type(
 
 @router.get("/by-species", response_model=IncidenceResponse)
 async def get_incidence_by_species(
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -162,12 +162,12 @@ async def get_incidence_by_species(
 
 @router.get("/by-breed", response_model=IncidenceResponse)
 async def get_incidence_by_breed(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -202,7 +202,7 @@ async def get_incidence_by_breed(
 
 @router.get("/breed-detail", response_model=BreedDetailOut)
 async def get_breed_detail(
-    breed: str = Query(..., description="Breed name to look up"),
+    breed: str = Query(..., max_length=200, description="Breed name to look up"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return cancer-type breakdown, sex breakdown, and county distribution for a single breed.

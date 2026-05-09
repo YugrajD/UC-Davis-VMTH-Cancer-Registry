@@ -17,3 +17,4 @@ zipcodes
 PyJWT[crypto]==2.8.0
 google-cloud-batch>=0.17.0
 google-cloud-storage>=2.18.0
+slowapi>=0.1.9

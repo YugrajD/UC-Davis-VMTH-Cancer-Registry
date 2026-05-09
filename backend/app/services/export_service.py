@@ -30,6 +30,17 @@ CSV_COLUMNS = [
     "review_status",
 ]
 
+# Characters that spreadsheet applications (Excel, Google Sheets) interpret
+# as formula starters.  Prefixing with a tab prevents execution.
+_FORMULA_CHARS = frozenset("=+-@")
+
+
+def _safe_csv_value(value: str) -> str:
+    """Defuse potential CSV formula injection by tab-prefixing dangerous values."""
+    if value and value[0] in _FORMULA_CHARS:
+        return "\t" + value
+    return value
+
 
 async def generate_patient_export_csv(
     db: AsyncSession,
@@ -95,17 +106,17 @@ async def generate_patient_export_csv(
 
     for row in rows:
         writer.writerow({
-            "species": row.species or "",
-            "breed": row.breed or "",
-            "sex": row.sex or "",
-            "county": row.county or "",
-            "zip_code": row.zip_code or "",
+            "species": _safe_csv_value(row.species or ""),
+            "breed": _safe_csv_value(row.breed or ""),
+            "sex": _safe_csv_value(row.sex or ""),
+            "county": _safe_csv_value(row.county or ""),
+            "zip_code": _safe_csv_value(row.zip_code or ""),
             "diagnosis_date": str(row.diagnosis_date) if row.diagnosis_date else "",
-            "outcome": row.outcome or "",
-            "cancer_type": row.cancer_type or "",
-            "icd_o_code": row.icd_o_code or "",
+            "outcome": _safe_csv_value(row.outcome or ""),
+            "cancer_type": _safe_csv_value(row.cancer_type or ""),
+            "icd_o_code": _safe_csv_value(row.icd_o_code or ""),
             "confidence": float(row.confidence) if row.confidence is not None else "",
-            "review_status": row.review_status or "",
+            "review_status": _safe_csv_value(row.review_status or ""),
         })
 
     return output.getvalue()

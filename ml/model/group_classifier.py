@@ -92,7 +92,7 @@ class GroupClassifier(nn.Module):
     @classmethod
     def load(cls, path: str | Path) -> tuple["GroupClassifier", list[str]]:
         """Load model and return (model, group_names)."""
-        data = torch.load(path, map_location="cpu", weights_only=False)
+        data = torch.load(path, map_location="cpu", weights_only=True)
         model = cls(
             num_groups=data["num_groups"],
             emb_dim=data["emb_dim"],

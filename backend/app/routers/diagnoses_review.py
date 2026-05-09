@@ -85,11 +85,12 @@ class ReviewAction(BaseModel):
     action: Literal["confirm", "correct", "reject"]
     cancer_type_name: Optional[str] = Field(
         default=None,
+        max_length=500,
         description="Required for 'correct'. If unknown, will be auto-created with confirmed=False.",
     )
-    icd_o_code: Optional[str] = None
-    predicted_term: Optional[str] = None
-    notes: Optional[str] = None
+    icd_o_code: Optional[str] = Field(default=None, max_length=20)
+    predicted_term: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, max_length=5000)
 
 
 # --- Helpers --------------------------------------------------------------
@@ -195,7 +196,7 @@ async def list_pending(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     cancer_type_id: Optional[int] = None,
-    method: Optional[str] = None,
+    method: Optional[str] = Query(default=None, max_length=50),
     max_confidence: Optional[float] = None,
     ingestion_job_id: Optional[int] = None,
 ) -> list[PendingDiagnosis]:

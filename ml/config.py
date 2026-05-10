@@ -21,6 +21,7 @@ ANNOTATION_DIR = "ml/output/annotation"
 ANNOTATION_CSV = f"{ANNOTATION_DIR}/annotation.csv"
 LLM_ANNOTATION_DIR = "ml/output/annotation/llm"
 LLM_ANNOTATION_CSV = f"{LLM_ANNOTATION_DIR}/llm_annotation.csv"
+LLM_ANNOTATION_CLEANED_CSV = f"{LLM_ANNOTATION_DIR}/llm_annotation_cleaned.csv"
 
 # ---------------------------------------------------------------------------
 # Training intermediates

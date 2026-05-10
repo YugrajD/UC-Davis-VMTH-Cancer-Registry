@@ -628,6 +628,11 @@ def _write_summary_md(summary: dict, path: str) -> None:
             f"| Ollama no match | {ts.get('tier3_no_match', 0):,} |",
         ]
 
+    top_terms = summary["top_matched_terms"]
+    most_matched = (
+        f"{next(iter(top_terms))} ({next(iter(top_terms.values()))} matches)"
+        if top_terms else "—"
+    )
     lines += [
         "",
         "## Taxonomy Coverage",
@@ -639,7 +644,7 @@ def _write_summary_md(summary: dict, path: str) -> None:
         "## Imbalance",
         f"| | |",
         f"|---|---|",
-        f"| Most matched term | {next(iter(summary['top_matched_terms']))} ({next(iter(summary['top_matched_terms'].values()))} matches) |",
+        f"| Most matched term | {most_matched} |",
         f"| Terms with only 1 match | {summary['imbalance']['terms_with_1_match']} |",
         f"| Terms with < 5 matches | {summary['imbalance']['terms_with_lt5_matches']} |",
         f"| Terms with ≥ 100 matches | {summary['imbalance']['terms_with_gte100_matches']} |",

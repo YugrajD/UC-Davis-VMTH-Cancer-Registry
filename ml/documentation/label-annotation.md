@@ -24,9 +24,11 @@ examples.
 
 ## Annotation Pipeline Flow
 
-A three-tier cascade. Tiers 1 and 2 are rule-based and fast; Tier 3 calls a local
-LLM only when there is a clear cancer signal in the text. This keeps LLM calls
-to ~1% of rows, making a full 188k-row run feasible.
+A three-tier matching cascade followed by a default ensemble verification pass.
+Tiers 1 and 2 are rule-based and fast; Tier 3 calls a local LLM only when there
+is a clear cancer signal in the text (~1% of rows). The verification pass then
+re-checks every confirmed match with two diverse models and downgrades any
+non-unanimous result to `Uncertain` (or replaces it with the agreed correction).
 
 ```mermaid
 flowchart TD
@@ -34,7 +36,7 @@ flowchart TD
         A["diagnoses.csv<br/>diagnosis text"]
     end
 
-    subgraph P["Process"]
+    subgraph P["Match cascade"]
         N["Normalize + expand abbreviations"]
         M["Mask negations + 'non-X' phrases"]
         T1["Tier 1 — Exact keyword match"]
@@ -43,8 +45,13 @@ flowchart TD
         T3["Tier 3 — LLM resolution<br/>(group + site-aware)"]
     end
 
-    subgraph OUT["Output"]
-        F["llm_annotation.csv<br/>verified term, group, ICD code"]
+    subgraph C["Cleanup pass"]
+        F["llm_annotation.csv"]
+        V["Two-model unanimous vote<br/>per confirmed match"]
+        FC["llm_annotation_cleaned.csv"]
+    end
+
+    subgraph OUT["Training"]
         G["Training supervision"]
     end
 
@@ -56,10 +63,15 @@ flowchart TD
     T1 -->|matched| F
     T2 -->|matched| F
     SIG -->|no| F
-    F --> G
+    F --> V --> FC --> G
 ```
 
-Entry point: `run_llm_scan()` in `ml/annotation/llm_pipeline/pipeline.py`.
+Entry points:
+- `run_llm_scan()` in `ml/annotation/llm_pipeline/pipeline.py` — match cascade.
+- `run_cleanup()` in `ml/annotation/llm_pipeline/cleanup.py` — verification pass.
+
+Both are invoked by `run_annotation.py` (cleanup runs by default; pass
+`--skip-cleanup` to stop after the cascade).
 
 ---
 
@@ -214,9 +226,32 @@ near-match at ≥0.80 → `LLM` (confidence 0.9); `"no match"` → `No Match`;
 - **Speed.** ~1–2 s per LLM call × ~1.7k Tier 3 rows = 30–60 minutes for a full
   188k-row run.
 
-For systematic noise beyond what the cascade catches, see
-`ml/annotation/llm_pipeline/cleanup.py` (ensemble-verification cleanup pass over
-confirmed Tier 1/2/3 matches).
+## Cleanup pass (ensemble verification)
+
+Runs by default after the three-tier cascade. For every confirmed positive
+(`Exact` / `Fuzzy` / `LLM`), the row is sent to two diverse local LM-Studio
+models. Each model returns one of: `CORRECT`, `WRONG_should_be:<term>`,
+`WRONG_no_cancer`, `UNCERTAIN`. Resolution rules:
+
+| Both models say | Action |
+|---|---|
+| `CORRECT` | keep the original match |
+| `WRONG_no_cancer` | demote row to `No Match` |
+| `WRONG_should_be:<X>` (same X) | replace match with X |
+| anything else (disagreement) | optional 3rd-model tiebreaker, otherwise demote to `Uncertain` |
+
+Default verifier pair (validated 2026-05-09 on a 26-row Tier-3 sample):
+`google/gemma-4-31b` and `qwen/qwen3.6-27b`. Both are calibrated (low
+fabrication rate) and architecturally diverse, so unanimous votes carry signal.
+Override with `--cleanup-models a,b` and optionally
+`--cleanup-tiebreaker c`.
+
+Outputs: `llm_annotation_cleaned.csv` (full row set with cleaned values),
+`cleanup_diff.csv` (only changed rows, with before/after columns), and
+`cleanup_summary.json`.
+
+Re-run cleanup independently — without redoing the cascade — via
+`python ml/annotation/llm_pipeline/run_annotation_cleanup.py`.
 
 ---
 
@@ -240,8 +275,19 @@ LM-Studio / Ollama-compatible HTTP server. Connection settings live in
 ```ini
 LLM_HOST=127.0.0.1
 API_PORT=1234
-LLM_MODEL=qwen2.5:72b           # current recommended default
+LLM_MODEL=google/gemma-4-e4b    # current default — fast and conservative
 ```
+
+For Tier-3 annotation, `gemma-4-e4b` was selected as the production default
+after a 6-model bake-off (2026-05-09) showed it had the best calibration among
+fast models. `medgemma-27b` and `meta/llama-3.3-70b` had higher raw match
+rates but routinely fabricated subtypes ("LEUKEMIA" → "Lymphoblastic leukemia,
+NOS"; "MEIBOMIAN EPITHELIOMA" ↔ "INFUNDIBULAR KERATINIZING EPITHELIOMA"
+flipped between two distinct entities) and are not recommended.
+
+For the verification cleanup pass, `google/gemma-4-31b` and `qwen/qwen3.6-27b`
+are the recommended verifier pair — see
+`ml/annotation/llm_pipeline/run_annotation_cleanup.py`.
 
 The `--model` CLI flag overrides `LLM_MODEL` at runtime.
 
@@ -258,8 +304,12 @@ The `--model` CLI flag overrides `LLM_MODEL` at runtime.
 | `--labels-csv` | `ml/ICD_labels/labels.csv` | Path to Vet-ICD-O taxonomy CSV |
 | `--out-dir` | `ml/output/annotation/llm` | Output directory |
 | `--max-rows` | all | Cap on input rows (for testing) |
-| `--llm-timeout` | 60 | Seconds to wait per LLM call |
-| `--model` | `.env` value | Model name (overrides `.env`) |
+| `--llm-timeout` | 60 | Seconds to wait per Tier-3 LLM call |
+| `--model` | `.env` value | Tier-3 model name (overrides `.env`) |
+| `--skip-cleanup` | off | Stop after the cascade; do not run the cleanup pass |
+| `--cleanup-models` | `google/gemma-4-31b,qwen/qwen3.6-27b` | Comma-separated verifier pair |
+| `--cleanup-tiebreaker` | none | Optional third model used on disagreement |
+| `--cleanup-timeout` | 60 | Seconds to wait per cleanup LLM call |
 | `--list-models` | — | Print available models on the configured server and exit |
 | `--compare-models` | — | Run all available models on `--max-rows` rows and print a comparison |
 
@@ -267,9 +317,14 @@ The `--model` CLI flag overrides `LLM_MODEL` at runtime.
 
 ## Example commands
 
-**Standard full run:**
+**Standard full run** (cascade + cleanup):
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py
+```
+
+**Skip the cleanup pass** (cascade only — useful for quick iterations):
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --skip-cleanup
 ```
 
 **Quick test on first 100 rows:**
@@ -277,19 +332,26 @@ ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py
 ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --max-rows 100
 ```
 
-**Use a specific model:**
+**Use a specific Tier-3 model:**
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --model llama3.3:70b
+ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --model qwen/qwen3.6-27b
+```
+
+**Override the cleanup verifier pair / add a tiebreaker:**
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py \
+  --cleanup-models google/gemma-4-31b,qwen/qwen3.6-27b \
+  --cleanup-tiebreaker nvidia/nemotron-3-nano-omni
+```
+
+**Re-run cleanup only** (uses the existing `llm_annotation.csv`):
+```bash
+ml/.venv/Scripts/python.exe ml/annotation/llm_pipeline/run_annotation_cleanup.py
 ```
 
 **List available models on the configured server:**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --list-models
-```
-
-**Compare all available models on 500 rows:**
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --compare-models --max-rows 500
 ```
 
 ---
@@ -326,10 +388,10 @@ imbalance, full group distribution, and top 20 terms.
 | File | Role |
 |------|------|
 | `ml/annotation/llm_pipeline/pipeline.py` | Tiers 1–3, normalization + negation masking, prompt builder, summary writer, `run_llm_scan` |
+| `ml/annotation/llm_pipeline/cleanup.py` | Ensemble verification pass: `run_cleanup`, vote resolution, diff/summary writer |
 | `ml/annotation/llm_pipeline/client.py` | HTTP client: `chat()`, `list_models()` |
-| `ml/annotation/llm_pipeline/cli.py` | CLI argument parsing, `--list-models`, `--compare-models` |
+| `ml/annotation/llm_pipeline/cli.py` | CLI argument parsing; orchestrates cascade + cleanup |
 | `ml/annotation/llm_pipeline/.env` | Connection settings (`LLM_HOST`, `API_PORT`, `LLM_MODEL`) |
-| `ml/annotation/cli.py` | Package entry point: `python -m annotation` |
 | `ml/ICD_labels/taxonomy.py` | Vet-ICD-O taxonomy CSV parser |
 | `ml/ICD_labels/labels.csv` | Vet-ICD-O-canine-1 taxonomy (~857 terms across 44 groups) |
 
@@ -337,6 +399,9 @@ imbalance, full group distribution, and top 20 terms.
 
 | File | Role |
 |------|------|
-| `ml/output/annotation/llm/llm_annotation.csv` | Per-row match results |
-| `ml/output/annotation/llm/llm_summary.json` | Aggregate statistics |
-| `ml/output/annotation/llm/llm_summary.md` | Human-readable summary |
+| `ml/output/annotation/llm/llm_annotation.csv` | Per-row match results from the three-tier cascade |
+| `ml/output/annotation/llm/llm_summary.json` | Aggregate cascade statistics |
+| `ml/output/annotation/llm/llm_summary.md` | Human-readable cascade summary |
+| `ml/output/annotation/llm/llm_annotation_cleaned.csv` | Per-row results after the verification pass (downstream training input) |
+| `ml/output/annotation/llm/cleanup_diff.csv` | Only rows the cleanup changed, with before/after columns |
+| `ml/output/annotation/llm/cleanup_summary.json` | Aggregate cleanup statistics (kept, term_changed, set_no_match, flagged_uncertain, parse_errors) |

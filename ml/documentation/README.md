@@ -47,8 +47,14 @@ ml/
 ├── analysis/               Standalone analysis utilities (annotation coverage stats)
 ├── annotation/             Annotation pipeline — maps diagnosis text to ICD-O labels
 │   ├── __init__.py         Programmatic API: llm_main()
-│   ├── cli.py              CLI dispatch (requires PYTHONPATH=ml)
-│   └── llm_pipeline/       LLM-assisted annotation (three-tier cascade)
+│   └── llm_pipeline/       LLM-assisted annotation (three-tier cascade + ensemble cleanup)
+│       ├── pipeline.py                  Cascade implementation
+│       ├── cleanup.py                   Ensemble verification pass
+│       ├── client.py                    LM Studio HTTP client
+│       ├── cli.py                       Cascade-then-cleanup CLI (called by run_annotation.py)
+│       ├── audit.py                     90-row noise-audit harness
+│       ├── run_annotation_cleanup.py    Standalone re-run of the cleanup pass
+│       └── compare_llm_models.py        Bake-off harness for comparing LM Studio models on Tier-3
 ├── production/             Production scoring pipelines
 │   └── petbert_pipeline/   3/4-stage pipeline (CasePresence → Group → LabelPresence → KW)
 ├── evaluation/             Model assessment
@@ -61,8 +67,7 @@ ml/
 │   ├── contrastive/        Embedding backbone adaptation (production best)
 │   └── data/               Data utilities (train/test split generation)
 ├── scripts/                Top-level entry points (no PYTHONPATH needed)
-│   ├── run_annotation.py            Annotate diagnoses with cancer labels
-│   ├── run_annotation_cleanup.py    Ensemble verification pass over a confirmed annotation CSV
+│   ├── run_annotation.py            Annotate diagnoses with cancer labels (cascade + cleanup pass; --skip-cleanup to disable)
 │   ├── run_data_analysis.py         Annotation coverage statistics
 │   ├── run_training.py              4-stage training (modes: train-groups, adapt-backbone, train-case-presence, train-label-presence)
 │   ├── run_evaluation.py            Score the latest predictions and record to history
@@ -101,19 +106,22 @@ through CasePresenceClassifier → GroupClassifier → per-group LabelPresenceCl
 
 ### `annotation/llm_pipeline/` — Diagnosis-to-label annotation
 
-Uses a three-tier cascade (exact match → fuzzy → LLM) to annotate diagnoses.
-Tier 1/2 run negation masking and behavior-code-aware fuzzy matching; Tier 3
-calls a local LM-Studio-hosted LLM only for rows with a cancer-signal term
-(~15% of rows). Handles negation, hedging, abbreviations, and anatomic-site
-disambiguation.
+Uses a three-tier cascade (exact match → fuzzy → LLM) followed by an ensemble
+verification cleanup pass. Tier 1/2 run negation masking and behavior-code-aware
+fuzzy matching; Tier 3 calls a local LM-Studio-hosted LLM only for rows with a
+cancer-signal term (~15% of rows). The cleanup pass then re-asks two diverse
+models per confirmed match and demotes non-unanimous results to `Uncertain`.
+Handles negation, hedging, abbreviations, and anatomic-site disambiguation.
 
 | File | Role |
 |---|---|
 | `pipeline.py` | Tiers 1–3, normalization + negation masking, prompt builder, summary writer |
-| `client.py` | OpenAI-compatible HTTP client (LM Studio / Ollama) |
-| `cli.py` | CLI with `--list-models`, `--compare-models`, `--model` |
 | `cleanup.py` | Ensemble verification pass — re-asks 2+ models per confirmed row and rewrites `llm_annotation_cleaned.csv` |
+| `client.py` | OpenAI-compatible HTTP client (LM Studio) |
+| `cli.py` | CLI orchestrating cascade + cleanup; `--skip-cleanup`, `--cleanup-models`, `--list-models` |
 | `audit.py` | Reproduces the 90-row stratified noise-audit sample and prints a before/after diff |
+| `run_annotation_cleanup.py` | Standalone re-run of the cleanup pass over an existing `llm_annotation.csv` |
+| `compare_llm_models.py` | Bake-off harness — runs N LM Studio models on a Tier-3 stratified sample and reports latency / agreement / disagreements |
 | `.env` | `LLM_HOST`, `API_PORT`, `LLM_MODEL` |
 
 ### `evaluation/evaluate.py` — End-to-end verdict scoring

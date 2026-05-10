@@ -8,12 +8,19 @@ Reads diagnoses.csv and maps each diagnosis field to a Vet-ICD-O taxonomy label
   2. Fuzzy token overlap (behavior-code aware)
   3. LM-Studio-hosted LLM (for rows containing a cancer signal term)
 
-The output annotation file is used as training supervision and evaluation
-ground truth for all classifiers.
+By default, the cascade is followed by an ensemble verification cleanup pass
+(two diverse LLMs vote on every confirmed match) which writes
+llm_annotation_cleaned.csv. Pass --skip-cleanup to stop after the initial
+annotation; the cleanup can also be re-run later via
+ml/annotation/llm_pipeline/run_annotation_cleanup.py.
+
+The cleaned annotation file (or the raw one when cleanup is skipped) is used
+as training supervision and evaluation ground truth for all classifiers.
 
 Usage:
   python ml/scripts/run_annotation.py
   python ml/scripts/run_annotation.py --max-rows 100
+  python ml/scripts/run_annotation.py --skip-cleanup
   python ml/scripts/run_annotation.py --list-models
 """
 

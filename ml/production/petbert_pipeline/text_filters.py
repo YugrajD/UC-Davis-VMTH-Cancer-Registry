@@ -119,9 +119,12 @@ _NON_NEOPLASTIC_PATTERNS = [
     r"\bis\s+a\s+(?:benign\s+)?(?:radicular|odontogenic|dermal|epidermal|sebaceous|follicular|epidermoid)?\s*cyst",
     r"consistent with\s+(?:\w+\s+){0,4}cyst\b",
     r"compatible with\s+(?:a\s+)?(?:radicular|odontogenic|dermal|sebaceous)?\s*cyst",
+    r"\bpneumonia\b", r"\bbronchopneumonia\b",
     r"\bleiomyositi", r"\bpancreatiti", r"\bhepatiti", r"\bdermatiti",
     r"\bcholangiti", r"\bnephriti", r"\bencephaliti", r"\bmyositi",
     r"\bcystiti", r"\bgastriti", r"\bcolitis", r"\bperitoniti",
+    r"\bcellulitis\b", r"\bpyogranulomatous\b",
+    r"\b(?:fungal|bacterial|mycotic|protozoal)\s+(?:infection|pneumonia|dermatitis|inflammation)\b",
     r"no evidence of neoplas",
     r"\bnon[- ]neoplastic\b",
     r"\bnon[- ]?tumorous\b",
@@ -129,33 +132,75 @@ _NON_NEOPLASTIC_PATTERNS = [
     r"inflammatory process",
     r"hepatic (?:injury|dysfunction|necrosis|hepatopathy)",
     r"degenerative (?:process|change|lesion)",
+    r"\b(?:disk|disc)\s+herniation\b",
+    r"\bmyelomalacia\b",
+    r"\bcongenital\b", r"\bdevelopmental\b",
     r"reactive\s+(?:process|change|lesion|hyperplasi)",
     r"\bgranulation tissue\b",
     r"\babscess\b",
 ]
 _NON_NEOPLASTIC_RE = re.compile("|".join(_NON_NEOPLASTIC_PATTERNS), re.IGNORECASE)
 
-# Phrases that indicate a competing neoplastic primary diagnosis. If any of
-# these match, we do NOT suppress — pathologist is calling a tumor and a
-# concurrent inflammatory process.
-_NEOPLASTIC_PATTERNS = [
-    r"consistent with\s+(?:\w+\s+){0,4}(?:carcinoma|sarcoma|adenoma|lymphoma|melanoma|tumou?r|neoplas|leukemia|myeloma|mesothelioma|blastoma|cytoma)\b",
-    r"diagnos(?:is|ed)\s+(?:of\s+)?(?:\w+\s+){0,4}(?:carcinoma|sarcoma|adenoma|lymphoma|melanoma|tumou?r|neoplas|leukemia|myeloma|mesothelioma|blastoma|cytoma)\b",
-    r"\bis\s+(?:a\s+)?(?:malignant\s+|benign\s+)?(?:carcinoma|sarcoma|adenoma|lymphoma|melanoma|neoplas|leukemia|myeloma|mesothelioma|blastoma|cytoma)\b",
-    r"\bmalignant\s+(?:lymphoma|tumou?r|neoplas)",
-    r"neoplastic (?:cells?|infiltrat|process|tissue|population|mass)",
-    r"\bcell tumor\b",
-    r"\bmast cell tumor\b",
-    r"\bround cell tumor\b",
-    r"\b(?:carcinoma|sarcoma|adenoma|lymphoma|melanoma|hepatoma|osteosarcoma|hemangiosarcoma|lipoma|fibroma|leiomyoma|leiomyosarcoma|fibrosarcoma|mast cell tumor|meningioma|glioma)\b",
-]
-_NEOPLASTIC_RE = re.compile("|".join(_NEOPLASTIC_PATTERNS), re.IGNORECASE)
+_DIRECT_TUMOR_TERMS = (
+    r"neoplasia|neoplasm|tumou?r|carcinoma|adenocarcinoma|"
+    r"cystadenocarcinoma|sarcoma|osteosarcoma|chondrosarcoma|"
+    r"hemangiosarcoma|lymphoma|lymphosarcoma|mast cell tumou?r|"
+    r"melanoma|meningioma|glioma|oligodendroglioma|ependymoma|"
+    r"choroid plexus tumou?r|adenoma|cystadenoma|hemangioma|"
+    r"pheochromocytoma|insulinoma|glucagonoma|neuroendocrine tumou?r|"
+    r"carcinoid|plasmacytoma|plasma cell tumou?r|schwannoma|"
+    r"peripheral nerve sheath tumou?r|neurofibroma|trichoblastoma|"
+    r"trichoepithelioma|rhabdomyosarcoma|leiomyosarcoma|"
+    r"histiocytic sarcoma|fibrosarcoma|lipoma"
+)
+
+_DIRECT_TUMOR_EVIDENCE_RE = re.compile(
+    r"\b(?:" + _DIRECT_TUMOR_TERMS + r")(?:s|es)?\b|"
+    r"(?<!non-)(?<!non )\bneoplastic\s+(?:cells?|population|mass|tissue|infiltrat)",
+    re.IGNORECASE,
+)
+
+_NEGATED_TUMOR_SPAN_RE = re.compile(
+    r"\b(?:no|without|absence of|free of)\s+(?:overt\s+)?(?:evidence of\s+)?"
+    r"(?:\w+\s+){0,5}(?:" + _DIRECT_TUMOR_TERMS + r"|neoplastic\s+cells?)\b|"
+    r"\b(?:negative for|not consistent with|not diagnostic for|does not support|"
+    r"do not support|rule(?:s|d)? out|ruled out|exclude(?:s|d)?)\s+"
+    r"(?:\w+\s+){0,5}(?:" + _DIRECT_TUMOR_TERMS + r"|neoplastic\s+cells?)\b|"
+    r"\b(?:" + _DIRECT_TUMOR_TERMS + r"|neoplastic\s+cells?)\s+"
+    r"(?:\w+\s+){0,4}(?:not\s+(?:seen|observed|identified|present)|absent)\b|"
+    r"\bnon[- ]neoplastic\b",
+    re.IGNORECASE,
+)
+
+
+def has_non_neoplastic_primary_diagnosis(final_comment: str) -> bool:
+    """True when FINAL COMMENT contains a strong non-neoplastic diagnosis cue."""
+    return bool(_NON_NEOPLASTIC_RE.search(final_comment or ""))
+
+
+def _text_has_direct_tumor_evidence(text: str) -> bool:
+    """True when text names tumor/neoplasia evidence outside negated spans."""
+    if not text:
+        return False
+    cleaned = _NEGATED_TUMOR_SPAN_RE.sub(" ", text)
+    return bool(_DIRECT_TUMOR_EVIDENCE_RE.search(cleaned))
+
+
+def final_comment_has_tumor_evidence(final_comment: str) -> bool:
+    """True when FINAL COMMENT directly names tumor/neoplasia evidence.
+
+    Incidental, benign, unrelated, or completely excised tumors still count:
+    for Vet-ICD-O extraction they remain neoplastic diagnoses and should veto
+    suppression to Non-neoplastic.
+    """
+    return _text_has_direct_tumor_evidence(final_comment or "")
 
 
 _ANCILLARY_MARKER_POSITIVE_RE = re.compile(
-    r"\b(positive|positivity|immunoreactive|immunolabel(?:ed|ing)?|"
-    r"immunoreactivity|label(?:ed|ing)|stain(?:ed|ing)?|express(?:es|ed|ion)|"
-    r"expression)\b",
+    r"\b(positive|positivity|(?<!non-)immunoreactive|immunolabel(?:ed|ing)?|"
+    r"(?<!non-)immunoreactivity|label(?:ed|ing)|stain(?:ed|ing)?|"
+    r"express(?:es|ed|ion)|expression|support(?:s|ed|ing)?|"
+    r"confirm(?:s|ed|ing)?|consistent with|diagnostic for)\b",
     re.IGNORECASE,
 )
 
@@ -168,12 +213,21 @@ _ANCILLARY_NEGATIVE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_ANCILLARY_NEGATED_SPAN_RE = re.compile(
+    r"[^.;\n\r|]{0,40}\b(?:negative|no immunoreactivity|not immunoreactive|"
+    r"non[- ]immunoreactive|non[- ]specific|failed to reveal|does not support|"
+    r"do not support|pending|inconclusive|none performed|not performed|"
+    r"rule(?:s|d)? out|ruled out|rule-out|exclude(?:s|d)?|without evidence|"
+    r"no evidence)\b[^.;\n\r|]{0,120}",
+    re.IGNORECASE,
+)
+
 _ANCILLARY_TUMOR_EVIDENCE_RE = re.compile(
     r"|".join(
         [
             # "neoplastic cells are positive/immunoreactive for ..."
             r"\b(?:neoplastic|tumou?r)\s+(?:cells?|population|lymphocytes?|"
-            r"epithelial cells?|endothelial cells?|melanocytes?)\b.{0,100}"
+            r"epithelial cells?|endothelial cells?|melanocytes?|spindle cells?)\b.{0,100}"
             r"\b(?:positive|positivity|immunoreactive|immunolabel(?:ed|ing)?|"
             r"immunoreactivity|label(?:ed|ing)|stain(?:ed|ing)?|express(?:es|ed|ion)|"
             r"expression)\b",
@@ -182,11 +236,21 @@ _ANCILLARY_TUMOR_EVIDENCE_RE = re.compile(
             r"immunoreactivity|label(?:ed|ing)|stain(?:ed|ing)?|express(?:es|ed|ion)|"
             r"expression)\b.{0,100}"
             r"\b(?:neoplastic|tumou?r)\s+(?:cells?|population|lymphocytes?|"
-            r"epithelial cells?|endothelial cells?|melanocytes?)\b",
+            r"epithelial cells?|endothelial cells?|melanocytes?|spindle cells?)\b",
             # Marker-positive neoplastic cells, e.g. "CD3-positive neoplastic lymphocytes".
             r"\b[A-Z0-9][A-Za-z0-9/\- ]{1,25}[- ]positive\b.{0,80}"
             r"\b(?:neoplastic|tumou?r)\s+(?:cells?|population|lymphocytes?|"
-            r"epithelial cells?|endothelial cells?|melanocytes?)\b",
+            r"epithelial cells?|endothelial cells?|melanocytes?|spindle cells?)\b",
+            # "IHC supports/confirms diagnosis of insulinoma / PNST / etc."
+            r"\b(?:support(?:s|ed|ing)?|confirm(?:s|ed|ing)?|consistent with|"
+            r"diagnostic for)\b.{0,140}\b(?:" + _DIRECT_TUMOR_TERMS + r"|"
+            r"urothelial origin|skeletal muscle origin)\b",
+            # "insulin/S100/uroplakin supports diagnosis/origin ..."
+            r"\b(?:insulin|s100|uroplakin|olig-?2|desmin|pan[- ]?muscle actin|"
+            r"cd3|cd20|cd31|factor viii|melan[- ]?a)\b.{0,100}"
+            r"\b(?:support(?:s|ed|ing)?|confirm(?:s|ed|ing)?|consistent with|"
+            r"diagnostic for)\b.{0,140}\b(?:" + _DIRECT_TUMOR_TERMS + r"|"
+            r"urothelial origin|skeletal muscle origin)\b",
         ]
     ),
     re.IGNORECASE,
@@ -197,18 +261,18 @@ def ancillary_tests_support_neoplasia(ancillary_tests: str) -> bool:
     """True when ancillary tests provide strong, positive tumor evidence.
 
     This is intentionally conservative. Marker names alone do not count; the
-    evidence must connect positive marker language directly to neoplastic/tumor
-    cells. If the same ancillary section contains negation, rule-out, pending,
-    or inconclusive language, it does not veto non-neoplastic suppression.
+    evidence must connect positive/supportive marker language to neoplastic or
+    tumor cells, a tumor diagnosis, or tumor lineage/origin. Negated/rule-out
+    spans are ignored so negative stains, nonspecific staining, pending tests,
+    and infection-only stains do not veto non-neoplastic suppression.
     """
     text = ancillary_tests or ""
     if not text.strip():
         return False
-    if _ANCILLARY_NEGATIVE_RE.search(text):
+    cleaned = _ANCILLARY_NEGATED_SPAN_RE.sub(" ", text)
+    if not _ANCILLARY_MARKER_POSITIVE_RE.search(cleaned):
         return False
-    if not _ANCILLARY_MARKER_POSITIVE_RE.search(text):
-        return False
-    return bool(_ANCILLARY_TUMOR_EVIDENCE_RE.search(text))
+    return bool(_ANCILLARY_TUMOR_EVIDENCE_RE.search(cleaned))
 
 
 def looks_non_neoplastic(
@@ -218,23 +282,22 @@ def looks_non_neoplastic(
 ) -> bool:
     """Heuristic: True if the report's primary diagnosis appears non-neoplastic.
 
-    Logic: a non-neoplastic indicator must be present in FINAL COMMENT, AND
-    no competing neoplastic primary indicator may be present. FINAL COMMENT and
-    HP summary are primary evidence; ANCILLARY TESTS is used only as a narrow
-    tumor-evidence veto so it can prevent unsafe suppression without creating a
-    new tumor diagnosis.
+    Logic: a strong non-neoplastic indicator must be present in FINAL COMMENT,
+    and direct tumor evidence must be absent from FINAL COMMENT and ANCILLARY
+    TESTS. HP summary remains a soft veto for explicit tumor morphology.
     """
     fc = final_comment or ""
     hp = hp_summary or ""
-    if not _NON_NEOPLASTIC_RE.search(fc):
+    if not has_non_neoplastic_primary_diagnosis(fc):
         return False
-    # Veto if the report also names a tumor type in FINAL COMMENT.
-    if _NEOPLASTIC_RE.search(fc):
+    # Veto if FINAL COMMENT names any neoplasm, including incidental/benign
+    # tumors. Vet-ICD-O extraction should keep those diagnoses.
+    if final_comment_has_tumor_evidence(fc):
         return False
     # Soft veto from HP summary: if HP mentions a tumor explicitly we keep
     # the prediction. (HP often says "neoplastic cells infiltrate ..." even
     # when FINAL COMMENT focuses on the inflammatory secondary process.)
-    if _NEOPLASTIC_RE.search(hp):
+    if _text_has_direct_tumor_evidence(hp):
         return False
     # Ancillary tests can veto suppression when they strongly support a tumor,
     # but marker names alone are deliberately ignored.

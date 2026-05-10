@@ -34,6 +34,8 @@ import pandas as pd
 from .text_filters import (
     _QUALIFIER_VARIANTS,
     ancillary_tests_support_neoplasia,
+    final_comment_has_tumor_evidence,
+    has_non_neoplastic_primary_diagnosis,
     looks_non_neoplastic,
     qualifier_words_missing_from_text,
 )
@@ -220,14 +222,18 @@ def apply_non_neoplastic_gate(
     )
 
     suppressed_ids: set[str] = set()
+    n_final_comment_vetoed = 0
     n_ancillary_vetoed = 0
     for cid, cols in reports.items():
         fc = cols.get(final_comment_col, "")
         hp = cols.get(hp_summary_col, "")
         ancillary = cols.get(ancillary_tests_col, "")
-        # Count how often ancillary tests rescue a case that the FINAL COMMENT
-        # and HP summary alone would have suppressed.
-        if looks_non_neoplastic(fc, hp) and ancillary_tests_support_neoplasia(ancillary):
+        if not has_non_neoplastic_primary_diagnosis(fc):
+            continue
+        if final_comment_has_tumor_evidence(fc):
+            n_final_comment_vetoed += 1
+            continue
+        if ancillary_tests_support_neoplasia(ancillary):
             n_ancillary_vetoed += 1
             continue
         if looks_non_neoplastic(fc, hp, ancillary):
@@ -253,5 +259,6 @@ def apply_non_neoplastic_gate(
     print(
         f"Non-neoplastic gate: suppressed {n_suppressed} predictions across "
         f"{len(suppressed_ids)} flagged cases "
-        f"({n_ancillary_vetoed} ancillary tumor-evidence vetoes)"
+        f"({n_final_comment_vetoed} final-comment tumor-evidence vetoes, "
+        f"{n_ancillary_vetoed} ancillary tumor-evidence vetoes)"
     )

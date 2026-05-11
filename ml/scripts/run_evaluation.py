@@ -28,13 +28,14 @@ from evaluation import (
     evaluate,
     evaluate_case_based,
     evaluate_case_presence,
+    evaluate_common_labels,
     evaluate_groups,
     evaluate_label_presence,
     log_evaluation,
 )
 
 
-_STAGE_CHOICES = ["pipeline", "case-based", "case-presence", "groups", "label-presence", "all"]
+_STAGE_CHOICES = ["pipeline", "case-based", "common-labels", "case-presence", "groups", "label-presence", "all"]
 _DEFAULT_THRESHOLDS = {
     "case-presence": 0.5,
     "groups": 0.85,
@@ -108,6 +109,10 @@ def main() -> int:
         "--labels-csv", default=config.LABELS_CSV,
         help="Vet-ICD-O labels CSV.",
     )
+    parser.add_argument(
+        "--top-n", type=int, default=20,
+        help="Number of most-common labels to report (common-labels stage only).",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -135,6 +140,13 @@ def main() -> int:
             summary=str(out_dir / "case_based_summary.csv"),
             history=str(out_dir / "case_based_history.csv"),
             label=args.label,
+        )
+
+    def _run_common_labels() -> None:
+        evaluate_common_labels(
+            Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
+            cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups,
+            top_n=args.top_n,
         )
 
     def _run_case_presence() -> None:
@@ -176,6 +188,8 @@ def main() -> int:
         _run_pipeline()
     elif args.stage == "case-based":
         _run_case_based()
+    elif args.stage == "common-labels":
+        _run_common_labels()
     elif args.stage == "case-presence":
         _run_case_presence()
     elif args.stage == "groups":
@@ -185,6 +199,7 @@ def main() -> int:
     elif args.stage == "all":
         _run_pipeline()
         _run_case_based()
+        _run_common_labels()
         _run_case_presence()
         _run_groups()
         _run_label_presence()

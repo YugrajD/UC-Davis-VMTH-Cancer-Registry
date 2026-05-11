@@ -35,10 +35,10 @@ ml/
 │   ├── annotation/         Annotation pipeline outputs
 │   │   └── llm/            llm_annotation.csv + llm_summary.json/md
 │   ├── checkpoints/        Trained model weights (.pt files) — gitignored, back up separately
-│   │   ├── contrastive/    Adapted PetBERT backbone (production) + legacy LabelPresenceClassifier
+│   │   ├── contrastive/    Adapted PetBERT backbone (production)
 │   │   ├── group/          GroupClassifier checkpoints
 │   │   ├── case_presence/  CasePresenceClassifier checkpoint (Stage 1 gate)
-│   │   └── label_presence/ Per-group LabelPresenceClassifier checkpoints (Stage 3a, Phase 28+)
+│   │   └── label_presence/ Per-group LabelPresenceClassifier checkpoints (Stage 3, Phase 28+) + lp_thresholds.json
 │   ├── data_analysis/      Annotation coverage stats (run_data_analysis.py): combined .txt + per-section .csv + .png
 │   ├── evaluation/         Cycle evaluation results
 │   ├── production/         Scoring pipeline predictions and supporting files
@@ -56,14 +56,20 @@ ml/
 │       ├── run_annotation_cleanup.py    Standalone re-run of the cleanup pass
 │       └── compare_llm_models.py        Bake-off harness for comparing LM Studio models on Tier-3
 ├── production/             Production scoring pipelines
-│   └── petbert_pipeline/   3/4-stage pipeline (CasePresence → Group → LabelPresence → KW)
+│   └── petbert_pipeline/   4-stage pipeline (CasePresence → Group → LabelPresence → KW)
 ├── evaluation/             Model assessment
-│   ├── evaluate.py         Score predictions against verified labels → verdicts
-│   └── log_evaluation.py   Append cycle results to evaluation_history.csv
+│   ├── evaluate.py                  Per-label verdict scoring (end-to-end)
+│   ├── evaluate_case_based.py       Case-level lenient verdict (one per case)
+│   ├── evaluate_common_labels.py    Per-label recall report for the top-N expected labels
+│   ├── evaluate_case_presence.py    Stage 1 metrics
+│   ├── evaluate_groups.py           Stage 2 metrics
+│   ├── evaluate_label_presence.py   Stage 3 metrics
+│   ├── log_evaluation.py            Append cycle results to evaluation_history.csv
+│   └── common.py                    Shared helpers: safe_div, prf, load_filter_ids, load_uncommon_groups
 ├── training/               Training scripts, organized by mode
-│   ├── binary/             Legacy LabelPresenceClassifier cycle orchestration + CasePresenceClassifier dataset/training
+│   ├── binary/             CasePresenceClassifier dataset/training (Stage 1 gate)
 │   ├── group/              GroupClassifier training (one-shot)
-│   ├── label_presence/     Per-group LabelPresenceClassifier training (Stage 3a, one-shot per group)
+│   ├── label_presence/     Per-group LabelPresenceClassifier training (Stage 3, one-shot per group)
 │   ├── contrastive/        Embedding backbone adaptation (production best)
 │   └── data/               Data utilities (train/test split generation)
 ├── scripts/                Top-level entry points (no PYTHONPATH needed)
@@ -72,7 +78,8 @@ ml/
 │   ├── run_training.py              4-stage training (modes: train-groups, adapt-backbone, train-case-presence, train-label-presence)
 │   ├── run_evaluation.py            Score the latest predictions and record to history
 │   ├── run_production.py            4-stage production inference (default)
-│   └── sweep_lp_thresholds.py       Calibrate per-LP Stage-3 thresholds (writes lp_thresholds.json + sweep CSV)
+│   ├── sweep_lp_thresholds.py       Calibrate per-LP Stage-3 thresholds (writes lp_thresholds.json + sweep CSV)
+│   └── sweep_tail_gate.py           Sweep (tail_max_predictions, tail_max_group_prob_gap) on the held-out test set
 ├── config.py               Project-wide path defaults and shared helpers
 ├── utils/                  Shared helpers (encoding/safe_filename, csv_io/strip_bom, …)
 ├── text_selection/         Multi-column TF-IDF text selector — used by both production and training
@@ -98,9 +105,9 @@ through CasePresenceClassifier → GroupClassifier → per-group LabelPresenceCl
 | `embedding_cache.py` | Save/load cached embeddings — avoids re-running PetBERT every cycle |
 | `stages/case_presence_classifier.py` | Stage 1 — CasePresenceClassifier gate |
 | `stages/group_classifier.py` | Stage 2 — GroupClassifier |
-| `stages/label_presence_classifier.py` | Stage 3a — per-group LabelPresenceClassifier loader + within-group scorer |
-| `stages/keyword_correction.py` | Stage 3b — ICD-O behavior + subtype keyword filter |
-| `stages/__init__.py` | Per-case dispatcher (`categorize_per_case`) that drives Stage 3a → Stage 3b |
+| `stages/label_presence_classifier.py` | Stage 3 — per-group LabelPresenceClassifier loader + within-group scorer |
+| `stages/keyword_correction.py` | Stage 4 — ICD-O behavior + subtype keyword filter |
+| `stages/__init__.py` | Per-case dispatcher (`categorize_per_case`) that drives Stage 3 → Stage 4 |
 | `io.py` | Write all output files (CSV, NPZ, JSON) |
 | `cli.py` | `argparse` CLI; `build_config()` maps args → `ScanConfig` |
 | `utils.py` | Text cleaning, device selection, column merging |
@@ -129,6 +136,19 @@ Handles negation, hedging, abbreviations, and anatomic-site disambiguation.
 
 Scores final pipeline predictions against verified annotation labels
 (good / slightly_off / completely_off / false_positive / false_negative).
+Emits one row per *expected term*, so multi-label cases produce multiple rows.
+
+### `evaluation/evaluate_case_based.py` — Case-level lenient scoring
+
+Rolls every label up to a single verdict per case ("any expected label hit ⇒
+Good"). Optimistic counterpart to `evaluate.py`'s per-label scoring.
+
+### `evaluation/evaluate_common_labels.py` — Per-label recall report
+
+For each of the top-N most-common expected labels, reports `recall_exact`
+(top-5 predicted term matches) and `recall_group` (predicted group covers
+the expected group). Keeps missed labels visible — the opposite trade-off
+from `evaluate_case_based.py`.
 
 ### `evaluation/evaluate_case_presence.py` — Stage 1 metrics
 
@@ -164,19 +184,22 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 | `catalog.py` | Build a `LabelCatalog` (label strings + embedding texts) |
 | `projection.py` | Map predicted label indices → `(term, group, code)` output fields |
 | `behavior_keywords.py` | ICD-O behavior code keyword lists and scorer — applied in Stage 4 (KW correction) by default |
-| `subtype_keywords.py` | Histologic/topographic subtype keyword discriminators — applied in Stage 4 KW correction for 6 groups (Phase 27) |
-| `labels.csv` | Vet-ICD-O-canine-1 taxonomy: ~857 terms across 44 cancer groups |
+| `subtype_keywords.py` | Histologic/topographic subtype keyword discriminators — applied in Stage 4 (KW correction) for 6 groups (Phase 27) |
+| `labels.csv` | Vet-ICD-O-canine-1 taxonomy: 846 terms across 52 cancer groups |
 
 ### `model/` — Neural network architectures
 
 | File | Role |
 |---|---|
 | `constants.py` | `PETBERT_EMB_DIM=768`, `DEFAULT_HIDDEN_DIM=512`, `DEFAULT_DROPOUT=0.3`, `DEFAULT_TEXT_COLS` (experiment-path columns) |
-| `label_presence_classifier.py` | Binary MLP: `[report_emb ‖ label_emb] → present/absent`. Used as the per-group Stage 3a classifier in the 4-stage pipeline |
+| `label_presence_classifier.py` | Binary MLP: `[report_emb ‖ label_emb] → present/absent`. Used as the per-group Stage 3 classifier in the 4-stage pipeline |
 | `group_classifier.py` | Multi-label MLP: `report_emb → per-group sigmoid probabilities` |
 | `case_presence_classifier.py` | Binary MLP: `report_emb → cancer probability` (case-level gate, Stage 1) |
 
 ### `training/binary/` — CasePresenceClassifier (Stage 1) training
+
+(The legacy `--mode train-classifier` pipeline that previously lived here —
+single all-label binary with CO-bank cycles — was removed in Phase 28.)
 
 | File | Role |
 |---|---|
@@ -190,11 +213,11 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 | `build_training_data.py` | Build multi-hot targets for `GroupClassifier` from cached embeddings (with common/uncommon bucketing via `--uncommon-threshold`) |
 | `train.py` | Train `GroupClassifier` (one-shot, not iterative). Supports BCE / Focal / ASL losses and cosine LR schedule |
 
-### `training/label_presence/` — Per-group LabelPresenceClassifier training (Stage 3a)
+### `training/label_presence/` — Per-group LabelPresenceClassifier training (Stage 3)
 
 | File | Role |
 |---|---|
-| `build_training_pairs.py` | Build within-group `(case, label, target)` pairs for one group; positives are annotation matches, negatives are other labels in the same group. Handles the "Uncommon" bucket as a union of merged groups |
+| `build_training_pairs.py` | Build within-group `(case, label, target)` pairs for one group; positives are annotation matches, negatives are other labels in the same group (random or cosine-mined hard-neg via QW1). Handles the "Uncommon" bucket as a union of merged groups |
 | `train.py` | Train one `LabelPresenceClassifier` (n_cols=1, concat) per group on cached `tfidf_selected` embeddings; save to `{safe_group_name}.pt` |
 
 ### `training/contrastive/` — Embedding backbone adaptation (production best)
@@ -258,7 +281,6 @@ output/evaluation/contrastive_test/evaluation_history.csv
 | Path | Contents |
 |---|---|
 | `output/production/contrastive/petbert_predictions.csv` | Top-5 predicted labels per case (term, group, ICD code, score) |
-| `output/production/contrastive/petbert_column_scores.csv` | Per-column similarity breakdown |
 | `output/production/contrastive/petbert_provenance.csv` | Per-case traceability (column selected, token counts) |
 | `output/production/contrastive/petbert_similarity_scores.csv` | Full score matrix (N cases × M labels) |
 | `output/production/contrastive/petbert_visualization.csv` | PCA 2-D coordinates per case |
@@ -276,13 +298,15 @@ output/evaluation/contrastive_test/evaluation_history.csv
 | `output/evaluation/{subdir}/case_presence_evaluation{,_summary,_history}.csv` | Stage 1 — per-case + summary + history metrics (P, R, F1, AUC) |
 | `output/evaluation/{subdir}/groups_evaluation{,_summary,_history}.csv` | Stage 2 — per (case, group) + per-group + macro/micro + top-k metrics |
 | `output/evaluation/{subdir}/label_presence_evaluation{,_summary,_history}.csv` | Stage 3 — per (case, label) + per-LP + macro/micro metrics |
-| `output/training/contrastive/evaluation_co_bank.csv` | Rolling bank of wrong-group predictions (legacy training-cycle path) |
+| `output/evaluation/{subdir}/case_based_evaluation.csv` | Case-level lenient verdicts (one verdict per case) |
+| `output/evaluation/{subdir}/case_based_{summary,history}.csv` | Aggregate counts + history for case-based evaluation |
+| `output/evaluation/{subdir}/common_labels_evaluation.csv` | Per-label exact-term and group-level recall for the top-N most common expected labels |
+| `output/evaluation/{subdir}/lp_threshold_sweep.csv` | Per-LP threshold sweep (written by `sweep_lp_thresholds.py`) |
 | `output/training/contrastive/contrastive_pairs.csv` | (report_text, label_text) pairs for backbone adaptation |
 | `output/training/contrastive/hard_neg_pairs.csv` | (report, correct_label, wrong_label) triplets for hard-neg loss |
 | `output/training/group/group_training_data.npz` | Cached multi-hot training targets for group classifier |
 | `output/training/group/uncommon_groups.txt` | Group names merged into the "Uncommon" bucket |
 | `output/training/binary/case_presence_dataset.npz` | Case-level cancer/no-cancer dataset for CasePresenceClassifier |
-| `output/training/binary/training_pairs.csv` | Generated (case, label, target) pairs for legacy classifier training |
 | `output/training/label_presence/{safe_group_name}_pairs.csv` | Within-group training pairs per ICD group |
 | `output/splits/train_cases.txt` | Case IDs reserved for training (generated once by `create_split.py`) |
 | `output/splits/test_cases.txt` | Case IDs held out for evaluation (generated once by `create_split.py`) |
@@ -327,7 +351,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
 
 **Per-stage evaluation — isolate which classifier moved between training cycles:**
 ```bash
-# All four (end-to-end + Stage 1 + Stage 2 + Stage 3)
+# All stages (end-to-end + case-based + common-labels + Stage 1 + Stage 2 + Stage 3)
 ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
   --stage all \
   --test-cases ml/output/splits/test_cases.txt \
@@ -338,6 +362,8 @@ ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
 ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --stage case-presence  --test-cases ml/output/splits/test_cases.txt
 ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --stage groups         --test-cases ml/output/splits/test_cases.txt
 ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --stage label-presence --test-cases ml/output/splits/test_cases.txt
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --stage case-based     --test-cases ml/output/splits/test_cases.txt
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --stage common-labels  --test-cases ml/output/splits/test_cases.txt
 ```
 
 **Annotate diagnoses:**
@@ -377,7 +403,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --annotation-csv ml/output/annotation/llm/llm_annotation.csv
 ```
 
-**Train per-group LabelPresenceClassifiers (Stage 3a, one model per ICD group):**
+**Train per-group LabelPresenceClassifiers (Stage 3, one model per ICD group):**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode train-label-presence --label-presence-epochs 25 \
@@ -405,11 +431,11 @@ ml/.venv/Scripts/python.exe ml/scripts/run_data_analysis.py
 |---|---|
 | `README.md` | This file — project overview, structure, quick start |
 | `production-pipeline.md` | Authoritative implementation-based walkthrough of the code path used by `run_production.py` today |
-| `label-annotation.md` | Both annotation methods: keyword and LLM — how they work, coverage comparison, known limitations |
+| `label-annotation.md` | LLM annotation pipeline — three-tier cascade, ensemble cleanup, known limitations |
 | `classifiers.md` | All classifier approaches: architecture, advantages/disadvantages, evaluation results |
 | `model-training.md` | Comparison table and architectural decisions |
 | `training-guide.md` | Step-by-step how-to: cold start, run commands, expected trajectory |
 | `training-log/training-log-binary.md` | Label presence classifier — phase-by-phase history (Phases 1–16) |
 | `training-log/training-log-group.md` | Group classifier — experiments and results |
 | `training-log/training-log-finetune.md` | Backbone adaptation — contrastive approach (Phase 17) and end-to-end attempt (Approach B, 2026-05, abandoned) |
-| `training-log/training-log-label-presence.md` | Per-group LabelPresenceClassifier (Stage 3a) — Phase 28+ |
+| `training-log/training-log-label-presence.md` | Per-group LabelPresenceClassifier (Stage 3) — Phase 28+ |

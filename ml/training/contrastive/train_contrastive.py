@@ -225,6 +225,7 @@ def train(
     hard_neg_csv: str | None = None,
     hard_neg_weight: float = 0.5,
     hard_neg_margin: float = 0.3,
+    hard_neg_batch_size: int | None = None,
 ) -> None:
 
     device = device_from_arg(device_arg)
@@ -264,15 +265,19 @@ def train(
         if len(hn_dataset) == 0:
             print("  Warning: hard-neg CSV is empty — skipping hard-neg loss.")
         else:
+            hn_batch_size = hard_neg_batch_size if hard_neg_batch_size else batch_size
             hard_neg_loader = DataLoader(
                 hn_dataset,
-                batch_size=batch_size,
+                batch_size=hn_batch_size,
                 shuffle=True,
                 collate_fn=_make_hard_neg_collator(tokenizer, max_length),
                 drop_last=True,
             )
             hn_iter_box.append(iter(hard_neg_loader))
-            print(f"  Hard-neg weight={hard_neg_weight}, margin={hard_neg_margin}")
+            print(
+                f"  Hard-neg weight={hard_neg_weight}, margin={hard_neg_margin}, "
+                f"batch_size={hn_batch_size}"
+            )
 
     # --- Optimiser and scheduler --------------------------------------------
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
@@ -303,6 +308,26 @@ def train(
         ).last_hidden_state
         return F.normalize(_mean_pool(hidden, attention_mask), dim=-1)
 
+    pad_id = tokenizer.pad_token_id or 0
+
+    def _pad_to(t: torch.Tensor, target_len: int, value: int = 0) -> torch.Tensor:
+        if t.shape[1] >= target_len:
+            return t
+        return F.pad(t, (0, target_len - t.shape[1]), value=value)
+
+    def _cat_padded(
+        tensors_ids: list[torch.Tensor],
+        tensors_mask: list[torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Pad all to the longest in the group, then concat along batch dim.
+        # Two forward passes per step (reports / labels) — fewer than 5 separate
+        # forwards trims per-call XPU kernel-launch overhead.
+        max_len = max(t.shape[1] for t in tensors_ids)
+        return (
+            torch.cat([_pad_to(t, max_len, pad_id) for t in tensors_ids], dim=0),
+            torch.cat([_pad_to(t, max_len, 0)      for t in tensors_mask], dim=0),
+        )
+
     global_step = 0
     epoch_pbar = tqdm(range(1, epochs + 1), desc="Contrastive training", unit="epoch")
     for epoch in epoch_pbar:
@@ -319,13 +344,11 @@ def train(
 
             # Forward through PetBERT base transformer only — MLM head is never
             # called so its parameters receive no gradients and are not updated.
-            report_emb = _embed(report_input_ids, report_attention_mask)
-            label_emb  = _embed(label_input_ids,  label_attention_mask)
-
-            loss = _infonce_loss(report_emb, label_emb, temperature)
-
-            # Hard-negative margin loss (optional)
-            if hn_iter_box:
+            if not hn_iter_box:
+                report_emb = _embed(report_input_ids, report_attention_mask)
+                label_emb  = _embed(label_input_ids,  label_attention_mask)
+                loss = _infonce_loss(report_emb, label_emb, temperature)
+            else:
                 try:
                     hn_batch = next(hn_iter_box[0])
                 except StopIteration:
@@ -333,13 +356,36 @@ def train(
                     hn_iter_box[0] = iter(hard_neg_loader)
                     hn_batch = next(hn_iter_box[0])
 
-                hn_r  = _embed(hn_batch["report_input_ids"].to(device),
-                               hn_batch["report_attention_mask"].to(device))
-                hn_c  = _embed(hn_batch["correct_input_ids"].to(device),
-                               hn_batch["correct_attention_mask"].to(device))
-                hn_w  = _embed(hn_batch["wrong_input_ids"].to(device),
-                               hn_batch["wrong_attention_mask"].to(device))
+                hn_r_ids = hn_batch["report_input_ids"].to(device)
+                hn_r_mask = hn_batch["report_attention_mask"].to(device)
+                hn_c_ids = hn_batch["correct_input_ids"].to(device)
+                hn_c_mask = hn_batch["correct_attention_mask"].to(device)
+                hn_w_ids = hn_batch["wrong_input_ids"].to(device)
+                hn_w_mask = hn_batch["wrong_attention_mask"].to(device)
 
+                B_pos = report_input_ids.shape[0]
+                B_hn = hn_r_ids.shape[0]
+
+                # Mega-forward over reports (long ~256 tokens):
+                all_r_ids, all_r_mask = _cat_padded(
+                    [report_input_ids, hn_r_ids],
+                    [report_attention_mask, hn_r_mask],
+                )
+                all_r_emb = _embed(all_r_ids, all_r_mask)
+                report_emb = all_r_emb[:B_pos]
+                hn_r       = all_r_emb[B_pos:B_pos + B_hn]
+
+                # Mega-forward over labels (short ~12 tokens):
+                all_l_ids, all_l_mask = _cat_padded(
+                    [label_input_ids, hn_c_ids, hn_w_ids],
+                    [label_attention_mask, hn_c_mask, hn_w_mask],
+                )
+                all_l_emb = _embed(all_l_ids, all_l_mask)
+                label_emb = all_l_emb[:B_pos]
+                hn_c      = all_l_emb[B_pos:B_pos + B_hn]
+                hn_w      = all_l_emb[B_pos + B_hn:B_pos + 2 * B_hn]
+
+                loss = _infonce_loss(report_emb, label_emb, temperature)
                 hn_loss = _hard_neg_loss(hn_r, hn_c, hn_w, temperature, hard_neg_margin)
                 loss = loss + hard_neg_weight * hn_loss
                 epoch_hn_loss += hn_loss.item()
@@ -421,6 +467,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hard-neg-margin", type=float, default=0.3,
                         help="Margin for the hard-negative loss: loss fires when "
                              "sim(report, wrong) > sim(report, correct) - margin (default: 0.3)")
+    parser.add_argument("--hard-neg-batch-size", type=int, default=None,
+                        help="Override batch size for the hard-neg loader. Smaller values "
+                             "reduce XPU activation memory across 5 forward passes per step. "
+                             "(default: same as --batch-size)")
     args = parser.parse_args(argv)
 
     train(
@@ -437,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         hard_neg_csv=args.hard_neg_csv,
         hard_neg_weight=args.hard_neg_weight,
         hard_neg_margin=args.hard_neg_margin,
+        hard_neg_batch_size=args.hard_neg_batch_size,
     )
     return 0
 

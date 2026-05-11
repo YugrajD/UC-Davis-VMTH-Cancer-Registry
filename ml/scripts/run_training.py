@@ -116,6 +116,7 @@ def _adapt_backbone(args: argparse.Namespace) -> None:
         hard_neg_csv=args.hard_neg_csv,
         hard_neg_weight=args.hard_neg_weight,
         hard_neg_margin=args.hard_neg_margin,
+        hard_neg_batch_size=args.hard_neg_batch_size,
     )
 
     print("\n=== Cold-start required ===")
@@ -504,6 +505,10 @@ def main() -> int:
                         help="[adapt-backbone] Weight for the hard-negative margin loss (default: 0.5)")
     parser.add_argument("--hard-neg-margin", type=float, default=0.3,
                         help="[adapt-backbone] Margin for hard-negative loss (default: 0.3)")
+    parser.add_argument("--hard-neg-batch-size", type=int, default=None,
+                        help="[adapt-backbone] Override batch size for the hard-neg loader. "
+                             "Smaller values reduce XPU activation memory across the 5 forward "
+                             "passes per step. (default: same as --batch-size)")
 
     args = parser.parse_args()
 

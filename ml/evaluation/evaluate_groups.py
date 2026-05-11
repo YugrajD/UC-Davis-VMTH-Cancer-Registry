@@ -6,8 +6,11 @@ might gate out are still evaluated here — this isolates Stage 2 performance fr
 Stage 1 errors.
 
 Per case, the expected group set is derived from the annotation CSV. Any
-expected matched_group that is in the uncommon-groups list is replaced by the
-literal token "Uncommon" to align with the GroupClassifier output vocabulary.
+expected matched_group not in the classifier's output vocabulary is folded to
+the literal token "Uncommon" to align with the GroupClassifier output vocabulary.
+The fold list is derived from the checkpoint's `group_names`, so classifiers
+with different output taxonomies (e.g. 17-group vs 26-group) are scored fairly
+without requiring a separate `uncommon_groups.txt`.
 
 Output files (written to --out-dir):
   groups_evaluation.csv         — per (case, group) verdict (TP/FP/FN)
@@ -29,7 +32,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
-from evaluation.common import load_filter_ids, load_uncommon_groups, prf, safe_div
+from evaluation.common import load_filter_ids, prf, safe_div
 from model.group_classifier import GroupClassifier
 from utils.encoding import npz_col_key
 
@@ -44,12 +47,13 @@ def _load_cache_minimal(path: Path) -> tuple[list[str], np.ndarray, dict[str, np
 
 
 def _load_annotation_groups(
-    annotation_csv: Path, uncommon_groups: frozenset[str]
+    annotation_csv: Path, classifier_groups: frozenset[str]
 ) -> tuple[dict[str, set[str]], set[str]]:
     """Return (case_id -> expected groups, set of cancer case_ids).
 
-    Uncommon matched_groups are folded into the literal token "Uncommon" to
-    align with the GroupClassifier output vocabulary.
+    Any matched_group not in the classifier's output vocabulary is folded into
+    the literal token "Uncommon", aligning expected sets with what the model
+    can actually predict.
     """
     expected: dict[str, set[str]] = defaultdict(set)
     cancer: set[str] = set()
@@ -62,10 +66,10 @@ def _load_annotation_groups(
             cid = row["case_id"]
             cancer.add(cid)
             if grp:
-                if grp in uncommon_groups:
-                    expected[cid].add("Uncommon")
-                else:
+                if grp in classifier_groups:
                     expected[cid].add(grp)
+                else:
+                    expected[cid].add("Uncommon")
     return expected, cancer
 
 
@@ -75,7 +79,6 @@ def evaluate_groups(
     annotation_csv: Path,
     out_dir: Path,
     cases_txt: str = "",
-    uncommon_groups_path: str = config.UNCOMMON_GROUPS_TXT,
     threshold: float = 0.85,
     history_label: str = "",
 ) -> dict:
@@ -86,11 +89,13 @@ def evaluate_groups(
         _load_cache_minimal(embedding_cache_path)
     print(f"  Loaded embedding cache: {len(case_ids)} cases, columns={col_names}.")
 
-    uncommon_groups = load_uncommon_groups(uncommon_groups_path)
-    if uncommon_groups:
-        print(f"  Uncommon groups loaded: {len(uncommon_groups)} groups.")
+    print(f"  Loading classifier from {classifier_path}...")
+    model, group_names = GroupClassifier.load(classifier_path)
+    classifier_groups = frozenset(group_names)
+    print(f"  Classifier vocab: {len(classifier_groups)} groups "
+          f"(Uncommon present: {'Uncommon' in classifier_groups}).")
 
-    expected_per_case, cancer_case_ids = _load_annotation_groups(annotation_csv, uncommon_groups)
+    expected_per_case, cancer_case_ids = _load_annotation_groups(annotation_csv, classifier_groups)
     print(f"  Annotation: {len(cancer_case_ids)} cancer cases (across all splits).")
 
     filter_ids = load_filter_ids(cases_txt)
@@ -110,9 +115,6 @@ def evaluate_groups(
     col_emb_concat = col_emb_concat[keep_idx]
     mean_embeddings = mean_embeddings[keep_idx]
     print(f"  Evaluating {len(case_ids)} cancer cases (intersection with filter).")
-
-    print(f"  Loading classifier from {classifier_path}...")
-    model, group_names = GroupClassifier.load(classifier_path)
     # Use mean_embeddings if model expects 768-dim input; else col_emb_concat.
     if model.emb_dim == mean_embeddings.shape[1]:
         feats = mean_embeddings
@@ -304,7 +306,6 @@ def main() -> int:
     parser.add_argument("--out-dir",
                         default=f"{config.OUTPUT_EVALUATION_DIR}/{config.BEST_PREDICTIONS_SUBDIR}")
     parser.add_argument("--test-cases", default="")
-    parser.add_argument("--uncommon-groups", default=config.UNCOMMON_GROUPS_TXT)
     parser.add_argument("--threshold", type=float, default=0.85)
     parser.add_argument("--label", default="")
     args = parser.parse_args()
@@ -314,7 +315,6 @@ def main() -> int:
         annotation_csv=Path(args.annotation_csv),
         out_dir=Path(args.out_dir),
         cases_txt=args.test_cases,
-        uncommon_groups_path=args.uncommon_groups,
         threshold=args.threshold,
         history_label=args.label,
     )

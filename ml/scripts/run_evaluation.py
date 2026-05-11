@@ -143,7 +143,6 @@ def main() -> int:
             annotation_csv=Path(args.annotation_csv),
             out_dir=out_dir,
             cases_txt=args.test_cases,
-            uncommon_groups_path=args.uncommon_groups,
             threshold=_t("groups"),
             history_label=args.label,
         )

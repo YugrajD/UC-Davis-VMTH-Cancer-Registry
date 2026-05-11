@@ -29,6 +29,7 @@ def main() -> int:
         group_classifier=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_best.pt",
         case_presence_classifier=config.CASE_PRESENCE_CLASSIFIER_PT,
         label_presence_classifier_dir=config.CHECKPOINT_LABEL_PRESENCE_DIR,
+        label_presence_thresholds_json=config.LABEL_PRESENCE_THRESHOLDS_JSON,
         out_dir=f"{config.OUTPUT_PRODUCTION_DIR}/contrastive",
         local_only=True,
         text_cols="",  # empty = TF-IDF text selection

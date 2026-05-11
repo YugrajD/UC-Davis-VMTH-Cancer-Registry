@@ -38,6 +38,7 @@ CHECKPOINT_CONTRASTIVE_DIR = "ml/output/checkpoints/contrastive"
 CHECKPOINT_GROUP_DIR = "ml/output/checkpoints/group"
 CHECKPOINT_CASE_PRESENCE_DIR = "ml/output/checkpoints/case_presence"
 CHECKPOINT_LABEL_PRESENCE_DIR = "ml/output/checkpoints/label_presence"
+LABEL_PRESENCE_THRESHOLDS_JSON = "ml/output/checkpoints/label_presence/lp_thresholds.json"
 
 # ---------------------------------------------------------------------------
 # Output directories

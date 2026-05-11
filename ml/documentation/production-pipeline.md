@@ -203,7 +203,8 @@ through `run_production.py`.
 - `run_production.py` pre-wires all four stage checkpoints by default (see "Entry Point And Defaults").
 - `--label-presence-classifier-dir` enables Stage 3a; default is the production directory.
   Pass an empty string to disable and fall back to KW correction directly.
-- `--label-presence-threshold` (default 0.5) sets the within-group label selection threshold.
+- `--label-presence-threshold` (default 0.5) is the within-group label selection threshold and the fallback when no per-group threshold is set.
+- `--label-presence-thresholds-json` (default `ml/output/checkpoints/label_presence/lp_thresholds.json`) is a `{group_name: threshold}` map that overrides the global threshold per LP. Produced by `ml/scripts/sweep_lp_thresholds.py`; loaded automatically by `run_production.py`. Missing file → warn and fall back to the global threshold.
 - `--no-group-classifier-fallback-to-argmax` turns off the GroupClassifier argmax fallback
   (gate-passed cases with no group above threshold then become "Unidentified Cancer").
 - `--embedding-cache` reuses `ml/output/training/embedding_cache.npz` when provided.
@@ -238,11 +239,15 @@ cached `col_emb_concat` from the contrastive backbone. Phase 28 production: macr
 
 **Stage 3 — LabelPresenceClassifier (optional):**
 When `--label-presence-classifier-dir` is set, one per-group `LabelPresenceClassifier`
-model scores all labels within each active group. Labels whose score exceeds
-`--label-presence-threshold` (default 0.5) are selected; argmax fallback applies when
-nothing passes. Multiple labels per group can be selected, enabling within-group
-multi-diagnosis prediction. Groups without a corresponding `.pt` file in the directory
-fall through to KW correction directly. Train with `--mode train-label-presence`.
+model scores all labels within each active group. Labels whose score exceeds the
+threshold for that LP are selected; argmax fallback applies when nothing passes.
+The per-LP threshold is looked up in `--label-presence-thresholds-json` first (default
+`ml/output/checkpoints/label_presence/lp_thresholds.json`); groups missing from the map
+fall back to the global `--label-presence-threshold` (default 0.5). Multiple labels
+per group can be selected, enabling within-group multi-diagnosis prediction. Groups
+without a corresponding `.pt` file in the directory fall through to KW correction
+directly. Train with `--mode train-label-presence`; recalibrate thresholds after
+each retrain with `ml/scripts/sweep_lp_thresholds.py`.
 
 **Stage 4 — KW correction (post-filter):**
 Within the label pool selected by Stage 3 (or the full group pool when Stage 3 is absent),

@@ -131,7 +131,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.5,
         help=(
             "Probability threshold for LabelPresenceClassifier within-group label selection "
-            "(default: 0.5). Only used when --label-presence-classifier-dir is set."
+            "(default: 0.5). Only used when --label-presence-classifier-dir is set. "
+            "Acts as the fallback when --label-presence-thresholds-json is set but a group "
+            "is missing from the mapping."
+        ),
+    )
+    parser.add_argument(
+        "--label-presence-thresholds-json",
+        default=None,
+        help=(
+            "Optional path to a JSON file mapping group_name -> threshold (float). "
+            "When set, overrides --label-presence-threshold on a per-group basis; "
+            "groups not in the mapping fall back to --label-presence-threshold."
         ),
     )
     parser.add_argument(
@@ -174,6 +185,7 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         case_presence_threshold=args.case_presence_threshold,
         label_presence_classifier_dir=label_presence_dir,
         label_presence_threshold=args.label_presence_threshold,
+        label_presence_thresholds_json=args.label_presence_thresholds_json,
         tfidf_vectorizer_path=args.tfidf_vectorizer,
     )
 

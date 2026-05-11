@@ -55,6 +55,7 @@ def categorize_per_case(
     fallback_to_argmax: bool = True,
     label_presence_models: dict[str, "LabelPresenceClassifier"] | None = None,
     label_presence_threshold: float = 0.5,
+    label_presence_thresholds_per_group: dict[str, float] | None = None,
 ) -> CategorizationResult:
     """Dispatch each case to Stage 3a (LP) and/or Stage 3b (KW), assemble result.
 
@@ -154,13 +155,16 @@ def categorize_per_case(
 
             lp_model = (label_presence_models or {}).get(group_name)
             if lp_model is not None:
+                lp_t = (label_presence_thresholds_per_group or {}).get(
+                    group_name, label_presence_threshold
+                )
                 # Stage 3a: LabelPresenceClassifier picks within the group.
                 lp_pool, lp_score_map = score_within_group(
                     case_embedding=mean_embeddings[i : i + 1],
                     label_indices=label_idxs,
                     label_embeddings=label_embeddings,
                     lp_model=lp_model,
-                    threshold=label_presence_threshold,
+                    threshold=lp_t,
                 )
                 # Stage 3b: keyword post-filter on the LP-selected pool.
                 pool = apply_keyword_correction(

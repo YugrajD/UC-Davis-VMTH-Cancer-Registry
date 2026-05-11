@@ -36,6 +36,7 @@ class ScanConfig:
     case_presence_threshold: float = 0.5
     label_presence_classifier_dir: str | None = None
     label_presence_threshold: float = 0.5
+    label_presence_thresholds_json: str | None = None
     uncommon_groups_path: str = _config.UNCOMMON_GROUPS_TXT
 
 

@@ -16,6 +16,7 @@ Each stage lives in its own module under ``stages/``; this file only handles
 data prep, output writing, and stage dispatch.
 """
 
+import json
 from pathlib import Path
 
 # Import torch first — on Windows + Intel XPU, c10.dll load can fail if
@@ -207,6 +208,22 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         config.label_presence_classifier_dir, group_names
     )
 
+    label_presence_thresholds_per_group: dict[str, float] | None = None
+    if config.label_presence_thresholds_json:
+        thr_path = Path(config.label_presence_thresholds_json)
+        if thr_path.exists():
+            with open(thr_path, encoding="utf-8") as f:
+                label_presence_thresholds_per_group = {k: float(v) for k, v in json.load(f).items()}
+            print(
+                f"Loaded {len(label_presence_thresholds_per_group)} per-group LP thresholds "
+                f"from {thr_path}; fallback={config.label_presence_threshold}"
+            )
+        else:
+            print(
+                f"Warning: label_presence_thresholds_json does not exist: {thr_path} — "
+                f"falling back to global threshold {config.label_presence_threshold}"
+            )
+
     # Stage 3b: keyword correction lives inside the per-case dispatcher.
     categorization = categorize_per_case(
         texts=texts,
@@ -223,6 +240,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         fallback_to_argmax=config.group_classifier_fallback_to_argmax,
         label_presence_models=label_presence_models,
         label_presence_threshold=config.label_presence_threshold,
+        label_presence_thresholds_per_group=label_presence_thresholds_per_group,
     )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------

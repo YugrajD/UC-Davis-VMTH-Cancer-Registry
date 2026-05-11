@@ -71,7 +71,8 @@ ml/
 │   ├── run_data_analysis.py         Annotation coverage statistics
 │   ├── run_training.py              4-stage training (modes: train-groups, adapt-backbone, train-case-presence, train-label-presence)
 │   ├── run_evaluation.py            Score the latest predictions and record to history
-│   └── run_production.py            4-stage production inference (default)
+│   ├── run_production.py            4-stage production inference (default)
+│   └── sweep_lp_thresholds.py       Calibrate per-LP Stage-3 thresholds (writes lp_thresholds.json + sweep CSV)
 ├── config.py               Project-wide path defaults and shared helpers
 ├── utils/                  Shared helpers (encoding/safe_filename, csv_io/strip_bom, …)
 ├── text_selection/         Multi-column TF-IDF text selector — used by both production and training
@@ -228,7 +229,7 @@ output/annotation/llm/llm_annotation.csv
     │
 ml/data/report.csv  (clinical reports)
     │
-    ▼ run_training.py --mode adapt-backbone   (one-shot — InfoNCE + hard-neg)
+    ▼ run_training.py --mode adapt-backbone   (one-shot — InfoNCE; hard-neg loss optional via --hard-neg-csv)
     ▼ run_production.py                       (first run — embed all reports)
 output/checkpoints/contrastive/  (adapted PetBERT backbone)
 output/training/embedding_cache.npz  (cached PetBERT embeddings, keyed by tfidf_selected text)
@@ -309,9 +310,12 @@ ml/.venv/Scripts/python.exe ml/training/contrastive/fit_text_selector.py
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --group-classifier-threshold 0.85 \
-  --label-presence-threshold 0.5 \
   --device xpu --local-only
 ```
+
+Per-LP thresholds are auto-loaded from `ml/output/checkpoints/label_presence/lp_thresholds.json`
+(produced by `ml/scripts/sweep_lp_thresholds.py`). If that file is missing, the pipeline
+falls back to `--label-presence-threshold` (default 0.5).
 
 **Evaluate on held-out test set (after training):**
 ```bash

@@ -26,6 +26,7 @@ import argparse
 import config
 from evaluation import (
     evaluate,
+    evaluate_case_based,
     evaluate_case_presence,
     evaluate_groups,
     evaluate_label_presence,
@@ -33,7 +34,7 @@ from evaluation import (
 )
 
 
-_STAGE_CHOICES = ["pipeline", "case-presence", "groups", "label-presence", "all"]
+_STAGE_CHOICES = ["pipeline", "case-based", "case-presence", "groups", "label-presence", "all"]
 _DEFAULT_THRESHOLDS = {
     "case-presence": 0.5,
     "groups": 0.85,
@@ -125,6 +126,17 @@ def main() -> int:
             label=args.label,
         )
 
+    def _run_case_based() -> None:
+        evaluate_case_based(
+            Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
+            cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups,
+        )
+        log_evaluation(
+            summary=str(out_dir / "case_based_summary.csv"),
+            history=str(out_dir / "case_based_history.csv"),
+            label=args.label,
+        )
+
     def _run_case_presence() -> None:
         evaluate_case_presence(
             classifier_path=Path(args.case_presence_classifier),
@@ -162,6 +174,8 @@ def main() -> int:
 
     if args.stage == "pipeline":
         _run_pipeline()
+    elif args.stage == "case-based":
+        _run_case_based()
     elif args.stage == "case-presence":
         _run_case_presence()
     elif args.stage == "groups":
@@ -170,6 +184,7 @@ def main() -> int:
         _run_label_presence()
     elif args.stage == "all":
         _run_pipeline()
+        _run_case_based()
         _run_case_presence()
         _run_groups()
         _run_label_presence()

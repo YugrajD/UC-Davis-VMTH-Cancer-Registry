@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import precision_recall_fscore_support
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -63,6 +63,8 @@ def train_label_presence(
     val_split: float = 0.15,
     pos_weight: float = 1.0,
     recall_weight: float = 0.5,
+    weight_decay: float = 1e-4,
+    patience: int = 0,
     device: str = "auto",
     seed: int = 42,
     model_name: str = "SAVSNET/PetBERT",
@@ -111,7 +113,7 @@ def train_label_presence(
     tfidf_embs = cache["col_embeddings"][tfidf_col]   # (N_cases, 768)
     label_embs_all = cache["label_embeddings"]          # (M_labels, 768)
 
-    report_list, label_list, target_list = [], [], []
+    report_list, label_list, target_list, kept_case_ids = [], [], [], []
     skipped = 0
     for row, lstr, cid in zip(rows, label_strings, case_ids):
         cidx = case_id_to_idx.get(cid)
@@ -122,6 +124,7 @@ def train_label_presence(
         report_list.append(tfidf_embs[cidx])
         label_list.append(label_embs_all[lidx])
         target_list.append(float(row["target"]))
+        kept_case_ids.append(cid)
 
     if skipped:
         print(f"  Warning: {skipped}/{len(rows)} pairs skipped (case or label not in cache)")
@@ -132,12 +135,13 @@ def train_label_presence(
     report_embs = np.array(report_list, dtype=np.float32)
     label_embs  = np.array(label_list,  dtype=np.float32)
     targets     = np.array(target_list,  dtype=np.float32)
+    case_id_arr = np.array(kept_case_ids)
 
-    # --- Train/val split ------------------------------------------------------
-    indices = np.arange(len(targets))
-    train_idx, val_idx = train_test_split(
-        indices, test_size=val_split, random_state=seed, stratify=targets.astype(int)
-    )
+    # --- Case-disjoint train/val split (QW2) ---------------------------------
+    # GroupShuffleSplit ensures the same case never appears in both train and val,
+    # preventing target-stratified leakage that previously inflated val scores.
+    splitter = GroupShuffleSplit(n_splits=1, test_size=val_split, random_state=seed)
+    train_idx, val_idx = next(splitter.split(report_embs, targets, groups=case_id_arr))
 
     train_ds = _PairDataset(report_embs[train_idx], label_embs[train_idx], targets[train_idx])
     val_ds   = _PairDataset(report_embs[val_idx],   label_embs[val_idx],   targets[val_idx])
@@ -165,10 +169,12 @@ def train_label_presence(
 
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     best_score = -1.0
+    epochs_since_best = 0
+    best_epoch = 0
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
     print(f"  {'Epoch':>5}  {'Loss':>8}  {'F1':>6}  {'P':>6}  {'R':>6}  {'Score':>7}")
@@ -189,14 +195,22 @@ def train_label_presence(
         avg_loss = total_loss / len(train_ds)
         m = _evaluate(model, val_loader, dev)
         score = (1 - recall_weight) * m["precision"] + recall_weight * m["recall"]
-        marker = " *" if score > best_score else ""
+        improved = score > best_score
+        marker = " *" if improved else ""
         print(
             f"  {epoch:>5}  {avg_loss:>8.4f}  {m['f1']:>6.3f}  "
             f"{m['precision']:>6.3f}  {m['recall']:>6.3f}  {score:>7.3f}{marker}"
         )
-        if score > best_score:
+        if improved:
             best_score = score
+            best_epoch = epoch
+            epochs_since_best = 0
             model.save(out_path)
+        else:
+            epochs_since_best += 1
+            if patience > 0 and epochs_since_best >= patience:
+                print(f"  Early stop at epoch {epoch} (patience={patience}; best={best_epoch})")
+                break
 
-    print(f"  Best score: {best_score:.3f} -> {out_path}")
+    print(f"  Best score: {best_score:.3f} (epoch {best_epoch}) -> {out_path}")
     return best_score

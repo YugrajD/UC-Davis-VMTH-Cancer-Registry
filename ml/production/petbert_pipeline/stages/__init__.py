@@ -56,6 +56,7 @@ def categorize_per_case(
     label_presence_models: dict[str, "LabelPresenceClassifier"] | None = None,
     label_presence_threshold: float = 0.5,
     label_presence_thresholds_per_group: dict[str, float] | None = None,
+    tail_max_group_prob_gap: float = 1.0,
 ) -> CategorizationResult:
     """Dispatch each case to Stage 3a (LP) and/or Stage 3b (KW), assemble result.
 
@@ -143,8 +144,11 @@ def categorize_per_case(
         k_scores: list[float] = []
         k_meths: list[str] = []
         seen_winners: set[int] = set()
+        top_prob = float(case_probs[predicted[0]])
 
-        for g_idx in predicted[:max_predictions]:
+        for rank, g_idx in enumerate(predicted[:max_predictions]):
+            if rank > 0 and (top_prob - float(case_probs[g_idx])) > tail_max_group_prob_gap:
+                break
             group_name = group_names[g_idx]
             if group_name == "Uncommon":
                 label_idxs = uncommon_label_indices

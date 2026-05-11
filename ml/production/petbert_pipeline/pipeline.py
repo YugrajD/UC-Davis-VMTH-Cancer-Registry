@@ -234,13 +234,14 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         group_probs=group_probs,
         group_names=group_names,
         threshold=config.group_classifier_threshold,
-        max_predictions=5,
+        max_predictions=config.tail_max_predictions,
         presence_mask=presence_gate_mask,
         uncommon_groups=_load_uncommon_groups(config.uncommon_groups_path),
         fallback_to_argmax=config.group_classifier_fallback_to_argmax,
         label_presence_models=label_presence_models,
         label_presence_threshold=config.label_presence_threshold,
         label_presence_thresholds_per_group=label_presence_thresholds_per_group,
+        tail_max_group_prob_gap=config.tail_max_group_prob_gap,
     )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------

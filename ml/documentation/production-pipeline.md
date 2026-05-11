@@ -1,4 +1,4 @@
-# Production Pipeline
+ # Production Pipeline
 
 Implementation-based description of what `ml/scripts/run_production.py` does today.
 
@@ -205,6 +205,8 @@ through `run_production.py`.
   Pass an empty string to disable and fall back to KW correction directly.
 - `--label-presence-threshold` (default 0.5) is the within-group label selection threshold and the fallback when no per-group threshold is set.
 - `--label-presence-thresholds-json` (default `ml/output/checkpoints/label_presence/lp_thresholds.json`) is a `{group_name: threshold}` map that overrides the global threshold per LP. Produced by `ml/scripts/sweep_lp_thresholds.py`; loaded automatically by `run_production.py`. Missing file → warn and fall back to the global threshold.
+- `--tail-max-predictions` (default **2**) caps the number of group predictions emitted per case. Set to 1 to keep only the top group.
+- `--tail-max-group-prob-gap` (default **0.08**) drops tail group predictions whose probability is more than this far below the top group. Set to 1.0 to disable. Defaults calibrated 2026-05-11 on the held-out test set — see `ml/scripts/sweep_tail_gate.py` for the trade-off curve.
 - `--no-group-classifier-fallback-to-argmax` turns off the GroupClassifier argmax fallback
   (gate-passed cases with no group above threshold then become "Unidentified Cancer").
 - `--embedding-cache` reuses `ml/output/training/embedding_cache.npz` when provided.
@@ -236,6 +238,11 @@ For cases that passed the gate, predicts which cancer group(s) the case belongs 
 is applied: the top-scoring group is used regardless of confidence, so gate-passed cases
 always receive a concrete group prediction rather than "Unidentified Cancer". MLP on
 cached `col_emb_concat` from the contrastive backbone. Phase 28 production: macro F1=0.4475.
+Tail-gate: at most `--tail-max-predictions` (default 2) groups are kept per case, and any
+tail group more than `--tail-max-group-prob-gap` (default 0.08) below the top group's
+probability is dropped. Calibrated 2026-05-11 — gives +0.9pp G+S vs no-gate at the cost
+of recall on multi-label cases. Recalibrate with `ml/scripts/sweep_tail_gate.py` after
+any GroupClassifier retrain.
 
 **Stage 3 — LabelPresenceClassifier (optional):**
 When `--label-presence-classifier-dir` is set, one per-group `LabelPresenceClassifier`

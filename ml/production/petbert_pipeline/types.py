@@ -37,6 +37,8 @@ class ScanConfig:
     label_presence_classifier_dir: str | None = None
     label_presence_threshold: float = 0.5
     label_presence_thresholds_json: str | None = None
+    tail_max_predictions: int = 2
+    tail_max_group_prob_gap: float = 0.08
     uncommon_groups_path: str = _config.UNCOMMON_GROUPS_TXT
 
 

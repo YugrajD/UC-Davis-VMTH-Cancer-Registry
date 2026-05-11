@@ -146,6 +146,30 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--tail-max-predictions",
+        type=int,
+        default=2,
+        help=(
+            "Cap the number of group predictions emitted per case (default: 2). "
+            "Set to 1 to keep only the top group; 2 keeps the top group plus one "
+            "tail prediction that also clears --tail-max-group-prob-gap. Lowers CO "
+            "at the cost of recall on multi-label cases. Calibrated 2026-05-11 "
+            "(see sweep_tail_gate.py): K=2 with gap=0.08 gives +0.9 pp G+S on test."
+        ),
+    )
+    parser.add_argument(
+        "--tail-max-group-prob-gap",
+        type=float,
+        default=0.08,
+        help=(
+            "Drop tail group predictions whose probability is below "
+            "(top_group_prob - this_value). Default 0.08 trims wrong-group tail "
+            "predictions whose Stage-2 score is far below the top group. Set to "
+            "1.0 to disable. Calibrated 2026-05-11 on the held-out test set — see "
+            "ml/scripts/sweep_tail_gate.py for the trade-off curve."
+        ),
+    )
+    parser.add_argument(
         "--tfidf-vectorizer",
         default=config.TFIDF_VECTORIZER_PATH,
         help=(
@@ -186,6 +210,8 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         label_presence_classifier_dir=label_presence_dir,
         label_presence_threshold=args.label_presence_threshold,
         label_presence_thresholds_json=args.label_presence_thresholds_json,
+        tail_max_predictions=args.tail_max_predictions,
+        tail_max_group_prob_gap=args.tail_max_group_prob_gap,
         tfidf_vectorizer_path=args.tfidf_vectorizer,
     )
 

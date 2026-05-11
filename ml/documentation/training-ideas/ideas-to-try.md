@@ -4,8 +4,10 @@ Structured improvement plan for pushing Good+Slightly off on the 4-stage pipelin
 (CasePresenceClassifier → GroupClassifier → LabelPresenceClassifier → KW correction)
 toward 65% G+S on the held-out test set.
 
-**Current baseline (Phase 28, 2026-05-07, lp-t=0.5, group-t=0.85, 4-stage):**
-G+S = 57.9% | CO = 23.4% | FP = 8.0% | FN = 9.2% | 16,902 test cases
+**Current baseline (Phase 28 LPs restored after QW1 revert, verified 2026-05-10, lp-t=0.5, group-t=0.85, 4-stage):**
+G+S = **59.5%** (Good 25.7% + Slightly 33.8%) | CO = 23.4% | FP = 8.0% | FN = 9.2% | 16,902 test cases (`evaluation_history.csv` row #33).
+
+> Historical reference: the original 25-group Phase 28 setup (pre-Phase-29 cold-start backbone) measured G+S = 57.9% / CO = 25.3% / FN = 11.1% / 15,100 rows. After the Phase 29 backbone cold-start + 17-group LP retrain (live on disk), the operational baseline shifted to the numbers above.
 
 **Target:** 65% G+S (+7.1 pp).
 
@@ -54,7 +56,25 @@ downstream classifiers.
 
 ### QW1 — Hard within-group negative mining ★ FIRST MOVE
 
-**Status:** Not started.
+**Status:** Attempted 2026-05-10 at fraction=0.7, both alone and bundled with
+QW2 — **net-negative in both configurations, REVERTED**. Best G+S:
+- QW1 alone, LP-t=0.5: 58.4% (−1.1 pp vs Phase 28 baseline 59.5%)
+- QW1+QW2 bundle, LP-t=0.5: 58.6% (−0.9 pp)
+
+Hard-neg mining preserved recall but compressed sigmoid scores toward 0.5
+(calibration shift), inflating prediction count ~20 % and Slightly-Off.
+QW2 regularization didn't undo the shift. Phase 28 LPs restored to live
+checkpoints; bundle and QW1-only LPs archived. Code infrastructure
+(`--label-presence-hard-neg-fraction`, case-disjoint split, early stopping)
+left in place as opt-in; defaults flipped back to Phase 28 values. Full
+breakdown: `training-log-label-presence.md` Phase 30 / Phase 30b.
+
+**Open follow-ups that may still work:**
+- fraction=0.3 or 0.5 (less aggressive) — untried.
+- QW3 (per-group threshold calibration) on top of QW1-bundle — directly
+  counters the calibration shift; the bundle's LP-t=0.8 result (Good 27.4 %,
+  CO 22.8 % — both *beat* Phase 28) suggests per-group thresholds could
+  recover the lost FN budget.
 
 **Problem:** Random within-group negatives (`rng.sample`, `negs_per_pos=5`) make the LP task too easy in training. The MLP overfits to lexical cues from label strings and fails in production where confusable subtypes co-occur (Osseous: 894 FP / 402 TP; Gliomas: P=0.18).
 
@@ -75,7 +95,17 @@ downstream classifiers.
 
 ### QW2 — Case-disjoint LP val split + dropout/weight-decay tuning + early stopping
 
-**Status:** Not started.
+**Status:** Implemented 2026-05-10 alongside QW1 (Phase 30b bundle). Code landed:
+`GroupShuffleSplit` in `train.py`, new flags
+`--label-presence-{dropout,weight-decay,patience}` in `run_training.py`,
+optional early-stopping loop. Case-disjoint split confirmed Phase 29's val
+scores were inflated by case leakage (same-model val score dropped on the
+new split). Combined with QW1 at fraction=0.7 + wd=1e-2 + dropout=0.2 +
+patience=5 + recall_weight=0.35, the bundle was **net-negative on G+S** —
+QW2's regularization didn't undo QW1's calibration shift. Defaults reverted
+to Phase 28 values; the flags remain available as opt-in. The case-disjoint
+split itself is strictly better than the old target-stratified split and
+stays the new default.
 
 **Problem:** Current target-stratified split (`train.py:138-140`) leaks the same case across train and val with different labels, so val scores are optimistic. Combined with hardcoded `weight_decay=1e-4` and `dropout=0.3`, regularization is weak and the val→prod precision collapse is unsurprising.
 
@@ -248,35 +278,37 @@ downstream classifiers.
 
 ---
 
-### LB2 — Re-do contrastive backbone with Phase-28-mined hard negatives
+### LB2 — Round 2 backbone fine-tuning (hard-neg) on the post-TF-IDF backbone
 
-**Status:** Not started. **(Refreshed from previous Tier 4a.)** Run only if Tier 1 + MI1 stalls below 62%.
+**Status:** Not started. **(Refreshed from previous Tier 4a.)** Now more attractive given QW1 (LP-layer hard-neg) was net-negative at fraction=0.7 (Phase 30, 2026-05-10) — the same hard-neg signal at the *embedding* layer is the next place to try.
 
-**Problem:** The Phase 17 contrastive backbone wasn't tuned against the specific Phase 28 confusion matrix. Mining hard-neg triplets from current production errors would push embeddings of confusable labels apart. (CO is now 23.4%, mostly within adjacent groups.)
+**Problem:** The current production backbone (`ml/output/checkpoints/contrastive/model.safetensors`, 2026-05-07 05:18) was trained **Round 1 only** — single 3-epoch InfoNCE pass with in-batch negatives on TF-IDF-selected text, no hard-negative loss. The last hard-neg backbone pass on record is Phase 23 Run 8 (2026-04-28), which predates the TF-IDF text-selector format and is no longer the production backbone. The on-disk `hard_neg_pairs.csv` (2026-04-28 12:35) was built from pre-TF-IDF report text — it must be re-mined before any Round 2 attempt.
 
 **Approach:**
-1. New script `ml/scripts/mine_phase28_confusions.py` — read `output/production/contrastive/petbert_predictions.csv` + annotation CSV, emit `output/training/contrastive/hard_neg_pairs.csv` with (report, correct_label, wrong_label) triplets.
-2. Run `--mode adapt-backbone --hard-neg-csv …`.
-3. Cold-start of cache + Stage 2 + Stage 3a per CLAUDE.md "Cold Start Protocol":
+1. Mine fresh hard-neg triplets from current Phase 28 production errors. New script `ml/scripts/mine_phase28_confusions.py` — read `output/production/contrastive/petbert_predictions.csv` + annotation CSV, emit `output/training/contrastive/hard_neg_pairs.csv` with (report, correct_label, wrong_label) triplets where `report` is the same TF-IDF-selected text the current backbone was trained on (use `text_selection.get_selector(...)`).
+2. Warm-start from current backbone: `--mode adapt-backbone --model ml/output/checkpoints/contrastive --skip-pair-build --hard-neg-csv … --hard-neg-weight 0.25 --hard-neg-margin 0.3 --lr 1e-5 --epochs 2`. Phase 21 found weight=0.25 the right setting; weight=0.5 (Phase 20) regressed.
+3. Cold-start cache + Stage 1 + Stage 2 + Stage 3a per CLAUDE.md "Cold Start Protocol":
    ```bash
    rm -f ml/output/training/embedding_cache.npz
    ```
 4. Archive the full old generation (embeddings + backbone + all classifiers) under `ml/output/archive/YYYY-MM-DD_<short>/` before starting (CLAUDE.md "Embedding & Classifier Versioning").
 
-**Cost:** 2 weeks (PetBERT regen on 58k reports is the long pole).
+**Cost:** ~1 day backbone fine-tune + ~3h embed cache regen on 58k reports + downstream retrains. Total ~2 days, not 2 weeks — Round 1 only takes ~33 minutes; Round 2 is the same shape.
 
-**Expected gain:** +2 to +4 pp G+S, but heavily overlaps QW1.
+**Expected gain:** +1 to +3 pp G+S. Lower-bounded estimate now that QW1 demonstrated the LP layer cannot absorb the hard-neg signal cleanly — pushing it into the embedding space is the alternative lever.
 
-**Risk:** Cold-start cost is large; if QW1 already addresses the same hard negatives at the LP layer, marginal gain is small. Run only after QW1 results land.
+**Risk:** Phase 20 showed Round 2 with weight=0.5 *regresses* G+S; Phase 21 with weight=0.25 was −0.5pp on the old data. Use the Phase 21 weight setting and verify against current Phase 28 baseline before locking in.
 
 ---
 
 ## Recommended Sequencing
 
-1. **Week 1:** QW1 (hard negatives) + QW2 (case-disjoint split + regularization) bundled into one LP retrain cycle. Land QW3 (threshold calibration) on top of the new LPs.
-2. **Week 1 (parallel, no retrain conflict):** QW4 (Adenomas keywords) + QW5 (soft-tissue threshold).
+QW1 was attempted at fraction=0.7 (Phase 30, 2026-05-10) and was **net-negative**: G+S 59.5% → 58.4%. The LP-layer hard-neg signal squeezed sigmoid scores toward 0.5 and inflated Slightly-Off; per-group recall mostly held but macro precision fell. **Phase 28 LPs have been restored to live `ml/output/checkpoints/label_presence/`** (byte-identical to `archive/2026-05-10_pre-QW1-hardneg/label_presence/`); QW1-only and QW1+QW2 bundle outputs are archived at `archive/2026-05-10_QW1-fraction-0.7/` and `archive/2026-05-10_QW1+QW2-bundle/` respectively. Sanity check 2026-05-10 reproduced the 59.5% baseline (`evaluation_history.csv` row #33).
+
+1. **Decide on QW1 first** — either revert to Phase 28 LPs (rollback target on disk) or try the QW1 fallback at fraction=0.5 / bundle with QW2. Both paths are cheap.
+2. **No-retrain wins in parallel:** QW3 (per-group threshold calibration), QW4 (Adenomas keywords), QW5 (soft-tissue threshold). None invalidate downstream.
 3. **Re-evaluate.** If G+S ≥ 63%, push to MI1 (bilinear head) for the 65% target.
-4. **Tier 3 only if Tier 1 + MI1 stalls below 62%.** LB2 is most attractive once QW1 hard-neg patterns are known. LB1 is the riskiest swing — reserve.
+4. **Tier 3 if Tier 1 + MI1 stalls below 62%.** LB2 is now the most attractive Tier-3 move — QW1's LP-layer hard-neg failure is itself evidence that the hard-neg signal needs to live in the embedding space, not the LP head. LB1 is the riskiest swing — reserve.
 
 ---
 
@@ -299,4 +331,4 @@ ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --stage label-presence 
 
 Results append to `ml/output/evaluation/contrastive_test/evaluation_history.csv` and the per-stage `*_history.csv` files.
 
-**Baseline to beat:** G+S = 57.9% (Phase 28, 2026-05-07, 4-stage, lp-t=0.5, group-t=0.85).
+**Baseline to beat:** G+S = **59.5%** (Phase 28 LPs restored 2026-05-10, 17-group LPs on Phase 29 cold-start backbone, 4-stage, lp-t=0.5, group-t=0.85). Verified `evaluation_history.csv` row #33.

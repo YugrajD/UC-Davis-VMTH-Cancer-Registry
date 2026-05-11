@@ -55,6 +55,7 @@ Thumbs.db
 geo/data/
 
 # ML backup (local restructure backup — never commit)
+ml-per-stage-backbone/
 ml_backup/
 
 # ML model weights

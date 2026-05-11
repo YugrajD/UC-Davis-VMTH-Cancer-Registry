@@ -8,7 +8,7 @@ label(s) a report belongs to. The 4-stage pipeline
 |---|---|---|
 | CasePresenceClassifier | Stage 1 gate of 4-stage pipeline | val score=0.939 (P=0.927, R=0.941) at recall_weight=0.85 |
 | GroupClassifier | Stage 2 of 4-stage pipeline | macro F1=0.4475 (Phase 27, dropout=0.1, epoch 192/300) |
-| Per-group LabelPresenceClassifier | **Stage 3a of 4-stage pipeline (Phase 28)** | **57.9% G+S (group-t=0.85, lp-t=0.5) — +2.6pp vs 3-stage Phase 27 baseline** |
+| Per-group LabelPresenceClassifier | **Stage 3a of 4-stage pipeline (Phase 28; 17 LPs after Phase 29 cold-start + QW1 revert)** | **59.5% G+S (group-t=0.85, lp-t=0.5) — current production baseline, verified 2026-05-10. Historical 25-group Phase 28 setup: 57.9%.** |
 | LabelPresenceClassifier (whole-corpus, all-label binary) | Removed during 4-stage refactor; preserved in `training-log/training-log-binary.md` | 65.7% G+S train (Phase 25 c14, contrastive backbone) |
 
 > **Training ground truth:** Training supervision comes from the LLM annotation pipeline (`llm_annotation.csv`). It uses a three-tier cascade — exact keyword match (with negation masking) → fuzzy token overlap (behavior-code aware) → LLM resolution (group + anatomic-site aware) — to map diagnosis text to Vet-ICD-O labels. In production, no diagnosis text is available — classifiers predict from report text alone.
@@ -177,9 +177,11 @@ recall-precision trade-off via its training objective.
 **Run 8 (baseline, no gate):** GroupClassifier ran unconditionally; `PresenceClassifier` was a fallback
 for cases where no group cleared the threshold, not a gate.
 
-### Phase 28 Evaluation Results (2026-05-07) — CURRENT
+### Phase 28 Evaluation Results (2026-05-07) — HISTORICAL (25-group setup, pre-cold-start backbone)
 
-**4-stage pipeline: CasePresenceClassifier (rw=0.85) → GroupClassifier (Ph27, F1=0.4475) → LabelPresenceClassifier (Stage 3a) → KW correction.**
+> **Note:** The table below is the original Phase 28 measurement (25 LP files, Phase 27 GroupCLF on the pre-cold-start backbone). The current production setup uses 17 LP files trained on the Phase 29 cold-start backbone — its baseline is **59.5% G+S at lp-t=0.5** (see `training-log/training-log-label-presence.md` Phase 29 + Phase 30/30b revert sections, and `evaluation_history.csv` row #33). The 25-group threshold-sweep curve below is preserved as historical reference; a fresh sweep on the 17-group setup has not been done.
+
+**4-stage pipeline (historical): CasePresenceClassifier (rw=0.85) → GroupClassifier (Ph27, F1=0.4475) → LabelPresenceClassifier (Stage 3a, 25 LPs) → KW correction.**
 
 `--group-classifier-threshold 0.85`, `--label-presence-threshold` swept 0.5–0.9 on held-out test set.
 

@@ -113,7 +113,7 @@ Ideas that were implemented and evaluated but caused regression or no improvemen
 
 **Why it won't work:** The annotation pipeline is already operating on all available data. There is no mechanism to generate additional ground-truth labels beyond what the existing pipeline produces — more annotation runs would not yield new cases, only re-annotate existing ones. The minority-group data ceiling is a fixed constraint of the current dataset size, not an annotation coverage gap.
 
-**Alternative:** Tier 4a (Round 3 backbone adaptation) addresses the same CO problem from the embedding side rather than the data side.
+**Alternative:** LB2 (Round 2 backbone hard-neg fine-tune on the current post-TF-IDF backbone) addresses the same CO problem from the embedding side rather than the data side.
 
 ---
 

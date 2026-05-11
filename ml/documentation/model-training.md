@@ -8,7 +8,7 @@ cancer labels (term, group, ICD code). Several classifier approaches have been e
 | Binary PresenceClassifier (single all-label) | Removed in Phase 28 | 65.7% G+S train (Phase 25 c14, contrastive backbone, 5,788 cases) |
 | GroupClassifier | **Stage 2 of 4-stage pipeline (Phase 28)** | macro F1=0.4475 (Phase 27, dropout=0.1) |
 | Per-group LabelPresenceClassifier | **Stage 3a of 4-stage pipeline (Phase 28)** | — |
-| Contrastive fine-tuned PetBERT + 4-stage pipeline | **Production best** | **57.9% G+S test set (Phase 28, lp-t=0.5, group-t=0.85)** |
+| Contrastive fine-tuned PetBERT + 4-stage pipeline | **Production best** | **59.5% G+S test set (verified 2026-05-10 sanity check; 17-group LPs, post-Phase-29 cold-start backbone, lp-t=0.5, group-t=0.85)** |
 
 > For full current results and Phase 25 details see [classifiers.md](classifiers.md).
 
@@ -377,7 +377,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-label-presen
 
 ## End-to-end fine-tuning (attempted, reverted 2026-05)
 
-End-to-end fine-tuning of PetBERT as a Stage 2 classifier was integrated and benchmarked in 2026-05. Standalone val macro F1 reached 0.5774 (vs Phase 27 GroupCLF's 0.4475), but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9%. Reverted. See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sweep/8-epoch findings, the cost analysis, and the resurrection path.
+End-to-end fine-tuning of PetBERT as a Stage 2 classifier was integrated and benchmarked in 2026-05. Standalone val macro F1 reached 0.5774 (vs Phase 27 GroupCLF's 0.4475), but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9% (the contemporary baseline at that comparison; the current baseline is 59.5% on the post-Phase-29 17-group LPs). Reverted. See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sweep/8-epoch findings, the cost analysis, and the resurrection path.
 
 ---
 
@@ -397,8 +397,8 @@ End-to-end fine-tuning of PetBERT as a Stage 2 classifier was integrated and ben
 
 ### Roadmap
 
-- **Now**: Three-stage pipeline (Phase 26) — CasePresenceClassifier + GroupClassifier (F1=0.4335) + KW correction with argmax fallback and subtype keyword discriminators. See [classifiers.md](classifiers.md) for full details.
-- **Next**: Reduce 3-stage CO% (22.3%) — backbone adaptation Round 3 with hard-negative mining from CO bank (Tier 4 in `training-ideas/ideas-to-try.md`)
+- **Now**: 4-stage pipeline (Phase 28+ / restored after QW1 revert) — CasePresenceClassifier + GroupClassifier (`group_classifier_best.pt`, F1=0.494, 17-group post-cold-start) + per-group LabelPresenceClassifier (17 `.pt` files in `checkpoints/label_presence/`) + KW correction with argmax fallback and subtype keyword discriminators. **Current baseline: 59.5% G+S on test set** (lp-t=0.5, group-t=0.85, 16,902 prediction rows; verified 2026-05-10, evaluation_history.csv row #33). The earlier 57.9% Phase 28 number was the 25-group setup on the pre-cold-start backbone — superseded. See [classifiers.md](classifiers.md) for full details.
+- **Next**: Tier 1 quick wins (QW1 fallback / QW2–QW5) in `training-ideas/ideas-to-try.md`. Backbone Round 2 (hard-neg) is now LB2 in Tier 3 — note that the current backbone is Round 1 only on TF-IDF text, so a hard-neg pass is genuinely untried in the current embedding space.
 
 ---
 

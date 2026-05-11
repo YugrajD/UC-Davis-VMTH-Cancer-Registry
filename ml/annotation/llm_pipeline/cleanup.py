@@ -59,6 +59,7 @@ class CleanupConfig:
     tiebreaker_model: str | None
     timeout: int = 60
     max_rows: int | None = None
+    methods_to_verify: frozenset[str] = frozenset(_CONFIRMED_METHODS)
 
 
 @dataclass
@@ -199,9 +200,9 @@ def run_cleanup(config: CleanupConfig) -> dict:
     group_to_labels = _build_group_index(taxonomy)
     term_to_label = {l.term: l for l in taxonomy}
 
-    confirmed_mask = df["method"].isin(_CONFIRMED_METHODS)
+    confirmed_mask = df["method"].isin(config.methods_to_verify)
     confirmed_idx = df.index[confirmed_mask].tolist()
-    print(f"Confirmed positives to verify: {len(confirmed_idx):,}")
+    print(f"Verifying {len(confirmed_idx):,} rows (methods: {sorted(config.methods_to_verify)})")
     print(f"Verifier models: {config.models}"
           + (f" + tiebreaker {config.tiebreaker_model}" if config.tiebreaker_model else ""))
 

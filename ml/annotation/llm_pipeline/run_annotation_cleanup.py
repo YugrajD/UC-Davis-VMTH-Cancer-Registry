@@ -86,6 +86,11 @@ def main() -> int:
         default=None,
         help="Cap on input rows (testing only).",
     )
+    parser.add_argument(
+        "--methods",
+        default="Exact,Fuzzy,LLM",
+        help="Comma-separated methods to verify (e.g. 'LLM' to target only Tier-3 rows).",
+    )
     args = parser.parse_args()
 
     cfg = CleanupConfig(
@@ -98,6 +103,7 @@ def main() -> int:
         tiebreaker_model=args.tiebreaker,
         timeout=args.timeout,
         max_rows=args.max_rows,
+        methods_to_verify=frozenset(m.strip() for m in args.methods.split(",") if m.strip()),
     )
     run_cleanup(cfg)
     return 0

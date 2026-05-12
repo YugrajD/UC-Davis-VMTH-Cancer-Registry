@@ -38,15 +38,15 @@ def load_finetuned_classifier(
     model_path: str, *, local_only: bool = True
 ) -> tuple[AutoTokenizer, "transformers.AutoModelForSequenceClassification", dict[int, str]]:
     """Load a fine-tuned PetBERT sequence classification model.
-
+    
     Returns the tokenizer, the sequence classification model, and the mapping
     from class index to Vet-ICD group name.
     """
     from transformers import AutoModelForSequenceClassification
-
+    
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=local_only)
     model = AutoModelForSequenceClassification.from_pretrained(model_path, local_files_only=local_only)
-
+    
     # Extract the idx -> group string mapping from the config
     idx_to_group = {int(k): str(v) for k, v in model.config.id2label.items()}
     return tokenizer, model, idx_to_group
@@ -136,7 +136,7 @@ def predict_groups_finetuned(
     desc: str = "Classifying",
 ) -> np.ndarray:
     """Predict cancer groups directly using a finetuned PetBERT classifier.
-
+    
     Return array (N, num_classes) of softmax probabilities.
     """
     model.eval()
@@ -144,7 +144,7 @@ def predict_groups_finetuned(
 
     num_batches = math.ceil(len(texts) / batch_size)
     all_probs: list[np.ndarray] = []
-
+    
     for start in tqdm(range(0, len(texts), batch_size), total=num_batches, desc=desc, unit="batch"):
         batch_texts = texts[start : start + batch_size]
 
@@ -161,7 +161,7 @@ def predict_groups_finetuned(
         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits
         probs = torch.softmax(logits, dim=-1)
-
+        
         all_probs.append(probs.detach().cpu().numpy().astype(np.float32, copy=False))
 
     return np.vstack(all_probs)

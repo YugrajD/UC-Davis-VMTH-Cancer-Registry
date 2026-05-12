@@ -1,7 +1,7 @@
 """ML worker microservice — wraps PetBERT scan pipeline as an HTTP endpoint.
 
-Accepts a CSV upload (Dataset A with columns anon_id, Clinical Diagnoses),
-runs the PetBERT categorization pipeline, and returns structured predictions.
+Accepts a CSV upload (Dataset A), runs the PetBERT categorization pipeline,
+and returns structured predictions.
 """
 
 import csv
@@ -26,15 +26,18 @@ async def health():
 async def predict(file: UploadFile = File(...)):
     """Run PetBERT categorization on an uploaded CSV.
 
-    Expects CSV with columns: anon_id, Clinical Diagnoses
-    Returns structured predictions JSON.
+    Expects CSV with columns: anon_id, Text (+ optional others).
+    PetBERT processes the Text column (pathology report). Returns structured predictions JSON.
     """
-    if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="File must be a .csv")
+    if not file.filename or not file.filename.lower().endswith((".csv", ".xlsx")):
+        raise HTTPException(status_code=400, detail="File must be a .csv or .xlsx")
 
     contents = await file.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    if len(contents) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         csv_path = os.path.join(tmpdir, "input.csv")
@@ -45,18 +48,19 @@ async def predict(file: UploadFile = File(...)):
 
         # Import pipeline at call time (heavy torch import)
         try:
-            from petbert_scan.pipeline import run_scan
-            from petbert_scan.types import ScanConfig
-        except ImportError as e:
+            from production.petbert_pipeline.pipeline import run_scan
+            from production.petbert_pipeline.types import ScanConfig
+        except ImportError:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to import PetBERT pipeline: {e}",
+                detail="PetBERT pipeline is not available",
             )
 
         config = ScanConfig(
             csv_path=csv_path,
             id_col="anon_id",
-            text_col="Clinical Diagnoses",
+            text_cols=("Text",),
+            col_weights={"Text": 1.0},
             model_name=os.environ.get("PETBERT_MODEL_PATH", "/ml/models/petbert"),
             local_only=True,
             out_dir=out_dir,
@@ -68,19 +72,18 @@ async def predict(file: UploadFile = File(...)):
             embedding_min_sim=0.6,
             device="auto",
             labels_csv_path="/ml/labels/labels.csv",
-            carcinoma_csv_path="/ml/data/dataCarcinoma.csv",
-            sarcoma_csv_path="/ml/data/dataSarcoma.csv",
-            use_auxiliary_labels=False,
+            presence_classifier_path=None,
+            embedding_cache_path=None,
         )
 
         try:
             outputs = run_scan(config)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
+        except Exception:
             raise HTTPException(
                 status_code=500,
-                detail=f"PetBERT pipeline error: {e}",
+                detail="PetBERT pipeline failed",
             )
 
         # Read the predictions CSV and return as structured JSON

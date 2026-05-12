@@ -87,6 +87,60 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function ResultSummary({ summary }: { summary: NonNullable<IngestionJob['result_summary']> }) {
+  const total = summary.high_confidence + summary.medium_confidence + summary.low_confidence;
+  const pct = (n: number) => total > 0 ? Math.round((n / total) * 100) : 0;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-2">Model results</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+        <div className="bg-gray-50 rounded-md px-3 py-2 text-center">
+          <p className="text-lg font-bold text-[var(--color-text-primary)]">{summary.patients}</p>
+          <p className="text-xs text-[var(--color-text-secondary)]">Records</p>
+        </div>
+        <div className="bg-gray-50 rounded-md px-3 py-2 text-center">
+          <p className="text-lg font-bold text-[var(--color-text-primary)]">{summary.diagnoses}</p>
+          <p className="text-xs text-[var(--color-text-secondary)]">Diagnoses</p>
+        </div>
+        <div className="bg-gray-50 rounded-md px-3 py-2 text-center">
+          <p className="text-lg font-bold text-[var(--color-text-primary)]">
+            {summary.avg_confidence !== null ? `${summary.avg_confidence}%` : '—'}
+          </p>
+          <p className="text-xs text-[var(--color-text-secondary)]">Avg confidence</p>
+        </div>
+        <div className="bg-gray-50 rounded-md px-3 py-2">
+          <div className="flex items-center gap-1 mb-1">
+            <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+            <span className="text-xs text-gray-600">{pct(summary.high_confidence)}% high ≥80%</span>
+          </div>
+          <div className="flex items-center gap-1 mb-1">
+            <span className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />
+            <span className="text-xs text-gray-600">{pct(summary.medium_confidence)}% med 50–79%</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+            <span className="text-xs text-gray-600">{pct(summary.low_confidence)}% low &lt;50%</span>
+          </div>
+        </div>
+      </div>
+      {summary.top_cancer_types.length > 0 && (
+        <div>
+          <p className="text-xs text-[var(--color-text-secondary)] mb-1">Top predicted cancer types</p>
+          <div className="flex flex-wrap gap-1.5">
+            {summary.top_cancer_types.map(ct => (
+              <span key={ct.name} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 text-xs border border-teal-100">
+                {ct.name}
+                <span className="font-semibold">{ct.count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PreviewModal({ content, filename, onClose }: { content: string; filename: string; onClose: () => void }) {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -163,7 +217,7 @@ function JobCard({
   onRejectConfirm: (id: number) => void;
   onRejectCancel: () => void;
   onRejectReasonChange: (v: string) => void;
-  onPreview: (id: number, dataset: 'a' | 'b', filename: string) => void;
+  onPreview: (id: number, filename: string) => void;
   onCancel: (id: number) => void;
 }) {
   return (
@@ -179,8 +233,7 @@ function JobCard({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-[var(--color-text-secondary)]">
             <p>Uploaded by: <span className="font-medium text-[var(--color-text-primary)]">{job.uploaded_by_email}</span></p>
             <p>Date: {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}</p>
-            <p>Dataset A: <span className="font-mono">{job.dataset_a_filename}</span></p>
-            <p>Dataset B: <span className="font-mono">{job.dataset_b_filename}</span></p>
+            <p>File: <span className="font-mono">{job.dataset_a_filename}</span></p>
             {job.reviewed_by_email && <p>Reviewed by: {job.reviewed_by_email}</p>}
             {job.reviewed_at && <p>Reviewed: {new Date(job.reviewed_at).toLocaleString()}</p>}
             {job.rejection_reason && <p className="text-red-600">Reason: {job.rejection_reason}</p>}
@@ -190,24 +243,14 @@ function JobCard({
 
         <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={() => onPreview(job.id, 'a', job.dataset_a_filename)}
-            disabled={previewLoading === `${job.id}-a`}
+            onClick={() => onPreview(job.id, job.dataset_a_filename)}
+            disabled={previewLoading === `${job.id}`}
             className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
           >
-            {previewLoading === `${job.id}-a` && (
+            {previewLoading === `${job.id}` && (
               <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
             )}
-            Preview A
-          </button>
-          <button
-            onClick={() => onPreview(job.id, 'b', job.dataset_b_filename)}
-            disabled={previewLoading === `${job.id}-b`}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
-          >
-            {previewLoading === `${job.id}-b` && (
-              <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-            )}
-            Preview B
+            Preview
           </button>
 
           {job.status === 'pending_review' && (
@@ -243,6 +286,11 @@ function JobCard({
       {/* Pipeline stage indicator — only shown while processing */}
       {job.status === 'processing' && job.processing_stage && (
         <PipelineStageIndicator stage={job.processing_stage} />
+      )}
+
+      {/* Model result summary — shown on completed jobs */}
+      {job.status === 'completed' && job.result_summary && (
+        <ResultSummary summary={job.result_summary} />
       )}
 
       {rejectJobId === job.id && (
@@ -285,6 +333,8 @@ export function AdminQueue() {
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'queue' | 'archive'>('queue');
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>('all');
+  const [archivePage, setArchivePage] = useState(1);
+  const ARCHIVE_PAGE_SIZE = 10;
 
   const loadJobs = useCallback(async () => {
     try {
@@ -301,7 +351,7 @@ export function AdminQueue() {
   }, [getAccessToken]);
 
   useEffect(() => {
-    loadJobs();
+    loadJobs(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [loadJobs]);
 
   // Auto-poll when any job is processing
@@ -358,13 +408,13 @@ export function AdminQueue() {
     }
   };
 
-  const handlePreview = async (jobId: number, dataset: 'a' | 'b', filename: string) => {
-    const key = `${jobId}-${dataset}`;
+  const handlePreview = async (jobId: number, filename: string) => {
+    const key = `${jobId}`;
     setPreviewLoading(key);
     try {
       const token = await getAccessToken();
       if (!token) return;
-      const content = await fetchJobPreview(token, jobId, dataset);
+      const content = await fetchJobPreview(token, jobId);
       setPreview({ content, filename });
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Preview failed');
@@ -374,9 +424,14 @@ export function AdminQueue() {
   };
 
   const queueJobs = jobs.filter(j => ACTIVE_STATUSES.includes(j.status));
-  const archiveJobs = jobs
+  const allArchiveJobs = jobs
     .filter(j => ARCHIVE_STATUSES.includes(j.status))
     .filter(j => archiveFilter === 'all' || j.status === archiveFilter);
+  const archiveTotalPages = Math.max(1, Math.ceil(allArchiveJobs.length / ARCHIVE_PAGE_SIZE));
+  const archiveJobs = allArchiveJobs.slice(
+    (archivePage - 1) * ARCHIVE_PAGE_SIZE,
+    archivePage * ARCHIVE_PAGE_SIZE,
+  );
 
   const sharedJobCardProps = {
     actionLoading,
@@ -455,7 +510,7 @@ export function AdminQueue() {
             {activeView === 'archive' && (
               <select
                 value={archiveFilter}
-                onChange={e => setArchiveFilter(e.target.value as ArchiveFilter)}
+                onChange={e => { setArchiveFilter(e.target.value as ArchiveFilter); setArchivePage(1); }}
                 className="text-sm border border-gray-300 rounded-md px-2 py-1.5 text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] bg-white"
               >
                 <option value="all">All statuses</option>
@@ -493,7 +548,7 @@ export function AdminQueue() {
 
       {/* Archive View */}
       {activeView === 'archive' && (
-        archiveJobs.length === 0 ? (
+        allArchiveJobs.length === 0 ? (
           <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
             <p className="text-sm text-[var(--color-text-secondary)]">
               {archiveFilter === 'all'
@@ -506,6 +561,41 @@ export function AdminQueue() {
             {archiveJobs.map(job => (
               <JobCard key={job.id} job={job} {...sharedJobCardProps} />
             ))}
+            {/* Pagination controls */}
+            <div className="bg-white rounded-lg border border-gray-200 px-4 py-3 flex items-center justify-between">
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Showing {(archivePage - 1) * ARCHIVE_PAGE_SIZE + 1}–{Math.min(archivePage * ARCHIVE_PAGE_SIZE, allArchiveJobs.length)} of {allArchiveJobs.length} jobs
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setArchivePage(p => Math.max(1, p - 1))}
+                  disabled={archivePage === 1}
+                  className="px-2.5 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  ‹ Prev
+                </button>
+                {Array.from({ length: archiveTotalPages }, (_, i) => i + 1).map(page => (
+                  <button
+                    key={page}
+                    onClick={() => setArchivePage(page)}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                      page === archivePage
+                        ? 'bg-[var(--color-teal)] text-white'
+                        : 'text-gray-600 border border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setArchivePage(p => Math.min(archiveTotalPages, p + 1))}
+                  disabled={archivePage === archiveTotalPages}
+                  className="px-2.5 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next ›
+                </button>
+              </div>
+            </div>
           </div>
         )
       )}

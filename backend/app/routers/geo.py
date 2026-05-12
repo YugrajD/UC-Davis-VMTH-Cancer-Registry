@@ -8,6 +8,7 @@ import json
 
 from app.database import get_db
 from app.models.models import County, CancerType, Patient, Species, CaseDiagnosis, CalEnviroScreen
+from app.services.review_filter import apply_review_filter, review_status_sql_in
 from app.schemas.schemas import (
     GeoJSONResponse, GeoJSONFeature, GeoJSONFeatureProperties,
     CountyDetail, CountyOut, TopCancer, SpeciesBreakdown,
@@ -27,11 +28,11 @@ SEX_MAP = {
 
 @router.get("/counties", response_model=GeoJSONResponse)
 async def get_counties_geojson(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     # Build dynamic WHERE clause
@@ -56,10 +57,12 @@ async def get_counties_geojson(
     if cancer_type:
         conditions.append(
             "p.id IN (SELECT cd.patient_id FROM case_diagnoses cd "
-            "JOIN cancer_types ct ON ct.id = cd.cancer_type_id WHERE ct.name = ANY(:cancer_type))"
+            "JOIN cancer_types ct ON ct.id = cd.cancer_type_id "
+            f"WHERE ct.name = ANY(:cancer_type) AND cd.review_status IN {review_status_sql_in()})"
         )
         params["cancer_type"] = cancer_type
     where_clause = " AND ".join(conditions)
+    VISIBLE_STATUSES_SQL = review_status_sql_in()
 
     query = text(f"""
         SELECT
@@ -79,6 +82,7 @@ async def get_counties_geojson(
                  JOIN patients p2 ON p2.id = cd.patient_id AND p2.data_source = 'petbert'
                  JOIN cancer_types ct2 ON ct2.id = cd.cancer_type_id
                  WHERE p2.county_id = p.county_id
+                   AND cd.review_status IN {VISIBLE_STATUSES_SQL}
                  GROUP BY ct2.name
                  ORDER BY COUNT(*) DESC
                  LIMIT 1
@@ -130,8 +134,8 @@ async def get_county_detail(
     )
     total_cases = result.scalar() or 0
 
-    # Cancer breakdown (ingested only; from case_diagnoses)
-    result = await db.execute(
+    # Cancer breakdown (ingested only; confirmed/corrected diagnoses)
+    cancer_breakdown_stmt = apply_review_filter(
         select(CancerType.name, func.count(CaseDiagnosis.id).label("cnt"))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -140,6 +144,7 @@ async def get_county_detail(
         .group_by(CancerType.name)
         .order_by(func.count(CaseDiagnosis.id).desc())
     )
+    result = await db.execute(cancer_breakdown_stmt)
     cancer_breakdown = [TopCancer(cancer_type=name, count=cnt) for name, cnt in result.all()]
 
     # Species breakdown (ingested only)

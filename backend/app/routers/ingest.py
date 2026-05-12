@@ -4,6 +4,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -12,8 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from typing import Optional
-from app.auth import CurrentUser, get_current_user, get_optional_user, require_admin
+from app.auth import CurrentUser, get_current_user, require_admin, require_reviewer
 from app.config import settings
 from app.database import get_db
 from app.models.models import IngestionJob
@@ -41,23 +41,107 @@ def _ensure_csv(raw_bytes: bytes, filename: str) -> bytes:
 
 # Column name mapping: uploaded name → name expected by GCP Batch image
 _COLUMN_RENAMES = {
-    "diagnoses (labels)": "Clinical Diagnoses",
-    "diagnoses": "Clinical Diagnoses",
-    "clinical diagnoses": "Clinical Diagnoses",
     "text (pathology report)": "Text",
-    "text": "Text",
 }
+
+
+# Fields that must have real values (not NA/empty) for a row to be a patient header.
+_HEADER_SENTINEL_COLS = ["Date of Birth", "Sex", "Species", "Breed"]
+
+# Columns concatenated from continuation rows into the preceding header.
+_CONTINUATION_COLS = ["Text"]
+
+# HTML tag pattern for stripping markup from pathology text.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+# Characters allowed in a stored filename (strip everything else).
+_SAFE_FILENAME_RE = re.compile(r"[^\w\-. ]")
+
+
+def _is_na(value) -> bool:
+    """Return True if the value is missing, empty, or the string 'NA'."""
+    if value is None:
+        return True
+    s = str(value).strip()
+    return s == "" or s.lower() == "na" or s.lower() == "nan"
+
+
+def _merge_continuation_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Merge HTML-like continuation rows into single patient records.
+
+    The uploaded file may have one 'header row' per patient followed by zero or
+    more 'continuation rows' where all demographic fields are NA and only the
+    ``Text`` and/or ``Clinical Diagnoses`` columns carry additional content.
+    This function collapses each group into a single row with the fragments
+    concatenated.
+
+    A row is treated as a *patient header* when at least one sentinel column
+    (Date of Birth, Sex, Species, Breed) contains a real value.  Otherwise it
+    is a continuation row appended to the preceding patient.
+
+    Rows that appear before the first header are silently skipped.
+    """
+    # Identify which sentinel columns are actually present in the dataframe.
+    sentinel_cols = [c for c in _HEADER_SENTINEL_COLS if c in df.columns]
+    cont_cols = [c for c in _CONTINUATION_COLS if c in df.columns]
+
+    # Fast path: no sentinel columns found → file is already flat, return as-is.
+    if not sentinel_cols:
+        return df
+
+    patients: list[dict] = []
+    current: dict | None = None
+
+    for _, row in df.iterrows():
+        is_header = any(not _is_na(row.get(c)) for c in sentinel_cols)
+
+        if is_header:
+            if current is not None:
+                patients.append(current)
+            current = row.to_dict()
+            # Strip HTML from the initial fragments.
+            for col in cont_cols:
+                if not _is_na(current.get(col)):
+                    current[col] = _HTML_TAG_RE.sub("", str(current[col])).strip()
+        else:
+            # Continuation row — append its fragments to the current patient.
+            if current is None:
+                continue  # orphaned continuation before any header; skip
+            for col in cont_cols:
+                if _is_na(row.get(col)):
+                    continue
+                fragment = _HTML_TAG_RE.sub("", str(row[col])).strip()
+                if not fragment:
+                    continue
+                existing = str(current.get(col, "") or "").strip()
+                current[col] = f"{existing} {fragment}".strip() if existing else fragment
+
+    # Flush the last patient.
+    if current is not None:
+        patients.append(current)
+
+    if not patients:
+        return df
+
+    merged = pd.DataFrame(patients, columns=df.columns)
+    logger.info(
+        "_merge_continuation_rows: %d raw rows → %d patient records",
+        len(df),
+        len(merged),
+    )
+    return merged
 
 
 def _normalize_columns(csv_bytes: bytes) -> bytes:
     """Normalize CSV columns to match the deployed GCP Batch image expectations.
 
-    - Adds ``anon_id`` column (row index) if missing
+    - Merges HTML-like continuation rows into single patient records
     - Renames known variant column names to canonical forms
+    - Adds ``anon_id`` column (sequential per patient) if missing
     """
-    df = pd.read_csv(io.BytesIO(csv_bytes))
+    df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
 
-    # Rename columns to canonical names
+    # Rename columns to canonical names first so sentinel detection works.
     rename_map = {}
     for col in df.columns:
         canonical = _COLUMN_RENAMES.get(col.strip().lower())
@@ -66,11 +150,25 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
     if rename_map:
         df = df.rename(columns=rename_map)
 
-    # Add anon_id if missing (row index as string)
+    # Merge continuation rows into one record per patient.
+    df = _merge_continuation_rows(df)
+
+    # Add anon_id if missing — one sequential ID per merged patient record.
     if "anon_id" not in df.columns:
-        df.insert(0, "anon_id", [str(i) for i in range(len(df))])
+        df.insert(0, "anon_id", [f"VMTH_{i}" for i in range(len(df))])
 
     return df.to_csv(index=False).encode("utf-8")
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Strip path separators, control chars, and truncate for safe DB storage."""
+    # Take only the basename (strip directory components).
+    name = os.path.basename(filename)
+    # Remove any characters that aren't word chars, hyphens, dots, or spaces.
+    name = _SAFE_FILENAME_RE.sub("_", name)
+    # Collapse runs of underscores and truncate.
+    name = re.sub(r"_+", "_", name).strip("_")
+    return name[:255] or "upload"
 
 
 @router.get("/status")
@@ -82,35 +180,33 @@ async def ingestion_status():
 @router.post("/upload")
 async def upload_datasets(
     dataset_a: UploadFile = File(...),
-    dataset_b: Optional[UploadFile] = None,
     db: AsyncSession = Depends(get_db),
-    user: Optional[CurrentUser] = Depends(get_optional_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
-    """Upload Dataset A and optionally Dataset B. Creates a job in pending_review status.
+    """Upload a dataset CSV/XLSX. Creates a job in pending_review status.
 
-    Authentication is optional — anonymous uploads are allowed.
+    Requires authentication.
     """
     if not dataset_a.filename:
-        raise HTTPException(status_code=400, detail="Dataset A file is required")
+        raise HTTPException(status_code=400, detail="Dataset file is required")
 
     dataset_a_bytes = await dataset_a.read()
-    dataset_b_bytes = (await dataset_b.read()) if dataset_b and dataset_b.filename else b""
 
     if not dataset_a_bytes:
-        raise HTTPException(status_code=400, detail="Dataset A file is empty")
+        raise HTTPException(status_code=400, detail="Dataset file is empty")
+
+    if len(dataset_a_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
 
     # Convert XLSX → CSV if needed, then normalize columns for GCP Batch image
     dataset_a_bytes = _normalize_columns(_ensure_csv(dataset_a_bytes, dataset_a.filename))
-    if dataset_b_bytes:
-        dataset_b_bytes = _normalize_columns(_ensure_csv(dataset_b_bytes, dataset_b.filename))
 
-    # Rate limit: 3 uploads per day for non-admin users
-    if not user or not user.is_admin:
-        uploader_id = user.email if user else "anonymous"
+    # Rate limit: 3 uploads per day. Admins and uploader-role users bypass.
+    if not (user.is_admin or user.is_uploader):
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         count_result = await db.execute(
             select(func.count(IngestionJob.id)).where(
-                IngestionJob.uploaded_by_email == uploader_id,
+                IngestionJob.uploaded_by_email == user.email,
                 IngestionJob.created_at >= today_start,
             )
         )
@@ -122,12 +218,10 @@ async def upload_datasets(
             )
 
     # Create job record first to get an ID
-    dataset_b_filename = dataset_b.filename if dataset_b and dataset_b.filename else None
     job = IngestionJob(
-        uploaded_by_email=user.email if user else "anonymous",
-        uploaded_by_sub=user.sub if user else "anonymous",
-        dataset_a_filename=dataset_a.filename,
-        dataset_b_filename=dataset_b_filename,
+        uploaded_by_email=user.email,
+        uploaded_by_sub=user.sub,
+        dataset_a_filename=_sanitize_filename(dataset_a.filename),
         storage_path="",  # will update after we know the ID
         status="pending_review",
         created_at=datetime.now(timezone.utc),
@@ -136,15 +230,12 @@ async def upload_datasets(
     db.add(job)
     await db.flush()
 
-    # Save files to disk
+    # Save file to disk
     storage_path = os.path.join(settings.UPLOAD_DIR, str(job.id))
     os.makedirs(storage_path, exist_ok=True)
 
     with open(os.path.join(storage_path, "dataset_a.csv"), "wb") as f:
         f.write(dataset_a_bytes)
-    if dataset_b_bytes:
-        with open(os.path.join(storage_path, "dataset_b.csv"), "wb") as f:
-            f.write(dataset_b_bytes)
 
     job.storage_path = storage_path
     await db.commit()
@@ -158,7 +249,7 @@ async def list_jobs(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
     mine: bool = Query(False),
-    status: list[str] = Query(default=[]),
+    status: list[str] = Query(default=[], max_length=10),
 ):
     """List jobs. Admins see all (unless mine=true); regular users always see only their own.
 
@@ -167,7 +258,8 @@ async def list_jobs(
     valid_statuses = {"pending_review", "processing", "completed", "failed", "rejected"}
     filtered_statuses = [s for s in status if s in valid_statuses]
 
-    if user.is_admin and not mine:
+    # Reviewers and admins see the global queue; uploaders see only their own.
+    if (user.is_admin or user.is_reviewer) and not mine:
         query = select(IngestionJob)
     else:
         query = select(IngestionJob).where(
@@ -192,30 +284,32 @@ async def get_job(
     """Get a single job by ID (for polling)."""
     job = await _get_job_or_404(db, job_id)
 
-    # Non-admin can only see their own jobs
-    if not user.is_admin and job.uploaded_by_email != user.email:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Reviewers and admins see all jobs; uploaders see only their own.
+    # Return 404 (not 403) to avoid leaking whether a job ID exists.
+    if not (user.is_admin or user.is_reviewer) and job.uploaded_by_email != user.email:
+        raise HTTPException(status_code=404, detail="Job not found")
 
     return _job_to_dict(job)
 
 
-@router.get("/jobs/{job_id}/preview/{dataset}")
+@router.get("/jobs/{job_id}/preview")
 async def preview_job_dataset(
     job_id: int,
-    dataset: str,
     db: AsyncSession = Depends(get_db),
-    _admin: CurrentUser = Depends(require_admin),
+    _reviewer: CurrentUser = Depends(require_reviewer),
 ):
-    """Stream a stored CSV file for admin preview."""
-    if dataset not in ("a", "b"):
-        raise HTTPException(status_code=400, detail="dataset must be 'a' or 'b'")
-
+    """Stream the stored CSV file for reviewer preview."""
     job = await _get_job_or_404(db, job_id)
-    filename = "dataset_a.csv" if dataset == "a" else "dataset_b.csv"
-    filepath = os.path.join(job.storage_path, filename)
+    filepath = os.path.join(job.storage_path, "dataset_a.csv")
+
+    # Defense-in-depth: ensure the resolved path stays inside UPLOAD_DIR.
+    allowed_base = os.path.abspath(settings.UPLOAD_DIR)
+    resolved = os.path.abspath(filepath)
+    if not resolved.startswith(allowed_base + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+        raise HTTPException(status_code=404, detail="File not found")
 
     def iter_file():
         with open(filepath, "rb") as f:
@@ -224,7 +318,7 @@ async def preview_job_dataset(
     return StreamingResponse(
         iter_file(),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="dataset_a.csv"'},
     )
 
 
@@ -232,7 +326,7 @@ async def preview_job_dataset(
 async def cancel_job(
     job_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: CurrentUser = Depends(require_admin),
+    actor: CurrentUser = Depends(require_reviewer),
 ):
     """Cancel a job that is currently processing."""
     job = await _get_job_or_404(db, job_id)
@@ -246,8 +340,8 @@ async def cancel_job(
     now = datetime.now(timezone.utc)
     job.status = "cancelled"
     job.processing_stage = None
-    job.processing_error = "Cancelled by admin"
-    job.reviewed_by_email = admin.email
+    job.processing_error = f"Cancelled by {actor.email}"
+    job.reviewed_by_email = actor.email
     job.reviewed_at = now
     job.updated_at = now
     await db.commit()
@@ -271,7 +365,7 @@ async def review_job(
     job_id: int,
     review: IngestionJobReview,
     db: AsyncSession = Depends(get_db),
-    admin: CurrentUser = Depends(require_admin),
+    reviewer: CurrentUser = Depends(require_reviewer),
 ):
     """Approve or reject a pending job."""
     job = await _get_job_or_404(db, job_id)
@@ -282,11 +376,8 @@ async def review_job(
             detail=f"Job is '{job.status}', can only review 'pending_review' jobs",
         )
 
-    if review.action not in ("approve", "reject"):
-        raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
-
     now = datetime.now(timezone.utc)
-    job.reviewed_by_email = admin.email
+    job.reviewed_by_email = reviewer.email
     job.reviewed_at = now
     job.updated_at = now
 
@@ -303,9 +394,19 @@ async def review_job(
     await db.commit()
     await db.refresh(job)
 
-    asyncio.create_task(process_approved_job(job.id))
+    task = asyncio.create_task(process_approved_job(job.id))
+    task.add_done_callback(_log_task_exception)
 
     return _job_to_dict(job)
+
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Log unhandled exceptions from fire-and-forget background tasks."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.error(
+            "Background job task failed with unhandled exception",
+            exc_info=task.exception(),
+        )
 
 
 # --- Helpers ---
@@ -325,7 +426,6 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "id": job.id,
         "uploaded_by_email": job.uploaded_by_email,
         "dataset_a_filename": job.dataset_a_filename,
-        "dataset_b_filename": job.dataset_b_filename,
         "status": job.status,
         "processing_stage": job.processing_stage,
         "reviewed_by_email": job.reviewed_by_email,
@@ -334,6 +434,7 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "ingestion_log_id": job.ingestion_log_id,
         "processing_error": job.processing_error,
         "batch_job_name": job.batch_job_name,
+        "result_summary": job.result_summary,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }

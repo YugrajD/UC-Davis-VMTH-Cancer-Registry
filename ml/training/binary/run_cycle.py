@@ -1,19 +1,25 @@
-"""Orchestrate a full binary-classifier training cycle in one command.
+"""Run one full label-classifier training cycle.
 
-Steps:
-  0. (first run only) Build embedding cache via petbert_pipeline
-  1. build_training_pairs   — assemble training data from evaluation output
-  2. train                  — train presence classifier using cached embeddings
-  3. petbert_pipeline       — re-run with the trained classifier (uses cache)
-  4. evaluate               — score new predictions against keyword ground truth
-  5. log_evaluation         — append result to evaluation_history.csv
+A cycle is the core unit of iterative training:
 
-Step 0 runs only when the embedding cache doesn't exist yet.  After the first
-cycle, Steps 2 and 3 load embeddings from cache — PetBERT is never called again.
+  Step 0  Embed all reports into vector space (first run only — skipped once cache exists)
+  Step 1  Assemble training data: positives from verified labels + negatives from
+          previous cycle's wrong predictions
+  Step 2  Train the label presence classifier on those pairs
+  Step 3  Score all reports with the updated classifier
+  Step 4  Evaluate predictions against verified labels → verdicts (good / slightly_off /
+          completely_off / false_positive / false_negative)
+  Step 4.5 Record wrong-group predictions in the rolling feedback bank
+  Step 5  Record cycle results to evaluation history; promote checkpoint if new best
+
+After the first cycle, Step 0 is skipped — PetBERT never runs again; all subsequent
+training and inference reads embeddings from the cache.
+
+Typical trajectory with the adapted backbone (Phase 17):
+  c1 ~50%  →  c3 ~65%  →  c8 ~69% (plateau)
 
 Usage:
-  env PYTHONPATH=ml python ml/training/binary/run_cycle.py --label "classifier v2"
-  env PYTHONPATH=ml python ml/training/binary/run_cycle.py --label "v3" --epochs 30 --device mps
+  python ml/training/binary/run_cycle.py --label "c1" --device xpu --local-only
 """
 
 import argparse
@@ -22,43 +28,46 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from petbert_pipeline.pipeline import run_scan
-from petbert_pipeline.types import ScanConfig
+import config
+from model.constants import DEFAULT_TEXT_COLS
+from production.petbert_pipeline import run_scan, ScanConfig
 from training.binary.build_training_pairs import build_pairs
-from training.binary.evaluate import evaluate
-from training.binary.log_evaluation import log_evaluation
+from evaluation import evaluate, log_evaluation
 from training.binary.train import train
 from training.binary.update_co_bank import update_co_bank
 
-_CHECKPOINT            = "ml/model/checkpoints/presence_classifier_current.pt"
-_CHECKPOINT_PRODUCTION = "ml/model/checkpoints/presence_classifier_best.pt"
-_HISTORY_CSV           = "ml/output/evaluation/evaluation_history.csv"
 
-_DEFAULT_TEXT_COLS = ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "ANCILLARY TESTS")
+def _subdir(model: str) -> str:
+    """Return the output subdirectory for a given model path.
+
+    Uses 'contrastive' when the model path points to the adapted backbone
+    checkpoint directory; 'binary' for the frozen-backbone baseline.
+    """
+    return "contrastive" if "contrastive" in model else "binary"
 
 
-def _print_banner(title: str) -> None:
+def _banner(title: str) -> None:
     print(f"\n{'=' * 60}")
     print(f"  {title}")
     print(f"{'=' * 60}\n")
 
 
-def _scan(title: str, config: ScanConfig) -> None:
-    """Run the petbert_pipeline directly — no subprocess."""
-    _print_banner(title)
-    run_scan(config)
+def _score_reports(title: str, scan_config: ScanConfig) -> None:
+    """Run the scoring pipeline — wrapped here to keep cycle steps readable."""
+    _banner(title)
+    run_scan(scan_config)
 
 
-def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> ScanConfig:
+def _make_scan_config(args, *, out_dir: str, classifier_path: str | None = None) -> ScanConfig:
     """Build a ScanConfig from cycle CLI args."""
     return ScanConfig(
-        csv_path="ml/data/report.csv",
+        csv_path=config.REPORTS_CSV,
         id_col="case_id",
-        text_cols=_DEFAULT_TEXT_COLS,
+        text_cols=DEFAULT_TEXT_COLS,
         col_weights={},
-        model_name="SAVSNET/PetBERT",
+        model_name=args.model,
         local_only=args.local_only,
-        out_dir="ml/output/report",
+        out_dir=out_dir,
         max_rows=None,
         batch_size=16,
         max_length=512,
@@ -66,43 +75,52 @@ def _make_scan_config(args, *, presence_classifier_path: str | None = None) -> S
         task="categorize",
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
-        labels_csv_path="ml/labels/labels.csv",
-        presence_classifier_path=presence_classifier_path,
+        labels_csv_path=config.LABELS_CSV,
+        presence_classifier_path=classifier_path,
         embedding_cache_path=args.embedding_cache or None,
         enrich_labels_csv_path=args.enrich_labels_csv or None,
     )
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Run a full PetBERT training cycle.")
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Run one full label-classifier training cycle."
+    )
     parser.add_argument(
         "--label", default="",
         help="Label written to evaluation_history.csv (default: auto-timestamp)",
     )
     parser.add_argument(
-        "--epochs", type=int, default=20,
-        help="Training epochs (default: 20)",
+        "--epochs", type=int, default=25,
+        help="Training epochs (default: 25)",
     )
     parser.add_argument(
         "--device", default="auto",
         choices=["auto", "cpu", "cuda", "mps", "xpu"],
-        help="Compute device for training and inference (default: auto)",
+        help="Compute device (default: auto)",
     )
     parser.add_argument(
-        "--embedding-min-sim", type=float, default=0.5,
-        help="Presence probability threshold for the pipeline step (default: 0.5)",
+        "--embedding-min-sim", type=float, default=0.05,
+        help="Minimum score threshold for predictions (default: 0.05; "
+             "scores are mean-subtracted so 0.05 suits the label classifier)",
     )
     parser.add_argument(
         "--local-only", action="store_true",
-        help="Use only locally cached PetBERT model files (no network calls)",
+        help="Use only locally cached model files (no network calls)",
+    )
+    parser.add_argument(
+        "--model", default="SAVSNET/PetBERT",
+        help="HuggingFace model name or local path for embeddings "
+             "(default: SAVSNET/PetBERT). Pass the adapted backbone path "
+             "after running --mode adapt-backbone.",
     )
     parser.add_argument(
         "--pos-weight", type=float, default=1.0,
         help="BCEWithLogitsLoss pos_weight (default: 1.0)",
     )
     parser.add_argument(
-        "--recall-weight", type=float, default=0.5,
-        help="Checkpoint selection recall weight (default: 0.5)",
+        "--recall-weight", type=float, default=0.25,
+        help="Checkpoint selection recall weight (default: 0.25)",
     )
     parser.add_argument(
         "--max-pos-per-group", type=int, default=0,
@@ -110,93 +128,127 @@ def main() -> int:
     )
     parser.add_argument(
         "--co-neg-per-case", type=int, default=3,
-        help="Cap completely-off negatives per case (0 = no cap, default: 3).",
+        help="Cap wrong-group negatives per case (0 = no cap, default: 3).",
     )
     parser.add_argument(
         "--fp-neg-per-case", type=int, default=10,
-        help="Extra random taxonomy labels to sample per unique false-positive case (default: 10).",
+        help="Extra random labels to sample per false-positive case (default: 10).",
     )
     parser.add_argument(
         "--co-neg-extra-csv", default="",
-        help="Optional second evaluation.csv to pull extra CO negatives from.",
+        help="Optional second evaluation.csv to pull extra wrong-group negatives from.",
     )
     parser.add_argument(
         "--co-neg-bank-csv",
-        default="ml/output/evaluation/evaluation_co_bank.csv",
-        help="Path to the rolling CO-negative bank (default: ml/output/evaluation/evaluation_co_bank.csv). "
-             "Pass empty string to disable.",
+        default=None,
+        help="Path to the rolling wrong-label feedback bank "
+             "(default: auto-derived from --model). Pass empty string to disable.",
     )
     parser.add_argument(
-        "--embedding-cache", default="ml/data/embedding_cache.npz",
-        help="Path to embedding cache npz. Pass empty string to disable. "
-             "(default: ml/data/embedding_cache.npz)",
+        "--embedding-cache", default=config.EMBEDDING_CACHE_NPZ,
+        help=f"Path to embedding cache file. Pass empty string to disable. "
+             f"(default: {config.EMBEDDING_CACHE_NPZ})",
     )
     parser.add_argument(
         "--enrich-labels-csv", default="",
-        help="Path to keyword_predictions.csv for label embedding enrichment. "
-             "(default: disabled)",
+        help="Annotation CSV for label embedding enrichment (default: disabled).",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--hidden-dim", type=int, default=512,
+        help="MLP hidden layer size (default: 512).",
+    )
+    parser.add_argument(
+        "--annotation-csv", default=config.KEYWORD_ANNOTATION_CSV,
+        help="Verified label annotations for training positives and evaluation. "
+             f"(default: {config.KEYWORD_ANNOTATION_CSV})",
+    )
+    parser.add_argument(
+        "--train-cases", default="",
+        help="Path to train_cases.txt. When provided, only train cases contribute to "
+             "training pairs. Generate with create_split.py.",
+    )
+    args = parser.parse_args(argv)
 
-    label = args.label or f"classifier {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    subdir = _subdir(args.model)
+    ckpt_dir        = config.CHECKPOINT_CONTRASTIVE_DIR if subdir == "contrastive" else config.CHECKPOINT_BINARY_DIR
+    checkpoint      = f"{ckpt_dir}/presence_classifier_current.pt"
+    checkpoint_best = f"{ckpt_dir}/presence_classifier_best.pt"
+    production_out  = f"{config.OUTPUT_PRODUCTION_DIR}/{subdir}"
+    evaluation_out  = f"{config.OUTPUT_EVALUATION_DIR}/{subdir}"
+    history_csv     = f"{config.OUTPUT_EVALUATION_DIR}/{subdir}/evaluation_history.csv"
 
-    # 0 ── Build embedding cache (first run only) ──────────────────────────────
+    if args.co_neg_bank_csv is None:
+        args.co_neg_bank_csv = f"{config.OUTPUT_TRAINING_DIR}/{subdir}/evaluation_co_bank.csv"
+
+    label = args.label or f"cycle {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+    # 0 ── Embed reports (first run only) ─────────────────────────────────────
     if args.embedding_cache and not Path(args.embedding_cache).exists():
-        _scan(
-            "Step 0/5 — Build embedding cache (first run only)",
-            _make_scan_config(args),
+        _score_reports(
+            "Step 0/5 — Embed reports into vector space (first run only)",
+            _make_scan_config(args, out_dir=production_out),
         )
 
-    # 1 ── Build training pairs ────────────────────────────────────────────────
-    _print_banner("Step 1/5 — Build training pairs")
+    # 1 ── Assemble training data ──────────────────────────────────────────────
+    _banner("Step 1/5 — Assemble training data")
     build_pairs(
+        expectation_csv=args.annotation_csv,
+        evaluation_csv=f"{evaluation_out}/evaluation.csv",
         co_neg_per_case=args.co_neg_per_case,
         fp_neg_per_case=args.fp_neg_per_case,
         max_pos_per_group=args.max_pos_per_group,
         co_neg_extra_csv=args.co_neg_extra_csv,
         co_neg_bank_csv=args.co_neg_bank_csv,
+        train_cases_txt=args.train_cases,
     )
 
-    # 2 ── Train classifier ────────────────────────────────────────────────────
-    _print_banner("Step 2/5 — Train classifier")
+    # 2 ── Train label presence classifier ────────────────────────────────────
+    _banner("Step 2/5 — Train label presence classifier")
     train(
         epochs=args.epochs,
         device=args.device,
         pos_weight=args.pos_weight,
         recall_weight=args.recall_weight,
         embedding_cache=args.embedding_cache or None,
+        hidden_dim=args.hidden_dim,
+        model_name=args.model,
+        out_dir=ckpt_dir,
     )
 
-    # 3 ── Re-run pipeline with trained classifier ─────────────────────────────
-    _scan(
-        "Step 3/5 — Re-run pipeline with trained classifier",
-        _make_scan_config(args, presence_classifier_path=_CHECKPOINT),
+    # 3 ── Score reports with updated classifier ───────────────────────────────
+    _score_reports(
+        "Step 3/5 — Score reports with updated classifier",
+        _make_scan_config(args, out_dir=production_out, classifier_path=checkpoint),
     )
 
-    # 4 ── Evaluate ────────────────────────────────────────────────────────────
-    _print_banner("Step 4/5 — Evaluate predictions")
+    # 4 ── Evaluate predictions ────────────────────────────────────────────────
+    _banner("Step 4/5 — Score predictions against verified labels")
     evaluate(
-        petbert_csv=Path("ml/output/report/petbert_predictions.csv"),
-        keyword_csv=Path("ml/output/diagnoses/keyword_predictions.csv"),
-        out_dir=Path("ml/output/evaluation"),
+        prediction_csv=Path(f"{production_out}/petbert_predictions.csv"),
+        expectation_csv=Path(args.annotation_csv),
+        out_dir=Path(evaluation_out),
+        cases_txt=args.train_cases,
     )
 
-    # 4.5 ── Update rolling CO-negative bank ──────────────────────────────────
+    # 4.5 ── Record wrong-group feedback ──────────────────────────────────────
     if args.co_neg_bank_csv:
-        _print_banner("Step 4.5/5 — Update rolling CO-negative bank")
+        _banner("Step 4.5/5 — Record wrong-group predictions in feedback bank")
         update_co_bank(
-            evaluation_csv="ml/output/evaluation/evaluation.csv",
+            evaluation_csv=f"{evaluation_out}/evaluation.csv",
             bank_csv=args.co_neg_bank_csv,
         )
 
-    # 5 ── Log ─────────────────────────────────────────────────────────────────
-    _print_banner("Step 5/5 — Log evaluation results")
-    log_evaluation(label=label)
+    # 5 ── Record cycle results ────────────────────────────────────────────────
+    _banner("Step 5/5 — Record cycle results")
+    log_evaluation(
+        summary=f"{evaluation_out}/evaluation_summary.csv",
+        history=history_csv,
+        label=label,
+    )
 
-    # 5.5 ── Save best checkpoint ──────────────────────────────────────────────
-    history_path = Path(_HISTORY_CSV)
-    checkpoint_path = Path(_CHECKPOINT)
-    production_path = Path(_CHECKPOINT_PRODUCTION)
+    # 5.5 ── Promote checkpoint if new best ───────────────────────────────────
+    history_path    = Path(history_csv)
+    checkpoint_path = Path(checkpoint)
 
     if history_path.exists() and checkpoint_path.exists():
         with open(history_path, encoding="utf-8") as f:
@@ -211,10 +263,10 @@ def main() -> int:
                 + float(rows[-1].get("slightly_off_pct", 0) or 0)
             )
             if current_gs >= best_gs:
-                shutil.copy2(_CHECKPOINT, _CHECKPOINT_PRODUCTION)
+                shutil.copy2(checkpoint, checkpoint_best)
                 print(
-                    f"\n* New best Good+Slight: {current_gs:.1f}% -- "
-                    f"checkpoint saved to {_CHECKPOINT_PRODUCTION}"
+                    f"\n* New best: {current_gs:.1f}% correct or close — "
+                    f"checkpoint saved to {checkpoint_best}"
                 )
 
     return 0

@@ -17,10 +17,13 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.models import (
+    Breed,
     CancerType,
     CaseDiagnosis,
     County,
+    DiagnosisReviewEvent,
     IngestionLog,
     Patient,
     Species,
@@ -138,24 +141,45 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
 # Parse demographics CSV
 # ---------------------------------------------------------------------------
 
-def parse_demographics_csv(csv_bytes: bytes) -> dict[str, dict]:
-    """Parse Dataset B (demographics) CSV.
+# ---------------------------------------------------------------------------
+# Parse Dataset A demographics
+# ---------------------------------------------------------------------------
 
-    Expects columns: anon_id, Sex, and a zip column (any column with 'zip' in name).
-    Takes first non-empty sex/zip per anon_id.
+def _parse_date(raw: str):
+    """Parse '8-Jan-25' style dates into a Python date."""
+    if not raw or not raw.strip():
+        return None
+    try:
+        return datetime.strptime(raw.strip(), "%d-%b-%y").date()
+    except ValueError:
+        return None
 
-    Returns: {anon_id: {"sex": str|None, "zip": str|None}}
+
+def _clean_zip(raw: str) -> str:
+    """Normalize a raw zip cell: strip NA/NaN, drop trailing '.0', keep empty string on miss."""
+    s = str(raw or "").strip()
+    if s.lower() in ("", "na", "nan"):
+        return ""
+    return s.split(".")[0]
+
+
+def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
+    """Parse Dataset A CSV for demographic columns.
+
+    Dataset A columns: anon_id, DtOfRq, Sex, Species, Breed,
+    'Zipcode Zipcode', 'RfrrVtrn Zipcode Zipcode', ...
+    Extracts: sex, breed, diagnosis_date, species, zip per anon_id.
+    Takes first non-empty value per anon_id (same pattern as demographics).
+
+    Zip preference: 'Zipcode Zipcode'; falls back to
+    'RfrrVtrn Zipcode Zipcode' when the primary is missing/NA.
+
+    Returns: {anon_id: {"sex": str|None, "breed": str|None,
+                         "diagnosis_date": date|None, "species": str|None,
+                         "zip": str|None}}
     """
     text = csv_bytes.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
-
-    # Find zip column
-    fieldnames = reader.fieldnames or []
-    zip_col = None
-    for col in fieldnames:
-        if "zip" in col.lower():
-            zip_col = col
-            break
 
     result: dict[str, dict] = {}
     for row in reader:
@@ -167,16 +191,42 @@ def parse_demographics_csv(csv_bytes: bytes) -> dict[str, dict]:
         if raw_sex == "NAN" or raw_sex == "":
             raw_sex = ""
 
-        raw_zip = str(row.get(zip_col, "")).strip() if zip_col else ""
-        if raw_zip.lower() == "nan":
-            raw_zip = ""
-        raw_zip = raw_zip.split(".")[0]
+        raw_breed = str(row.get("Breed", "")).strip()
+        if raw_breed.lower() == "nan":
+            raw_breed = ""
+
+        raw_date = str(row.get("DtOfRq", "")).strip()
+        if raw_date.lower() == "nan":
+            raw_date = ""
+
+        raw_species = str(row.get("Species", "")).strip()
+        if raw_species.lower() == "nan":
+            raw_species = ""
+
+        raw_zip = _clean_zip(row.get("Zipcode Zipcode", "")) or _clean_zip(
+            row.get("RfrrVtrn Zipcode Zipcode", "")
+        )
 
         if anon_id not in result:
-            result[anon_id] = {"sex": None, "zip": None}
+            result[anon_id] = {
+                "sex": None,
+                "breed": None,
+                "diagnosis_date": None,
+                "species": None,
+                "zip": None,
+            }
 
         if result[anon_id]["sex"] is None and raw_sex:
             result[anon_id]["sex"] = SEX_MAP.get(raw_sex)
+
+        if result[anon_id]["breed"] is None and raw_breed:
+            result[anon_id]["breed"] = raw_breed
+
+        if result[anon_id]["diagnosis_date"] is None and raw_date:
+            result[anon_id]["diagnosis_date"] = _parse_date(raw_date)
+
+        if result[anon_id]["species"] is None and raw_species:
+            result[anon_id]["species"] = raw_species
 
         if result[anon_id]["zip"] is None and raw_zip:
             result[anon_id]["zip"] = raw_zip
@@ -191,9 +241,9 @@ def parse_demographics_csv(csv_bytes: bytes) -> dict[str, dict]:
 async def ingest_upload(
     db: AsyncSession,
     predictions: list[dict],
-    demographics_csv: Optional[bytes],
     dataset_a_filename: str,
-    dataset_b_filename: Optional[str],
+    dataset_a_csv: Optional[bytes] = None,
+    ingestion_job_id: int | None = None,
 ) -> IngestionResponse:
     """Ingest ML worker predictions + optional demographics into the database.
 
@@ -215,22 +265,14 @@ async def ingest_upload(
     petbert = parse_predictions(predictions)
     total_diag = sum(len(v) for v in petbert.values())
 
-    # --- Parse demographics ---
+    # --- Parse Dataset A demographics ---
     demographics: dict[str, dict] = {}
-    if demographics_csv:
-        demographics = parse_demographics_csv(demographics_csv)
+    if dataset_a_csv:
+        demographics = parse_dataset_a_demographics(dataset_a_csv)
 
     # --- Determine which IDs to process ---
-    if demographics:
-        ids_to_process = sorted(set(petbert.keys()) & set(demographics.keys()))
-        petbert_only = set(petbert.keys()) - set(demographics.keys())
-        if petbert_only:
-            warnings.append(
-                f"{len(petbert_only)} patients in Dataset A have no demographics match (skipped)"
-            )
-    else:
-        # No demographics provided — ingest all prediction IDs
-        ids_to_process = sorted(petbert.keys())
+    # Process all patients with predictions; demographics are optional enrichment
+    ids_to_process = sorted(petbert.keys())
 
     if not ids_to_process:
         return IngestionResponse(
@@ -247,11 +289,11 @@ async def ingest_upload(
     species_map = {name: id_ for id_, name in species_result.fetchall()}
     dog_species_id = species_map.get("Dog")
     if not dog_species_id:
-        # Try to create the Dog species
         dog = Species(name="Dog")
         db.add(dog)
         await db.flush()
         dog_species_id = dog.id
+        species_map["Dog"] = dog_species_id
 
     county_result = await db.execute(select(County.id, County.name))
     county_map = {name: id_ for id_, name in county_result.fetchall()}
@@ -259,12 +301,42 @@ async def ingest_upload(
     cancer_type_result = await db.execute(select(CancerType.id, CancerType.name))
     cancer_type_map = {name: id_ for id_, name in cancer_type_result.fetchall()}
 
+    # Pre-load breed lookup: (species_id, name) → id
+    breed_result = await db.execute(select(Breed.id, Breed.species_id, Breed.name))
+    breed_map: dict[tuple[int, str], int] = {
+        (row.species_id, row.name): row.id for row in breed_result.fetchall()
+    }
+
     # --- Upsert patients ---
     patients_inserted = 0
     for anon_id in ids_to_process:
         demo = demographics.get(anon_id, {})
         sex = demo.get("sex")
-        raw_zip = demo.get("zip", "")
+        raw_zip = demo.get("zip") or ""
+        breed_name = demo.get("breed") or ""
+        diagnosis_date = demo.get("diagnosis_date")
+        species_name = demo.get("species") or ""
+
+        # Resolve species_id (default to Dog)
+        species_id = dog_species_id
+        if species_name:
+            if species_name not in species_map:
+                new_sp = Species(name=species_name)
+                db.add(new_sp)
+                await db.flush()
+                species_map[species_name] = new_sp.id
+            species_id = species_map[species_name]
+
+        # Resolve breed_id (lookup or create)
+        breed_id = None
+        if breed_name and species_id:
+            key = (species_id, breed_name)
+            if key not in breed_map:
+                new_breed = Breed(species_id=species_id, name=breed_name)
+                db.add(new_breed)
+                await db.flush()
+                breed_map[key] = new_breed.id
+            breed_id = breed_map[key]
 
         county_name = lookup_county(raw_zip) if raw_zip else None
         county_id = county_map.get(county_name) if county_name else None
@@ -272,23 +344,25 @@ async def ingest_upload(
             warnings.append(f"{anon_id}: zip '{raw_zip}' not in California")
 
         stmt = pg_insert(Patient.__table__).values(
-            species_id=dog_species_id,
-            breed_id=None,
+            species_id=species_id,
+            breed_id=breed_id,
             sex=sex,
             county_id=county_id,
             anon_id=anon_id,
             zip_code=raw_zip or None,
             data_source="petbert",
-            diagnosis_date=None,
+            diagnosis_date=diagnosis_date,
             outcome=None,
         ).on_conflict_do_update(
             index_elements=["anon_id"],
             set_={
-                "species_id": dog_species_id,
+                "species_id": species_id,
+                "breed_id": breed_id,
                 "sex": sex,
                 "county_id": county_id,
                 "zip_code": raw_zip or None,
                 "data_source": "petbert",
+                "diagnosis_date": diagnosis_date,
             },
         )
         await db.execute(stmt)
@@ -317,11 +391,20 @@ async def ingest_upload(
         if not patient_id:
             continue
 
+        # Top-1 vs top-2 margin is computed once per case_id and only
+        # attached to the rank-1 row (it is not meaningful for lower ranks).
+        conf_by_rank = {d["diagnosis_index"]: (d["confidence"] or 0.0) for d in petbert[anon_id]}
+        top1_conf = conf_by_rank.get(1, 0.0)
+        top2_conf = conf_by_rank.get(2, 0.0)
+        margin = top1_conf - top2_conf if top1_conf and top2_conf else None
+
         for diag in petbert[anon_id]:
             group = diag["predicted_group"] or "Unknown"
 
             if group not in cancer_type_map:
-                # Upsert cancer type
+                # Upsert cancer type. PetBERT-introduced types are accepted
+                # as confirmed; reviewer-introduced types go in unconfirmed
+                # (see review router).
                 ct_stmt = pg_insert(CancerType.__table__).values(
                     name=group,
                 ).on_conflict_do_nothing(index_elements=["name"])
@@ -335,25 +418,61 @@ async def ingest_upload(
 
             cancer_type_id = cancer_type_map[group]
 
+            conf = diag["confidence"] or 0.0
+            method = diag["method"]
+            rank = diag["diagnosis_index"]
+
+            # Review gate: flag pending when confidence is below the auto-
+            # accept threshold OR (rank-1 only) the margin to the next
+            # candidate is too tight OR the pipeline already labelled the
+            # row low_confidence.
+            row_margin = margin if rank == 1 else None
+            margin_too_tight = (
+                row_margin is not None
+                and row_margin < settings.REVIEW_AUTO_ACCEPT_MARGIN
+            )
+            needs_review = (
+                method == "low_confidence"
+                or conf < settings.REVIEW_AUTO_ACCEPT_CONFIDENCE
+                or margin_too_tight
+            )
+            review_status = "pending" if needs_review else "confirmed"
+
             diagnosis = CaseDiagnosis(
                 patient_id=patient_id,
                 cancer_type_id=cancer_type_id,
                 icd_o_code=diag["icd_o_code"] or None,
                 predicted_term=diag["predicted_term"] or None,
-                confidence=round(diag["confidence"], 2) if diag["confidence"] else None,
-                prediction_method=diag["method"] or None,
+                confidence=round(conf, 2) if conf else None,
+                prediction_method=method or None,
                 source_row_index=diag["row_index"],
-                diagnosis_index=diag["diagnosis_index"],
+                diagnosis_index=rank,
+                review_status=review_status,
+                top2_margin=round(row_margin, 2) if row_margin is not None else None,
+                ingestion_job_id=ingestion_job_id,
             )
             db.add(diagnosis)
             diagnoses_inserted += 1
+
+            if needs_review:
+                # Audit-log the auto-flag so the queue can show "flagged at
+                # ingest" alongside subsequent reviewer actions.
+                db.add(DiagnosisReviewEvent(
+                    case_diagnosis=diagnosis,
+                    actor_email="system",
+                    action="flagged",
+                    from_status=None,
+                    to_status="pending",
+                    cancer_type_id_after=cancer_type_id,
+                    icd_o_code_after=diag["icd_o_code"] or None,
+                ))
 
             row_results.append(IngestionRowResult(
                 row_number=diag["row_index"],
                 anon_id=anon_id,
                 status="inserted",
                 cancer_type=group,
-                confidence=round(diag["confidence"], 2) if diag["confidence"] else None,
+                confidence=round(conf, 2) if conf else None,
             ))
 
     await db.flush()
@@ -367,7 +486,8 @@ async def ingest_upload(
     ))
 
     # --- Refresh materialized views ---
-    for view in ("mv_county_cancer_incidence", "mv_yearly_trends"):
+    _ALLOWED_VIEWS = frozenset({"mv_county_cancer_incidence", "mv_yearly_trends"})
+    for view in _ALLOWED_VIEWS:
         try:
             await db.execute(text(f"REFRESH MATERIALIZED VIEW {view}"))
         except Exception as e:
@@ -376,7 +496,6 @@ async def ingest_upload(
     # --- Log the ingestion ---
     log = IngestionLog(
         dataset_a_filename=dataset_a_filename,
-        dataset_b_filename=dataset_b_filename,
         started_at=started_at,
         completed_at=datetime.now(timezone.utc),
         rows_processed=total_diag,
@@ -392,6 +511,26 @@ async def ingest_upload(
 
     await db.commit()
 
+    # --- Compute confidence summary ---
+    confidences = [r.confidence for r in row_results if r.confidence is not None]
+    cancer_counts: dict[str, int] = defaultdict(int)
+    for r in row_results:
+        if r.cancer_type:
+            cancer_counts[r.cancer_type] += 1
+
+    result_summary = {
+        "patients": len(ids_to_process),
+        "diagnoses": diagnoses_inserted,
+        "avg_confidence": round(sum(confidences) / len(confidences) * 100, 1) if confidences else None,
+        "high_confidence": sum(1 for c in confidences if c >= 0.8),
+        "medium_confidence": sum(1 for c in confidences if 0.5 <= c < 0.8),
+        "low_confidence": sum(1 for c in confidences if c < 0.5),
+        "top_cancer_types": [
+            {"name": name, "count": count}
+            for name, count in sorted(cancer_counts.items(), key=lambda x: -x[1])[:5]
+        ],
+    }
+
     return IngestionResponse(
         total_rows=len(predictions),
         inserted=diagnoses_inserted,
@@ -400,4 +539,5 @@ async def ingest_upload(
         warnings=warnings,
         row_results=row_results,
         ingestion_log_id=log_id,
+        result_summary=result_summary,
     )

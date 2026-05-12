@@ -8,6 +8,7 @@ from typing import Optional, List
 from app.database import get_db
 from app.models.models import CancerType, Patient, Species, County, CaseDiagnosis
 from app.schemas.schemas import TrendsResponse, TrendSeries, TrendPoint
+from app.services.review_filter import apply_review_filter
 
 router = APIRouter(prefix="/api/v1/trends", tags=["trends"])
 
@@ -22,10 +23,10 @@ SEX_MAP = {
 
 @router.get("/yearly", response_model=TrendsResponse)
 async def get_yearly_trends(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -41,9 +42,12 @@ async def get_yearly_trends(
         .where(Patient.data_source == "petbert")
     )
     if cancer_type:
-        stmt = stmt.join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id).join(
-            CancerType, CancerType.id == CaseDiagnosis.cancer_type_id
-        ).where(CancerType.name.in_(cancer_type))
+        stmt = (
+            stmt.join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+            .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+            .where(CancerType.name.in_(cancer_type))
+        )
+        stmt = apply_review_filter(stmt)
     if species:
         stmt = stmt.where(Species.name.in_(species))
     if county:
@@ -69,9 +73,9 @@ async def get_yearly_trends(
 
 @router.get("/by-cancer-type", response_model=TrendsResponse)
 async def get_trends_by_cancer_type(
-    species: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -89,6 +93,7 @@ async def get_trends_by_cancer_type(
         .join(County, Patient.county_id == County.id)
         .where(Patient.data_source == "petbert")
     )
+    stmt = apply_review_filter(stmt)
     if species:
         stmt = stmt.where(Species.name.in_(species))
     if county:

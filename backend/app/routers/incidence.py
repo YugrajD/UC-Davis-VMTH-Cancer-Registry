@@ -8,6 +8,7 @@ from typing import Optional, List
 from app.database import get_db
 from app.models.models import CancerType, Patient, Species, Breed, County, CaseDiagnosis
 from app.schemas.schemas import IncidenceRecord, IncidenceResponse, BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount
+from app.services.review_filter import apply_review_filter
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
 
@@ -25,6 +26,7 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
                    year_end: Optional[int], sex: Optional[str]):
     """Apply common filters to a query statement (ingested data only)."""
     stmt = stmt.where(Patient.data_source == "petbert")
+    stmt = apply_review_filter(stmt)
     if species:
         stmt = stmt.where(Species.name.in_(species))
     if cancer_type:
@@ -43,12 +45,12 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
 
 @router.get("", response_model=IncidenceResponse)
 async def get_incidence(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -94,11 +96,11 @@ async def get_incidence(
 
 @router.get("/by-cancer-type", response_model=IncidenceResponse)
 async def get_incidence_by_cancer_type(
-    species: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -127,11 +129,11 @@ async def get_incidence_by_cancer_type(
 
 @router.get("/by-species", response_model=IncidenceResponse)
 async def get_incidence_by_species(
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -160,12 +162,12 @@ async def get_incidence_by_species(
 
 @router.get("/by-breed", response_model=IncidenceResponse)
 async def get_incidence_by_breed(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -200,7 +202,7 @@ async def get_incidence_by_breed(
 
 @router.get("/breed-detail", response_model=BreedDetailOut)
 async def get_breed_detail(
-    breed: str = Query(..., description="Breed name to look up"),
+    breed: str = Query(..., max_length=200, description="Breed name to look up"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return cancer-type breakdown, sex breakdown, and county distribution for a single breed.
@@ -208,7 +210,7 @@ async def get_breed_detail(
     Includes ALL data where breed_id IS NOT NULL (mock + real).
     """
     # --- total cases ---
-    total_stmt = (
+    total_stmt = apply_review_filter(
         select(func.count(CaseDiagnosis.id))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -218,7 +220,7 @@ async def get_breed_detail(
     total_cases = (await db.execute(total_stmt)).scalar() or 0
 
     # --- sex breakdown ---
-    sex_stmt = (
+    sex_stmt = apply_review_filter(
         select(Patient.sex.label("sex"), func.count(CaseDiagnosis.id).label("count"))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -231,7 +233,7 @@ async def get_breed_detail(
     sex_breakdown = [BreedSexCount(sex=r.sex or "Unknown", count=r.count) for r in sex_rows]
 
     # --- cancer types ---
-    ct_stmt = (
+    ct_stmt = apply_review_filter(
         select(CancerType.name.label("cancer_type"), func.count(CaseDiagnosis.id).label("count"))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -245,7 +247,7 @@ async def get_breed_detail(
     cancer_types = [BreedCancerTypeCount(cancer_type=r.cancer_type, count=r.count) for r in ct_rows]
 
     # --- county distribution ---
-    county_stmt = (
+    county_stmt = apply_review_filter(
         select(
             County.name.label("county_name"),
             County.fips_code.label("fips_code"),

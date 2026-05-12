@@ -168,7 +168,13 @@ Apply `Depends(get_current_user)` to these routes:
 | `upload` | `POST /csv`, `POST /text`, `GET /history` | `get_current_user` |
 | `review` | `GET /queue`, `PUT /{id}`, `GET /stats` | `get_current_user` |
 | `auth` | `POST /register` | `require_admin` |
-| All others | Dashboard, incidence, geo, trends, search | **Public** (read-only visualization) |
+| `search` | `POST /classify`, `GET /reports` | `get_current_user` |
+| `ingest` | `POST /upload`, `POST /jobs/{id}/review` | `get_current_user` / `require_reviewer` |
+| `diagnoses` | All endpoints | `require_reviewer` |
+| `admin` | All endpoints | `require_admin` |
+| `role-requests` | `POST /`, `GET /` | `get_current_user`; resolve = `require_admin` |
+| `export-requests` | `POST /`, `GET /` | `get_current_user`; resolve = `require_admin` |
+| All others | Dashboard, incidence, geo, trends | **Public** (read-only visualization) |
 
 ## 4.6 Configuration Additions
 

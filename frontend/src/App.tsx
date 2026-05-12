@@ -1,9 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AuthProvider } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue, DiagnosisReview, UserManagement } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
+import {
+  VET_ICD_O_CATEGORIES,
+  classifyCancerType,
+  type VetIcdOCategoryId,
+} from './data/vetIcdOCategories';
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -18,6 +23,24 @@ function AppContent() {
 
   const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);
+  const [cancerCategory, setCancerCategory] = useState<VetIcdOCategoryId | 'all'>('all');
+
+  // Counts per VET-ICD-O-Canine-1 category for the current cancer-types data.
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<VetIcdOCategoryId, number>();
+    for (const r of cancerTypesState.data) {
+      const cat = classifyCancerType(r.cancer_type);
+      counts.set(cat, (counts.get(cat) ?? 0) + r.count);
+    }
+    return counts;
+  }, [cancerTypesState.data]);
+
+  const filteredCancerTypes = useMemo(() => {
+    if (cancerCategory === 'all') return cancerTypesState.data;
+    return cancerTypesState.data.filter(
+      (r) => classifyCancerType(r.cancer_type) === cancerCategory,
+    );
+  }, [cancerTypesState.data, cancerCategory]);
 
   const handleCountyClick = (county: string) => {
     setSelectedCounty(selectedCounty === county ? null : county);
@@ -32,10 +55,14 @@ function AppContent() {
           <DataUpload />
         ) : activeTab === 'review-queue' ? (
           <AdminQueue />
+        ) : activeTab === 'diagnosis-review' ? (
+          <DiagnosisReview />
+        ) : activeTab === 'user-management' ? (
+          <UserManagement />
         ) : activeTab === 'breed-disparities' ? (
           <BreedDisparitiesView />
         ) : activeTab === 'analysis' ? (
-          <AnalysisView countyData={countyData} countRange={countRange} />
+          <AnalysisView />
         ) : activeTab === 'cancer-types' ? (
           <div className="space-y-6">
             <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -44,6 +71,56 @@ function AppContent() {
                 Use the filters above to focus on specific sex or cancer types.
               </p>
             </div>
+
+            <div className="bg-white rounded-lg border border-gray-200 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+                  VET-ICD-O-Canine-1 Category
+                </h3>
+                <a
+                  href="https://pmc.ncbi.nlm.nih.gov/articles/PMC8946502/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-[var(--color-teal)] hover:underline"
+                >
+                  about this classification
+                </a>
+              </div>
+              <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+                Filter cancer types by organ-system grouping from the Vet-ICD-O-canine-1 standard.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {(() => {
+                  const allCount = cancerTypesState.data.reduce((s, r) => s + r.count, 0);
+                  const pills: Array<{ id: VetIcdOCategoryId | 'all'; label: string; count: number }> = [
+                    { id: 'all', label: 'All', count: allCount },
+                    ...VET_ICD_O_CATEGORIES
+                      .map((c) => ({ id: c.id, label: c.label, count: categoryCounts.get(c.id) ?? 0 }))
+                      .filter((p) => p.count > 0),
+                  ];
+                  return pills.map((pill) => {
+                    const active = cancerCategory === pill.id;
+                    return (
+                      <button
+                        key={pill.id}
+                        onClick={() => setCancerCategory(pill.id)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                          active
+                            ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]'
+                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        {pill.label}
+                        <span className={`ml-1.5 ${active ? 'text-teal-100' : 'text-gray-500'}`}>
+                          {pill.count.toLocaleString()}
+                        </span>
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
             <div className="bg-white rounded-lg border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
                 Cancer Types Distribution
@@ -56,18 +133,16 @@ function AppContent() {
                 <p className="text-sm text-[var(--color-text-secondary)]">Loading cancer type data...</p>
               ) : cancerTypesState.error ? (
                 <p className="text-sm text-red-600">Error: {cancerTypesState.error}</p>
-              ) : cancerTypesState.data.length === 0 ? (
+              ) : filteredCancerTypes.length === 0 ? (
                 <p className="text-sm text-[var(--color-text-secondary)]">
-                  No cancer type data found for the selected filters.
+                  No cancer types in this category for the selected filters.
                 </p>
               ) : (
                 <div className="space-y-4">
-                  {cancerTypesState.data
-                    .slice()
-                    .sort((a, b) => b.count - a.count)
-                    .slice(0, 10)
-                    .map((record) => {
-                      const maxCount = cancerTypesState.data[0]?.count || 1;
+                  {(() => {
+                    const sorted = filteredCancerTypes.slice().sort((a, b) => b.count - a.count).slice(0, 10);
+                    const maxCount = sorted[0]?.count || 1;
+                    return sorted.map((record) => {
                       const width = Math.max(5, (record.count / maxCount) * 100);
                       return (
                         <div key={record.cancer_type} className="flex items-center gap-4">
@@ -86,7 +161,8 @@ function AppContent() {
                           </div>
                         </div>
                       );
-                    })}
+                    });
+                  })()}
                 </div>
               )}
             </div>

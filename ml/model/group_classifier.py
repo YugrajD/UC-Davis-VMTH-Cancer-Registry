@@ -84,6 +84,7 @@ class GroupClassifier(nn.Module):
                 "group_names": group_names,
                 "num_groups": self.num_groups,
                 "emb_dim": self.emb_dim,
+                "hidden_dim": self.net[0].out_features,
             },
             path,
         )
@@ -91,7 +92,11 @@ class GroupClassifier(nn.Module):
     @classmethod
     def load(cls, path: str | Path) -> tuple["GroupClassifier", list[str]]:
         """Load model and return (model, group_names)."""
-        data = torch.load(path, map_location="cpu", weights_only=False)
-        model = cls(num_groups=data["num_groups"], emb_dim=data["emb_dim"])
+        data = torch.load(path, map_location="cpu", weights_only=True)
+        model = cls(
+            num_groups=data["num_groups"],
+            emb_dim=data["emb_dim"],
+            hidden_dim=data.get("hidden_dim", DEFAULT_HIDDEN_DIM),
+        )
         model.load_state_dict(data["state_dict"])
         return model, data["group_names"]

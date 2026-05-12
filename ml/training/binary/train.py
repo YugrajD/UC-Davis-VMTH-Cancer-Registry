@@ -1,22 +1,20 @@
 """Train the binary presence classifier on (case, label) pairs.
 
 Steps:
-  1. Load training_pairs.csv.
-  2. Look up per-column mean embeddings from the embedding cache (built by petbert_pipeline).
-     Using cached embeddings ensures train/inference consistency: both use the same
-     mean-of-columns representation, not a merged-text approximation.
-  3. Build a PyTorch Dataset from the cached embedding pairs.
-  4. Train PresenceClassifier with BCEWithLogitsLoss, using a weighted sampler
+  0. (auto) Build embedding cache via petbert_pipeline if missing.
+  1. (auto) Build training_pairs.csv via build_training_pairs if missing.
+  2. Load training_pairs.csv.
+  3. Look up per-column mean embeddings from the embedding cache.
+  4. Build a PyTorch Dataset from the cached embedding pairs.
+  5. Train PresenceClassifier with BCEWithLogitsLoss, using a weighted sampler
      and pos_weight to handle class imbalance.
-  5. Evaluate precision / recall / F1 on a held-out validation split after each epoch.
-  6. Save the best checkpoint (by validation F1) to ml/model/checkpoints/.
-
-Requires an embedding cache built by petbert_pipeline --embedding-cache <path>.
-Use training/binary/run_cycle.py to orchestrate the full cycle; it builds the cache automatically.
+  6. Evaluate precision / recall / F1 on a held-out validation split after each epoch.
+  7. Save the best checkpoint (by validation F1) to ml/output/checkpoints/.
 
 Usage:
-  python ml/training/binary/train.py --embedding-cache ml/data/embedding_cache.npz
-  python ml/training/binary/train.py --embedding-cache ml/data/embedding_cache.npz --epochs 40
+  python ml/training/binary/train.py --embedding-cache ml/output/training/embedding_cache.npz
+  python ml/training/binary/train.py --embedding-cache ml/output/training/embedding_cache.npz --epochs 40
+  python ml/training/binary/train.py --skip-prerequisites --embedding-cache ml/output/training/embedding_cache.npz
 """
 
 import argparse
@@ -30,9 +28,67 @@ from sklearn.metrics import precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-from model.constants import PETBERT_EMB_DIM
+import config
+from model.constants import DEFAULT_HIDDEN_DIM, DEFAULT_TEXT_COLS, PETBERT_EMB_DIM
 from model.presence_classifier import PresenceClassifier
-from petbert_pipeline.utils import device_from_arg
+from production.petbert_pipeline import run_scan, ScanConfig, device_from_arg
+from training.binary.build_training_pairs import build_pairs as build_training_pairs
+
+
+def _print_banner(title: str) -> None:
+    print(f"\n{'=' * 60}")
+    print(f"  {title}")
+    print(f"{'=' * 60}\n")
+
+
+def _ensure_embedding_cache(
+    cache_path: str,
+    *,
+    local_only: bool = False,
+    device: str = "auto",
+    embedding_min_sim: float = 0.5,
+) -> None:
+    """Build the embedding cache if it doesn't exist yet (i.e., run_cycle Step 0)."""
+    if Path(cache_path).exists():
+        return
+    _print_banner("Prerequisite — Build embedding cache (first run only)")
+    run_scan(ScanConfig(
+        csv_path=config.REPORTS_CSV,
+        id_col="case_id",
+        text_cols=DEFAULT_TEXT_COLS,
+        col_weights={},
+        model_name="SAVSNET/PetBERT",
+        local_only=local_only,
+        out_dir=f"{config.OUTPUT_PRODUCTION_DIR}/binary",
+        max_rows=None,
+        batch_size=16,
+        max_length=512,
+        neighbors_k=3,
+        task="categorize",
+        embedding_min_sim=embedding_min_sim,
+        device=device,
+        labels_csv_path=config.LABELS_CSV,
+        presence_classifier_path=None,
+        embedding_cache_path=cache_path,
+    ))
+
+
+def _ensure_training_pairs(
+    pairs_csv: str,
+    *,
+    co_neg_per_case: int = 3,
+    fp_neg_per_case: int = 10,
+    max_pos_per_group: int = 0,
+) -> None:
+    """Build training_pairs.csv if it doesn't exist yet (run_cycle Step 1)."""
+    if Path(pairs_csv).exists():
+        return
+    _print_banner("Prerequisite — Build training pairs")
+    build_training_pairs(
+        co_neg_per_case=co_neg_per_case,
+        fp_neg_per_case=fp_neg_per_case,
+        max_pos_per_group=max_pos_per_group,
+    )
 
 
 class PairDataset(Dataset):
@@ -77,22 +133,35 @@ def evaluate(
 
 def train(
     *,
-    pairs_csv: str = "ml/data/training_pairs.csv",
+    pairs_csv: str = config.TRAINING_PAIRS_CSV,
     embedding_cache: str | None = None,
-    report_csv: str = "ml/data/report.csv",
-    labels_csv: str = "ml/labels/labels.csv",
-    out_dir: str = "ml/model/checkpoints",
+    report_csv: str = config.REPORTS_CSV,
+    labels_csv: str = config.LABELS_CSV,
+    out_dir: str = config.CHECKPOINT_BINARY_DIR,
     epochs: int = 20,
     batch_size: int = 256,
     lr: float = 1e-3,
-    hidden_dim: int = 256,
+    hidden_dim: int = DEFAULT_HIDDEN_DIM,
     dropout: float = 0.3,
     val_split: float = 0.15,
     device: str = "auto",
     seed: int = 42,
     pos_weight: float = 1.0,
     recall_weight: float = 0.5,
+    skip_prerequisites: bool = False,
+    local_only: bool = False,
+    model_name: str = "SAVSNET/PetBERT",
 ) -> int:
+    # Auto-build prerequisites if missing (i.e., run_cycle Steps 0–1)
+    if not skip_prerequisites:
+        cache_path = embedding_cache or config.EMBEDDING_CACHE_NPZ
+        _ensure_embedding_cache(
+            cache_path,
+            local_only=local_only,
+            device=device,
+        )
+        _ensure_training_pairs(pairs_csv)
+
     torch.manual_seed(seed)
     np.random.seed(seed)
     dev = device_from_arg(device)
@@ -120,10 +189,10 @@ def train(
     # --- Load or compute embeddings --------------------------------------
     cache = None
     if embedding_cache:
-        from petbert_pipeline.embedding_cache import load_cache
+        from production.petbert_pipeline import load_cache
         cache = load_cache(
             embedding_cache,
-            model_name="SAVSNET/PetBERT",
+            model_name=model_name,
             report_csv_path=report_csv,
             labels_csv_path=labels_csv,
         )
@@ -178,7 +247,7 @@ def train(
         targets     = np.array(targets_list,      dtype=np.float32)
         print(f"  Using {len(targets)} pairs after cache lookup")
     else:
-        cache_path = embedding_cache or "ml/data/embedding_cache.npz"
+        cache_path = embedding_cache or config.EMBEDDING_CACHE_NPZ
         print(
             f"\nError: embedding cache not found or stale.\n"
             f"Build it first by running petbert_pipeline once:\n\n"
@@ -217,7 +286,8 @@ def train(
 
     # --- Model, loss, optimiser ------------------------------------------
     classifier = PresenceClassifier(
-        emb_dim=PETBERT_EMB_DIM, hidden_dim=hidden_dim, dropout=dropout, n_cols=n_cols,
+        emb_dim=PETBERT_EMB_DIM, hidden_dim=hidden_dim, dropout=dropout,
+        n_cols=n_cols, col_pair_mode=False,
     ).to(dev)
 
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)
@@ -270,15 +340,15 @@ def train(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Train the binary presence classifier.")
-    parser.add_argument("--pairs-csv", default="ml/data/training_pairs.csv",
+    parser.add_argument("--pairs-csv", default=config.TRAINING_PAIRS_CSV,
                         help="Output of build_training_pairs.py")
-    parser.add_argument("--out-dir", default="ml/model/checkpoints",
+    parser.add_argument("--out-dir", default=config.CHECKPOINT_BINARY_DIR,
                         help="Directory to save the best checkpoint")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=256,
                         help="Batch size for classifier training")
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--hidden-dim", type=int, default=256)
+    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM)
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--val-split", type=float, default=0.15,
                         help="Fraction of data to hold out for validation")
@@ -295,10 +365,16 @@ def main() -> int:
                         help="Path to embedding cache npz (from petbert_pipeline --embedding-cache). "
                              "When provided, PetBERT is not loaded — embeddings are read from "
                              "the cache using case_id, fixing the train/inference mismatch.")
-    parser.add_argument("--report-csv", default="ml/data/report.csv",
+    parser.add_argument("--report-csv", default=config.REPORTS_CSV,
                         help="Path to report CSV (used only for cache validation).")
-    parser.add_argument("--labels-csv", default="ml/labels/labels.csv",
+    parser.add_argument("--labels-csv", default=config.LABELS_CSV,
                         help="Path to labels CSV (used only for cache validation).")
+    parser.add_argument("--skip-prerequisites", action="store_true",
+                        help="Skip auto-building embedding cache and training pairs. "
+                             "Use when these files already exist and you want to skip the checks.")
+    parser.add_argument("--local-only", action="store_true",
+                        help="Use only locally cached PetBERT model files (no network calls). "
+                             "Only relevant when the embedding cache needs to be built.")
     args = parser.parse_args()
     return train(
         pairs_csv=args.pairs_csv,
@@ -316,6 +392,8 @@ def main() -> int:
         seed=args.seed,
         pos_weight=args.pos_weight,
         recall_weight=args.recall_weight,
+        skip_prerequisites=args.skip_prerequisites,
+        local_only=args.local_only,
     )
 
 

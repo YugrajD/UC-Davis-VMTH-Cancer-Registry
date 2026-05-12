@@ -1,0 +1,186 @@
+"""Record evaluation results to a persistent history log.
+
+Appends the latest evaluation summary to evaluation_history.csv and prints
+a formatted trend table showing how metrics have changed across cycles.
+
+Usage:
+  python ml/evaluation/log_evaluation.py
+  python ml/evaluation/log_evaluation.py --label "after cycle 3"
+  python ml/evaluation/log_evaluation.py --show    # print history without recording
+"""
+
+import argparse
+import csv
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config
+
+_SUMMARY_DEFAULT = f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation_summary.csv"
+_HISTORY_DEFAULT = f"{config.OUTPUT_EVALUATION_DIR}/binary/evaluation_history.csv"
+
+_HISTORY_FIELDS = [
+    "timestamp",
+    "label",
+    "total",
+    "good",
+    "good_pct",
+    "slightly_off",
+    "slightly_off_pct",
+    "completely_off",
+    "completely_off_pct",
+    "false_positive",
+    "false_positive_pct",
+    "false_negative",
+    "false_negative_pct",
+]
+
+
+def _read_overall(summary_path: Path) -> dict:
+    with open(summary_path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if row["scope"] == "OVERALL":
+                return row
+    raise ValueError(f"No OVERALL row found in {summary_path}")
+
+
+def _read_history(history_path: Path) -> list[dict]:
+    if not history_path.exists():
+        return []
+    with open(history_path, encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _append_history(history_path: Path, entry: dict) -> None:
+    exists = history_path.exists()
+    with open(history_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=_HISTORY_FIELDS)
+        if not exists:
+            writer.writeheader()
+        writer.writerow(entry)
+
+
+def _delta(current: float, previous: float | None, higher_is_better: bool) -> str:
+    if previous is None:
+        return ""
+    diff = current - previous
+    if abs(diff) < 0.05:
+        return " --"
+    arrow = "^" if diff > 0 else "v"
+    sign = "+" if diff > 0 else ""
+    return f" {arrow}{sign}{diff:.1f}"
+
+
+def _print_history(rows: list[dict]) -> None:
+    if not rows:
+        print("No history recorded yet.")
+        return
+
+    header = (
+        f"{'#':>3}  {'Timestamp':<19}  {'Label':<25}  "
+        f"{'Good%':>6}  {'Slight%':>7}  {'Off%':>6}  {'FP%':>6}  {'FN%':>6}  {'Total':>7}"
+    )
+    print()
+    print("=== Evaluation History ===")
+    print(header)
+    print("-" * len(header))
+
+    prev: dict | None = None
+    for i, row in enumerate(rows, start=1):
+        g   = float(row.get("good_pct")            or 0)
+        sl  = float(row.get("slightly_off_pct")   or 0)
+        off = float(row.get("completely_off_pct") or 0)
+        fp  = float(row.get("false_positive_pct") or 0)
+        fn  = float(row.get("false_negative_pct") or 0)
+
+        pg   = float(prev.get("good_pct")            or 0) if prev else None
+        psl  = float(prev.get("slightly_off_pct")   or 0) if prev else None
+        poff = float(prev.get("completely_off_pct") or 0) if prev else None
+        pfp  = float(prev.get("false_positive_pct") or 0) if prev else None
+        pfn  = float(prev.get("false_negative_pct") or 0) if prev else None
+
+        label = row["label"] or ""
+        ts    = row["timestamp"][:19]  # trim microseconds
+
+        print(
+            f"{i:>3}  {ts:<19}  {label:<25}  "
+            f"{g:>5.1f}%{_delta(g, pg, True)}  "
+            f"{sl:>5.1f}%{_delta(sl, psl, True)}  "
+            f"{off:>5.1f}%{_delta(off, poff, False)}  "
+            f"{fp:>5.1f}%{_delta(fp, pfp, False)}  "
+            f"{fn:>5.1f}%{_delta(fn, pfn, False)}  "
+            f"{row['total']:>7}"
+        )
+        prev = row
+
+    print()
+
+
+def log_evaluation(
+    summary: str = _SUMMARY_DEFAULT,
+    history: str = _HISTORY_DEFAULT,
+    label: str = "",
+) -> int:
+    summary_path = Path(summary)
+    history_path = Path(history)
+
+    if not summary_path.exists():
+        print(f"Error: {summary_path} not found. Run evaluate.py first.")
+        return 1
+
+    overall = _read_overall(summary_path)
+    entry = {
+        "timestamp": datetime.now().isoformat(sep=" ", timespec="seconds"),
+        "label":     label,
+        "total":               overall["total"],
+        "good":                overall["good"],
+        "good_pct":            overall["good_pct"],
+        "slightly_off":        overall["slightly_off"],
+        "slightly_off_pct":    overall["slightly_off_pct"],
+        "completely_off":      overall["completely_off"],
+        "completely_off_pct":  overall["completely_off_pct"],
+        "false_positive":      overall["false_positive"],
+        "false_positive_pct":  overall["false_positive_pct"],
+        "false_negative":      overall["false_negative"],
+        "false_negative_pct":  overall["false_negative_pct"],
+    }
+
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    _append_history(history_path, entry)
+
+    history_rows = _read_history(history_path)
+    _print_history(history_rows)
+    print(f"Recorded to {history_path}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Log evaluation results to history.")
+    parser.add_argument("--summary", default=_SUMMARY_DEFAULT,
+                        help="Path to evaluation_summary.csv")
+    parser.add_argument("--history", default=_HISTORY_DEFAULT,
+                        help="Path to the persistent history CSV")
+    parser.add_argument("--label", default="",
+                        help="Short description for this run (e.g. 'after training v1')")
+    parser.add_argument("--show", action="store_true",
+                        help="Print history without recording a new entry")
+    parser.add_argument("--latest", action="store_true",
+                        help="Print only the most recent history entry")
+    args = parser.parse_args()
+
+    if args.show:
+        _print_history(_read_history(Path(args.history)))
+        return 0
+
+    if args.latest:
+        rows = _read_history(Path(args.history))
+        _print_history(rows[-1:] if rows else [])
+        return 0
+
+    return log_evaluation(summary=args.summary, history=args.history, label=args.label)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

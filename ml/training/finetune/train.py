@@ -1,272 +1,171 @@
-"""MLM domain adaptation — fine-tune PetBERT on cancer registry reports.
+"""Fine-tune PetBERT on report text -> Vet-ICD group classification.
 
-Fine-tunes PetBERT using the masked language modeling (MLM) objective on the
-unlabeled report corpus.  No labels are required.  The resulting checkpoint
-produces improved embeddings for all downstream tasks (PresenceClassifier,
-GroupClassifier) by adapting the model weights to UC Davis VMTH oncology
-terminology.
-
-The fine-tuned model is a drop-in replacement for the base PetBERT weights:
-pass its path as --model to run_pipeline.py or run_training.py binary/group modes.
-
-IMPORTANT — cold start required after fine-tuning:
-  The embedding cache and CO bank are keyed to the old model's embedding space.
-  Delete both before running any downstream training cycle with the new model:
-    rm ml/data/embedding_cache.npz
-    rm ml/output/evaluation/evaluation_co_bank.csv
-
-Usage (via run_training.py):
-  python ml/scripts/run_training.py --mode finetune --epochs 3 --local-only
-
-Direct usage:
-  python ml/training/finetune/train.py --epochs 3 --local-only
-  python ml/training/finetune/train.py --include-diagnoses --epochs 5 --device mps
+Use the Hugging Face Trainer API to finetune SAVSNET/PetBERT.
+Load the dataset built by build_dataset.py and apply the computed
+inverse frequency class weights to the CrossEntropyLoss.
 """
 
-from __future__ import annotations
-
 import argparse
-import math
+import json
+import os
+import sys
 from pathlib import Path
 
+import evaluate
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+import config as project_config
+import torch
+import torch.nn as nn
+from datasets import load_from_disk
 from transformers import (
-    AutoModelForMaskedLM,
-    AutoTokenizer,
-    DataCollatorForLanguageModeling,
+    AutoModelForSequenceClassification,
     Trainer,
     TrainingArguments,
 )
 
-from training.finetune.dataset import ReportMLMDataset
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score
 
-_DEFAULT_REPORT_CSV = "ml/data/report.csv"
-_DEFAULT_DIAGNOSES_CSV = "ml/data/diagnoses.csv"
-_DEFAULT_TEXT_COLS = ["HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "ANCILLARY TESTS"]
-_DEFAULT_DIAGNOSES_COL = ["diagnosis"]
-_DEFAULT_OUTPUT_DIR = "ml/model/checkpoints/petbert_mlm"
-_DEFAULT_MODEL = "SAVSNET/PetBERT"
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    predictions = np.argmax(logits, axis=-1)
+    
+    acc = accuracy_score(labels, predictions)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        labels, predictions, average="macro", zero_division=0
+    )
+    
+    return {
+        "accuracy": acc,
+        "f1": f1,
+        "precision": precision,
+        "recall": recall
+    }
 
-_COLD_START_WARNING = """
-╔══════════════════════════════════════════════════════════════════╗
-║  COLD START REQUIRED                                             ║
-║                                                                  ║
-║  The embedding space has changed. Before running a downstream    ║
-║  training cycle with this model, delete the stale cache and CO   ║
-║  bank — they are anchored to the old model's embedding space:    ║
-║                                                                  ║
-║    rm ml/data/embedding_cache.npz                                ║
-║    rm ml/output/evaluation/evaluation_co_bank.csv                ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
+
+class WeightedTrainer(Trainer):
+    """Custom Trainer subclass to inject class weights into the loss function."""
+    
+    def __init__(self, class_weights=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_weights = class_weights
+        
+        if self.class_weights is not None:
+            # Move weights to the same device as the model
+            self.loss_fct = nn.CrossEntropyLoss(
+                weight=torch.tensor(self.class_weights, dtype=torch.float32).to(self.args.device)
+            )
+        else:
+            self.loss_fct = nn.CrossEntropyLoss()
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.get("logits")
+        
+        loss = self.loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+        
+        return (loss, outputs) if return_outputs else loss
 
 
 def train(
-    *,
-    report_csv: str = _DEFAULT_REPORT_CSV,
-    diagnoses_csv: str = _DEFAULT_DIAGNOSES_CSV,
-    text_cols: list[str] = _DEFAULT_TEXT_COLS,
-    model_name: str = _DEFAULT_MODEL,
-    output_dir: str = _DEFAULT_OUTPUT_DIR,
-    epochs: int = 3,
-    lr: float = 2e-5,
+    dataset_dir: str = project_config.FINETUNE_DATASET_DIR,
+    output_dir: str = project_config.CHECKPOINT_FINETUNE_DIR,
+    model_name: str = "SAVSNET/PetBERT",
+    epochs: int = 5,
     batch_size: int = 16,
-    mlm_probability: float = 0.15,
-    val_frac: float = 0.1,
-    include_diagnoses: bool = False,
-    local_only: bool = False,
-    device_arg: str = "auto",
-) -> None:
-    """Fine-tune PetBERT with MLM on the report corpus.
+    lr: float = 2e-5,
+    weight_decay: float = 0.01,
+):
+    print(f"Loading dataset from {dataset_dir}...")
+    dataset = load_from_disk(dataset_dir)
+    
+    config_path = Path(dataset_dir) / "config.json"
+    weights_path = Path(dataset_dir) / "class_weights.npy"
+    
+    with open(config_path) as f:
+        config = json.load(f)
+        
+    num_classes = config["num_classes"]
+    class_weights = np.load(weights_path) if weights_path.exists() else None
+    
+    print(f"Loaded config: {num_classes} classes")
+    if class_weights is not None:
+        print("Found custom class weights.")
 
-    TRAINING FLOW
-    =============
-    report.csv + (optionally) diagnoses.csv
-        │
-        ▼ ReportMLMDataset (tokenize, no padding)
-        │
-        ▼ 90/10 train/val split (random)
-        │
-        ▼ DataCollatorForLanguageModeling (dynamic 15% masking per batch)
-        │
-        ▼ HuggingFace Trainer (AutoModelForMaskedLM)
-        │  eval_strategy="epoch", save best by eval_loss
-        │
-        ▼ output_dir/  (best checkpoint + tokenizer)
-    """
-    # --- 1. Load tokenizer and model ---
-    print(f"[finetune] Loading tokenizer and model: {model_name}", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=local_only)
-    model = AutoModelForMaskedLM.from_pretrained(
-        model_name, local_files_only=local_only
+    print(f"Loading model {model_name}...")
+    # map back to group strings for the Hugging Face config
+    idx_to_group = {int(k): v for k, v in config["idx_to_group"].items()}
+    group_to_idx = {v: k for k, v in idx_to_group.items()}
+    
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_name, 
+        num_labels=num_classes,
+        id2label=idx_to_group,
+        label2id=group_to_idx,
+        ignore_mismatched_sizes=True # Ignore pre-trained classifier head if any
     )
-
-    # --- 2. Build dataset ---
-    sources: list[tuple[str, list[str]]] = [(report_csv, text_cols)]
-    if include_diagnoses:
-        sources.append((diagnoses_csv, _DEFAULT_DIAGNOSES_COL))
-
-    full_dataset = ReportMLMDataset(tokenizer, sources=sources)
-
-    # --- 3. Train / val split ---
-    n = len(full_dataset)
-    n_val = max(1, math.floor(n * val_frac))
-    n_train = n - n_val
-
-    import torch
-
-    train_ds, val_ds = torch.utils.data.random_split(
-        full_dataset,
-        [n_train, n_val],
-        generator=torch.Generator().manual_seed(42),
-    )
-    print(
-        f"[finetune] Split: {n_train:,} train / {n_val:,} val  (val_frac={val_frac})",
-        flush=True,
-    )
-
-    # --- 4. Data collator (handles masking + padding per batch) ---
-    collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=True,
-        mlm_probability=mlm_probability,
-    )
-
-    # --- 5. Training arguments ---
-    # no_cuda / use_mps_device flags are inferred from device_arg so that
-    # TrainingArguments still receives the standard keyword args it expects.
-    training_kwargs: dict = {}
-    if device_arg == "cpu":
-        training_kwargs["no_cuda"] = True
-        training_kwargs["use_mps_device"] = False
-    elif device_arg == "mps":
-        training_kwargs["no_cuda"] = True
-        training_kwargs["use_mps_device"] = True
-    # For "auto", "cuda", "xpu" — let Trainer detect.
 
     training_args = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=epochs,
+        learning_rate=lr,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        learning_rate=lr,
-        weight_decay=0.01,
-        eval_strategy="epoch",
+        gradient_accumulation_steps=4,
+        num_train_epochs=epochs,
+        weight_decay=weight_decay,
+        evaluation_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        logging_steps=50,
-        report_to="none",  # no wandb / tensorboard
-        **training_kwargs,
+        metric_for_best_model="f1",
+        fp16=torch.cuda.is_available(), # MPS float16 has known issues with CELoss weights sometimes, keeping fp32 for MPS
+        logging_dir=f"{output_dir}/logs",
+        logging_steps=10,
+        report_to="none", # set to none so we don't report to wandb, etc.
     )
 
-    # --- 6. Train ---
-    trainer = Trainer(
+    trainer = WeightedTrainer(
+        class_weights=class_weights,
         model=model,
         args=training_args,
-        train_dataset=train_ds,
-        eval_dataset=val_ds,
-        data_collator=collator,
-        tokenizer=tokenizer,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
+        compute_metrics=compute_metrics,
     )
 
-    print(
-        f"[finetune] Starting MLM training: {epochs} epoch(s), "
-        f"batch_size={batch_size}, lr={lr}, mlm_prob={mlm_probability}",
-        flush=True,
-    )
+    print("Starting fine-tuning...")
     trainer.train()
 
-    # --- 7. Save best checkpoint + tokenizer to output_dir root ---
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    print(f"Saving final model to {output_dir}...")
     trainer.save_model(output_dir)
+    # check later to debate if tokenizer should be saved with model or not
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.save_pretrained(output_dir)
-    print(f"[finetune] Checkpoint saved to: {output_dir}", flush=True)
-
-    print(_COLD_START_WARNING, flush=True)
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="MLM domain adaptation — fine-tune PetBERT on cancer registry reports."
-    )
-    p.add_argument(
-        "--csv",
-        default=_DEFAULT_REPORT_CSV,
-        help=f"Report CSV (default: {_DEFAULT_REPORT_CSV})",
-    )
-    p.add_argument(
-        "--text-cols",
-        nargs="+",
-        default=_DEFAULT_TEXT_COLS,
-        help="Text columns to concatenate from the report CSV",
-    )
-    p.add_argument(
-        "--model",
-        default=_DEFAULT_MODEL,
-        help=f"Base model to fine-tune (default: {_DEFAULT_MODEL})",
-    )
-    p.add_argument(
-        "--output-dir",
-        default=_DEFAULT_OUTPUT_DIR,
-        help=f"Where to save the fine-tuned checkpoint (default: {_DEFAULT_OUTPUT_DIR})",
-    )
-    p.add_argument("--epochs", type=int, default=3, help="Training epochs (default: 3)")
-    p.add_argument(
-        "--lr", type=float, default=2e-5, help="Learning rate (default: 2e-5)"
-    )
-    p.add_argument(
-        "--batch-size", type=int, default=16, help="Per-device batch size (default: 16)"
-    )
-    p.add_argument(
-        "--mlm-probability",
-        type=float,
-        default=0.15,
-        help="Fraction of tokens to mask per example (default: 0.15)",
-    )
-    p.add_argument(
-        "--val-frac",
-        type=float,
-        default=0.1,
-        help="Fraction of corpus held out for validation (default: 0.1)",
-    )
-    p.add_argument(
-        "--include-diagnoses",
-        action="store_true",
-        help=f"Also include {_DEFAULT_DIAGNOSES_CSV} `diagnosis` column in the corpus",
-    )
-    p.add_argument(
-        "--local-only",
-        action="store_true",
-        help="Use only locally cached model files (no HuggingFace Hub download)",
-    )
-    p.add_argument(
-        "--device",
-        default="auto",
-        choices=["auto", "cpu", "cuda", "mps", "xpu"],
-        help="Compute device (default: auto)",
-    )
-    return p
-
-
-def main() -> int:
-    args = _build_parser().parse_args()
-    train(
-        report_csv=args.csv,
-        text_cols=args.text_cols,
-        model_name=args.model,
-        output_dir=args.output_dir,
-        epochs=args.epochs,
-        lr=args.lr,
-        batch_size=args.batch_size,
-        mlm_probability=args.mlm_probability,
-        val_frac=args.val_frac,
-        include_diagnoses=args.include_diagnoses,
-        local_only=args.local_only,
-        device_arg=args.device,
-    )
-    return 0
+    
+    print("Done!")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", default=project_config.FINETUNE_DATASET_DIR)
+    parser.add_argument("--out-dir", default=project_config.CHECKPOINT_FINETUNE_DIR)
+    parser.add_argument("--model", default="SAVSNET/PetBERT")
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    args = parser.parse_args()
+    
+    # put this to stop crash for some operations during training for Metal/MPS
+    if torch.backends.mps.is_available():
+        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+        
+    train(
+        dataset_dir=args.dataset,
+        output_dir=args.out_dir,
+        model_name=args.model,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+    )

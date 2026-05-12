@@ -1,6 +1,6 @@
 """GeoJSON map endpoints using PostGIS spatial queries."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func
 from typing import Optional, List
@@ -47,7 +47,12 @@ async def get_counties_geojson(
         conditions.append("EXTRACT(YEAR FROM p.diagnosis_date) <= :year_end")
         params["year_end"] = year_end
     if sex and sex != "All" and sex != "all":
-        mapped_sex = SEX_MAP.get(sex, sex)
+        mapped_sex = SEX_MAP.get(sex)
+        if mapped_sex is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid sex filter. Must be one of: {', '.join(SEX_MAP.keys())}, All",
+            )
         conditions.append("p.sex = :sex")
         params["sex"] = mapped_sex
 
@@ -120,7 +125,6 @@ async def get_county_detail(
     county_result = await db.execute(select(County).where(County.id == county_id))
     county = county_result.scalar_one_or_none()
     if not county:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="County not found")
 
     # Total cases (ingested only) — count distinct patients

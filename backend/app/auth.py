@@ -100,7 +100,7 @@ async def get_current_user(
         logger.warning("JWT decode failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {e}",
+            detail="Invalid token",
         )
 
     email = payload.get("email", "")

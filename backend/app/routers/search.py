@@ -10,6 +10,7 @@ from app.models.models import PathologyReport, CancerType
 from app.schemas.schemas import (
     ClassifyRequest, ClassifyResult, ReportOut, ReportSearchResponse
 )
+from app.auth import CurrentUser, require_admin
 from app.services.bert_service import BertClassifier
 
 router = APIRouter(prefix="/api/v1/search", tags=["search"])
@@ -18,7 +19,10 @@ classifier = BertClassifier()
 
 
 @router.post("/classify", response_model=ClassifyResult)
-async def classify_report(request: ClassifyRequest):
+async def classify_report(
+    request: ClassifyRequest,
+    _admin: CurrentUser = Depends(require_admin),
+):
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Report text is required")
 
@@ -33,6 +37,7 @@ async def search_reports(
     limit: int = Query(default=20, le=100),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
+    _admin: CurrentUser = Depends(require_admin),
 ):
     stmt = select(PathologyReport)
 

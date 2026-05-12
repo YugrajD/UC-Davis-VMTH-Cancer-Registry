@@ -32,6 +32,9 @@ logs/
 .env
 .env.local
 
+# GCP service account keys
+secrets/
+
 # Claude Code
 CLAUDE.md
 

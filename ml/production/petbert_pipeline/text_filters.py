@@ -151,7 +151,9 @@ _DIRECT_TUMOR_TERMS = (
     r"carcinoid|plasmacytoma|plasma cell tumou?r|schwannoma|"
     r"peripheral nerve sheath tumou?r|neurofibroma|trichoblastoma|"
     r"trichoepithelioma|rhabdomyosarcoma|leiomyosarcoma|"
-    r"histiocytic sarcoma|fibrosarcoma|lipoma"
+    r"histiocytic sarcoma|histiocytoma|fibrosarcoma|lipoma|"
+    r"leukemia|myeloma|seminoma|thymoma|mesothelioma|teratoma|"
+    r"ameloblastoma|odontoma|blastoma|chordoma"
 )
 
 _DIRECT_TUMOR_EVIDENCE_RE = re.compile(
@@ -273,6 +275,128 @@ def ancillary_tests_support_neoplasia(ancillary_tests: str) -> bool:
     if not _ANCILLARY_MARKER_POSITIVE_RE.search(cleaned):
         return False
     return bool(_ANCILLARY_TUMOR_EVIDENCE_RE.search(cleaned))
+
+
+# ---------------------------------------------------------------------------
+# 2b. Low-confidence rescue support
+# ---------------------------------------------------------------------------
+
+_GENERIC_RESCUE_LABEL_RE = re.compile(
+    r"^(?:"
+    r"neoplasm|tumou?r cells?|malignant tumou?r|round cell tumou?r|"
+    r"clear cell tumou?r|soft tissue tumou?r|sarcoma,?\s*nos|"
+    r"carcinoma,?\s*nos"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_RESCUE_STOPWORDS = {
+    "nos",
+    "not",
+    "otherwise",
+    "specified",
+    "benign",
+    "malignant",
+    "tumor",
+    "tumour",
+    "neoplasm",
+    "neoplasms",
+    "cell",
+    "cells",
+    "type",
+    "grade",
+    "canine",
+    "cutaneous",
+    "subcutaneous",
+    "dermal",
+    "extramedullary",
+}
+
+_RESCUE_ALIAS_RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (re.compile(r"\bmast\s+cell\s+tumou?r\b|\bmastocytoma\b", re.IGNORECASE),
+     (r"\bmast\s+cell\s+tumou?r\b", r"\bmastocytoma\b")),
+    (re.compile(r"\blymphoma\b|\blymphosarcoma\b", re.IGNORECASE),
+     (r"\blymphoma\b", r"\blymphosarcoma\b")),
+    (re.compile(r"\bperipheral\s+nerve\s+sheath\s+tumou?r\b|\bschwannoma\b|\bneurofibroma\b", re.IGNORECASE),
+     (r"\bperipheral\s+nerve\s+sheath\s+tumou?r\b", r"\bschwannoma\b", r"\bneurofibroma\b", r"\bs100\b.{0,80}\b(?:support|consistent|confirm)")),
+    (re.compile(r"\brhabdomyosarcoma\b", re.IGNORECASE),
+     (r"\brhabdomyosarcoma\b", r"\bskeletal\s+muscle\s+(?:origin|differentiation)\b")),
+    (re.compile(r"\burothelial\b|\btransitional\s+cell\b", re.IGNORECASE),
+     (r"\burothelial\b", r"\btransitional\s+cell\b", r"\buroplakin\b.{0,80}\b(?:support|consistent|confirm)")),
+    (re.compile(r"\boligodendroglioma\b|\bglioma\b", re.IGNORECASE),
+     (r"\boligodendroglioma\b", r"\bglioma\b", r"\bolig-?2\b.{0,80}\b(?:positive|support|consistent|confirm)")),
+)
+
+
+def _normalize_for_rescue(text: str) -> str:
+    text = (text or "").lower()
+    text = re.sub(r"\([^)]*\)", " ", text)
+    text = re.sub(r"\bnot otherwise specified\b|\bnos\b", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def _rescue_label_tokens(label_term: str) -> list[str]:
+    normalized = _normalize_for_rescue(label_term)
+    return [
+        token
+        for token in normalized.split()
+        if token not in _RESCUE_STOPWORDS and len(token) >= 4
+    ]
+
+
+def low_confidence_label_supported_by_text(label_term: str, source_text: str) -> bool:
+    """Return True when text directly supports rescuing a low-confidence label.
+
+    This is a conservative recall aid. It only answers whether a hidden top
+    label is explicitly supported by report text; it does not create a new
+    diagnosis from marker names, generic mass language, or negated/rule-out
+    phrases. Generic labels such as "Neoplasm, malignant" are intentionally
+    not rescued because they are too easy to trigger from nonspecific wording.
+    """
+    label = label_term or ""
+    if not label.strip() or label == "Uncategorized":
+        return False
+    if _GENERIC_RESCUE_LABEL_RE.search(label):
+        return False
+    text = source_text or ""
+    if not text.strip():
+        return False
+
+    cleaned = _NEGATED_TUMOR_SPAN_RE.sub(" ", text)
+    cleaned = _ANCILLARY_NEGATED_SPAN_RE.sub(" ", cleaned)
+    cleaned_norm = _normalize_for_rescue(cleaned)
+    if not cleaned_norm:
+        return False
+
+    label_norm = _normalize_for_rescue(label)
+    if len(label_norm) >= 5 and re.search(rf"\b{re.escape(label_norm)}\b", cleaned_norm):
+        return True
+
+    label_head = _normalize_for_rescue(label.split(",", 1)[0])
+    if len(label_head) >= 5 and re.search(rf"\b{re.escape(label_head)}\b", cleaned_norm):
+        return True
+
+    for label_pattern, source_patterns in _RESCUE_ALIAS_RULES:
+        if not label_pattern.search(label):
+            continue
+        if any(re.search(pattern, cleaned, re.IGNORECASE) for pattern in source_patterns):
+            return True
+
+    tokens = _rescue_label_tokens(label)
+    if not tokens:
+        return False
+    if len(tokens) == 1:
+        token = tokens[0]
+        # Single-token rescue is allowed only for specific tumor-family words.
+        return len(token) >= 6 and re.search(rf"\b{re.escape(token)}s?\b", cleaned_norm) is not None
+
+    matched = sum(
+        1
+        for token in tokens
+        if re.search(rf"\b{re.escape(token)}s?\b", cleaned_norm)
+    )
+    return matched >= min(2, len(tokens))
 
 
 def looks_non_neoplastic(

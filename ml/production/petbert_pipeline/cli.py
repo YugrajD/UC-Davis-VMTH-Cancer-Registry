@@ -159,6 +159,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--apply-low-confidence-rescue",
+        action="store_true",
+        help=(
+            "Before post-processing gates, scan low-confidence top-k labels and "
+            "allow the first report-supported tumor term through. "
+            "This targets false negatives without globally lowering the confidence threshold."
+        ),
+    )
+    parser.add_argument(
+        "--low-confidence-rescue-k",
+        type=int,
+        default=10,
+        help=(
+            "Number of ranked labels to scan for --apply-low-confidence-rescue "
+            "(default: 10)."
+        ),
+    )
+    parser.add_argument(
         "--apply-subtype-gate",
         action="store_true",
         help=(
@@ -225,6 +243,8 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         cascade_k=args.cascade_k,
         cascade_adaptive_path=args.cascade_adaptive_path,
         strip_tissue_lists=args.strip_tissue_lists,
+        apply_low_confidence_rescue=args.apply_low_confidence_rescue,
+        low_confidence_rescue_k=args.low_confidence_rescue_k,
         apply_subtype_gate=args.apply_subtype_gate,
         apply_non_neoplastic_gate=args.apply_non_neoplastic_gate,
     )

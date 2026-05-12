@@ -20,7 +20,7 @@ from sklearn.decomposition import PCA
 
 from .categorization import run_categorization, run_categorization_group, run_categorization_group_keyword
 from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
-from .text_filters import strip_tissue_lists
+from .text_filters import low_confidence_label_supported_by_text, strip_tissue_lists
 from model.presence_classifier import PresenceClassifier
 from model.group_classifier import GroupClassifier
 from .io import (
@@ -287,7 +287,44 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 score_matrix=presence_score_matrix,
             )
 
-    # --- Step 5: Resolve top-k label indices -> term / group / code ----------
+    # --- Step 5: Optional low-confidence top-k rescue ------------------------
+    #
+    # Default categorization stores only the hidden top-1 candidate for
+    # low-confidence rows. For this rescue layer, scan the ranked score matrix
+    # and allow the first label whose term is directly supported by report text.
+    # This is deliberately narrower than lowering the threshold globally.
+    n_low_confidence_rescued = 0
+    if config.apply_low_confidence_rescue:
+        rescue_k = max(1, int(config.low_confidence_rescue_k))
+        for i, source_text in enumerate(texts):
+            if not categorization.top_k_methods[i]:
+                continue
+            if not all(method == "low_confidence" for method in categorization.top_k_methods[i]):
+                continue
+            scores = categorization.label_scores[i]
+            ranked = np.argsort(-scores)[:rescue_k]
+            for label_idx in ranked:
+                label_idx = int(label_idx)
+                term = label_catalog.labels[label_idx]
+                if not low_confidence_label_supported_by_text(term, source_text):
+                    continue
+                score = float(scores[label_idx])
+                method = "embedding+low_confidence_rescue"
+                categorization.top_k_indices[i] = [label_idx]
+                categorization.top_k_scores[i] = [score]
+                categorization.top_k_methods[i] = [method]
+                categorization.final_indices[i] = label_idx
+                categorization.final_labels[i] = term
+                categorization.final_scores[i] = score
+                categorization.methods[i] = method
+                n_low_confidence_rescued += 1
+                break
+        print(
+            "Low-confidence rescue: allowed "
+            f"{n_low_confidence_rescued:,} text-supported top-{rescue_k} labels through"
+        )
+
+    # --- Step 6: Resolve top-k label indices -> term / group / code ----------
     all_k_terms: list[list[str]] = []
     all_k_groups: list[list[str]] = []
     all_k_codes: list[list[str]] = []
@@ -295,11 +332,17 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         terms, groups, codes = resolve_taxonomy_matches(
             k_idxs, label_catalog.labels, label_catalog.taxonomy_labels
         )
-        # Blank code for low_confidence predictions
-        codes = [c if m == "embedding" else "" for c, m in zip(codes, k_methods)]
         all_k_terms.append(terms)
         all_k_groups.append(groups)
         all_k_codes.append(codes)
+
+    # Blank codes only for labels still rejected as low-confidence. Rescued
+    # rows keep their resolved Vet-ICD-O code.
+    for i, k_methods in enumerate(categorization.top_k_methods):
+        all_k_codes[i] = [
+            code if method != "low_confidence" else ""
+            for code, method in zip(all_k_codes[i], k_methods)
+        ]
 
     # Top-1 resolved info (for provenance, similarity, visualization)
     matched_terms, matched_groups, matched_codes = resolve_taxonomy_matches(
@@ -425,6 +468,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "predicted_group_counts": pd.Series(matched_groups).value_counts().to_dict(),
         "predicted_code_counts": pd.Series(matched_codes).value_counts().to_dict(),
         "prediction_method_counts": pd.Series(categorization.methods).value_counts().to_dict(),
+        "low_confidence_rescue_count": int(n_low_confidence_rescued),
         "pca_explained_variance_ratio": pca.explained_variance_ratio_.tolist()
         if embeddings.size
         else [0.0, 0.0],

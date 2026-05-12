@@ -97,5 +97,45 @@ class NonNeoplasticGateTests(unittest.TestCase):
                 self.assert_suppressed(final_comment)
 
 
+class LowConfidenceRescueTests(unittest.TestCase):
+    def assert_rescued(self, label_term: str, source_text: str) -> None:
+        self.assertTrue(
+            text_filters.low_confidence_label_supported_by_text(label_term, source_text),
+            msg=f"{label_term}: {source_text}",
+        )
+
+    def assert_not_rescued(self, label_term: str, source_text: str) -> None:
+        self.assertFalse(
+            text_filters.low_confidence_label_supported_by_text(label_term, source_text),
+            msg=f"{label_term}: {source_text}",
+        )
+
+    def test_rescues_only_text_supported_specific_tumors(self) -> None:
+        examples = [
+            ("Mast cell tumor, NOS", "Final comment: cutaneous mast cell tumor, completely excised."),
+            ("Hemangiosarcoma, NOS", "Final comment: splenic hemangiosarcoma with hemorrhage."),
+            ("Adenocarcinoma, NOS", "The intestinal mass is an adenocarcinoma."),
+            ("Osteosarcoma, NOS", "The bone lesion is consistent with osteosarcoma."),
+            ("Lymphosarcoma", "The mass is consistent with lymphoma."),
+            ("Peripheral nerve sheath tumor, NOS", "S100 supports peripheral nerve sheath tumor."),
+            ("Rhabdomyosarcoma, NOS", "IHC supports skeletal muscle origin of the neoplasm."),
+        ]
+        for label_term, source_text in examples:
+            with self.subTest(label_term=label_term):
+                self.assert_rescued(label_term, source_text)
+
+    def test_does_not_rescue_generic_or_negated_tumor_language(self) -> None:
+        examples = [
+            ("Neoplasm, malignant", "There is a mass-like area of chronic inflammation."),
+            ("Round cell tumor, NOS", "Round cells are reactive; no evidence of neoplasia."),
+            ("Lymphosarcoma", "Immunohistochemistry is pending to rule out lymphoma."),
+            ("Adenoma, NOS", "The submitted tissue is a cyst with epithelial hyperplasia."),
+            ("Acute megakaryoblastic leukemia", "There is no evidence of leukemia or neoplasia."),
+        ]
+        for label_term, source_text in examples:
+            with self.subTest(label_term=label_term):
+                self.assert_not_rescued(label_term, source_text)
+
+
 if __name__ == "__main__":
     unittest.main()

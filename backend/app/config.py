@@ -43,11 +43,12 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = ""
 
-    # Per-diagnosis manual review thresholds (conservative defaults; tune
-    # against a labeled validation set before relying on the auto-accept
-    # band). A row is auto-confirmed at ingest only when *both* gates pass.
-    REVIEW_AUTO_ACCEPT_CONFIDENCE: float = 0.85
-    REVIEW_AUTO_ACCEPT_MARGIN: float = 0.10  # top1 - top2 spread
+    # Per-diagnosis manual review thresholds. These defaults are calibrated
+    # from ml/data/validation/review_threshold_validation.csv; re-run
+    # scripts/analyze_review_thresholds.py before changing the model or labels.
+    # A row is auto-confirmed at ingest only when *both* gates pass.
+    REVIEW_AUTO_ACCEPT_CONFIDENCE: float = 0.23
+    REVIEW_AUTO_ACCEPT_MARGIN: float = 0.15  # top1 - top2 spread
 
     # Reverse-proxy trust — comma-separated IPs whose X-Forwarded-For
     # header is trusted for rate-limiting.  Empty (default) means only

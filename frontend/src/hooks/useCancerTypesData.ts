@@ -16,10 +16,47 @@ function seededRandom(seed: string) {
   };
 }
 
-interface CancerTypesState {
+export interface CancerTypesState {
   data: IncidenceRecord[];
   loading: boolean;
   error: string | null;
+}
+
+export function applyCancerTypeDemoFilters(
+  data: IncidenceRecord[],
+  filters: FilterState,
+  options: { applyServerSideFilters?: boolean } = {},
+): IncidenceRecord[] {
+  let result = data;
+
+  if (options.applyServerSideFilters !== false) {
+    if (filters.cancerType && filters.cancerType !== 'All Types') {
+      const match = result.find(r =>
+        r.cancer_type.toLowerCase().includes(filters.cancerType.toLowerCase())
+      );
+      result = match ? [match] : result;
+    }
+
+    if (filters.sex && filters.sex !== 'all') {
+      const rand = seededRandom(filters.sex);
+      result = result.map(r => ({
+        ...r,
+        count: Math.max(1, Math.round(r.count * 0.25 * (0.6 + rand() * 0.8))),
+      }));
+    }
+  }
+
+  // Breed-level cancer-type aggregation is not available from the current
+  // API, so preserve the previous deterministic demo narrowing for breed.
+  if (filters.breed && filters.breed !== 'All Breeds') {
+    const rand = seededRandom(filters.breed);
+    result = result.map(r => ({
+      ...r,
+      count: Math.max(1, Math.round(r.count * 0.1 * (0.5 + rand() * 1.0))),
+    }));
+  }
+
+  return result;
 }
 
 export function useCancerTypesData(filters: FilterState): CancerTypesState {
@@ -64,20 +101,8 @@ export function useCancerTypesData(filters: FilterState): CancerTypesState {
   }, [filters.cancerType, filters.sex]);
 
   const data = useMemo(() => {
-    let result = apiData;
-
-    // Breed-level cancer-type aggregation is not available from the current
-    // API, so preserve the previous deterministic demo narrowing for breed.
-    if (filters.breed && filters.breed !== 'All Breeds') {
-      const rand = seededRandom(filters.breed);
-      result = result.map(r => ({
-        ...r,
-        count: Math.max(1, Math.round(r.count * 0.1 * (0.5 + rand() * 1.0))),
-      }));
-    }
-
-    return result;
-  }, [apiData, filters.breed]);
+    return applyCancerTypeDemoFilters(apiData, filters, { applyServerSideFilters: false });
+  }, [apiData, filters]);
 
   return { data, loading, error };
 }

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
 import { MOCK_COUNTY_DATA } from '../data/mockData';
-import { fetchIncidence } from '../api/client';
+import { fetchIncidence, type IncidenceRecord } from '../api/client';
 
-interface FilteredDataState {
+export interface FilteredDataState {
   countyData: CountyData[];
   regionSummary: RegionSummary;
   countRange: { min: number; max: number };
@@ -49,7 +49,24 @@ function seededRandom(seed: string) {
   };
 }
 
-function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
+export function buildCountyDataFromIncidence(records: IncidenceRecord[]): CountyData[] {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    if (!record.county) continue;
+    counts.set(record.county, (counts.get(record.county) ?? 0) + record.count);
+  }
+
+  return Array.from(counts.entries())
+    .map(([county, count]) => ({
+      county,
+      region: regionForCounty(county),
+      count,
+      fips: '',
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export function applyCountyDemoFilters(base: CountyData[], filters: FilterState): CountyData[] {
   const isDefault =
     (!filters.sex || filters.sex === 'all') &&
     (!filters.cancerType || filters.cancerType === 'All Types') &&
@@ -75,8 +92,37 @@ function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
   }).filter(c => c.count > 0);
 }
 
+export function getCountRange(countyData: CountyData[]) {
+  const counts = countyData.map(c => c.count).filter(n => n > 0);
+  if (counts.length === 0) return { min: 0, max: 1 };
+  return {
+    min: Math.min(...counts),
+    max: Math.max(...counts),
+  };
+}
+
+export function createFilteredDataState(
+  countyData: CountyData[],
+  filters: FilterState,
+  options: { applyServerSideFilters?: boolean } = {},
+): Omit<FilteredDataState, 'loading' | 'error'> {
+  const filteredCountyData = applyCountyDemoFilters(
+    countyData,
+    options.applyServerSideFilters === false
+      ? ({ cancerType: 'All Types', breed: filters.breed, sex: 'all' } as FilterState)
+      : filters,
+  );
+  const regionSummary = generateRegionSummary(filteredCountyData);
+
+  return {
+    countyData: filteredCountyData,
+    regionSummary: filteredCountyData.length > 0 ? regionSummary : EMPTY_REGION_SUMMARY,
+    countRange: getCountRange(filteredCountyData),
+  };
+}
+
 export function useFilteredData(filters: FilterState): FilteredDataState {
-  const { cancerType, breed, sex } = filters;
+  const { cancerType, sex } = filters;
   const [countyData, setCountyData] = useState<CountyData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -94,22 +140,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
         });
         if (cancelled) return;
 
-        const counts = new Map<string, number>();
-        for (const record of response.data) {
-          if (!record.county) continue;
-          counts.set(record.county, (counts.get(record.county) ?? 0) + record.count);
-        }
-
-        const nextCountyData: CountyData[] = Array.from(counts.entries())
-          .map(([county, count]) => ({
-            county,
-            region: regionForCounty(county),
-            count,
-            fips: '',
-          }))
-          .sort((a, b) => b.count - a.count);
-
-        setCountyData(nextCountyData);
+        setCountyData(buildCountyDataFromIncidence(response.data));
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Unable to load dashboard data');
@@ -128,29 +159,13 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
     };
   }, [cancerType, sex]);
 
-  const filteredCountyData = useMemo(
-    () => applyFilters(countyData, { cancerType: 'All Types', breed, sex: 'all' } as FilterState),
-    [countyData, breed],
+  const derivedState = useMemo(
+    () => createFilteredDataState(countyData, filters, { applyServerSideFilters: false }),
+    [countyData, filters],
   );
-
-  const regionSummary = useMemo(
-    () => generateRegionSummary(filteredCountyData),
-    [filteredCountyData],
-  );
-
-  const countRange = useMemo(() => {
-    const counts = filteredCountyData.map(c => c.count).filter(n => n > 0);
-    if (counts.length === 0) return { min: 0, max: 1 };
-    return {
-      min: Math.min(...counts),
-      max: Math.max(...counts),
-    };
-  }, [filteredCountyData]);
 
   return {
-    countyData: filteredCountyData,
-    regionSummary: filteredCountyData.length > 0 ? regionSummary : EMPTY_REGION_SUMMARY,
-    countRange,
+    ...derivedState,
     loading,
     error,
   };
@@ -167,7 +182,7 @@ export function useCountyDataMap(countyData: CountyData[]): Map<string, CountyDa
 }
 
 // Generate hierarchical summary for the summary table
-function generateRegionSummary(countyData: CountyData[]): RegionSummary {
+export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   const regionMap = new Map<string, CountyData[]>();
 
   countyData.forEach(county => {

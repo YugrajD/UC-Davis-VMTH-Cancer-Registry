@@ -1,11 +1,13 @@
 """Application configuration loaded from environment variables."""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 import json
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/vmth_cancer"
     DATABASE_URL_SYNC: str = "postgresql://postgres:postgres@db:5432/vmth_cancer"
     CORS_ORIGINS: str = '["http://localhost:5173"]'
@@ -67,9 +69,6 @@ class Settings(BaseSettings):
         if not self.REVIEWER_EMAILS:
             return []
         return [e.strip() for e in self.REVIEWER_EMAILS.split(",") if e.strip()]
-
-    class Config:
-        env_file = ".env"
 
 
 settings = Settings()

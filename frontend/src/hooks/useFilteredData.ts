@@ -1,6 +1,38 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
 import { MOCK_COUNTY_DATA } from '../data/mockData';
+import { fetchIncidence } from '../api/client';
+
+interface FilteredDataState {
+  countyData: CountyData[];
+  regionSummary: RegionSummary;
+  countRange: { min: number; max: number };
+  loading: boolean;
+  error: string | null;
+}
+
+const EMPTY_REGION_SUMMARY: RegionSummary = {
+  name: 'California',
+  type: 'state',
+  count: 0,
+  children: [],
+};
+
+const COUNTY_REGION_MAP = new Map(
+  MOCK_COUNTY_DATA.map((county) => [county.county.toLowerCase(), county.region]),
+);
+
+function regionForCounty(county: string): string {
+  return COUNTY_REGION_MAP.get(county.toLowerCase()) ?? 'Other California';
+}
+
+function sexFilterValue(sex: FilterState['sex']) {
+  return sex && sex !== 'all' ? sex : undefined;
+}
+
+function cancerTypeFilterValue(cancerType: string) {
+  return cancerType && cancerType !== 'All Types' ? [cancerType] : undefined;
+}
 
 // Deterministic pseudo-random from a string seed so the same filter
 // always produces the same numbers (no flicker on re-render).
@@ -43,30 +75,84 @@ function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
   }).filter(c => c.count > 0);
 }
 
-export function useFilteredData(filters: FilterState) {
+export function useFilteredData(filters: FilterState): FilteredDataState {
   const { cancerType, breed, sex } = filters;
-  const countyData = useMemo(
-    () => applyFilters(MOCK_COUNTY_DATA, { cancerType, breed, sex } as FilterState),
-    [cancerType, breed, sex],
+  const [countyData, setCountyData] = useState<CountyData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCountyData() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetchIncidence({
+          cancerTypes: cancerTypeFilterValue(cancerType),
+          sex: sexFilterValue(sex),
+        });
+        if (cancelled) return;
+
+        const counts = new Map<string, number>();
+        for (const record of response.data) {
+          if (!record.county) continue;
+          counts.set(record.county, (counts.get(record.county) ?? 0) + record.count);
+        }
+
+        const nextCountyData: CountyData[] = Array.from(counts.entries())
+          .map(([county, count]) => ({
+            county,
+            region: regionForCounty(county),
+            count,
+            fips: '',
+          }))
+          .sort((a, b) => b.count - a.count);
+
+        setCountyData(nextCountyData);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Unable to load dashboard data');
+        setCountyData([]);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadCountyData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cancerType, sex]);
+
+  const filteredCountyData = useMemo(
+    () => applyFilters(countyData, { cancerType: 'All Types', breed, sex: 'all' } as FilterState),
+    [countyData, breed],
   );
 
-  const regionSummary = useMemo(() => generateRegionSummary(countyData), [countyData]);
+  const regionSummary = useMemo(
+    () => generateRegionSummary(filteredCountyData),
+    [filteredCountyData],
+  );
 
   const countRange = useMemo(() => {
-    const counts = countyData.map(c => c.count).filter(n => n > 0);
+    const counts = filteredCountyData.map(c => c.count).filter(n => n > 0);
     if (counts.length === 0) return { min: 0, max: 1 };
     return {
       min: Math.min(...counts),
       max: Math.max(...counts),
     };
-  }, [countyData]);
+  }, [filteredCountyData]);
 
   return {
-    countyData,
-    regionSummary,
+    countyData: filteredCountyData,
+    regionSummary: filteredCountyData.length > 0 ? regionSummary : EMPTY_REGION_SUMMARY,
     countRange,
-    loading: false,
-    error: null,
+    loading,
+    error,
   };
 }
 

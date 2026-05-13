@@ -20,6 +20,7 @@ from sklearn.decomposition import PCA
 
 from .categorization import run_categorization, run_categorization_group, run_categorization_group_keyword
 from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
+from .text_filters import low_confidence_label_supported_by_text, strip_tissue_lists
 from model.presence_classifier import PresenceClassifier
 from model.group_classifier import GroupClassifier
 from .io import (
@@ -76,6 +77,17 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     col_texts = {col: dataframe[col].map(clean_text).tolist() for col in cols}
     n = len(ids)
     row_indices = list(range(n))
+
+    # Tissue-list filter: drop necropsy "(T1) lung, liver; (T2) ..." segments
+    # from HISTOPATHOLOGICAL SUMMARY before embedding so they don't hijack the
+    # cosine match with organ words. FINAL COMMENT (the diagnostic prose) is
+    # untouched. See text_filters.strip_tissue_lists.
+    if config.strip_tissue_lists and "HISTOPATHOLOGICAL SUMMARY" in col_texts:
+        original_hp = col_texts["HISTOPATHOLOGICAL SUMMARY"]
+        filtered_hp = [strip_tissue_lists(t) for t in original_hp]
+        n_changed = sum(1 for o, f in zip(original_hp, filtered_hp) if o != f)
+        col_texts["HISTOPATHOLOGICAL SUMMARY"] = filtered_hp
+        print(f"Tissue-list filter: stripped list segments from {n_changed:,}/{n:,} HP summaries")
 
     # Merged text per row for provenance display and neighbors
     texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
@@ -207,11 +219,21 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         or config.finetuned_model_path is not None
     ):
         if config.finetuned_model_path is None:
-            # Use external GroupClassifier on per-column concat embeddings (2304-dim)
             print(f"Loading group classifier from {config.group_classifier_path}...")
             group_clf, group_names = GroupClassifier.load(config.group_classifier_path)
             group_clf.to(torch_device)
-            group_probs = group_clf.predict_proba(torch.from_numpy(col_emb_concat)).numpy()
+            # Older 768-dim checkpoints were trained on mean embeddings; newer
+            # 2304-dim ones on per-column concat. Pick the input that matches.
+            if group_clf.emb_dim == embeddings.shape[1]:
+                group_input = embeddings
+            elif group_clf.emb_dim == col_emb_concat.shape[1]:
+                group_input = col_emb_concat
+            else:
+                raise ValueError(
+                    f"GroupClassifier expects emb_dim={group_clf.emb_dim}, "
+                    f"got mean={embeddings.shape[1]}, concat={col_emb_concat.shape[1]}"
+                )
+            group_probs = group_clf.predict_proba(torch.from_numpy(group_input)).numpy()
             group_clf.cpu()
             del group_clf
         else:
@@ -265,7 +287,44 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 score_matrix=presence_score_matrix,
             )
 
-    # --- Step 5: Resolve top-k label indices -> term / group / code ----------
+    # --- Step 5: Optional low-confidence top-k rescue ------------------------
+    #
+    # Default categorization stores only the hidden top-1 candidate for
+    # low-confidence rows. For this rescue layer, scan the ranked score matrix
+    # and allow the first label whose term is directly supported by report text.
+    # This is deliberately narrower than lowering the threshold globally.
+    n_low_confidence_rescued = 0
+    if config.apply_low_confidence_rescue:
+        rescue_k = max(1, int(config.low_confidence_rescue_k))
+        for i, source_text in enumerate(texts):
+            if not categorization.top_k_methods[i]:
+                continue
+            if not all(method == "low_confidence" for method in categorization.top_k_methods[i]):
+                continue
+            scores = categorization.label_scores[i]
+            ranked = np.argsort(-scores)[:rescue_k]
+            for label_idx in ranked:
+                label_idx = int(label_idx)
+                term = label_catalog.labels[label_idx]
+                if not low_confidence_label_supported_by_text(term, source_text):
+                    continue
+                score = float(scores[label_idx])
+                method = "embedding+low_confidence_rescue"
+                categorization.top_k_indices[i] = [label_idx]
+                categorization.top_k_scores[i] = [score]
+                categorization.top_k_methods[i] = [method]
+                categorization.final_indices[i] = label_idx
+                categorization.final_labels[i] = term
+                categorization.final_scores[i] = score
+                categorization.methods[i] = method
+                n_low_confidence_rescued += 1
+                break
+        print(
+            "Low-confidence rescue: allowed "
+            f"{n_low_confidence_rescued:,} text-supported top-{rescue_k} labels through"
+        )
+
+    # --- Step 6: Resolve top-k label indices -> term / group / code ----------
     all_k_terms: list[list[str]] = []
     all_k_groups: list[list[str]] = []
     all_k_codes: list[list[str]] = []
@@ -273,11 +332,17 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         terms, groups, codes = resolve_taxonomy_matches(
             k_idxs, label_catalog.labels, label_catalog.taxonomy_labels
         )
-        # Blank code for low_confidence predictions
-        codes = [c if m == "embedding" else "" for c, m in zip(codes, k_methods)]
         all_k_terms.append(terms)
         all_k_groups.append(groups)
         all_k_codes.append(codes)
+
+    # Blank codes only for labels still rejected as low-confidence. Rescued
+    # rows keep their resolved Vet-ICD-O code.
+    for i, k_methods in enumerate(categorization.top_k_methods):
+        all_k_codes[i] = [
+            code if method != "low_confidence" else ""
+            for code, method in zip(all_k_codes[i], k_methods)
+        ]
 
     # Top-1 resolved info (for provenance, similarity, visualization)
     matched_terms, matched_groups, matched_codes = resolve_taxonomy_matches(
@@ -299,6 +364,41 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         all_k_scores=categorization.top_k_scores,
         all_k_methods=categorization.top_k_methods,
     )
+
+    # --- Cascade post-processing: kNN fallback for low-confidence predictions ---
+    if config.cascade_threshold > 0:
+        from .cascade import apply_cascade
+        apply_cascade(
+            predictions_csv=outputs.predictions_csv,
+            report_embeddings=embeddings,
+            label_embeddings=label_embeddings,
+            case_ids=ids,
+            labels_csv_path=config.labels_csv_path,
+            threshold=config.cascade_threshold,
+            k=config.cascade_k,
+            adaptive_thresholds_path=config.cascade_adaptive_path,
+        )
+
+    # --- Rule-based gates: subtype demotion + non-neoplastic suppression ----
+    # Run after the cascade so kNN-replaced rows are also gated. Subtype gate
+    # runs before the non-neoplastic gate so demoted-to-NOS predictions can
+    # still be suppressed when the case isn't a tumor.
+    if config.apply_subtype_gate:
+        from .gates import apply_subtype_gate
+        apply_subtype_gate(
+            predictions_csv=outputs.predictions_csv,
+            reports_csv_path=config.csv_path,
+            labels_csv_path=config.labels_csv_path,
+            id_col=config.id_col,
+            text_cols=config.text_cols,
+        )
+    if config.apply_non_neoplastic_gate:
+        from .gates import apply_non_neoplastic_gate
+        apply_non_neoplastic_gate(
+            predictions_csv=outputs.predictions_csv,
+            reports_csv_path=config.csv_path,
+            id_col=config.id_col,
+        )
 
     write_provenance_csv(
         path=outputs.provenance_csv,
@@ -368,6 +468,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "predicted_group_counts": pd.Series(matched_groups).value_counts().to_dict(),
         "predicted_code_counts": pd.Series(matched_codes).value_counts().to_dict(),
         "prediction_method_counts": pd.Series(categorization.methods).value_counts().to_dict(),
+        "low_confidence_rescue_count": int(n_low_confidence_rescued),
         "pca_explained_variance_ratio": pca.explained_variance_ratio_.tolist()
         if embeddings.size
         else [0.0, 0.0],

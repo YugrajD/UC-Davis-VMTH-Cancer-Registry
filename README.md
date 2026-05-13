@@ -90,10 +90,10 @@ All found at: Supabase Dashboard → **Settings** → **API**
 
 | `.env` variable | Where to find it |
 |---|---|
-| `SUPABASE_JWT_SECRET` | JWT Settings → **JWT Secret** |
+| `SUPABASE_JWT_SECRET` | JWT Settings → **JWT Secret**; leave blank for newer ES256/JWKS projects |
 | `SUPABASE_URL` | Project URL (e.g. `https://abcdef.supabase.co`) |
 | `VITE_SUPABASE_URL` | Same as `SUPABASE_URL` |
-| `VITE_SUPABASE_ANON_KEY` | Project API Keys → **anon** / **public** |
+| `VITE_SUPABASE_ANON_KEY` | Project API Keys → **anon** / **public** / **publishable** |
 
 #### Admin Emails
 

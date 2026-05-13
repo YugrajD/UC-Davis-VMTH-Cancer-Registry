@@ -105,7 +105,7 @@ class PresenceClassifier(nn.Module):
         self,
         report_embeddings: torch.Tensor,  # (N, n_cols * 768)
         label_embeddings: torch.Tensor,   # (M, 768)
-        batch_size: int = 512,
+        batch_size: int = 32,
     ) -> torch.Tensor:
         """Compute an (N, M) presence probability matrix efficiently."""
         self.eval()

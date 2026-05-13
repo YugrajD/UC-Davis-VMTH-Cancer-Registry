@@ -30,17 +30,36 @@ def load_csv(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def _behavior_digit(code: str) -> str | None:
+    """Extract the behavior digit from an ICD-O code like '9591/3' → '3'."""
+    if "/" in code:
+        return code.split("/", 1)[1][:1]
+    return None
+
+
 def score_prediction(predicted_term: str, predicted_group: str,
-                     matched_terms: set[str], matched_groups: set[str]) -> str:
-    """Score one petbert prediction against the case's keyword label sets."""
+                     predicted_code: str,
+                     matched_terms: set[str], matched_groups: set[str],
+                     matched_codes: set[str]) -> str:
+    """Score one petbert prediction against the case's keyword label sets.
+
+    Group-behavior post-processing: when the predicted group matches but the
+    exact term does not, check whether the behavior digit (benign/malignant)
+    also matches.  If so, upgrade to 'good' — the clinical distinction is
+    correct even if the specific morphology name differs.
+    """
     if not matched_terms:
-        # Model correctly abstained on a non-cancer case → true negative, not FP.
         if predicted_term == "Uncategorized":
             return "true_negative"
         return "false_positive"
     if predicted_term in matched_terms:
         return "good"
     if predicted_group in matched_groups:
+        pred_beh = _behavior_digit(predicted_code)
+        if pred_beh:
+            matched_behs = {_behavior_digit(c) for c in matched_codes if "/" in c}
+            if pred_beh in matched_behs:
+                return "good"
         return "slightly_off"
     return "completely_off"
 
@@ -60,11 +79,14 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
     # Build per-case label sets from keyword predictions
     case_terms: dict[str, set[str]] = defaultdict(set)
     case_groups: dict[str, set[str]] = defaultdict(set)
+    case_codes: dict[str, set[str]] = defaultdict(set)
     for row in kw_rows:
         if row["matched_term"].strip():
             case_terms[row["case_id"]].add(row["matched_term"])
         if row["matched_group"].strip():
             case_groups[row["case_id"]].add(row["matched_group"])
+        if row.get("matched_code", "").strip():
+            case_codes[row["case_id"]].add(row["matched_code"])
 
     # All cases confirmed to have cancer ground truth
     cancer_case_ids: set[str] = set(case_terms.keys())
@@ -77,7 +99,9 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
         cid = row["case_id"]
         verdict = score_prediction(
             row["predicted_term"], row["predicted_group"],
+            row.get("predicted_code", ""),
             case_terms.get(cid, set()), case_groups.get(cid, set()),
+            case_codes.get(cid, set()),
         )
         scored_row = {**row, "verdict": verdict}
         if verdict == "true_negative":

@@ -30,6 +30,14 @@ class ScanConfig:
     group_classifier_threshold: float = 0.3
     finetuned_model_path: str | None = None
     categorization_mode: str = "default"  # "default" | "group-keyword"
+    cascade_threshold: float = 0.0  # >0 enables kNN fallback for low-confidence predictions
+    cascade_k: int = 5
+    cascade_adaptive_path: str = ""  # path to per-group thresholds JSON
+    strip_tissue_lists: bool = False  # drop necropsy tissue-list segments before embedding
+    apply_low_confidence_rescue: bool = False  # rescue low-confidence labels with direct text support
+    low_confidence_rescue_k: int = 10  # top scored labels scanned by the rescue layer
+    apply_subtype_gate: bool = False  # demote hallucinated subtype qualifiers to NOS variant
+    apply_non_neoplastic_gate: bool = False  # suppress predictions when report describes non-neoplasia
 
 
 @dataclass(frozen=True)

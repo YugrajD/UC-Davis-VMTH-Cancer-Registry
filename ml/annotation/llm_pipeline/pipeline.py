@@ -462,6 +462,24 @@ def run_llm_scan(config: LLMConfig) -> LLMOutputs:
     oma_index = _build_oma_index(taxonomy_labels)
     group_index = _build_group_index(taxonomy_labels)
 
+    # Checkpoint/resume: load any (case_id, diagnosis_number) pairs already processed.
+    has_diag_num = config.diag_num_col in df.columns
+    processed: set = set()
+    if os.path.exists(outputs.predictions_csv):
+        try:
+            existing = pd.read_csv(outputs.predictions_csv)
+            if has_diag_num and config.diag_num_col in existing.columns:
+                processed = set(
+                    zip(existing[config.id_col].astype(str),
+                        existing[config.diag_num_col].astype(str))
+                )
+            else:
+                processed = set(existing[config.id_col].astype(str).tolist())
+            print(f"Resuming: found {len(processed):,} rows already in {outputs.predictions_csv}")
+        except Exception as e:
+            print(f"Warning: could not read existing checkpoint ({e}); starting fresh")
+            processed = set()
+
     total = len(df)
     counters: dict = {
         "signal_rows": 0,
@@ -470,8 +488,42 @@ def run_llm_scan(config: LLMConfig) -> LLMOutputs:
         "tier3_uncertain": 0,
         "tier3_no_match": 0,
     }
-    results = []
+
+    fieldnames = [config.id_col]
+    if has_diag_num:
+        fieldnames.append(config.diag_num_col)
+    fieldnames += [
+        config.text_col, "matched_term", "matched_group", "matched_code",
+        "matched_keyword", "method", "confidence",
+    ]
+
+    _CHECKPOINT_EVERY = 500
+    batch: list[dict] = []
+    file_exists = os.path.exists(outputs.predictions_csv) and len(processed) > 0
+
+    def _flush_batch() -> None:
+        nonlocal batch, file_exists
+        if not batch:
+            return
+        pd.DataFrame(batch, columns=fieldnames).to_csv(
+            outputs.predictions_csv,
+            mode="a" if file_exists else "w",
+            header=not file_exists,
+            index=False,
+        )
+        file_exists = True
+        batch = []
+
     for i, (_, row) in enumerate(df.iterrows(), 1):
+        if has_diag_num:
+            key = (str(row[config.id_col]), str(row[config.diag_num_col]))
+        else:
+            key = str(row[config.id_col])
+        if key in processed:
+            if i % 500 == 0:
+                print(f"[{i}/{total}] (skipped, already checkpointed)")
+            continue
+
         text = str(row[config.text_col]) if pd.notna(row[config.text_col]) else ""
         match = _match_diagnosis(
             text, keyword_index, taxonomy_labels, oma_index, group_index,
@@ -480,13 +532,12 @@ def run_llm_scan(config: LLMConfig) -> LLMOutputs:
         )
 
         if match.method == "LLM":
-            tier_label = match.method
-            print(f"[{i}/{total}] {tier_label:<6}: {text[:60]!r}  ->  {match.term!r}")
+            print(f"[{i}/{total}] LLM   : {text[:60]!r}  ->  {match.term!r}")
         elif i % 500 == 0:
             print(f"[{i}/{total}] ...")
 
         entry: dict = {config.id_col: row[config.id_col]}
-        if config.diag_num_col in df.columns:
+        if has_diag_num:
             entry[config.diag_num_col] = row[config.diag_num_col]
         entry.update({
             config.text_col: text,
@@ -497,10 +548,15 @@ def run_llm_scan(config: LLMConfig) -> LLMOutputs:
             "method": match.method,
             "confidence": match.confidence,
         })
-        results.append(entry)
+        batch.append(entry)
 
-    out_df = pd.DataFrame(results)
-    out_df.to_csv(outputs.predictions_csv, index=False)
+        if len(batch) >= _CHECKPOINT_EVERY:
+            _flush_batch()
+            print(f"[{i}/{total}] checkpointed")
+
+    _flush_batch()
+
+    out_df = pd.read_csv(outputs.predictions_csv)
 
     method_counts = out_df["method"].value_counts().to_dict()
     confirmed_df = out_df[~out_df["method"].isin(["No Match", "Uncertain"])]

@@ -1,11 +1,13 @@
 """Application configuration loaded from environment variables."""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 import json
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     # Required — no defaults.  The app will refuse to start if these are
     # unset, preventing silent fallback to hardcoded credentials.
     DATABASE_URL: str
@@ -95,9 +97,6 @@ class Settings(BaseSettings):
         if not self.REVIEWER_EMAILS:
             return []
         return [e.strip() for e in self.REVIEWER_EMAILS.split(",") if e.strip()]
-
-    class Config:
-        env_file = ".env"
 
 
 settings = Settings()

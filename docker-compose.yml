@@ -39,7 +39,12 @@ services:
       dockerfile: Dockerfile
     container_name: vmth_cancer_frontend
     environment:
-      VITE_API_URL: http://backend:8000
+      # VITE_API_URL is intentionally empty in dev: the browser must use
+      # relative URLs so they go through the Vite dev-server proxy. The
+      # proxy itself uses DEV_PROXY_TARGET (read in vite.config.ts) to
+      # forward to the backend over the docker network.
+      VITE_API_URL: ""
+      DEV_PROXY_TARGET: http://backend:8000
       VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
       VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     ports:

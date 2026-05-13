@@ -62,11 +62,14 @@ ml/model/weights/
 ml/output/
 
 # ML datasets (local)
-ml/data/
+ml/data/*
+!ml/data/validation/
+!ml/data/validation/*.csv
 
 # Database
 pgdata/
 !database/migrations/*.sql
+!database/scripts/*.sql
 
 # Ingestion data (real patient data — never commit)
 database/data/*.csv

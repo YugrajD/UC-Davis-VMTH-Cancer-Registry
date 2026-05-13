@@ -6,6 +6,8 @@ from sqlalchemy import text, select, func
 from typing import Optional, List
 import json
 
+from app.cache import cached_response
+from app.config import settings
 from app.database import get_db
 from app.models.models import County, CancerType, Patient, Species, CaseDiagnosis, CalEnviroScreen
 from app.services.review_filter import apply_review_filter, review_status_sql_in
@@ -27,12 +29,13 @@ SEX_MAP = {
 
 
 @router.get("/counties", response_model=GeoJSONResponse)
+@cached_response("geo_counties", ttl=settings.CACHE_TTL_GEO)
 async def get_counties_geojson(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     # Build dynamic WHERE clause
@@ -116,6 +119,7 @@ async def get_counties_geojson(
 
 
 @router.get("/counties/{county_id}", response_model=CountyDetail)
+@cached_response("geo_county_detail", ttl=settings.CACHE_TTL_GEO)
 async def get_county_detail(
     county_id: int,
     db: AsyncSession = Depends(get_db),
@@ -191,6 +195,7 @@ async def get_county_detail(
 
 
 @router.get("/calenviroscreen", response_model=List[CalEnviroScreenOut])
+@cached_response("calenviroscreen", ttl=settings.CACHE_TTL_CALENVIRO)
 async def get_calenviroscreen(
     db: AsyncSession = Depends(get_db),
 ):

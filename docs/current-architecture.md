@@ -5,76 +5,124 @@
 ---
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Docker Compose                              │
-│                                                                     │
-│  ┌───────────┐    ┌───────────────┐    ┌──────────────────────┐    │
-│  │  Frontend  │───▶│   Backend     │───▶│  PostgreSQL + PostGIS│    │
-│  │  React 19  │    │  FastAPI      │    │  postgis:16-3.4      │    │
-│  │  Vite      │    │  Python 3.11  │    │                      │    │
-│  │  Port 5173 │    │  Port 8000    │    │  Port 5432           │    │
-│  └───────────┘    └───────────────┘    └──────────────────────┘    │
-│                          │                                          │
-│                    ┌─────┴──────┐                                   │
-│                    │  ml/ volume │ (mounted, not integrated)        │
-│                    └────────────┘                                   │
-│                                                                     │
-│  ┌───────────┐                                                      │
-│  │   Seed    │ (one-shot, --profile seed)                          │
-│  └───────────┘                                                      │
-└─────────────────────────────────────────────────────────────────────┘
++---------------------------------------------------------------------------+
+|                            Docker Compose                                 |
+|                                                                           |
+|  +-----------+    +---------------+    +----------------------+           |
+|  |  Frontend  |--->|   Backend     |--->|  PostgreSQL + PostGIS|           |
+|  |  React 19  |    |  FastAPI      |    |  postgis:16-3.4      |           |
+|  |  Vite      |    |  Python 3.11  |    |                      |           |
+|  |  Port 5173 |    |  Port 8000    |    |  Port 5432           |           |
+|  +-----------+    +-------+-------+    +----------------------+           |
+|                           |                                               |
+|                     +-----+------+                                        |
+|                     |  ml/ volume | (PetBERT models + training code)      |
+|                     +-----+------+                                        |
+|                           |                                               |
+|                    +------+-------+                                       |
+|                    |  ML Worker   | (PetBERT inference, internal only)    |
+|                    |  Port 8001*  | * not exposed to host                 |
+|                    +--------------+                                       |
+|                                                                           |
+|  +-----------+  +-----------+  +-----------+  +-----------+              |
+|  |   Seed    |  |  Ingest   |  | Geo-Seed  |  |  GCP Batch| (optional)  |
+|  | --profile |  | --profile |  | --profile |  |  (remote) |              |
+|  |   seed    |  |  ingest   |  |  geo-seed |  |           |              |
+|  +-----------+  +-----------+  +-----------+  +-----------+              |
++---------------------------------------------------------------------------+
 ```
 
-**Current data flow:**
-1. Mock seed script inserts ~5,000 random records into PostgreSQL.
-2. Frontend fetches from backend REST endpoints, renders choropleth map + tables.
-3. 3 of 4 frontend tabs use hardcoded/random data (`Math.random()`).
-4. Classification endpoint (`POST /api/v1/search/classify`) uses inline keyword matcher — NOT the `ml/model/classifier.py` VetBERT mock.
-5. No file upload, no auth, no ICD-O codes, no review workflow.
+## Security Layers
 
-**Current database schema (6 migrations):**
+The backend enforces multiple layers of security:
+
+| Layer | Mechanism | Details |
+|-------|-----------|---------|
+| **Authentication** | Supabase JWT (HS256/ES256) | All write endpoints + search require auth |
+| **Authorization** | Role-based (admin, reviewer, uploader) | DB-backed `user_roles` table with env-var fallback |
+| **Rate limiting** | slowapi (60 req/min global) | Per-IP with trusted proxy support |
+| **Auth brute-force** | In-memory IP tracking | 5 failures per 15 min window |
+| **Body size limit** | ASGI middleware | 10 MB default, 50 MB for uploads |
+| **Input validation** | Pydantic `Field()` + FastAPI `Query()` | `max_length`, `Literal` types, range bounds |
+| **LIKE injection** | `_escape_like()` helper | Escapes `%`, `_`, `\` in search keywords |
+| **Error sanitization** | `_safe_error_message()` | Only RuntimeError messages passed through; others show class name only |
+| **Docker hardening** | Non-root user, no `--reload` in CMD | ML worker port not exposed to host |
+| **SMTP** | TLS with `ssl.create_default_context()` | 30-second connection timeout |
+| **CSP** | `<meta>` Content Security Policy | Restricts script/style/connect sources |
+
+## Data Flow
+
+1. Users upload CSV/XLSX datasets via the ingestion workflow.
+2. An admin or reviewer approves the upload job.
+3. The backend sends the dataset to the ML worker (or GCP Batch) for PetBERT categorization.
+4. Predictions are ingested into PostgreSQL (patients, cancer cases, case diagnoses).
+5. Materialized views are refreshed for fast aggregation queries.
+6. Frontend fetches from backend REST endpoints, renders choropleth maps, trend charts, and tables.
+7. Reviewers can manually review and correct individual diagnoses via the review workflow.
+
+## Database Schema
+
 ```
 species (id, name)
 breeds (id, species_id, name)
-cancer_types (id, name, description)
+cancer_types (id, name, description, confirmed, icd_o_morphology_code)
 counties (id, name, fips_code, geom, population, area_sq_miles)
-patients (id, species_id, breed_id, sex, age_years, weight_kg, county_id, registered_date)
+patients (id, species_id, breed_id, sex, age_years, weight_kg, county_id, registered_date, anon_id)
 cancer_cases (id, patient_id, cancer_type_id, diagnosis_date, stage, outcome, county_id)
+case_diagnoses (id, patient_id, cancer_type_id, predicted_term, confidence, method, review_status, ...)
 pathology_reports (id, case_id, report_text, classification, confidence_score, report_date)
+ingestion_logs (id, filename, ...)
+ingestion_jobs (id, status, uploaded_by_email, storage_path, batch_job_name, ...)
+user_roles (email, is_admin, is_uploader, is_reviewer)
+role_requests (id, email, requested_role, status, reason, ...)
+export_requests (id, email, status, reason, ...)
+diagnosis_review_events (id, case_diagnosis_id, action, ...)
+calenviroscreen_data (county_id, ces_score, pollution_burden, ...)
 
 Materialized Views:
   mv_county_cancer_incidence
   mv_yearly_trends
 ```
 
-**Current API endpoints (5 routers):**
-```
-dashboard:  GET /api/v1/dashboard/summary
-            GET /api/v1/dashboard/filters
-incidence:  GET /api/v1/incidence
-            GET /api/v1/incidence/by-cancer-type
-            GET /api/v1/incidence/by-species
-            GET /api/v1/incidence/by-breed
-geo:        GET /api/v1/geo/counties
-            GET /api/v1/geo/counties/{county_id}
-trends:     GET /api/v1/trends/yearly
-            GET /api/v1/trends/by-cancer-type
-search:     POST /api/v1/search/classify
-            GET  /api/v1/search/reports
-health:     GET /health
-root:       GET /
-```
+## API Endpoints (11 routers)
 
-**Current frontend component tree:**
 ```
-App.tsx
-├── Navigation (tabs: overview, breed-disparities, cancer-types, regional-comparison)
-├── Filters (rateType, sex, cancerType, breed)
-├── ChoroplethMap (D3 + react-simple-maps)
-├── SummaryTable (region hierarchy)
-├── CountyTable (sortable county list)
-├── [breed-disparities tab] — HARDCODED DATA
-├── [cancer-types tab] — HARDCODED DATA
-├── [regional-comparison tab] — HARDCODED DATA
-└── Footer
+auth:             GET  /api/v1/auth/me
+dashboard:        GET  /api/v1/dashboard/summary
+                  GET  /api/v1/dashboard/filters
+incidence:        GET  /api/v1/incidence
+                  GET  /api/v1/incidence/by-cancer-type
+                  GET  /api/v1/incidence/by-species
+                  GET  /api/v1/incidence/by-breed
+                  GET  /api/v1/incidence/breed-detail
+geo:              GET  /api/v1/geo/counties
+                  GET  /api/v1/geo/counties/{county_id}
+trends:           GET  /api/v1/trends/yearly
+                  GET  /api/v1/trends/by-cancer-type
+search:           POST /api/v1/search/classify          (auth required)
+                  GET  /api/v1/search/reports            (auth required)
+ingest:           GET  /api/v1/ingest/status
+                  POST /api/v1/ingest/upload             (auth required)
+                  GET  /api/v1/ingest/jobs
+                  GET  /api/v1/ingest/jobs/{id}
+                  GET  /api/v1/ingest/jobs/{id}/preview  (reviewer)
+                  POST /api/v1/ingest/jobs/{id}/review   (reviewer)
+                  POST /api/v1/ingest/jobs/{id}/cancel   (reviewer)
+diagnoses:        GET  /api/v1/diagnoses/pending         (reviewer)
+                  GET  /api/v1/diagnoses/pending/count   (reviewer)
+                  GET  /api/v1/diagnoses/{id}            (reviewer)
+                  POST /api/v1/diagnoses/{id}/review     (reviewer)
+admin:            GET  /api/v1/admin/users/{email}/roles (admin)
+                  PUT  /api/v1/admin/users/{email}/roles (admin)
+role-requests:    POST /api/v1/role-requests/            (auth required)
+                  GET  /api/v1/role-requests/            (auth required)
+                  GET  /api/v1/role-requests/pending/count (admin)
+                  POST /api/v1/role-requests/{id}/resolve  (admin)
+export-requests:  POST /api/v1/export-requests/          (auth required)
+                  GET  /api/v1/export-requests/           (auth required)
+                  GET  /api/v1/export-requests/pending/count (admin)
+                  POST /api/v1/export-requests/{id}/resolve  (admin)
+                  GET  /api/v1/export-requests/download      (approved user)
+health:           GET  /health
+root:             GET  /
 ```

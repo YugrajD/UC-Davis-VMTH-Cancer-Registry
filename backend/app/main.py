@@ -6,9 +6,15 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import select, text, update
 
 from app.config import settings
+from app.rate_limit import limiter
 from app.database import async_session, engine, Base
 from app.models.models import ExportRequest, IngestionJob, UserRole
 from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review, admin_users, role_requests, export
@@ -16,6 +22,109 @@ from app.routers import auth as auth_router
 from app.services.role_seed import seed_user_roles_from_env
 
 logger = logging.getLogger(__name__)
+
+
+class RequestBodySizeLimitMiddleware:
+    """Reject requests whose Content-Length exceeds a fixed limit.
+
+    The upload endpoint gets a larger allowance (50 MB); everything else
+    is capped at 10 MB.  Returns 413 Payload Too Large on violation.
+    """
+
+    DEFAULT_MAX_BYTES = 10 * 1024 * 1024   # 10 MB
+    UPLOAD_MAX_BYTES = 50 * 1024 * 1024    # 50 MB
+    UPLOAD_PATH = "/api/v1/ingest/upload"
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        max_bytes = (
+            self.UPLOAD_MAX_BYTES
+            if path == self.UPLOAD_PATH
+            else self.DEFAULT_MAX_BYTES
+        )
+
+        # Check Content-Length header if present
+        headers = dict(
+            (k.lower(), v)
+            for k, v in scope.get("headers", [])
+        )
+        content_length = headers.get(b"content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > max_bytes:
+                    response = Response(
+                        "Request body too large",
+                        status_code=413,
+                    )
+                    await response(scope, receive, send)
+                    return
+            except (ValueError, TypeError):
+                pass
+
+        await self.app(scope, receive, send)
+
+
+class CacheHeaderMiddleware:
+    """Set Cache-Control headers on public read-only GET endpoints.
+
+    Pure ASGI middleware (not BaseHTTPMiddleware) to avoid the internal
+    response-queue mechanism that can deadlock when downstream handlers
+    perform blocking I/O.
+    """
+
+    CACHE_RULES: list[tuple[str, int]] = [
+        ("/api/v1/dashboard/summary", 60),
+        ("/api/v1/dashboard/filters", 3600),
+        ("/api/v1/incidence", 60),
+        ("/api/v1/trends", 60),
+        ("/api/v1/geo/calenviroscreen", 3600),
+        ("/api/v1/geo/counties", 300),
+    ]
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+
+        # Only inject headers for GET requests matching a cache rule.
+        max_age = None
+        if method == "GET":
+            for prefix, age in self.CACHE_RULES:
+                if path.startswith(prefix):
+                    max_age = age
+                    break
+
+        if max_age is None:
+            await self.app(scope, receive, send)
+            return
+
+        swr = max(max_age // 2, 30)
+        cache_value = f"public, max-age={max_age}, stale-while-revalidate={swr}".encode()
+
+        async def send_with_cache_headers(message):
+            if message["type"] == "http.response.start":
+                status = message.get("status", 200)
+                if status < 400:
+                    headers = list(message.get("headers", []))
+                    headers.append((b"cache-control", cache_value))
+                    headers.append((b"vary", b"Accept-Encoding"))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_cache_headers)
 
 
 @asynccontextmanager
@@ -113,6 +222,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# --- Rate limiting ---
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -120,6 +234,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- HTTP cache headers for public read-only endpoints ---
+app.add_middleware(CacheHeaderMiddleware)
+
+# --- Request body size limit ---
+app.add_middleware(RequestBodySizeLimitMiddleware)
 
 app.include_router(dashboard.router)
 app.include_router(incidence.router)

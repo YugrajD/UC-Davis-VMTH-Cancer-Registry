@@ -23,35 +23,42 @@ true held-out performance.
 
 ## Training Pipeline Flow
 
-The strongest documented training path is contrastive backbone adaptation followed by
-iterative `PresenceClassifier` training, with the test split held out for later evaluation.
+The current production training path is contrastive backbone adaptation followed by
+four one-shot classifier trainings (Stage 1 → 2 → 3a) with per-LP threshold calibration,
+holding out the test split for later evaluation.
 
 ```mermaid
 flowchart TD
     subgraph IN2["Input"]
         A["report.csv"]
-        B["annotation labels / verified labels"]
+        B["annotation labels (llm_annotation.csv)"]
     end
 
     subgraph P2["Process"]
         C["Create case-level train/test split"]
-        D["Contrastive fine-tune"]
-        E["Train PresenceClassifier"]
-        F["Testing data branch<br/>Hold out test split for evaluation"]
+        D["adapt-backbone (contrastive)"]
+        E1["train-case-presence (Stage 1, 2304-dim gate)"]
+        E2["train-groups (Stage 2, 2304→25)"]
+        E3["train-label-presence (Stage 3a, per-group)"]
+        E4["sweep_lp_thresholds (calibrate per-LP thresholds)"]
     end
 
     subgraph OUT2["Output"]
-        G["contrastive-adapted PetBERT model"]
-        H["presence_classifier_best.pt"]
-        I["Held-out testing data for evaluation"]
+        G["checkpoints/contrastive/ (adapted PetBERT)"]
+        H1["checkpoints/case_presence/case_presence_classifier.pt"]
+        H2["checkpoints/group/group_classifier_best.pt"]
+        H3["checkpoints/label_presence/{group}.pt + lp_thresholds.json"]
+        I["Held-out test split for evaluation"]
     end
 
     A --> C
     B --> C
     C -->|"training data"| D
     D --> G
-    D -->|"training data"| E
-    E --> H
+    G --> E1 --> H1
+    G --> E2 --> H2
+    G --> E3 --> H3
+    E3 --> E4 --> H3
     C -->|"testing data"| I
 ```
 
@@ -127,10 +134,12 @@ in Phase 28 by four one-shot stages: `train-case-presence`, `train-groups`,
 ## Case Presence Classifier (one-shot)
 
 Trains a binary MLP that predicts cancer vs. non-cancer at the case level. This is the
-first stage of the three-stage production pipeline — it filters non-cancer cases before
+first stage of the four-stage production pipeline — it filters non-cancer cases before
 the GroupClassifier runs.
 
-**Input:** mean report embedding (768-dim, from embedding cache).
+**Input:** 2304-dim concat-3 report embedding (`col_tfidf_selected`, three per-section
+768-dim views concatenated per row). `emb_dim` is auto-detected from the cache, so the
+legacy 768-dim path at `ml-tfidf/` still works for that pipeline.
 **Output:** scalar cancer probability per case.
 **Training objective:** recall-weighted (`recall_weight=0.85`) — errs toward letting
 uncertain cases through rather than missing cancer.
@@ -144,7 +153,8 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --epochs 20 --device xpu
 ```
 
-Checkpoint saved to `ml/output/checkpoints/contrastive/case_presence_classifier.pt`.
+Checkpoint saved to `ml/output/checkpoints/case_presence/case_presence_classifier.pt`
+(path is `config.CHECKPOINT_CASE_PRESENCE_DIR`).
 
 > **Prerequisite:** the embedding cache must already exist. Run `run_production.py` once
 > (which embeds all reports on first run) to build it.
@@ -171,21 +181,21 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-groups --dev
 This builds training data from the embedding cache and annotation file, trains for the
 configured number of epochs, and saves to `ml/output/checkpoints/group/group_classifier_best.pt`.
 
-### Options (Phase 26 — current recommended hyperparameters)
+### Options (current recommended hyperparameters)
 
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode train-groups \
-  --epochs 300 --lr 5e-5 \
+  --epochs 300 --lr 5e-5 --dropout 0.1 \
   --max-class-weight 50 --weight-decay 1e-3 \
   --device xpu --local-only \
   --train-cases ml/output/splits/train_cases.txt \
   --annotation-csv ml/output/annotation/llm/llm_annotation.csv
 ```
 
-**Critical hyperparameters:** `--max-class-weight 50` caps BCE pos_weights (otherwise up to 3,587× on rare groups) and `--weight-decay 1e-3` prevents the model from predicting all groups for every case. Both are required.
+**Critical hyperparameters:** `--max-class-weight 50` caps BCE pos_weights (otherwise up to 3,587× on rare groups) and `--weight-decay 1e-3` prevents the model from predicting all groups for every case. Both are required. `--dropout 0.1` is the current default (Phase 27+).
 
-**Epoch count:** 300 epochs (Phase 26). The Phase 24 run used 150 epochs and best was at epoch 120 with loss still trending down. Phase 26 found the true best at epoch 219 (macro F1=0.4335 vs 0.3136). `lr=2e-5` was tested and found inferior (F1=0.4249).
+**Epoch count:** 300 epochs. Under the current concat-3 + per-section contrastive backbone, the best checkpoint is **macro F1=0.5712 at epoch 258/300**. The prior TF-IDF-on-default-PetBERT baseline (preserved at `ml-tfidf/`) tops out at F1=0.4475 (epoch 192). `lr=2e-5` was tested and found inferior. The hyperparameter recipe has not changed across backbones — only the F1 ceiling moved.
 
 ---
 
@@ -279,9 +289,13 @@ closer together. The adapted backbone is then used as the starting point for
 the downstream classifiers (`train-case-presence`, `train-groups`,
 `train-label-presence`). A cold start is required after adaptation.
 
-### Step 0 — Fit the TF-IDF vectorizer (run once, or after report.csv changes significantly)
+### Step 0 — Fit the TF-IDF vectorizer (legacy TF-IDF path only)
 
-The contrastive training pairs are built from TF-IDF-selected text that must match
+> Required only for the legacy TF-IDF text-selection path preserved at `ml-tfidf/`.
+> The concat-3 production path embeds each section independently and does **not** use
+> TF-IDF sentence scoring — skip this step when training the current `ml/` pipeline.
+
+The TF-IDF contrastive training pairs are built from TF-IDF-selected text that must match
 what production embeds. Fit the vectorizer before building pairs:
 
 ```bash
@@ -394,7 +408,7 @@ Continue with subsequent cycles (update `--label` each time) as normal.
 
 ---
 
-> **End-to-end fine-tuned PetBERT** was attempted in 2026-05 and reverted — it didn't beat the Phase 28 4-stage pipeline. See `training-log/training-log-finetune.md` Approach B for findings, cost analysis, and the resurrection path.
+> **End-to-end fine-tuned PetBERT** was attempted in 2026-05 and reverted — it didn't beat the 4-stage pipeline. The current bar to clear is **G+S 62.1%** on eval-half (concat-3 + per-section contrastive + 4-stage with per-LP thresholds + tail-gate), not the Phase 28 57.9% baseline that the experiment was measured against. See `training-log/training-log-finetune.md` Approach B for findings, cost analysis, and the resurrection path.
 
 ---
 

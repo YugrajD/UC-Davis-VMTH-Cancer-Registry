@@ -4,12 +4,12 @@ Structured improvement plan for pushing Good+Slightly off on the 4-stage pipelin
 (CasePresenceClassifier → GroupClassifier → LabelPresenceClassifier → KW correction)
 toward 65% G+S on the held-out test set.
 
-**Current baseline (Phase 28 LPs restored after QW1 revert, verified 2026-05-10, lp-t=0.5, group-t=0.85, 4-stage):**
-G+S = **59.5%** (Good 25.7% + Slightly 33.8%) | CO = 23.4% | FP = 8.0% | FN = 9.2% | 16,902 test cases (`evaluation_history.csv` row #33).
+**Current baseline (concat-3 + per-section contrastive + 4-stage with per-LP thresholds + tail-gate, verified 2026-05-13, eval-half unbiased):**
+G+S = **62.1%** (Good 46.1% + Slightly 16.0%) | CO = 14.7% | FP = 2.3% | FN = 20.8% | n=4,414 eval-half (`pipeline_eval_half/evaluation_history.csv`, full test n=8,835 → G+S 62.3%).
 
-> Historical reference: the original 25-group Phase 28 setup (pre-Phase-29 cold-start backbone) measured G+S = 57.9% / CO = 25.3% / FN = 11.1% / 15,100 rows. After the Phase 29 backbone cold-start + 17-group LP retrain (live on disk), the operational baseline shifted to the numbers above.
+> Historical references: the prior 17-LP TF-IDF baseline (now preserved at `ml-tfidf/`) measured G+S = 59.5% (Good 25.7% + Slightly 33.8%) / CO = 23.4% / FN = 9.2% / 16,902 test cases. The original 25-group Phase 28 setup (pre-cold-start) was 57.9% G+S. The bottleneck table below is the 17-LP analysis preserved for failure-mode reference; verdict ownership has shifted under concat-3 (much more error now lives in Stage 1 gate / FN than in Stage 3a / Slightly Off).
 
-**Target:** 65% G+S (+7.1 pp).
+**Target:** 65% G+S (+2.9 pp from the current 62.1% baseline).
 
 Run `run_evaluation.py --stage all --test-cases ml/output/splits/test_cases.txt`
 after each tier to record the marginal change before moving on. Per
@@ -19,7 +19,9 @@ downstream classifiers.
 
 ---
 
-## Bottleneck Analysis (verified on Phase 28 test set)
+## Bottleneck Analysis (verified on Phase 28 / 17-LP TF-IDF test set — historical reference)
+
+> Preserved as failure-mode reference. Under concat-3 (G+S 62.1%) verdict ownership shifted: Slight collapsed 33.8% → 16.0% and CO collapsed 23.4% → 14.7%, but FN grew 9.2% → 20.8% (stricter gate at 0.85). Rerun a fresh bottleneck pass on `pipeline_eval_half/evaluation.csv` before quoting these percentages as current. The verified file:line root causes below have *partially shipped* — see the per-item status updates.
 
 ### Verdict distribution (16,902 test cases)
 | Verdict | % | Owning stage |
@@ -43,12 +45,12 @@ downstream classifiers.
 | Soft tissue tumors and sarcomas | — | — | 46.8% Good, P=0.50 | Over-predicts |
 | Uncommon | 421 | 2.5% | 3.1% | Inherent — 25 merged groups |
 
-### Verified root causes (file:line)
-1. `ml/training/label_presence/train.py:138-140` — `train_test_split(stratify=targets)` is target-stratified but **NOT case-disjoint**. Same case can appear in train and val with different labels → optimistic val score, masking the val/prod gap.
-2. `ml/training/label_presence/build_training_pairs.py:101` — `rng.sample(neg_pool, k)` picks **random** within-group negatives. The MLP learns lexical label cues rather than discriminative report features.
-3. `ml/training/label_presence/train.py:62, 168` — `dropout=0.3`, `weight_decay=1e-4` hardcoded. Fixed `epochs=25`, no early stopping.
-4. `ml/production/petbert_pipeline/stages/__init__.py:111-122` — Single global `label_presence_threshold=0.5` across 17 LPs whose precisions span 0.18–0.96.
-5. `ml/production/petbert_pipeline/stages/keyword_correction.py:38-45` — Adenomas has no entry in `subtype_keywords.py`; `filter_by_subtype` returns the input pool unchanged.
+### Verified root causes (file:line — shipping status as of 2026-05-13)
+1. ~~`ml/training/label_presence/train.py:138-140` — `train_test_split(stratify=targets)`~~ — **SHIPPED**. `train.py:151` now uses `GroupShuffleSplit(groups=case_ids)` (case-disjoint). Same-case leakage closed; val scores no longer inflated by the old split.
+2. `ml/training/label_presence/build_training_pairs.py:163` — `rng.sample(remaining, n_random)` is still the random-negative path, but **hard-neg mining infrastructure is in place** behind `--label-presence-hard-neg-fraction` (precomputed `hard_rank` at L107-114, mixed in at L153-156). Default fraction is 0.0 (random-only) after QW1 at fraction=0.7 net-negative — see "QW1 followups" below.
+3. `ml/training/label_presence/train.py:62, 168` — `dropout`, `weight_decay`, `patience` are now flag-plumbed (`--label-presence-{dropout,weight-decay,patience}`); defaults remain at the Phase 28 values pending a cleaner sweep.
+4. ~~Single global `label_presence_threshold=0.5`~~ — **SHIPPED**. `lp_thresholds.json` is the production default (see `ideas-accepted.md → Per-LP threshold calibration`); production loads per-LP thresholds in `stages/label_presence_classifier.py` with the CLI default as fallback.
+5. `ml/production/petbert_pipeline/stages/keyword_correction.py` — Adenomas still has no entry in `subtype_keywords.py`. QW4 below remains open.
 
 ---
 
@@ -126,25 +128,9 @@ stays the new default.
 
 ---
 
-### QW3 — Per-group LP threshold calibration (no retrain)
+### QW3 — Per-group LP threshold calibration (no retrain) — **SHIPPED 2026-05-10**
 
-**Status:** Not started.
-
-**Problem:** A single `label_presence_threshold=0.5` across 17 heterogeneous LPs (production precision span 0.18–0.96) is wrong by construction. The optimal sigmoid threshold is group-specific.
-
-**Hypothesis:** Pure post-hoc calibration on a held-out fold lifts precision without retraining.
-
-**Approach:**
-1. New script `ml/scripts/calibrate_label_presence.py` (read-only on weights). For each LP: load weights, run on a train-cases holdout fold, sweep thresholds 0.3–0.9, pick the threshold that maximizes F0.7 (precision-weighted).
-2. Persist as `{group}.threshold.json` next to each `.pt` in `output/checkpoints/label_presence/`.
-3. Modify `ml/production/petbert_pipeline/stages/label_presence_classifier.py::score_within_group` to read per-group thresholds, falling back to the CLI default when missing.
-4. Wire through `categorize_per_case` — pass per-group threshold dict alongside the existing `label_presence_threshold` arg.
-
-**Cost:** 0.5 day. No retrain, no embedding regen.
-
-**Expected gain:** +0.7 to +1.5 pp G+S.
-
-**Risk:** Calibration set overfit. Use a fold disjoint from training; verify on test.
+Implemented as `ml/scripts/sweep_lp_thresholds.py` (one consolidated JSON, not per-LP files). Produces `ml/output/checkpoints/label_presence/lp_thresholds.json`; production auto-loads it via `--label-presence-thresholds-json` with the CLI default as fallback. Measured gain on test eval-half: +8.7 pp top-1 exact-term Good (+0.082 macro F1 / +0.19 micro F1). See `ideas-accepted.md → Per-LP threshold calibration` for the full entry.
 
 ---
 

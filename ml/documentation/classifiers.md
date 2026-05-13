@@ -67,7 +67,7 @@ fallback-chain embedding (768-dim, col_fallback_selected)
     ↓
 GroupClassifier MLP
     ↓
-sigmoid score per group (42 outputs — groups with ≥10 training cases)
+sigmoid score per group (25 outputs — post-uncommon-bucket consolidation)
     ↓
 threshold → predicted group(s)
 ```
@@ -195,9 +195,9 @@ recall-precision trade-off via its training objective.
 **Run 8 (baseline, no gate):** GroupClassifier ran unconditionally; `PresenceClassifier` was a fallback
 for cases where no group cleared the threshold, not a gate.
 
-### Phase 28 Evaluation Results (2026-05-07) — HISTORICAL (25-group setup, pre-cold-start backbone)
+### Phase 28 Evaluation Results (2026-05-07) — HISTORICAL (25-group setup, pre-concat-3 backbone)
 
-> **Note:** The table below is the original Phase 28 measurement (25 LP files, Phase 27 GroupCLF on the pre-cold-start backbone). The current production setup uses 17 LP files trained on the Phase 29 cold-start backbone — its baseline is **59.5% G+S at lp-t=0.5** (see `training-log/training-log-label-presence.md` Phase 29 + Phase 30/30b revert sections, and `evaluation_history.csv` row #33). The 25-group threshold-sweep curve below is preserved as historical reference; a fresh sweep on the 17-group setup has not been done.
+> **Note:** The table below is the original Phase 28 measurement (25 LP files, Phase 27 GroupCLF on the TF-IDF-text-aligned backbone). The current production setup (`ml/` post-2026-05-13 promotion) runs **25 LPs on the concat-3 + per-section contrastive backbone** with per-LP thresholds (`lp_thresholds.json`) and the Stage-2 tail-gate, reaching **G+S 62.1% on eval-half** (Good 46.1, Slight 16.0, CO 14.7, FP 2.3, FN 20.8, n=4,414). See `training-log/training-log-label-presence.md` for the post-promotion section with the canonical reproducibility command. The threshold-sweep curve below is preserved as a historical reference for the legacy TF-IDF stack (now at `ml-tfidf/`).
 
 **4-stage pipeline (historical): CasePresenceClassifier (rw=0.85) → GroupClassifier (Ph27, F1=0.4475) → LabelPresenceClassifier (Stage 3a, 25 LPs) → KW correction.**
 
@@ -255,7 +255,7 @@ Phase 25 per-case-FN results (old methodology, not directly comparable):
 | Ph24 3-stage rw=0.7 gate=0.5 | 49.1% | 22.1% | 3.7% | 25.0% | 6,748 |
 | Ph25 3-stage rw=0.85 gate=0.5 | 62.6% | 26.2% | 6.7% | 4.5% | 7,084 |
 
-Best config: `--case-presence-threshold 0.5 --group-classifier-threshold 0.85`.
+Best config for the Phase 25/26 3-stage setup above: `--case-presence-threshold 0.5 --group-classifier-threshold 0.85`. Superseded by the 4-stage concat-3 production stack (`--case-presence-threshold 0.85`, see the README Quick Start for the current canonical command).
 
 **Note:** PresenceClassifier cycles (binary mode) are NOT used in the 3-stage pipeline.
 Binary best (c14): 65.7% train G+S. 3-stage uses GroupClassifier + CasePresenceClassifier only.
@@ -488,6 +488,8 @@ is the mechanism. Revisit if the annotation pipeline cannot scale to ~10,000+ ca
 
 End-to-end fine-tuning of PetBERT as a Stage 2 group classifier was attempted in 2026-05 and reverted. The val macro F1 ceiling lifted to 0.5774 (vs Phase 27 GroupCLF's 0.4475), but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9%. The F1 win was absorbed by LP coupling (LPs trained against Phase 27 GroupCLF outputs), and closing the gap would have required regenerating the embedding cache and retraining Stages 1 and 3a — a substantial commitment for an uncertain ~+1–3pp ceiling, against ~30× slower inference.
 
+> **Bar today is higher:** the experiment was measured against Phase 28's 57.9% G+S. The current concat-3 + per-section contrastive + 4-stage pipeline reaches **G+S 62.1%** on eval-half (`ml/` post-2026-05-13 promotion). Resurrecting Approach B would need to beat 62.1%, not 57.9%.
+
 See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sweep/8-epoch results, the cost analysis, and the resurrection path.
 
 ---
@@ -509,22 +511,29 @@ See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sw
 
 ### When to Use Each
 
-- **Three-stage pipeline (current design — CasePresenceClassifier + GroupClassifier + KW):**
+- **Four-stage pipeline (current production — CasePresenceCLF → GroupCLF → per-group LabelPresenceCLF → KW correction):**
+  ```bash
+  ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+    --csv ml/data/report.csv \
+    --concat-3 \
+    --model ml/output/checkpoints/contrastive --local-only \
+    --embedding-cache ml/output/training/embedding_cache.npz \
+    --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
+    --case-presence-threshold 0.85 \
+    --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
+    --group-classifier-threshold 0.85 \
+    --label-presence-classifier-dir ml/output/checkpoints/label_presence \
+    --label-presence-thresholds-json ml/output/checkpoints/label_presence/lp_thresholds.json \
+    --tail-max-predictions 2 --tail-max-group-prob-gap 0.08 \
+    --out-dir ml/output/production --device xpu
   ```
-  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt
-  --case-presence-threshold 0.5
-  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt
-  --group-classifier-threshold 0.85
-  ```
-  Stage 1 filters non-cancer cases; Stage 2 assigns the ICD group (with argmax fallback so no
-  gate-passed case is left as "Unidentified Cancer"); Stage 3 selects the specific term with
-  subtype keyword discriminators applied before cosine similarity.
-  Train CasePresenceClassifier first with `--mode train-case-presence`.
+  Stage 1 (2304-dim gate) filters non-cancer; Stage 2 assigns the ICD group with argmax fallback and tail-gate trimming; Stage 3a (per-group LP head, `n_cols=3, col_pair_mode=True, col_combine="learned"`) picks the within-group term using per-LP calibrated thresholds; Stage 3b (KW correction) applies behavior-code and subtype discriminators.
 
-- **Phase 23 GroupClassifier alone (Run 8 baseline):** `--group-classifier` only, no gate — 50.1% G+S, 8.9% FP, 15.5% FN at threshold=0.90
-- **Phase 23 binary**: legacy iterative LabelPresenceClassifier (since deleted) — 47.2% G+S, higher FP, lower FN
-- **Phase 18 contrastive (keyword annotation)**: highest overall G+S (86.5%) but evaluated on a smaller dataset — not directly comparable to Phase 23 LLM ground truth
-- **End-to-end fine-tuning**: after three-stage pipeline proves stable and bugs are resolved
+- **Legacy TF-IDF 4-stage (`ml-tfidf/`):** preserved baseline at G+S 56.6% on eval-half. Same CLI flags, but `--no-concat-3` (or omit `--concat-3`) and 768-dim checkpoints.
+- **Phase 23 GroupClassifier alone (Run 8 baseline):** `--group-classifier` only, no gate — 50.1% G+S, 8.9% FP, 15.5% FN at threshold=0.90.
+- **Phase 23 binary:** legacy iterative LabelPresenceClassifier (since deleted) — 47.2% G+S, higher FP, lower FN.
+- **Phase 18 contrastive (keyword annotation):** highest single-classifier G+S (86.5%) but evaluated on a smaller dataset — not directly comparable to LLM-annotation results.
+- **End-to-end fine-tuning:** revisit only after the 4-stage pipeline plateaus; current bar is G+S 62.1%.
 
 ---
 

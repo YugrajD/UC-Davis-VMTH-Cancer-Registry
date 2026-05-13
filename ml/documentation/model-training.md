@@ -378,28 +378,28 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-label-presen
 
 ## End-to-end fine-tuning (attempted, reverted 2026-05)
 
-End-to-end fine-tuning of PetBERT as a Stage 2 classifier was integrated and benchmarked in 2026-05. Standalone val macro F1 reached 0.5774 (vs Phase 27 GroupCLF's 0.4475), but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9% (the contemporary baseline at that comparison; the current baseline is 59.5% on the post-Phase-29 17-group LPs). Reverted. See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sweep/8-epoch findings, the cost analysis, and the resurrection path.
+End-to-end fine-tuning of PetBERT as a Stage 2 classifier was integrated and benchmarked in 2026-05. Standalone val macro F1 reached 0.5774 (vs Phase 27 GroupCLF's 0.4475), but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9% (the contemporary baseline at that comparison; the **current** baseline is G+S 62.1% on eval-half under concat-3 + per-section contrastive + 4-stage with per-LP thresholds + tail-gate). Reverted. See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sweep/8-epoch findings, the cost analysis, and the resurrection path.
 
 ---
 
 ## Comparison
 
-| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuned + 3-stage |
+| | Binary PresenceClassifier | GroupClassifier (alone) | Contrastive + 4-stage (concat-3) |
 |---|---|---|---|
-| **Status** | Superseded | **Competitive (Phase 23)** | **Production best** |
-| **Best result** | 41.9% G+S (Phase 16) | **50.1% G+S @ t=0.90 (Phase 23)** | **62.6% G+S test set (Phase 25, 3-stage)** |
-| **PetBERT** | Frozen | Contrastive fine-tuned | Fine-tuned (InfoNCE) |
-| **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier |
-| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | Works at ~5,788 cases |
-| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative |
-| **Inference speed** | Slow (~857 pair scores/report) | Fast (~42 group scores + cosine) | Fast (3-stage: gate + ~42 group scores) |
-| **CO floor** | ~30% | ~25.5% @ t=0.90 | **~26% (3-stage, Phase 25)** — backbone-level improvement |
-| **Main constraint** | Superseded | FN trade-off at high threshold | LLM annotation ceiling |
+| **Status** | Removed Phase 28 | Stage 2 of 4-stage | **Production best (2026-05-13)** |
+| **Best result** | 41.9% G+S (Phase 16) | **macro F1=0.5712 (epoch 258, concat-3 + per-section contrastive)** | **G+S 62.1% on eval-half** (Good 46.1, Slight 16.0, CO 14.7, FP 2.3, FN 20.8, n=4,414) |
+| **PetBERT** | Frozen | Per-section contrastive fine-tuned | Per-section contrastive fine-tuned |
+| **Training style** | Iterative (CO feedback) | One-shot | Four one-shot stages + per-LP threshold sweep |
+| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | 46,652 train cases |
+| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (backbone) + fast (four downstream heads) |
+| **Inference speed** | Slow (~857 pair scores/report) | Fast (25 group scores + cosine) | Fast (gate + 25 group scores + within-group LP) |
+| **CO floor** | ~30% | ~25.5% @ t=0.90 (legacy) | **14.7% (concat-3, 4-stage)** |
+| **Main constraint** | Removed | FN trade-off at high threshold | FN at gate-t=0.85 (20.8%); LLM annotation ceiling |
 
 ### Roadmap
 
-- **Now**: 4-stage pipeline (Phase 28+ / restored after QW1 revert) — CasePresenceClassifier + GroupClassifier (`group_classifier_best.pt`, F1=0.494, 17-group post-cold-start) + per-group LabelPresenceClassifier (17 `.pt` files in `checkpoints/label_presence/`) + KW correction with argmax fallback and subtype keyword discriminators. **Current baseline: 59.5% G+S on test set** (lp-t=0.5, group-t=0.85, 16,902 prediction rows; verified 2026-05-10, evaluation_history.csv row #33). The earlier 57.9% Phase 28 number was the 25-group setup on the pre-cold-start backbone — superseded. See [classifiers.md](classifiers.md) for full details.
-- **Next**: Tier 1 quick wins (QW1 fallback / QW2–QW5) in `training-ideas/ideas-to-try.md`. Backbone Round 2 (hard-neg) is now LB2 in Tier 3 — note that the current backbone is Round 1 only on TF-IDF text, so a hard-neg pass is genuinely untried in the current embedding space.
+- **Now**: 4-stage pipeline (concat-3 + per-section contrastive backbone, 25 LPs with per-LP calibrated thresholds, Stage-2 tail-gate) — see `ideas-accepted.md` for the per-improvement breakdown. **Current baseline: G+S 62.1% on eval-half** (Good 46.1 / Slight 16.0 / CO 14.7 / FP 2.3 / FN 20.8; verified 2026-05-13 in `pipeline_eval_half/evaluation_history.csv`). The legacy TF-IDF stack (G+S 56.6%) is preserved at `ml-tfidf/`. See [classifiers.md](classifiers.md) for full details.
+- **Next**: Tier 1 quick wins (QW4 Adenomas keywords, QW5 soft-tissue threshold; QW1 fallback at fraction=0.5) in `training-ideas/ideas-to-try.md`. Backbone Round 2 (hard-neg) is LB2 in Tier 3 — current backbone has no hard-neg pass, so this is genuinely untried in the concat-3 embedding space.
 
 ---
 

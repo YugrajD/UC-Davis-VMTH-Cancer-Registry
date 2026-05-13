@@ -467,7 +467,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_data_analysis.py
 | `classifiers.md` | All classifier approaches: architecture, advantages/disadvantages, evaluation results |
 | `model-training.md` | Comparison table and architectural decisions |
 | `training-guide.md` | Step-by-step how-to: cold start, run commands, expected trajectory |
-| `training-log/training-log-binary.md` | Label presence classifier — phase-by-phase history (Phases 1–16) |
+| `training-log/training-log-binary.md` | Label presence classifier — phase-by-phase history (Phases 1–22, removed in Phase 28) |
 | `training-log/training-log-group.md` | Group classifier — experiments and results |
 | `training-log/training-log-finetune.md` | Backbone adaptation — contrastive approach (Phase 17) and end-to-end attempt (Approach B, 2026-05, abandoned) |
 | `training-log/training-log-label-presence.md` | Per-group LabelPresenceClassifier (Stage 3) — Phase 28+ |

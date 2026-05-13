@@ -759,7 +759,7 @@ export function DataUpload() {
                                   {job.result_summary.avg_confidence}% avg confidence
                                 </p>
                               )}
-                              {job.result_summary.top_cancer_types[0] && (
+                              {job.result_summary.top_cancer_types?.[0] && (
                                 <p className="text-xs text-gray-500 truncate max-w-[180px]" title={job.result_summary.top_cancer_types[0].name}>
                                   Top: {job.result_summary.top_cancer_types[0].name}
                                 </p>

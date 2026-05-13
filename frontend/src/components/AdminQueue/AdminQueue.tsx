@@ -124,11 +124,11 @@ function ResultSummary({ summary }: { summary: NonNullable<IngestionJob['result_
           </div>
         </div>
       </div>
-      {summary.top_cancer_types.length > 0 && (
+      {(summary.top_cancer_types ?? []).length > 0 && (
         <div>
           <p className="text-xs text-[var(--color-text-secondary)] mb-1">Top predicted cancer types</p>
           <div className="flex flex-wrap gap-1.5">
-            {summary.top_cancer_types.map(ct => (
+            {(summary.top_cancer_types ?? []).map(ct => (
               <span key={ct.name} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 text-xs border border-teal-100">
                 {ct.name}
                 <span className="font-semibold">{ct.count}</span>

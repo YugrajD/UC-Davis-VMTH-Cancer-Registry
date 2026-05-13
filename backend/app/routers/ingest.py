@@ -59,6 +59,7 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _SAFE_FILENAME_RE = re.compile(r"[^\w\-. ]")
 
 
+
 def _is_na(value) -> bool:
     """Return True if the value is missing, empty, or the string 'NA'."""
     if value is None:

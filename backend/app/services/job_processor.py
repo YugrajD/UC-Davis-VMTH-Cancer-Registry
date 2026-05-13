@@ -67,6 +67,7 @@ def _safe_error_message(e: Exception) -> str:
     return type(e).__name__
 
 
+
 async def _mark_failed(job_id: int, error_msg: str) -> None:
     """Mark a job as failed with the given error message."""
     async with async_session() as db:

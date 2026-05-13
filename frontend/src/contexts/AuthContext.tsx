@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { fetchMe } from '../api/client';
@@ -26,18 +26,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isUploader, setIsUploader] = useState(false);
   const [isReviewer, setIsReviewer] = useState(false);
 
+  // Dedup and backoff refs for refreshRoles
+  const inflightRef = useRef(false);
+  const backoffRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const refreshRolesRef = useRef<(accessToken: string) => Promise<void>>();
+
   const refreshRoles = useCallback(async (accessToken: string) => {
+    // Skip if a request is already in-flight
+    if (inflightRef.current) return;
+
+    // Clear any scheduled retry — a fresh call supersedes it
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = undefined;
+    }
+
+    inflightRef.current = true;
     try {
       const me = await fetchMe(accessToken);
       setIsAdmin(me.is_admin);
       setIsUploader(me.is_uploader);
       setIsReviewer(me.is_reviewer);
+      backoffRef.current = 0;
     } catch {
       setIsAdmin(false);
       setIsUploader(false);
       setIsReviewer(false);
+      // Exponential backoff: 2s, 4s, 8s, 16s, 30s cap
+      backoffRef.current = Math.min(backoffRef.current + 1, 5);
+      const delay = Math.min(1000 * 2 ** backoffRef.current, 30_000);
+      retryTimerRef.current = setTimeout(() => refreshRolesRef.current?.(accessToken), delay);
+    } finally {
+      inflightRef.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    refreshRolesRef.current = refreshRoles;
+  }, [refreshRoles]);
 
   useEffect(() => {
     if (!supabaseConfigured) return;
@@ -65,7 +92,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
   }, [refreshRoles]);
 
   const signIn = async (email: string, password: string) => {

@@ -5,8 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional, List
 
+from app.cache import cached_response
+from app.config import settings
 from app.database import get_db
 from app.models.models import CancerType, Patient, Species, County, CaseDiagnosis
+from app.models.views import mv_yearly_trends
 from app.schemas.schemas import TrendsResponse, TrendSeries, TrendPoint
 from app.services.review_filter import apply_review_filter
 
@@ -22,11 +25,12 @@ SEX_MAP = {
 
 
 @router.get("/yearly", response_model=TrendsResponse)
+@cached_response("trends_yearly", ttl=settings.CACHE_TTL_TRENDS)
 async def get_yearly_trends(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -72,39 +76,31 @@ async def get_yearly_trends(
 
 
 @router.get("/by-cancer-type", response_model=TrendsResponse)
+@cached_response("trends_by_cancer", ttl=settings.CACHE_TTL_TRENDS)
 async def get_trends_by_cancer_type(
-    species: Optional[List[str]] = Query(None),
-    county: Optional[List[str]] = Query(None),
-    sex: Optional[str] = None,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    sex: Optional[str] = Query(None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(
-            CancerType.name.label("cancer_type"),
-            func.extract("year", Patient.diagnosis_date).label("year"),
-            func.count(CaseDiagnosis.id).label("count"),
-            func.count(CaseDiagnosis.id).filter(Patient.outcome == "deceased").label("deceased"),
-            func.count(CaseDiagnosis.id).filter(Patient.outcome == "alive").label("alive"),
-        )
-        .select_from(CaseDiagnosis)
-        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
-        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-        .join(Species, Patient.species_id == Species.id)
-        .join(County, Patient.county_id == County.id)
-        .where(Patient.data_source == "petbert")
-    )
-    stmt = apply_review_filter(stmt)
-    if species:
-        stmt = stmt.where(Species.name.in_(species))
-    if county:
-        stmt = stmt.where(County.name.in_(county))
-    if sex and sex not in ("All", "all"):
-        mapped_sex = SEX_MAP.get(sex, sex)
-        stmt = stmt.where(Patient.sex == mapped_sex)
+    mv = mv_yearly_trends.c
+    stmt = select(
+        mv.cancer_type_name.label("cancer_type"),
+        mv.year,
+        func.sum(mv.case_count).label("count"),
+        func.sum(mv.deceased_count).label("deceased"),
+        func.sum(mv.alive_count).label("alive"),
+    ).select_from(mv_yearly_trends)
 
-    stmt = stmt.group_by(
-        CancerType.name, func.extract("year", Patient.diagnosis_date)
-    ).order_by(CancerType.name, func.extract("year", Patient.diagnosis_date))
+    if species:
+        stmt = stmt.where(mv.species_name.in_(species))
+    if county:
+        stmt = stmt.where(mv.county_name.in_(county))
+    if sex and sex not in ("All", "all"):
+        stmt = stmt.where(mv.sex == SEX_MAP.get(sex, sex))
+
+    stmt = stmt.group_by(mv.cancer_type_name, mv.year)
+    stmt = stmt.order_by(mv.cancer_type_name, mv.year)
 
     result = await db.execute(stmt)
     rows = result.all()

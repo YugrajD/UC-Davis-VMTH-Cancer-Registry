@@ -14,10 +14,9 @@ from pathlib import Path
 
 import psycopg2
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL_SYNC",
-    "postgresql://postgres:postgres@localhost:5432/vmth_cancer",
-)
+DATABASE_URL = os.getenv("DATABASE_URL_SYNC")
+if not DATABASE_URL:
+    sys.exit("ERROR: DATABASE_URL_SYNC environment variable is required")
 
 # Path to optional GeoJSON (all 58 CA counties). Set GEO_DATA_DIR in Docker to /geo/data.
 GEO_DATA_DIR = Path(os.getenv("GEO_DATA_DIR", ""))

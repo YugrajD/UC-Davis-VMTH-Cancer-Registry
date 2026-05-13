@@ -36,6 +36,9 @@ async def predict(file: UploadFile = File(...)):
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
+    if len(contents) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
+
     with tempfile.TemporaryDirectory() as tmpdir:
         csv_path = os.path.join(tmpdir, "input.csv")
         out_dir = os.path.join(tmpdir, "output")
@@ -50,7 +53,7 @@ async def predict(file: UploadFile = File(...)):
         except ImportError as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to import PetBERT pipeline: {e}",
+                detail="PetBERT pipeline is not available",
             )
 
         config = ScanConfig(
@@ -77,10 +80,10 @@ async def predict(file: UploadFile = File(...)):
             outputs = run_scan(config)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
+        except Exception:
             raise HTTPException(
                 status_code=500,
-                detail=f"PetBERT pipeline error: {e}",
+                detail="PetBERT pipeline failed",
             )
 
         # Read the predictions CSV and return as structured JSON

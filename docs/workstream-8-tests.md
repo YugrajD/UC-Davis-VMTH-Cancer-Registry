@@ -13,16 +13,18 @@
 backend/
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py              # Shared fixtures
-│   ├── test_dashboard.py        # Dashboard endpoint tests
-│   ├── test_incidence.py        # Incidence endpoint tests
-│   ├── test_trends.py           # Trends endpoint tests
-│   ├── test_geo.py              # Geo endpoint tests
-│   ├── test_search.py           # Search/classify endpoint tests
-│   ├── test_upload.py           # CSV upload tests
-│   ├── test_auth.py             # Authentication tests
-│   ├── test_review.py           # Review queue tests
-│   └── test_ingestion.py        # Ingestion service unit tests
+│   ├── conftest.py              # Shared fixtures and mock helpers
+│   ├── test_admin_users.py      # Admin role management (GET/PUT roles, self-demotion, env seed)
+│   ├── test_dashboard.py        # Dashboard summary and filters endpoints
+│   ├── test_incidence.py        # Incidence endpoints (by-cancer-type, by-species, by-breed, breed-detail)
+│   ├── test_security.py         # Security hardening (body size, auth gates, input validation, LIKE escaping, error sanitization)
+│   ├── test_trends.py           # (planned) Yearly aggregation, by-cancer-type series
+│   ├── test_geo.py              # (planned) GeoJSON structure, county geometry
+│   ├── test_search.py           # (planned) Search/classify endpoint tests
+│   ├── test_upload.py           # (planned) CSV upload validation tests
+│   ├── test_auth.py             # (planned) Authentication flow tests
+│   ├── test_review.py           # (planned) Diagnosis review queue tests
+│   └── test_ingestion.py        # (planned) Ingestion service unit tests
 ```
 
 **`conftest.py` architecture:**
@@ -71,17 +73,19 @@ def sample_csv():
 
 **Key test cases per file:**
 
-| File | Test Cases |
-|------|-----------|
-| `test_dashboard.py` | Summary returns correct totals, filters return valid options, empty DB returns zeros |
-| `test_incidence.py` | Incidence with no filters, with species filter, with date range, by-cancer-type grouping |
-| `test_trends.py` | Yearly aggregation correct, by-cancer-type returns multiple series, filter narrows results |
-| `test_geo.py` | GeoJSON has valid structure, counties have geometry, filter reduces case counts |
-| `test_search.py` | Classify returns valid cancer type, empty text returns 400, confidence between 0-1 |
-| `test_upload.py` | Valid CSV accepted, missing columns return 422, invalid breed rejected with error, file type validation |
-| `test_auth.py` | Login returns token, invalid password returns 401, protected endpoint returns 403 without token |
-| `test_review.py` | Queue returns flagged reports, approve updates status, reclassify changes classification |
-| `test_ingestion.py` | Sex aliases mapped correctly, case-insensitive breed matching, date parsing |
+| File | Test Cases | Status |
+|------|-----------|--------|
+| `test_admin_users.py` | GET/PUT role management, env fallback, admin implication, self-demotion block, email normalization, auth gating, role_seed logic | Implemented (15 tests) |
+| `test_dashboard.py` | Summary returns correct totals, species percentages, year range, empty DB defaults, top cancers ordering, filters endpoint | Implemented (10 tests) |
+| `test_incidence.py` | Incidence with no filters, schema validation, total counts, filter echo, by-cancer-type, by-species, by-breed, breed-detail, SEX_MAP | Implemented (15 tests) |
+| `test_security.py` | Body size middleware (413), upload path exemption, search auth gates, ClassifyRequest validation, IngestionJobReview Literal/max_length, LIKE escaping, error message sanitization | Implemented (17 tests) |
+| `test_trends.py` | Yearly aggregation correct, by-cancer-type returns multiple series, filter narrows results | Planned |
+| `test_geo.py` | GeoJSON has valid structure, counties have geometry, filter reduces case counts | Planned |
+| `test_search.py` | Classify returns valid cancer type, confidence between 0-1 | Planned |
+| `test_upload.py` | Valid CSV accepted, missing columns return 422, invalid breed rejected with error, file type validation | Planned |
+| `test_auth.py` | Login returns token, invalid password returns 401, protected endpoint returns 403 without token | Planned |
+| `test_review.py` | Queue returns flagged reports, approve updates status, reclassify changes classification | Planned |
+| `test_ingestion.py` | Sex aliases mapped correctly, case-insensitive breed matching, date parsing | Planned |
 
 **Dependencies to add to `backend/requirements.txt`:**
 ```

@@ -2,10 +2,10 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,12 +22,12 @@ router = APIRouter(prefix="/api/v1/role-requests", tags=["role-requests"])
 
 
 class RoleRequestCreate(BaseModel):
-    requested_role: str  # "uploader" or "reviewer"
-    reason: Optional[str] = None
+    requested_role: Literal["uploader", "reviewer"]
+    reason: Optional[str] = Field(default=None, max_length=2000)
 
 
 class RoleRequestResolve(BaseModel):
-    action: str  # "approve" or "deny"
+    action: Literal["approve", "deny"]
 
 
 class RoleRequestOut(BaseModel):
@@ -56,9 +56,6 @@ async def submit_role_request(
     user: CurrentUser = Depends(get_current_user),
 ):
     """Submit a request for the uploader or reviewer role."""
-    if body.requested_role not in ("uploader", "reviewer"):
-        raise HTTPException(status_code=400, detail="requested_role must be 'uploader' or 'reviewer'")
-
     # Check if user already has the role
     if body.requested_role == "uploader" and user.is_uploader:
         raise HTTPException(status_code=400, detail="You already have the uploader role")
@@ -142,9 +139,6 @@ async def resolve_role_request(
     admin: CurrentUser = Depends(require_admin),
 ):
     """Approve or deny a role request (admin-only)."""
-    if body.action not in ("approve", "deny"):
-        raise HTTPException(status_code=400, detail="action must be 'approve' or 'deny'")
-
     result = await db.execute(
         select(RoleRequest).where(RoleRequest.id == request_id)
     )

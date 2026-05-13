@@ -3,6 +3,18 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
+from app.cache import clear_all_caches
+
+
+@pytest.fixture(autouse=True)
+def _clear_caches():
+    """Clear in-memory response caches before each test."""
+    clear_all_caches()
+    yield
+    clear_all_caches()
+
 
 # ---------------------------------------------------------------------------
 # DB result mock helpers

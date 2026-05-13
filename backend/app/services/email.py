@@ -2,6 +2,7 @@
 
 import logging
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 
 from app.config import settings
@@ -38,9 +39,10 @@ def send_role_request_email(
     )
 
     try:
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30) as server:
             if settings.SMTP_USER and settings.SMTP_PASSWORD:
-                server.starttls()
+                ctx = ssl.create_default_context()
+                server.starttls(context=ctx)
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
 
             for admin_email in admin_emails:

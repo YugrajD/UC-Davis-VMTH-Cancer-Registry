@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timezone
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import CurrentUser, get_current_user, require_admin, require_reviewer
 from app.config import settings
 from app.database import get_db
+from app.rate_limit import limiter
 from app.models.models import IngestionJob
 from app.schemas.schemas import IngestionJobOut, IngestionJobReview
 from app.services.job_processor import process_approved_job
@@ -178,7 +179,9 @@ async def ingestion_status():
 
 
 @router.post("/upload")
+@limiter.limit(settings.RATE_LIMIT_WRITE)
 async def upload_datasets(
+    request: Request,
     dataset_a: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),

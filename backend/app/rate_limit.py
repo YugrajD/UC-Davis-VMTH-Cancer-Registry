@@ -1,5 +1,6 @@
 """Global rate-limiter instance shared across the application."""
 
+import jwt
 from fastapi import Request
 from slowapi import Limiter
 
@@ -29,4 +30,29 @@ def get_client_ip(request: Request) -> str:
     return peer_ip
 
 
-limiter = Limiter(key_func=get_client_ip, default_limits=["60/minute"])
+def get_rate_limit_key(request: Request) -> str:
+    """Return user sub (from JWT) if authenticated, otherwise client IP.
+
+    This lets authenticated users have their own per-user bucket,
+    while anonymous users share a per-IP bucket.
+    """
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        try:
+            # Decode without verification — we only need the 'sub' claim
+            # for rate-limit keying. Auth verification happens later in
+            # the dependency chain.
+            payload = jwt.decode(token, options={"verify_signature": False})
+            sub = payload.get("sub")
+            if sub:
+                return f"user:{sub}"
+        except Exception:
+            pass
+    return get_client_ip(request)
+
+
+limiter = Limiter(
+    key_func=get_rate_limit_key,
+    default_limits=[settings.RATE_LIMIT_ANONYMOUS],
+)

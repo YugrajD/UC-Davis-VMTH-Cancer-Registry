@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import httpx
 from sqlalchemy import select
 
+from app.cache import clear_all_caches
 from app.config import settings
 from app.database import async_session
 from app.models.models import IngestionJob
@@ -192,6 +193,7 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
                 await db.commit()
 
         logger.info("Job %d completed: %d inserted", job_id, ingestion_result.inserted)
+        clear_all_caches()
 
     except Exception as e:
         logger.exception("Job %d failed", job_id)
@@ -329,6 +331,7 @@ async def _process_via_gcp_batch(job_id: int) -> None:
                 await db.commit()
 
         logger.info("Job %d completed via GCP Batch: %d inserted", job_id, ingestion_result.inserted)
+        clear_all_caches()
 
         # Cleanup GCS files (best-effort)
         try:

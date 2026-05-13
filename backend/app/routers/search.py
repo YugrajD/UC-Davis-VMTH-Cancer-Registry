@@ -1,13 +1,15 @@
 """BERT search and pathology report endpoints."""
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text
 from typing import Optional
 
 from app.auth import CurrentUser, get_current_user
+from app.config import settings
 from app.database import get_db
 from app.models.models import PathologyReport, CancerType
+from app.rate_limit import limiter
 from app.schemas.schemas import (
     ClassifyRequest, ClassifyResult, ReportOut, ReportSearchResponse
 )
@@ -24,14 +26,16 @@ def _escape_like(value: str) -> str:
 
 
 @router.post("/classify", response_model=ClassifyResult)
+@limiter.limit(settings.RATE_LIMIT_EXPENSIVE)
 async def classify_report(
-    request: ClassifyRequest,
+    body: ClassifyRequest,
+    request: Request,
     _user: CurrentUser = Depends(get_current_user),
 ):
-    if not request.text.strip():
+    if not body.text.strip():
         raise HTTPException(status_code=400, detail="Report text is required")
 
-    result = classifier.classify(request.text)
+    result = classifier.classify(body.text)
     return result
 
 

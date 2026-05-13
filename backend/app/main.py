@@ -71,6 +71,62 @@ class RequestBodySizeLimitMiddleware:
         await self.app(scope, receive, send)
 
 
+class CacheHeaderMiddleware:
+    """Set Cache-Control headers on public read-only GET endpoints.
+
+    Pure ASGI middleware (not BaseHTTPMiddleware) to avoid the internal
+    response-queue mechanism that can deadlock when downstream handlers
+    perform blocking I/O.
+    """
+
+    CACHE_RULES: list[tuple[str, int]] = [
+        ("/api/v1/dashboard/summary", 60),
+        ("/api/v1/dashboard/filters", 3600),
+        ("/api/v1/incidence", 60),
+        ("/api/v1/trends", 60),
+        ("/api/v1/geo/calenviroscreen", 3600),
+        ("/api/v1/geo/counties", 300),
+    ]
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+
+        # Only inject headers for GET requests matching a cache rule.
+        max_age = None
+        if method == "GET":
+            for prefix, age in self.CACHE_RULES:
+                if path.startswith(prefix):
+                    max_age = age
+                    break
+
+        if max_age is None:
+            await self.app(scope, receive, send)
+            return
+
+        swr = max(max_age // 2, 30)
+        cache_value = f"public, max-age={max_age}, stale-while-revalidate={swr}".encode()
+
+        async def send_with_cache_headers(message):
+            if message["type"] == "http.response.start":
+                status = message.get("status", 200)
+                if status < 400:
+                    headers = list(message.get("headers", []))
+                    headers.append((b"cache-control", cache_value))
+                    headers.append((b"vary", b"Accept-Encoding"))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_cache_headers)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle handler."""
@@ -178,6 +234,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- HTTP cache headers for public read-only endpoints ---
+app.add_middleware(CacheHeaderMiddleware)
 
 # --- Request body size limit ---
 app.add_middleware(RequestBodySizeLimitMiddleware)

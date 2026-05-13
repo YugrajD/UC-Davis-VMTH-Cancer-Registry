@@ -4,6 +4,7 @@ Supports both HS256 (shared secret) and ES256 (JWKS) depending on the
 algorithm in the token header. Supabase newer projects use ES256.
 """
 
+import asyncio
 import base64
 import logging
 import time
@@ -39,7 +40,7 @@ def _get_jwks_client() -> Optional[PyJWKClient]:
         return _jwks_client
     if settings.SUPABASE_URL:
         url = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
-        _jwks_client = PyJWKClient(url)
+        _jwks_client = PyJWKClient(url, timeout=10)
         return _jwks_client
     return None
 
@@ -109,6 +110,7 @@ def _verify_token(token: str) -> dict:
         raise jwt.InvalidTokenError(f"Cannot read token header: {e}")
 
     alg = header.get("alg", "")
+    logger.debug("JWT algorithm: %s", alg)
 
     if alg == "HS256":
         secret = _decode_hs256_secret(settings.SUPABASE_JWT_SECRET)
@@ -129,7 +131,9 @@ def _verify_token(token: str) -> dict:
             "SUPABASE_URL is not configured for JWKS verification"
         )
 
+    logger.debug("Fetching JWKS signing key for %s token", alg)
     signing_key = jwks_client.get_signing_key_from_jwt(token)
+    logger.debug("JWKS signing key obtained")
     return jwt.decode(
         token,
         signing_key.key,
@@ -180,6 +184,9 @@ async def _resolve_roles(db: AsyncSession, email: str) -> tuple[bool, bool, bool
     return is_admin, is_uploader, is_reviewer
 
 
+_VERIFY_TIMEOUT = 10  # seconds — fail fast rather than hang
+
+
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
@@ -189,7 +196,16 @@ async def get_current_user(
     _check_auth_rate_limit(request)
     token = credentials.credentials
     try:
-        payload = _verify_token(token)
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(_verify_token, token),
+            timeout=_VERIFY_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.error("JWT verification timed out after %ds (JWKS fetch may be hanging)", _VERIFY_TIMEOUT)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication timed out — please try again",
+        )
     except jwt.ExpiredSignatureError:
         _record_auth_failure(request)
         raise HTTPException(
@@ -235,8 +251,11 @@ async def get_optional_user(
         return None
     _check_auth_rate_limit(request)
     try:
-        payload = _verify_token(credentials.credentials)
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(_verify_token, credentials.credentials),
+            timeout=_VERIFY_TIMEOUT,
+        )
+    except (asyncio.TimeoutError, jwt.ExpiredSignatureError, jwt.InvalidTokenError):
         _record_auth_failure(request)
         return None
 

@@ -1,5 +1,12 @@
 // API client for the VMTH Cancer Registry backend
 
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
+function apiUrl(path: string): string {
+  if (!API_BASE_URL) return path;
+  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
 export interface DashboardSummary {
   total_cases: number;
   total_patients: number;
@@ -83,7 +90,7 @@ function filtersToParams(filters: FilterParams): URLSearchParams {
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+  const response = await fetch(apiUrl(url));
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);
   }
@@ -91,7 +98,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 async function fetchJsonAuth<T>(url: string, token: string): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -213,7 +220,7 @@ export async function updateUserRoles(
 ): Promise<UserRoles> {
   const normalized = normalizeEmail(email);
   const response = await fetch(
-    `/api/v1/admin/users/${encodeURIComponent(normalized)}/roles`,
+    apiUrl(`/api/v1/admin/users/${encodeURIComponent(normalized)}/roles`),
     {
       method: 'PUT',
       headers: {
@@ -281,7 +288,7 @@ export async function uploadCSV(
   const formData = new FormData();
   formData.append('dataset_a', dataset);
 
-  const response = await fetch('/api/v1/ingest/upload', {
+  const response = await fetch(apiUrl('/api/v1/ingest/upload'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
@@ -313,7 +320,7 @@ export async function fetchJob(token: string, jobId: number): Promise<IngestionJ
 }
 
 export async function fetchJobPreview(token: string, jobId: number): Promise<string> {
-  const response = await fetch(`/api/v1/ingest/jobs/${jobId}/preview`, {
+  const response = await fetch(apiUrl(`/api/v1/ingest/jobs/${jobId}/preview`), {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -324,7 +331,7 @@ export async function fetchJobPreview(token: string, jobId: number): Promise<str
 }
 
 export async function cancelJob(token: string, jobId: number): Promise<IngestionJob> {
-  const response = await fetch(`/api/v1/ingest/jobs/${jobId}/cancel`, {
+  const response = await fetch(apiUrl(`/api/v1/ingest/jobs/${jobId}/cancel`), {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -341,7 +348,7 @@ export async function reviewJob(
   action: 'approve' | 'reject',
   rejectionReason?: string,
 ): Promise<IngestionJob> {
-  const response = await fetch(`/api/v1/ingest/jobs/${jobId}/review`, {
+  const response = await fetch(apiUrl(`/api/v1/ingest/jobs/${jobId}/review`), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -450,7 +457,7 @@ export async function reviewDiagnosis(
   diagnosisId: number,
   payload: ReviewActionPayload,
 ): Promise<DiagnosisDetail> {
-  const response = await fetch(`/api/v1/diagnoses/${diagnosisId}/review`, {
+  const response = await fetch(apiUrl(`/api/v1/diagnoses/${diagnosisId}/review`), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -486,7 +493,7 @@ export async function submitRoleRequest(
   requested_role: string,
   reason?: string,
 ): Promise<RoleRequest> {
-  const response = await fetch('/api/v1/role-requests/', {
+  const response = await fetch(apiUrl('/api/v1/role-requests/'), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -520,7 +527,7 @@ export async function resolveRoleRequest(
   requestId: number,
   action: 'approve' | 'deny',
 ): Promise<RoleRequest> {
-  const response = await fetch(`/api/v1/role-requests/${requestId}/resolve`, {
+  const response = await fetch(apiUrl(`/api/v1/role-requests/${requestId}/resolve`), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -553,7 +560,7 @@ export async function submitExportRequest(
   token: string,
   reason?: string,
 ): Promise<ExportRequest> {
-  const response = await fetch('/api/v1/export-requests/', {
+  const response = await fetch(apiUrl('/api/v1/export-requests/'), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -587,7 +594,7 @@ export async function resolveExportRequest(
   requestId: number,
   action: 'approve' | 'deny',
 ): Promise<ExportRequest> {
-  const response = await fetch(`/api/v1/export-requests/${requestId}/resolve`, {
+  const response = await fetch(apiUrl(`/api/v1/export-requests/${requestId}/resolve`), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -627,7 +634,7 @@ export async function downloadExportCsv(token: string, filters?: ExportFilters):
   const url = params.toString()
     ? `/api/v1/export-requests/download?${params}`
     : '/api/v1/export-requests/download';
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     headers: { Authorization: `Bearer ${token}` },
   });
 

@@ -94,6 +94,7 @@ All found at: Supabase Dashboard → **Settings** → **API**
 | `SUPABASE_URL` | Project URL (e.g. `https://abcdef.supabase.co`) |
 | `VITE_SUPABASE_URL` | Same as `SUPABASE_URL` |
 | `VITE_SUPABASE_ANON_KEY` | Project API Keys → **anon** / **public** / **publishable** |
+| `VITE_API_URL` | Deployed FastAPI backend base URL for static frontend deployments; leave blank for local Vite proxy |
 
 #### Admin Emails
 

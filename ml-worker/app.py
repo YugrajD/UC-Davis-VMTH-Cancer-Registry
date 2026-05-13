@@ -50,7 +50,7 @@ async def predict(file: UploadFile = File(...)):
         try:
             from production.petbert_pipeline.pipeline import run_scan
             from production.petbert_pipeline.types import ScanConfig
-        except ImportError:
+        except ImportError as e:
             raise HTTPException(
                 status_code=500,
                 detail="PetBERT pipeline is not available",

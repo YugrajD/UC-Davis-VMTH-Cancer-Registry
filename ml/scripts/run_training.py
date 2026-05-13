@@ -245,6 +245,9 @@ def _train_label_presence(args: argparse.Namespace) -> None:
             model_name=args.model,
             labels_csv=config.LABELS_CSV,
             report_csv=config.REPORTS_CSV,
+            n_cols=args.label_presence_n_cols,
+            col_pair_mode=args.label_presence_col_pair_mode,
+            col_combine=args.label_presence_col_combine,
         )
         if score > 0:
             trained += 1
@@ -281,6 +284,9 @@ def _train_label_presence(args: argparse.Namespace) -> None:
                 model_name=args.model,
                 labels_csv=config.LABELS_CSV,
                 report_csv=config.REPORTS_CSV,
+                n_cols=args.label_presence_n_cols,
+                col_pair_mode=args.label_presence_col_pair_mode,
+                col_combine=args.label_presence_col_combine,
             )
             if score > 0:
                 trained += 1
@@ -468,6 +474,28 @@ def main() -> int:
         help="[train-label-presence] Pipe-separated group names to train. "
              "Empty = train all groups. Include 'Uncommon' to retrain the Uncommon bucket. "
              "Example: 'Thymic epithelial neoplasms|Myxomatous neoplasms|Uncommon'",
+    )
+    parser.add_argument(
+        "--label-presence-n-cols",
+        type=int,
+        default=3,
+        help="[train-label-presence] Number of per-row sections in the report "
+             "embedding (default: 3 for concat_3). Each section's 768-dim view "
+             "scores the label independently when col-pair-mode is on.",
+    )
+    parser.add_argument(
+        "--label-presence-col-pair-mode",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="[train-label-presence] Per-section pair architecture (default: True). "
+             "Off = legacy single-MLP concat [report | label] path.",
+    )
+    parser.add_argument(
+        "--label-presence-col-combine",
+        choices=["max", "mean", "learned"],
+        default="learned",
+        help="[train-label-presence] How per-section logits combine when "
+             "col-pair-mode is on (default: learned - Linear(n_cols -> 1)).",
     )
 
     # ------------------------------------------------------------------

@@ -38,9 +38,20 @@ from utils.encoding import safe_filename
 
 
 def _load_cache_minimal(path: Path) -> tuple[list[str], np.ndarray, np.ndarray]:
-    """Read case_ids, mean_embeddings, label_embeddings from the cache NPZ."""
+    """Read case_ids, report embeddings, label_embeddings from the cache NPZ.
+
+    Prefers the concat-3 view at "col_tfidf_selected" (2304-dim under concat_3,
+    or 768-dim under legacy TF-IDF mode) — that's what the LP heads were
+    trained on. Falls back to "mean_embeddings" only if "col_tfidf_selected"
+    is absent.
+    """
     data = np.load(path, allow_pickle=True)
-    return list(data["case_ids"]), data["mean_embeddings"], data["label_embeddings"]
+    report_embs = (
+        data["col_tfidf_selected"]
+        if "col_tfidf_selected" in data.files
+        else data["mean_embeddings"]
+    )
+    return list(data["case_ids"]), report_embs, data["label_embeddings"]
 
 
 def _load_annotation(annotation_csv: Path) -> tuple[

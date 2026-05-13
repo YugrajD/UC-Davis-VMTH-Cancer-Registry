@@ -208,10 +208,16 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --train-cases ml/output/splits/train_cases.txt \
   --annotation-csv ml/output/annotation/llm/llm_annotation.csv \
   --embedding-cache ml/output/training/embedding_cache.npz \
+  --model ml/output/checkpoints/contrastive \
   --label-presence-epochs 25 \
   --label-presence-negs-per-pos 5 \
+  --label-presence-n-cols 3 --label-presence-col-pair-mode \
+  --label-presence-col-combine learned \
   --device xpu --local-only
 ```
+
+`--label-presence-col-pair-mode` is on by default; pass `--no-label-presence-col-pair-mode`
+to fall back to the legacy single-MLP concat path (n_cols=1, used by `ml-tfidf/`).
 
 Checkpoints saved to `ml/output/checkpoints/label_presence/{safe_group_name}.pt`.
 The "Uncommon" model saves to `ml/output/checkpoints/label_presence/uncommon.pt`.
@@ -220,15 +226,37 @@ The "Uncommon" model saves to `ml/output/checkpoints/label_presence/uncommon.pt`
 
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --label-presence-classifier-dir ml/output/checkpoints/label_presence \
-  --label-presence-threshold 0.5 \
+  --csv ml/data/report.csv --concat-3 \
+  --model ml/output/checkpoints/contrastive --local-only \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
+  --case-presence-threshold 0.85 \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
   --group-classifier-threshold 0.85 \
-  --local-only
+  --label-presence-classifier-dir ml/output/checkpoints/label_presence \
+  --label-presence-thresholds-json ml/output/checkpoints/label_presence/lp_thresholds.json \
+  --tail-max-predictions 2 --tail-max-group-prob-gap 0.08 \
+  --out-dir ml/output/production --device xpu
 ```
 
-Run a threshold sweep (`--label-presence-threshold` at 0.3, 0.4, 0.5, 0.6, 0.7) on
-the test set to find the operating point — lower threshold = more predictions per group
-(lower FN, higher FP); higher threshold = fewer predictions (lower FP, higher FN).
+**Calibrate per-LP thresholds (preferred over a single global threshold):**
+
+```bash
+# 1. Run the LP-only eval on the test split to produce per-(case, label) scores
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py --stage label-presence \
+  --test-cases ml/output/splits/test_cases.txt \
+  --out-dir ml/output/evaluation/label_presence \
+  --label "lp eval (baseline t=0.5)"
+
+# 2. Sweep per-LP thresholds on the sweep-half; eval-half is unbiased
+ml/.venv/Scripts/python.exe ml/scripts/sweep_lp_thresholds.py \
+  --eval-csv ml/output/evaluation/label_presence/label_presence_evaluation.csv \
+  --baseline-threshold 0.5 --grid 0.05,0.95,0.05 \
+  --out-json ml/output/checkpoints/label_presence/lp_thresholds.json
+```
+
+`run_production.py` auto-loads the resulting `lp_thresholds.json` when present and falls back
+to `--label-presence-threshold` (default 0.5) for any group missing from the map.
 
 ### Key parameters
 
@@ -237,7 +265,10 @@ the test set to find the operating point — lower threshold = more predictions 
 | `--label-presence-epochs` | 25 | One-shot per group |
 | `--label-presence-negs-per-pos` | 5 | Within-group negatives per positive pair |
 | `--label-presence-recall-weight` | 0.5 | F1 for checkpoint selection; raise to prefer recall |
-| `--label-presence-threshold` | 0.5 | Inference threshold — sweep on test set |
+| `--label-presence-threshold` | 0.5 | Inference threshold — calibrate via sweep_lp_thresholds.py for per-LP tuning |
+| `--label-presence-n-cols` | 3 | Number of per-row sections (matches concat-3 inference) |
+| `--label-presence-col-pair-mode` | True | Per-section pair architecture (each section scores label independently) |
+| `--label-presence-col-combine` | learned | How per-section logits combine; `learned` = `Linear(3 → 1)` |
 
 ---
 

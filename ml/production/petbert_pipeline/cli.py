@@ -170,6 +170,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--rerank-stage3",
+        action="store_true",
+        default=False,
+        help=(
+            "Re-rank Stage-3 winners across the top-K surviving groups by "
+            "(lp_score - lp_threshold) * group_prob (margin-times-group-prob). "
+            "Default off: labels stay in group-prob order. Only meaningful when "
+            "--tail-max-predictions > 1."
+        ),
+    )
+    parser.add_argument(
         "--tfidf-vectorizer",
         default=config.TFIDF_VECTORIZER_PATH,
         help=(
@@ -178,7 +189,34 @@ def build_parser() -> argparse.ArgumentParser:
             f"Default: {config.TFIDF_VECTORIZER_PATH}"
         ),
     )
+    parser.add_argument(
+        "--concat-3",
+        action="store_true",
+        default=False,
+        help=(
+            "Use the concat-3 text representation: embed three sections "
+            "(HIST, FINAL COMMENT+COMMENT, ANCILLARY TESTS) independently and "
+            "concatenate to 2304-dim. Overrides --text-cols and the TF-IDF path. "
+            "Required when running against classifiers trained on 2304-dim input."
+        ),
+    )
+    parser.add_argument(
+        "--embed-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Stop after Step 3 (cache populated). Useful for building the cache "
+            "before training downstream classifiers without running classification."
+        ),
+    )
     return parser
+
+
+_SECTIONS_3: tuple[tuple[str, ...], ...] = (
+    ("HISTOPATHOLOGICAL SUMMARY",),
+    ("FINAL COMMENT", "COMMENT"),
+    ("ANCILLARY TESTS",),
+)
 
 
 def build_config(args: argparse.Namespace) -> ScanConfig:
@@ -186,6 +224,9 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
     label_presence_dir = getattr(args, "label_presence_classifier_dir", None)
     if label_presence_dir == "":
         label_presence_dir = None
+    section_text_cols = _SECTIONS_3 if getattr(args, "concat_3", False) else None
+    concat_columns = bool(getattr(args, "concat_3", False))
+    embed_only = bool(getattr(args, "embed_only", False))
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
@@ -212,7 +253,11 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         label_presence_thresholds_json=args.label_presence_thresholds_json,
         tail_max_predictions=args.tail_max_predictions,
         tail_max_group_prob_gap=args.tail_max_group_prob_gap,
+        rerank_stage3=args.rerank_stage3,
         tfidf_vectorizer_path=args.tfidf_vectorizer,
+        section_text_cols=section_text_cols,
+        concat_columns=concat_columns,
+        embed_only=embed_only,
     )
 
 

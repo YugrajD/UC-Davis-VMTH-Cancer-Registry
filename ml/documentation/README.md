@@ -5,6 +5,13 @@
 A machine learning system that maps veterinary pathology report text to standardized
 Vet-ICD-O-canine-1 cancer labels (term, group, ICD code).
 
+**Current production stack (2026-05-13):** concat-3 text representation (3 sections embedded
+independently → concatenated to 2304-dim per case) + per-section contrastive PetBERT backbone
++ 2304-dim CasePresenceClassifier gate + 4-stage classifier pipeline with per-group
+LabelPresenceClassifier (`n_cols=3, col_pair_mode=True, col_combine="learned"`). G+S 62.1% on
+the unbiased eval-half. The prior TF-IDF 768-dim baseline (G+S 56.6%) is preserved at
+`../ml-tfidf/` for reference; the concat-3 prototype lives at `../ml-3-stage/`.
+
 Four pipelines with distinct roles:
 
 | Pipeline | Purpose | When it runs |
@@ -192,9 +199,9 @@ Shared by all pipelines. Loads and embeds the taxonomy used for prediction targe
 | File | Role |
 |---|---|
 | `constants.py` | `PETBERT_EMB_DIM=768`, `DEFAULT_HIDDEN_DIM=512`, `DEFAULT_DROPOUT=0.3`, `DEFAULT_TEXT_COLS` (experiment-path columns) |
-| `label_presence_classifier.py` | Binary MLP: `[report_emb ‖ label_emb] → present/absent`. Used as the per-group Stage 3 classifier in the 4-stage pipeline |
-| `group_classifier.py` | Multi-label MLP: `report_emb → per-group sigmoid probabilities` |
-| `case_presence_classifier.py` | Binary MLP: `report_emb → cancer probability` (case-level gate, Stage 1) |
+| `label_presence_classifier.py` | Per-(section, label) MLP. Default config `n_cols=3, col_pair_mode=True, col_combine="learned"`: each of the 3 sections forms a `[section_emb (768) ‖ label_emb (768)] → 1536` pair through a shared 1536→hidden→1 MLP; a learned `Linear(3 → 1)` combines per-section logits. Used as the per-group Stage 3 classifier |
+| `group_classifier.py` | Multi-label MLP: `report_emb(2304) → per-group sigmoid probabilities`. `emb_dim` auto-inferred from the training NPZ |
+| `case_presence_classifier.py` | Binary MLP: `report_emb(2304) → cancer probability` (case-level gate, Stage 1). `emb_dim` saved in the checkpoint |
 
 ### `training/binary/` — CasePresenceClassifier (Stage 1) training
 
@@ -218,15 +225,15 @@ single all-label binary with CO-bank cycles — was removed in Phase 28.)
 | File | Role |
 |---|---|
 | `build_training_pairs.py` | Build within-group `(case, label, target)` pairs for one group; positives are annotation matches, negatives are other labels in the same group (random or cosine-mined hard-neg via QW1). Handles the "Uncommon" bucket as a union of merged groups |
-| `train.py` | Train one `LabelPresenceClassifier` (n_cols=1, concat) per group on cached `tfidf_selected` embeddings; save to `{safe_group_name}.pt` |
+| `train.py` | Train one `LabelPresenceClassifier` per group on cached `tfidf_selected` embeddings (2304-dim under concat-3); default `n_cols=3, col_pair_mode=True, col_combine="learned"`; save to `{safe_group_name}.pt` |
 
 ### `training/contrastive/` — Embedding backbone adaptation (production best)
 
 | File | Role |
 |---|---|
-| `build_contrastive_dataset.py` | Build `(report_text, label_text)` pairs from annotations + report CSV, using TF-IDF-selected text |
-| `train_contrastive.py` | Adapt PetBERT backbone using contrastive loss; save checkpoint |
-| `fit_text_selector.py` | Fit and save the TF-IDF vectorizer on the full report corpus — run once before backbone adaptation |
+| `build_contrastive_dataset.py` | Build `(report_text, label_text)` pairs from annotations + report CSV. Default: TF-IDF-selected text. For per-section adaptation (matches concat-3 inference), use the per-section builder from `ml-3-stage/training/contrastive/build_contrastive_dataset.py::build_per_section_contrastive_pairs` (port pending) |
+| `train_contrastive.py` | Adapt PetBERT backbone using contrastive loss (in-batch negatives + optional hard-neg margin loss via `--hard-neg-csv`); save checkpoint |
+| `fit_text_selector.py` | Fit and save the per-column TF-IDF vectorizers (used by the legacy TF-IDF path; not required for the concat-3 production path) |
 
 ### `training/data/` — Data utilities
 
@@ -242,7 +249,7 @@ single all-label binary with CO-bank cycles — was removed in Phase 28.)
 
 ---
 
-## Data Flow (4-stage production pipeline)
+## Data Flow (4-stage production pipeline, concat-3)
 
 ```
 ml/data/diagnoses.csv  (diagnosis text from database)
@@ -253,25 +260,34 @@ output/annotation/llm/llm_annotation.csv
 ml/data/report.csv  (clinical reports)
     │
     ▼ run_training.py --mode adapt-backbone   (one-shot — InfoNCE; hard-neg loss optional via --hard-neg-csv)
-    ▼ run_production.py                       (first run — embed all reports)
-output/checkpoints/contrastive/  (adapted PetBERT backbone)
-output/training/embedding_cache.npz  (cached PetBERT embeddings, keyed by tfidf_selected text)
+    ▼ run_production.py --concat-3 --embed-only   (first run — embed all reports per-section + concat)
+output/checkpoints/contrastive/  (adapted PetBERT backbone, per-section-aligned)
+output/training/embedding_cache.npz
+    keys: case_ids, mean_embeddings (N, 768) for cosine fallbacks,
+          col___sec_{0,1,2}__ (N, 768) per-section views,
+          col_tfidf_selected (N, 2304) per-row concat alias,
+          label_texts, label_embeddings (M, 768)
     │
-    ├──► run_training.py --mode train-case-presence
+    ├──► run_training.py --mode train-case-presence    (2304-dim head; emb_dim auto-detected)
     │         └── output/checkpoints/case_presence/case_presence_classifier.pt
     │
-    ├──► run_training.py --mode train-groups
+    ├──► run_training.py --mode train-groups           (2304→512→25)
     │         └── output/checkpoints/group/group_classifier_best.pt
     │
-    ├──► run_training.py --mode train-label-presence  (one model per ICD group)
+    ├──► run_training.py --mode train-label-presence \
+    │         --label-presence-n-cols 3 --label-presence-col-pair-mode \
+    │         --label-presence-col-combine learned    (one model per ICD group; shared MLP 1536→512→1 + learned 3→1 combiner)
     │         └── output/checkpoints/label_presence/{safe_group_name}.pt
     │
-    ▼ run_production.py
-output/production/contrastive/petbert_predictions.csv
+    ├──► sweep_lp_thresholds.py                       (calibrate per-LP thresholds on sweep-half)
+    │         └── output/checkpoints/label_presence/lp_thresholds.json
+    │
+    ▼ run_production.py --concat-3 --case-presence-threshold 0.85 (+ all other flags)
+output/production/petbert_predictions.csv
     │
     ▼ run_evaluation.py --test-cases ml/output/splits/test_cases.txt
-output/evaluation/contrastive_test/evaluation.csv
-output/evaluation/contrastive_test/evaluation_history.csv
+output/evaluation/pipeline_test/evaluation.csv
+output/evaluation/pipeline_test/evaluation_history.csv
 ```
 
 ---
@@ -310,8 +326,8 @@ output/evaluation/contrastive_test/evaluation_history.csv
 | `output/training/label_presence/{safe_group_name}_pairs.csv` | Within-group training pairs per ICD group |
 | `output/splits/train_cases.txt` | Case IDs reserved for training (generated once by `create_split.py`) |
 | `output/splits/test_cases.txt` | Case IDs held out for evaluation (generated once by `create_split.py`) |
-| `output/training/embedding_cache.npz` | Cached PetBERT embeddings |
-| `output/training/tfidf_selector.joblib` | Fitted per-column TF-IDF vectorizers for multi-column text selection |
+| `output/training/embedding_cache.npz` | Cached PetBERT embeddings. Under concat-3: `mean_embeddings (N, 768)`, `col_tfidf_selected (N, 2304)` (per-row concat alias), per-section `col___sec_{0,1,2}__ (N, 768)`, plus 768-dim label embeddings |
+| `output/training/tfidf_selector.joblib` | Fitted per-column TF-IDF vectorizers for the legacy text-selection path. Not used by concat-3 |
 
 ---
 
@@ -325,16 +341,26 @@ output/evaluation/contrastive_test/evaluation_history.csv
 ml/.venv/Scripts/python.exe ml/training/data/create_split.py
 ```
 
-**Fit TF-IDF vectorizer (run once, before backbone adaptation or cold start):**
+**Fit TF-IDF vectorizer (only needed for the legacy TF-IDF path; concat-3 production does NOT require this):**
 ```bash
 ml/.venv/Scripts/python.exe ml/training/contrastive/fit_text_selector.py
 ```
 
-**Score all reports with the 4-stage production pipeline (default):**
+**Score all reports with the concat-3 4-stage production pipeline:**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --csv ml/data/report.csv \
+  --concat-3 \
+  --model ml/output/checkpoints/contrastive --local-only \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
+  --case-presence-threshold 0.85 \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
   --group-classifier-threshold 0.85 \
-  --device xpu --local-only
+  --label-presence-classifier-dir ml/output/checkpoints/label_presence \
+  --label-presence-thresholds-json ml/output/checkpoints/label_presence/lp_thresholds.json \
+  --tail-max-predictions 2 --tail-max-group-prob-gap 0.08 \
+  --out-dir ml/output/production --device xpu
 ```
 
 Per-LP thresholds are auto-loaded from `ml/output/checkpoints/label_presence/lp_thresholds.json`
@@ -409,11 +435,17 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --mode train-label-presence --label-presence-epochs 25 \
   --label-presence-recall-weight 0.5 \
   --label-presence-negs-per-pos 5 \
+  --label-presence-n-cols 3 --label-presence-col-pair-mode \
+  --label-presence-col-combine learned \
   --group-classifier-path ml/output/checkpoints/group/group_classifier_best.pt \
+  --model ml/output/checkpoints/contrastive \
   --device xpu --local-only \
   --train-cases ml/output/splits/train_cases.txt \
   --annotation-csv ml/output/annotation/llm/llm_annotation.csv
 ```
+
+`--label-presence-col-pair-mode` is on by default; use `--no-label-presence-col-pair-mode`
+to fall back to the legacy single-MLP concat path (n_cols=1).
 
 **Annotation coverage statistics:**
 ```bash

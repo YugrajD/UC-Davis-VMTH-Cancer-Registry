@@ -1,7 +1,12 @@
 """Train a LabelPresenceClassifier for a single ICD group.
 
-Uses the TF-IDF selected report embedding (768-dim, n_cols=1) from the
-embedding cache paired with the corresponding label embedding from the same cache.
+Reads the cache entry under "tfidf_selected" (alias). Under the canonical
+concat-3 pipeline this is a 2304-dim per-row concat (3 sections × 768) and the
+LP head is built with n_cols=3, col_pair_mode=True, col_combine="learned" so
+each section scores the label independently through a shared MLP, then a
+learned 3→1 weighted sum combines per-section logits. Under legacy single-col
+mode (n_cols=1) the report embedding is 768-dim and col_pair_mode=False
+collapses to the original [report | label] → MLP concat path.
 
 Designed to be called once per ICD group by run_training.py --mode train-label-presence.
 """
@@ -70,6 +75,9 @@ def train_label_presence(
     model_name: str = "SAVSNET/PetBERT",
     labels_csv: str = "ml/ICD_labels/labels.csv",
     report_csv: str = "ml/data/report.csv",
+    n_cols: int = 3,
+    col_pair_mode: bool = True,
+    col_combine: str = "learned",
 ) -> float:
     """Train LabelPresenceClassifier for one group. Returns best validation score."""
     torch.manual_seed(seed)
@@ -158,13 +166,17 @@ def train_label_presence(
     print(f"  Split: {len(train_ds)} train / {len(val_ds)} val  (pos={int(n_pos)}, neg={int(n_neg)})")
 
     # --- Model ----------------------------------------------------------------
-    # n_cols=1 + col_pair_mode=False: input is [report_emb (768) | label_emb (768)] → 1536
+    # Default: n_cols=3, col_pair_mode=True, col_combine="learned"
+    # — each section's 768-dim embedding scores the label independently via a
+    # shared 1536→hidden→1 MLP; per-section logits are combined by a learned 3→1
+    # head. Report embeddings expected shape: (B, n_cols * 768) = (B, 2304).
     model = LabelPresenceClassifier(
         emb_dim=PETBERT_EMB_DIM,
         hidden_dim=hidden_dim,
         dropout=dropout,
-        n_cols=1,
-        col_pair_mode=False,
+        n_cols=n_cols,
+        col_pair_mode=col_pair_mode,
+        col_combine=col_combine,
     ).to(dev)
 
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)

@@ -77,7 +77,7 @@ def _load_uncommon_groups(path: str) -> frozenset[str]:
 def run_scan(config: ScanConfig) -> ScanOutputs:
     """Execute the full categorization pipeline end-to-end."""
 
-    if config.group_classifier_path is None:
+    if config.group_classifier_path is None and not config.embed_only:
         raise ValueError("--group-classifier is required (the legacy binary path was removed)")
 
     # --- Step 0: Prepare output file paths -----------------------------------
@@ -94,8 +94,27 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     n = len(ids)
     row_indices = list(range(n))
 
-    # --- Step 2: Select text (TF-IDF or explicit columns) --------------------
-    if not config.text_cols:
+    # --- Step 2: Select text (concat-3 sections, TF-IDF, or explicit columns) -
+    if config.section_text_cols:
+        # Concat-3 path: build synthetic __sec_N__ columns by joining raw report
+        # fields per section. Each section gets the full token budget. The
+        # "tfidf_selected" alias is added to `cols` so the cache stores it under
+        # that key (downstream trainers hardcode the alias).
+        section_cols = tuple(f"__sec_{i}__" for i in range(len(config.section_text_cols)))
+        for i, group in enumerate(config.section_text_cols):
+            missing = [c for c in group if c not in dataframe.columns]
+            if missing:
+                raise ValueError(
+                    f"Missing source columns for section {i} ({group!r}): {missing!r}. "
+                    f"Available: {dataframe.columns.tolist()}"
+                )
+            dataframe[section_cols[i]] = (
+                dataframe[list(group)].fillna("").astype(str).agg("\n".join, axis=1)
+            )
+        cols = list(section_cols) + ["tfidf_selected"]
+        col_texts = {col: dataframe[col].map(clean_text).tolist() for col in section_cols}
+        texts = dataframe.apply(lambda row: merge_report_columns(row, section_cols), axis=1).tolist()
+    elif not config.text_cols:
         selector = get_selector(config.tfidf_vectorizer_path)
         cols = ["tfidf_selected"]
         selected_texts: list[str] = []
@@ -148,11 +167,27 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             max_length=config.max_length,
         )
 
-        col_emb_stack = np.stack([col_embeddings[col] for col in cols], axis=0)
-        content_mask = np.stack([col_has_content[col] for col in cols], axis=0).astype(np.float32)
+        # Restrict the masked-mean / concat to the columns that were actually
+        # embedded — under concat-3, "tfidf_selected" appears in `cols` as an
+        # alias but is populated below, not by embed_columns_separate.
+        embed_cols = [c for c in cols if c in col_embeddings]
+        col_emb_stack = np.stack([col_embeddings[c] for c in embed_cols], axis=0)
+        content_mask = np.stack([col_has_content[c] for c in embed_cols], axis=0).astype(np.float32)
         col_emb_masked = col_emb_stack * content_mask[:, :, None]
         content_counts = np.maximum(content_mask.sum(axis=0), 1.0)
         embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)
+
+        if config.section_text_cols:
+            # Materialise the "tfidf_selected" alias so downstream trainers
+            # (which hardcode that key) load the right view. Under concat_columns
+            # this is the 2304-dim per-row concat; otherwise the masked-mean.
+            if config.concat_columns:
+                col_embeddings["tfidf_selected"] = np.concatenate(
+                    [col_embeddings[c] for c in embed_cols], axis=1
+                ).astype(np.float32)
+            else:
+                col_embeddings["tfidf_selected"] = embeddings
+            col_has_content["tfidf_selected"] = np.ones(n, dtype=bool)
 
         label_catalog = label_catalog_for_config(config.labels_csv_path)
         label_embeddings, _ = embed_texts(
@@ -180,16 +215,32 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
                 labels_csv_path=config.labels_csv_path,
             )
 
+    if config.embed_only:
+        print("--embed-only set; cache populated, exiting before classification.")
+        return outputs
+
     # --- Step 4: Run the 4-stage pipeline ------------------------------------
+    # `report_emb_classifier` is the per-case vector fed to the gate and the LP
+    # head. Under concat_3 (concat_columns=True) this is the 2304-dim concat
+    # stored under "tfidf_selected"; otherwise the 768-dim masked-mean.
+    if config.concat_columns and "tfidf_selected" in col_embeddings:
+        report_emb_classifier = col_embeddings["tfidf_selected"].astype(np.float32)
+    else:
+        report_emb_classifier = embeddings
+
+    # GroupClassifier input: concatenation of the actually-embedded sections
+    # (matches the shape the head was trained on; the "tfidf_selected" alias is
+    # excluded so it isn't double-stacked under concat-3).
+    group_input_cols = [c for c in cols if c != "tfidf_selected"] or cols
     col_emb_concat = np.concatenate(
         [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
-         for col in cols],
+         for col in group_input_cols],
         axis=1,
     ).astype(np.float32)
 
     # Stage 1: CasePresenceClassifier gate.
     presence_gate_mask = run_case_presence_classifier(
-        embeddings=embeddings,
+        embeddings=report_emb_classifier,
         classifier_path=config.case_presence_classifier_path,
         threshold=config.case_presence_threshold,
         device=torch_device,
@@ -225,9 +276,14 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             )
 
     # Stage 3b: keyword correction lives inside the per-case dispatcher.
+    # The LP head consumes `report_emb_classifier` (2304-dim under concat-3),
+    # but cosine-similarity fallbacks need a view that matches `label_embeddings`
+    # dim (768) — so pass the 768-dim masked-mean as `mean_embeddings` and the
+    # LP-shaped view as `lp_embeddings`.
     categorization = categorize_per_case(
         texts=texts,
         mean_embeddings=embeddings,
+        lp_embeddings=report_emb_classifier,
         label_embeddings=label_embeddings,
         taxonomy_labels=label_catalog.taxonomy_labels,
         labels=label_catalog.labels,
@@ -242,6 +298,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         label_presence_threshold=config.label_presence_threshold,
         label_presence_thresholds_per_group=label_presence_thresholds_per_group,
         tail_max_group_prob_gap=config.tail_max_group_prob_gap,
+        rerank_stage3=config.rerank_stage3,
     )
 
     # --- Step 5: Resolve top-k label indices -> term / group / code ----------

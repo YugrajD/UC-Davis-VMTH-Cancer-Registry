@@ -559,3 +559,74 @@ Stage 3 baseline had macro precision 0.537 / recall 0.918 — heavily recall-til
 **Wired:** `LABEL_PRESENCE_THRESHOLDS_JSON` lives in `config.py`; `run_production.py` sets it as a default. If the JSON is missing the pipeline warns and falls back to `--label-presence-threshold`. Recompute on every LP retrain: `ml/.venv/Scripts/python.exe ml/scripts/sweep_lp_thresholds.py` (writes the JSON in place by default).
 
 **Caveat:** thresholds were picked on a held-out half of the *test* set rather than a true validation split carved from `train_cases.txt`. Both halves are case-disjoint and neither was used for LP training, so threshold curves are realistic — but on the next LP retrain, do the sweep on a fresh val split carved from train *before* retraining LPs, so the val cases are out-of-sample for the LP too.
+
+---
+
+## 2026-05-13 — Concat-3 + per-section contrastive + 2304-dim LP promoted to ml/
+
+The `ml-4-stage/` prototype was promoted to be the canonical `ml/` on 2026-05-13. The prior
+TF-IDF 768-dim baseline is preserved at `../ml-tfidf/` (renamed from the old `ml/`).
+
+### What changed
+
+- **Text representation**: TF-IDF-selected single 512-token string → **concat-3** (per-section
+  embed of HIST / FC+C / ANCILLARY → concatenate per-row to 2304-dim, stored under cache key
+  `tfidf_selected`).
+- **Backbone**: TF-IDF-trained contrastive → **per-section contrastive** (each section is its
+  own positive against the case's label; ~2.7× pairs vs the TF-IDF builder).
+- **CasePresenceClassifier**: 768-dim → **2304-dim** (`emb_dim=2304`). Val F1=0.942 at
+  `recall_weight=0.7`; operating threshold 0.85.
+- **GroupClassifier**: 768→25 → **2304→25**, macro F1 **0.4475 → 0.5712** (+0.124 absolute,
+  +28% relative). Phase 27 best config (dropout=0.1, lr=5e-5, max_class_weight=50,
+  weight_decay=1e-3, 300 epochs; best at epoch 258).
+- **LabelPresenceClassifier**: per-group, `n_cols=1, col_pair_mode=False` →
+  **`n_cols=3, col_pair_mode=True, col_combine="learned"`**. Each section's 768-dim view
+  forms a `[section_emb | label_emb] → 1536` pair through a shared 1536→512→1 MLP; a learned
+  `Linear(3 → 1)` combines per-section logits. Mean val score ≈ 0.88 across 25 LPs (min 0.69
+  T-cell lymphomas, max 0.99 Paragangliomas).
+- **Per-LP thresholds**: re-calibrated on the sweep-half. Unbiased eval-half Macro F1 0.6522
+  → 0.7342 (+0.082); Micro F1 0.5309 → 0.7224 (+0.19). Weakest LPs gain most (Gliomas +0.36,
+  Uncommon +0.27).
+- **CLI**: new `--concat-3` shortcut on `run_production.py` (sets section_text_cols +
+  concat_columns); new `--embed-only` for cache-build runs; new `--label-presence-n-cols /
+  --label-presence-col-pair-mode / --label-presence-col-combine` flags on `run_training.py`.
+- **`categorize_per_case`** now takes a new `lp_embeddings` parameter so the LP head (2304-dim)
+  and cosine-similarity fallbacks (768-dim, must match label embedding dim) each get the
+  correct view.
+
+### End-to-end result
+
+| Pipeline | G+S | Good | Slight | CO | FP | FN | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `../ml-tfidf/` (preserved baseline) | 56.6 | 37.3 | 19.3 | 16.8 | 7.8 | 18.7 | 10,334 |
+| **ml/ (current, eval-half unbiased)** | **62.1** | **46.1** | 16.0 | 14.7 | 2.3 | 20.8 | 4,414 |
+| ml/ (full test) | 62.3 | 46.6 | 15.7 | 14.4 | 2.3 | 21.0 | 8,835 |
+
+**+5.5 pp G+S, +8.8 pp Good, FP −5.5 pp**. The shift is away from Slight toward Good — the
+per-section LP head + concat-3 features pick the exact term within the right group more
+often than the 768-dim single-col LP could. Small FN uptick (+2.1 pp) from a stricter gate
+threshold (0.85 vs the old 0.5) — sweep at 0.75/0.80 to recover recall if needed.
+
+### Reproducibility command (canonical)
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --csv ml/data/report.csv \
+  --concat-3 \
+  --model ml/output/checkpoints/contrastive --local-only \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
+  --case-presence-threshold 0.85 \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
+  --group-classifier-threshold 0.85 \
+  --label-presence-classifier-dir ml/output/checkpoints/label_presence \
+  --label-presence-thresholds-json ml/output/checkpoints/label_presence/lp_thresholds.json \
+  --tail-max-predictions 2 --tail-max-group-prob-gap 0.08 \
+  --out-dir ml/output/production --device xpu
+```
+
+### Caveat on memory citations
+
+Memory entries written before 2026-05-13 that reference `ml/output/archive/<date>/` paths
+now live at `ml-tfidf/output/archive/<date>/`. The transformation is mechanical; update
+lazily when next encountered.

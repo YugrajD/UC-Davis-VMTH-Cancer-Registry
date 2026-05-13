@@ -6,9 +6,10 @@ cancer labels (term, group, ICD code). Several classifier approaches have been e
 | Approach | Status | Best result |
 |---|---|---|
 | Binary PresenceClassifier (single all-label) | Removed in Phase 28 | 65.7% G+S train (Phase 25 c14, contrastive backbone, 5,788 cases) |
-| GroupClassifier | **Stage 2 of 4-stage pipeline (Phase 28)** | macro F1=0.4475 (Phase 27, dropout=0.1) |
-| Per-group LabelPresenceClassifier | **Stage 3a of 4-stage pipeline (Phase 28)** | — |
-| Contrastive fine-tuned PetBERT + 4-stage pipeline | **Production best** | **59.5% G+S test set (verified 2026-05-10 sanity check; 17-group LPs, post-Phase-29 cold-start backbone, lp-t=0.5, group-t=0.85)** |
+| GroupClassifier (2304-dim concat-3) | **Stage 2 of 4-stage pipeline** | **macro F1=0.5712** (concat-3 + per-section contrastive backbone, dropout=0.1, epoch 258/300) |
+| Per-group LabelPresenceClassifier (`n_cols=3, col_pair_mode=True, col_combine="learned"`) | **Stage 3a of 4-stage pipeline (concat-3, 25 LPs)** | Mean val score ~0.88 across groups; G+S 62.1% as part of full pipeline |
+| Concat-3 + per-section contrastive PetBERT + 4-stage pipeline | **Production best (2026-05-13)** | **G+S 62.1% on unbiased eval-half** (G 46.1 / S 16.0 / CO 14.7 / FP 2.3 / FN 20.8, n=4,414); 62.3% on full test (n=8,835) |
+| Prior TF-IDF 4-stage baseline | Preserved at `../ml-tfidf/` | G+S 56.6% on eval-half — superseded 2026-05-13 (+5.5 pp G+S, +8.8 pp Good) |
 
 > For full current results and Phase 25 details see [classifiers.md](classifiers.md).
 

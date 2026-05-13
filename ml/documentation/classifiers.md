@@ -2,14 +2,15 @@
 
 The classifier layer sits on top of PetBERT embeddings and decides which cancer
 label(s) a report belongs to. The 4-stage pipeline
-(CasePresenceCLF → GroupCLF → per-group LabelPresenceCLF → KW correction) is the **current production design** (Phase 28).
+(CasePresenceCLF → GroupCLF → per-group LabelPresenceCLF → KW correction) is the **current production design** (2026-05-13, concat-3 stack).
 
 | Classifier | Status | Best result |
 |---|---|---|
-| CasePresenceClassifier | Stage 1 gate of 4-stage pipeline | val score=0.939 (P=0.927, R=0.941) at recall_weight=0.85 |
-| GroupClassifier | Stage 2 of 4-stage pipeline | macro F1=0.4475 (Phase 27, dropout=0.1, epoch 192/300) |
-| Per-group LabelPresenceClassifier | **Stage 3a of 4-stage pipeline (Phase 28; 17 LPs after Phase 29 cold-start + QW1 revert)** | **59.5% G+S (group-t=0.85, lp-t=0.5) — current production baseline, verified 2026-05-10. Historical 25-group Phase 28 setup: 57.9%.** |
+| CasePresenceClassifier (2304-dim) | Stage 1 gate of 4-stage pipeline | **val F1=0.942** (P=0.937, R=0.947) at recall_weight=0.7. Operating threshold 0.85 in production |
+| GroupClassifier (2304-dim → 25 groups) | Stage 2 of 4-stage pipeline | **macro F1=0.5712** (concat-3 + per-section contrastive backbone, epoch 258/300, dropout=0.1, lr=5e-5) — up from 0.4475 on the prior TF-IDF baseline |
+| Per-group LabelPresenceClassifier (`n_cols=3, col_pair_mode=True, col_combine="learned"`) | **Stage 3a of 4-stage pipeline (concat-3, 25 LPs)** | **G+S 62.1% on unbiased eval-half** (Good 46.1, Slight 16.0, CO 14.7, FP 2.3, FN 20.8, n=4,414); 62.3% on full test (n=8,835); per-LP threshold calibration adds +0.082 Macro F1 / +0.19 Micro F1 |
 | LabelPresenceClassifier (whole-corpus, all-label binary) | Removed during 4-stage refactor; preserved in `training-log/training-log-binary.md` | 65.7% G+S train (Phase 25 c14, contrastive backbone) |
+| Prior TF-IDF 4-stage baseline | Preserved at `../ml-tfidf/`; G+S 56.6% on eval-half | superseded 2026-05-13 by the concat-3 stack (+5.5 pp G+S, +8.8 pp Good) |
 
 > **Training ground truth:** Training supervision comes from the LLM annotation pipeline (`llm_annotation.csv`). It uses a three-tier cascade — exact keyword match (with negation masking) → fuzzy token overlap (behavior-code aware) → LLM resolution (group + anatomic-site aware) — to map diagnosis text to Vet-ICD-O labels. In production, no diagnosis text is available — classifiers predict from report text alone.
 
@@ -80,24 +81,28 @@ sub-problem — cosine similarity within only the ~20 terms of the predicted gro
 implicitly through argmax after independent scoring. The GroupClassifier directly
 penalises wrong-group assignments in the loss, eliminating CO at the group level.
 
-**Phase 23 architecture:** Uses `col_fallback_selected` (768-dim) from the
-contrastive fine-tuned backbone — not the old 3-column concat (2304-dim).
+**Current architecture (concat-3, 2026-05-13):** Uses `col_tfidf_selected` (2304-dim) from
+the per-section-adapted contrastive backbone — three section views (HIST / FC+C /
+ANCILLARY) concatenated per row.
 
 ### Model Architecture
 
 ```
 GroupClassifier(
-    input_dim   = 768,     # fallback-chain embedding (col_fallback_selected)
+    input_dim   = 2304,    # concat-3 per-row embedding (col_tfidf_selected)
     hidden_dim  = 512,
-    num_classes = 42,      # groups with ≥10 LLM-confirmed cases (Phase 23)
-    dropout     = 0.3
+    num_classes = 25,      # 25 groups (post-uncommon-bucket consolidation)
+    dropout     = 0.1
 )
 
 forward(x):
-    x = ReLU(Linear(768 → 512))
-    x = Dropout(0.3)
-    x = Sigmoid(Linear(512 → 42))   # independent probability per class
+    x = ReLU(Linear(2304 → 512))
+    x = Dropout(0.1)
+    x = Sigmoid(Linear(512 → 25))   # independent probability per class
 ```
+
+`emb_dim` is parameter-driven and auto-detected from the training NPZ shape, so the same
+trainer transparently handles the legacy 768-dim path at `ml-tfidf/` if needed.
 
 Sigmoid (not softmax) because a report can belong to multiple groups simultaneously.
 Loss: `BCEWithLogitsLoss` with per-class inverse-frequency weights, capped at
@@ -146,11 +151,13 @@ Four sequential stages, each with a single distinct responsibility:
    Groups below `--uncommon-threshold` cases are merged into a single "Uncommon" output class.
    **Responsibility: assign cancer to the correct ICD group → reduce CO.**
 
-3a. **Per-group LabelPresenceClassifier (Stage 3a — Phase 28+, optional)** — for each active group, a learned binary
-   `[report_emb (768) ‖ label_emb (768)] → 1 logit` model scores all labels in that group.
-   Labels above `--label-presence-threshold` are selected; argmax fallback applies otherwise.
-   Multiple labels per group can be selected, enabling within-group multi-diagnosis prediction.
-   Groups without a corresponding `.pt` file fall through directly to KW correction.
+3a. **Per-group LabelPresenceClassifier (Stage 3a — concat-3, current production)** — for each active group, a learned
+   `n_cols=3, col_pair_mode=True, col_combine="learned"` head. The 2304-dim report concat is viewed as three 768-dim
+   section embeddings; each section forms a `[section_emb (768) ‖ label_emb (768)] → 1536` pair through a shared
+   1536→512→1 MLP; the per-section logits go through a learned `Linear(3 → 1)` combiner to produce one (case, label)
+   score. Labels above the per-LP threshold (`lp_thresholds.json`) or the global `--label-presence-threshold` are
+   selected; argmax fallback applies otherwise. Multiple labels per group can be selected. Groups without a
+   corresponding `.pt` file fall through directly to KW correction.
    **Responsibility: pick the right specific term(s) within the group → convert Slight → Good.**
 
 3b. **KW correction (post-filter)** — within the label pool selected by Stage 3a (or the full group pool when 3a is absent),
@@ -158,16 +165,27 @@ Four sequential stages, each with a single distinct responsibility:
    (Mast cell, Blood vessel, Melanomas, Meningiomas, Osseous, Gliomas) applies group-specific discriminators
    before cosine similarity selects the final term.
 
-**Run command (4-stage, current production):**
+**Run command (4-stage, current production, concat-3):**
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --csv ml/data/report.csv \
+  --concat-3 \
+  --model ml/output/checkpoints/contrastive --local-only \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
+  --case-presence-threshold 0.85 \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
   --group-classifier-threshold 0.85 \
-  --label-presence-threshold 0.5 \
-  --device xpu --local-only
+  --label-presence-classifier-dir ml/output/checkpoints/label_presence \
+  --label-presence-thresholds-json ml/output/checkpoints/label_presence/lp_thresholds.json \
+  --tail-max-predictions 2 --tail-max-group-prob-gap 0.08 \
+  --out-dir ml/output/production --device xpu
 ```
 
-`run_production.py` sets all four stages by default — `--case-presence-classifier`, `--group-classifier`,
-and `--label-presence-classifier-dir` are pre-wired to the production checkpoint paths.
+`--concat-3` selects the per-section text path and ensures the 2304-dim view (`col_tfidf_selected`)
+is routed to the case gate, group classifier, and LP head. Cosine-similarity fallbacks inside
+`categorize_per_case` use the 768-dim masked-mean (`mean_embeddings`) so the comparison dim matches
+the 768-dim label embeddings.
 
 **Run 9 (2026-04-29, superseded):** Used the label-level `PresenceClassifier` score matrix (N × M)
 as the gate instead of `CasePresenceClassifier`. Replaced because `CasePresenceClassifier` is simpler

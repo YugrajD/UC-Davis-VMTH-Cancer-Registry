@@ -39,7 +39,16 @@ class ScanConfig:
     label_presence_thresholds_json: str | None = None
     tail_max_predictions: int = 2
     tail_max_group_prob_gap: float = 0.08
+    rerank_stage3: bool = False
     uncommon_groups_path: str = _config.UNCOMMON_GROUPS_TXT
+    # Concat-3 text representation (ported from ml-3-stage). When section_text_cols
+    # is set, each section is embedded independently; concat_columns=True then
+    # concatenates the per-section vectors into a single 2304-dim view stored under
+    # the "tfidf_selected" cache key (the alias keeps downstream consumers stable).
+    section_text_cols: tuple[tuple[str, ...], ...] | None = None
+    pool_columns: bool = False
+    concat_columns: bool = False
+    embed_only: bool = False
 
 
 @dataclass(frozen=True)

@@ -57,6 +57,9 @@ geo/data/
 # ML backup (local restructure backup — never commit)
 ml-per-stage-backbone/
 ml_backup/
+ml-3-stage/
+ml-4-stage/
+ml-*/
 
 # ML model weights
 ml/model/weights/

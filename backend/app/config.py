@@ -14,7 +14,12 @@ class Settings(BaseSettings):
     ML_WORKER_URL: str = "http://localhost:8001"
     SUPABASE_JWT_SECRET: str = ""
     SUPABASE_URL: str = ""
+    # Comma-separated email lists. Admins implicitly hold uploader and
+    # reviewer privileges, so these env vars only need users who don't
+    # also appear in ADMIN_EMAILS.
     ADMIN_EMAILS: str = ""
+    UPLOADER_EMAILS: str = ""
+    REVIEWER_EMAILS: str = ""
     UPLOAD_DIR: str = "/app/uploads"
 
     # GCP Batch — set USE_GCP_BATCH=true to route ML inference through GCP
@@ -28,6 +33,19 @@ class Settings(BaseSettings):
     GCP_BATCH_TIMEOUT_HOURS: int = 12
     GCP_BATCH_SERVICE_ACCOUNT: str = ""
 
+    # SMTP — email notifications for role requests (all default to empty = disabled)
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+
+    # Per-diagnosis manual review thresholds (conservative defaults; tune
+    # against a labeled validation set before relying on the auto-accept
+    # band). A row is auto-confirmed at ingest only when *both* gates pass.
+    REVIEW_AUTO_ACCEPT_CONFIDENCE: float = 0.85
+    REVIEW_AUTO_ACCEPT_MARGIN: float = 0.10  # top1 - top2 spread
+
     @property
     def cors_origins_list(self) -> List[str]:
         return json.loads(self.CORS_ORIGINS)
@@ -37,6 +55,18 @@ class Settings(BaseSettings):
         if not self.ADMIN_EMAILS:
             return []
         return [e.strip() for e in self.ADMIN_EMAILS.split(",") if e.strip()]
+
+    @property
+    def uploader_emails_list(self) -> List[str]:
+        if not self.UPLOADER_EMAILS:
+            return []
+        return [e.strip() for e in self.UPLOADER_EMAILS.split(",") if e.strip()]
+
+    @property
+    def reviewer_emails_list(self) -> List[str]:
+        if not self.REVIEWER_EMAILS:
+            return []
+        return [e.strip() for e in self.REVIEWER_EMAILS.split(",") if e.strip()]
 
     class Config:
         env_file = ".env"

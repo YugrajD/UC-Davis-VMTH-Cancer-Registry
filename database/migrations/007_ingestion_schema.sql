@@ -9,7 +9,7 @@ ALTER TABLE patients ADD COLUMN IF NOT EXISTS zip_code VARCHAR(10);
 ALTER TABLE patients ADD COLUMN IF NOT EXISTS data_source VARCHAR(20) DEFAULT 'mock';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_anon_id
-    ON patients (anon_id) WHERE anon_id IS NOT NULL;
+    ON patients (anon_id);
 
 -- Make demographic columns nullable for CSV patients
 ALTER TABLE patients ALTER COLUMN species_id DROP NOT NULL;

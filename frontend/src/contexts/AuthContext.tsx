@@ -8,7 +8,10 @@ interface AuthState {
   session: Session | null;
   loading: boolean;
   isAdmin: boolean;
+  isUploader: boolean;
+  isReviewer: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
 }
@@ -20,13 +23,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(supabaseConfigured);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isUploader, setIsUploader] = useState(false);
+  const [isReviewer, setIsReviewer] = useState(false);
 
-  const checkAdmin = useCallback(async (accessToken: string) => {
+  const refreshRoles = useCallback(async (accessToken: string) => {
     try {
       const me = await fetchMe(accessToken);
       setIsAdmin(me.is_admin);
+      setIsUploader(me.is_uploader);
+      setIsReviewer(me.is_reviewer);
     } catch {
       setIsAdmin(false);
+      setIsUploader(false);
+      setIsReviewer(false);
     }
   }, []);
 
@@ -38,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.access_token) {
-        checkAdmin(s.access_token);
+        refreshRoles(s.access_token);
       }
       setLoading(false);
     });
@@ -48,14 +57,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.access_token) {
-        checkAdmin(s.access_token);
+        refreshRoles(s.access_token);
       } else {
         setIsAdmin(false);
+        setIsUploader(false);
+        setIsReviewer(false);
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [checkAdmin]);
+  }, [refreshRoles]);
 
   const signIn = async (email: string, password: string) => {
     if (!supabaseConfigured) throw new Error('Auth is not configured');
@@ -63,10 +74,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
   };
 
+  const signUp = async (email: string, password: string) => {
+    if (!supabaseConfigured) throw new Error('Auth is not configured');
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) throw error;
+  };
+
   const signOut = async () => {
     if (!supabaseConfigured) return;
     await supabase.auth.signOut();
     setIsAdmin(false);
+    setIsUploader(false);
+    setIsReviewer(false);
   };
 
   const getAccessToken = async (): Promise<string | null> => {
@@ -76,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, signIn, signOut, getAccessToken }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, signIn, signUp, signOut, getAccessToken }}>
       {children}
     </AuthContext.Provider>
   );

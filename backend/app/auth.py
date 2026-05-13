@@ -14,8 +14,12 @@ import jwt
 from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import get_db
+from app.models.models import UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +86,46 @@ class CurrentUser:
     sub: str
     email: str
     is_admin: bool
+    # Scoped roles (admins implicitly hold both).
+    is_uploader: bool = False
+    is_reviewer: bool = False
+
+
+def _resolve_roles_from_env(email: str) -> tuple[bool, bool, bool]:
+    """Fallback role lookup against the env-var allow lists."""
+    is_admin = email in settings.admin_emails_list
+    # Admins implicitly inherit lower-privilege roles.
+    is_uploader = is_admin or email in settings.uploader_emails_list
+    is_reviewer = is_admin or email in settings.reviewer_emails_list
+    return is_admin, is_uploader, is_reviewer
+
+
+async def _resolve_roles(db: AsyncSession, email: str) -> tuple[bool, bool, bool]:
+    """Return (is_admin, is_uploader, is_reviewer) for a given email.
+
+    The user_roles table is the source of truth. If no row exists, fall
+    back to the env-var allow lists (for first-boot before the seed runs
+    and for emails not yet inserted).
+    """
+    result = await db.execute(
+        select(UserRole.is_admin, UserRole.is_uploader, UserRole.is_reviewer)
+        .where(func.lower(UserRole.email) == email.lower())
+    )
+    row = result.one_or_none()
+    if row is None:
+        return _resolve_roles_from_env(email)
+    is_admin, is_uploader, is_reviewer = row
+    # Admins implicitly inherit lower-privilege roles even if the DB row
+    # forgot to set them (defensive — UI normalizes this on write too).
+    if is_admin:
+        is_uploader = True
+        is_reviewer = True
+    return is_admin, is_uploader, is_reviewer
 
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
 ) -> CurrentUser:
     """Decode Supabase JWT and return the current user."""
     token = credentials.credentials
@@ -112,13 +152,20 @@ async def get_current_user(
             detail="Token missing required claims",
         )
 
-    is_admin = email in settings.admin_emails_list
+    is_admin, is_uploader, is_reviewer = await _resolve_roles(db, email)
 
-    return CurrentUser(sub=sub, email=email, is_admin=is_admin)
+    return CurrentUser(
+        sub=sub,
+        email=email,
+        is_admin=is_admin,
+        is_uploader=is_uploader,
+        is_reviewer=is_reviewer,
+    )
 
 
 async def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme_optional),
+    db: AsyncSession = Depends(get_db),
 ) -> Optional[CurrentUser]:
     """Decode JWT if provided, otherwise return None."""
     if credentials is None:
@@ -133,7 +180,14 @@ async def get_optional_user(
     if not email or not sub:
         return None
 
-    return CurrentUser(sub=sub, email=email, is_admin=email in settings.admin_emails_list)
+    is_admin, is_uploader, is_reviewer = await _resolve_roles(db, email)
+    return CurrentUser(
+        sub=sub,
+        email=email,
+        is_admin=is_admin,
+        is_uploader=is_uploader,
+        is_reviewer=is_reviewer,
+    )
 
 
 async def require_admin(
@@ -144,5 +198,17 @@ async def require_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
+        )
+    return user
+
+
+async def require_reviewer(
+    user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Require the current user to hold the reviewer or admin role."""
+    if not user.is_reviewer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Reviewer access required",
         )
     return user

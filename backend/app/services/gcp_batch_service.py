@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Any
 
 from google.cloud import batch_v1, storage
@@ -78,8 +79,9 @@ def submit_batch_job(job_id: int) -> str:
     output_dir = local_data
     model_path = f"{local_data}/models/petbert"
     labels_csv = f"{local_data}/models/labels/labels.csv"
+    presence_ckpt = f"{local_data}/models/checkpoints/presence_classifier_best.pt"
 
-    # Pre-task: download input CSV, model weights, and labels from GCS
+    # Pre-task: download input CSV, model weights, labels, and classifiers from GCS
     # Uses google/cloud-sdk container since COS doesn't have gcloud installed
     setup_container = batch_v1.Runnable.Container(
         image_uri="gcr.io/google.com/cloudsdktool/google-cloud-cli:slim",
@@ -87,13 +89,15 @@ def submit_batch_job(job_id: int) -> str:
             "/bin/bash", "-c",
             (
                 f"set -e && "
-                f"mkdir -p {local_data}/models/petbert {local_data}/models/labels && "
+                f"mkdir -p {local_data}/models/petbert {local_data}/models/labels {local_data}/models/checkpoints && "
                 f"echo 'Downloading input CSV...' && "
                 f"gcloud storage cp 'gs://{bucket}/{_GCS_PREFIX}/{job_id}/dataset_a.csv' {input_csv} && "
                 f"echo 'Downloading model weights...' && "
                 f"gcloud storage cp -r 'gs://{bucket}/models/petbert/*' {model_path}/ && "
                 f"echo 'Downloading labels...' && "
                 f"gcloud storage cp 'gs://{bucket}/models/labels/labels.csv' {labels_csv} && "
+                f"echo 'Downloading classifier checkpoints...' && "
+                f"gcloud storage cp 'gs://{bucket}/models/checkpoints/presence_classifier_best.pt' {presence_ckpt} && "
                 f"echo 'Download complete.'"
             ),
         ],
@@ -117,6 +121,7 @@ def submit_batch_job(job_id: int) -> str:
                 "OUTPUT_DIR": output_dir,
                 "MODEL_PATH": model_path,
                 "LABELS_CSV_PATH": labels_csv,
+                "PRESENCE_CLASSIFIER_PATH": presence_ckpt,
             },
         ),
     )
@@ -170,7 +175,8 @@ def submit_batch_job(job_id: int) -> str:
     )
 
     parent = f"projects/{settings.GCP_PROJECT_ID}/locations/{settings.GCP_REGION}"
-    batch_job_id = f"petbert-ingest-{job_id}"
+    # Include timestamp to avoid ALREADY_EXISTS on re-runs of the same job_id
+    batch_job_id = f"petbert-ingest-{job_id}-{int(time.time())}"
 
     created = client.create_job(
         parent=parent,

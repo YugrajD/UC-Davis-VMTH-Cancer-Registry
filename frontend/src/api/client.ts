@@ -167,10 +167,67 @@ export async function fetchCalEnviroScreen(): Promise<CalEnviroScreenData[]> {
 export interface MeResponse {
   email: string;
   is_admin: boolean;
+  is_uploader: boolean;
+  is_reviewer: boolean;
 }
 
 export async function fetchMe(token: string): Promise<MeResponse> {
   return fetchJsonAuth('/api/v1/auth/me', token);
+}
+
+// --- User-role admin panel ---
+
+export interface UserRoles {
+  email: string;
+  is_admin: boolean;
+  is_uploader: boolean;
+  is_reviewer: boolean;
+  updated_by_email: string | null;
+  updated_at: string | null;
+  /** False when no DB row exists yet — values come from env-fallback or defaults. */
+  persisted: boolean;
+}
+
+/** Treat empty input and bare strings without "@" as invalid client-side. */
+export function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+export function isValidEmail(raw: string): boolean {
+  const e = normalizeEmail(raw);
+  return e.length > 0 && e.length <= 255 && e.includes('@');
+}
+
+export async function fetchUserRoles(token: string, email: string): Promise<UserRoles> {
+  const normalized = normalizeEmail(email);
+  return fetchJsonAuth(
+    `/api/v1/admin/users/${encodeURIComponent(normalized)}/roles`,
+    token,
+  );
+}
+
+export async function updateUserRoles(
+  token: string,
+  email: string,
+  roles: { is_admin: boolean; is_uploader: boolean; is_reviewer: boolean },
+): Promise<UserRoles> {
+  const normalized = normalizeEmail(email);
+  const response = await fetch(
+    `/api/v1/admin/users/${encodeURIComponent(normalized)}/roles`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(roles),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Update failed: ${response.status}`);
+  }
+  return response.json();
 }
 
 // --- Ingestion Jobs ---
@@ -179,7 +236,6 @@ export interface IngestionJob {
   id: number;
   uploaded_by_email: string;
   dataset_a_filename: string;
-  dataset_b_filename: string;
   status: string;
   processing_stage?: string | null;
   reviewed_by_email?: string | null;
@@ -219,20 +275,15 @@ export interface IngestionResponse {
 }
 
 export async function uploadCSV(
-  datasetA: File,
-  datasetB?: File,
-  token?: string | null,
+  dataset: File,
+  token: string,
 ): Promise<IngestionJob> {
   const formData = new FormData();
-  formData.append('dataset_a', datasetA);
-  if (datasetB) formData.append('dataset_b', datasetB);
-
-  const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  formData.append('dataset_a', dataset);
 
   const response = await fetch('/api/v1/ingest/upload', {
     method: 'POST',
-    headers,
+    headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
 
@@ -261,8 +312,8 @@ export async function fetchJob(token: string, jobId: number): Promise<IngestionJ
   return fetchJsonAuth(`/api/v1/ingest/jobs/${jobId}`, token);
 }
 
-export async function fetchJobPreview(token: string, jobId: number, dataset: 'a' | 'b'): Promise<string> {
-  const response = await fetch(`/api/v1/ingest/jobs/${jobId}/preview/${dataset}`, {
+export async function fetchJobPreview(token: string, jobId: number): Promise<string> {
+  const response = await fetch(`/api/v1/ingest/jobs/${jobId}/preview`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -308,4 +359,282 @@ export async function reviewJob(
   }
 
   return response.json();
+}
+
+
+// --- Per-diagnosis review queue (admin-only) ---
+
+export interface PendingDiagnosis {
+  id: number;
+  patient_anon_id: string | null;
+  cancer_type_id: number;
+  cancer_type_name: string;
+  icd_o_code: string | null;
+  predicted_term: string | null;
+  confidence: number | null;
+  top2_margin: number | null;
+  prediction_method: string | null;
+  diagnosis_index: number | null;
+  review_status: 'pending' | 'confirmed' | 'corrected' | 'rejected';
+  ingestion_job_id: number | null;
+  job_filename: string | null;
+  job_created_at: string | null;
+}
+
+export interface DiagnosisReviewEvent {
+  id: number;
+  actor_email: string;
+  action: string;
+  from_status: string | null;
+  to_status: string;
+  cancer_type_id_before: number | null;
+  cancer_type_id_after: number | null;
+  icd_o_code_before: string | null;
+  icd_o_code_after: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface DiagnosisDetail extends PendingDiagnosis {
+  original_cancer_type_id: number | null;
+  original_icd_o_code: string | null;
+  original_predicted_term: string | null;
+  reviewed_by_email: string | null;
+  reviewed_at: string | null;
+  reviewer_notes: string | null;
+  events: DiagnosisReviewEvent[];
+}
+
+export type ReviewActionKind = 'confirm' | 'correct' | 'reject';
+
+export interface ReviewActionPayload {
+  action: ReviewActionKind;
+  cancer_type_name?: string;
+  icd_o_code?: string;
+  predicted_term?: string;
+  notes?: string;
+}
+
+export async function fetchPendingDiagnoses(
+  token: string,
+  params: {
+    limit?: number;
+    offset?: number;
+    cancer_type_id?: number;
+    method?: string;
+    max_confidence?: number;
+    ingestion_job_id?: number;
+  } = {},
+): Promise<PendingDiagnosis[]> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) qs.append(k, String(v));
+  }
+  const url = `/api/v1/diagnoses/pending${qs.toString() ? `?${qs}` : ''}`;
+  return fetchJsonAuth(url, token);
+}
+
+export async function fetchPendingCount(token: string): Promise<{ count: number }> {
+  return fetchJsonAuth('/api/v1/diagnoses/pending/count', token);
+}
+
+export async function fetchDiagnosisDetail(
+  token: string,
+  diagnosisId: number,
+): Promise<DiagnosisDetail> {
+  return fetchJsonAuth(`/api/v1/diagnoses/${diagnosisId}`, token);
+}
+
+export async function reviewDiagnosis(
+  token: string,
+  diagnosisId: number,
+  payload: ReviewActionPayload,
+): Promise<DiagnosisDetail> {
+  const response = await fetch(`/api/v1/diagnoses/${diagnosisId}/review`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Review failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+
+// --- Role Requests ---
+
+export interface RoleRequest {
+  id: number;
+  email: string;
+  requested_role: string;
+  status: string;
+  reason: string | null;
+  resolved_by_email: string | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
+export async function submitRoleRequest(
+  token: string,
+  requested_role: string,
+  reason?: string,
+): Promise<RoleRequest> {
+  const response = await fetch('/api/v1/role-requests/', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ requested_role, reason: reason || null }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchMyRoleRequests(token: string): Promise<RoleRequest[]> {
+  return fetchJsonAuth('/api/v1/role-requests/mine', token);
+}
+
+export async function fetchPendingRoleRequests(token: string): Promise<RoleRequest[]> {
+  return fetchJsonAuth('/api/v1/role-requests/pending', token);
+}
+
+export async function fetchPendingRoleRequestCount(token: string): Promise<{ count: number }> {
+  return fetchJsonAuth('/api/v1/role-requests/pending/count', token);
+}
+
+export async function resolveRoleRequest(
+  token: string,
+  requestId: number,
+  action: 'approve' | 'deny',
+): Promise<RoleRequest> {
+  const response = await fetch(`/api/v1/role-requests/${requestId}/resolve`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Resolve failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// --- Export Requests ---
+
+export interface ExportRequest {
+  id: number;
+  email: string;
+  status: string;
+  reason: string | null;
+  resolved_by_email: string | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
+export async function submitExportRequest(
+  token: string,
+  reason?: string,
+): Promise<ExportRequest> {
+  const response = await fetch('/api/v1/export-requests/', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ reason: reason || null }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchMyExportRequests(token: string): Promise<ExportRequest[]> {
+  return fetchJsonAuth('/api/v1/export-requests/mine', token);
+}
+
+export async function fetchPendingExportRequests(token: string): Promise<ExportRequest[]> {
+  return fetchJsonAuth('/api/v1/export-requests/pending', token);
+}
+
+export async function fetchPendingExportRequestCount(token: string): Promise<{ count: number }> {
+  return fetchJsonAuth('/api/v1/export-requests/pending/count', token);
+}
+
+export async function resolveExportRequest(
+  token: string,
+  requestId: number,
+  action: 'approve' | 'deny',
+): Promise<ExportRequest> {
+  const response = await fetch(`/api/v1/export-requests/${requestId}/resolve`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Resolve failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export interface ExportFilters {
+  cancerType?: string;
+  county?: string;
+  zipCode?: string;
+  sex?: string;
+  breed?: string;
+  yearStart?: number;
+  yearEnd?: number;
+}
+
+export async function downloadExportCsv(token: string, filters?: ExportFilters): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (filters?.cancerType) params.append('cancer_type', filters.cancerType);
+  if (filters?.county) params.append('county', filters.county);
+  if (filters?.zipCode) params.append('zip_code', filters.zipCode);
+  if (filters?.sex) params.append('sex', filters.sex);
+  if (filters?.breed) params.append('breed', filters.breed);
+  if (filters?.yearStart) params.append('year_start', String(filters.yearStart));
+  if (filters?.yearEnd) params.append('year_end', String(filters.yearEnd));
+
+  const url = params.toString()
+    ? `/api/v1/export-requests/download?${params}`
+    : '/api/v1/export-requests/download';
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Download failed: ${response.status}`);
+  }
+
+  return response.blob();
 }

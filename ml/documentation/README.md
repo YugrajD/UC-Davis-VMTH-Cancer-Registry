@@ -118,6 +118,11 @@ rows). Handles negation, hedged language, and abbreviations.
 Scores predictions against verified annotation labels (good / slightly_off /
 completely_off / false_positive / false_negative).
 
+### `review-threshold-validation.md` — Manual-review threshold calibration
+
+Documents the labelled validation sample, precision-by-bin analysis, and current
+backend defaults for routing PetBERT predictions into the diagnosis review queue.
+
 ### `evaluation/log_evaluation.py` — Evaluation history
 
 Appends cycle results to `evaluation_history.csv` and prints a trend table.

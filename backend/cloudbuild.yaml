@@ -1,0 +1,41 @@
+# Cloud Build pipeline for the FastAPI backend image.
+#
+# Usage (from repo root):
+#
+#   gcloud builds submit ./backend --config ./backend/cloudbuild.yaml \
+#     --substitutions=_TAG=$(git rev-parse --short HEAD)
+#
+# Or with `--tag` shorthand (skips this file, uses default cloudbuild):
+#
+#   gcloud builds submit ./backend \
+#     --tag us-central1-docker.pkg.dev/$PROJECT_ID/backend/api:latest
+#
+# This file lets us tag both `:<git-sha>` and `:latest` in a single
+# build, which makes rollback ("redeploy the previous tag") trivial.
+
+substitutions:
+  _REGION: us-central1
+  _REPO: backend
+  _IMAGE: api
+  # Override with --substitutions=_TAG=<sha>. Falls back to a placeholder
+  # so the file is valid on its own.
+  _TAG: latest
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:${_TAG}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:latest"
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:${_TAG}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:latest
+      - --file=Dockerfile
+      - .
+
+options:
+  # Cloud Build runs linux/amd64 by default — no buildx needed for the
+  # image. Use a beefier machine so the image build doesn't time out.
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,37 @@
+# Local-only state
+uploads/
+secrets/
+*.log
+
+# Python build/runtime artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Virtualenvs (developers may have them next to the code)
+venv/
+.venv/
+
+# Tests are not needed in the runtime image
+tests/
+
+# OS / editor noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Stray pip artifacts from shell-redirect typos like `pip install pkg>=X`
+=*
+
+# Git
+.git/
+.gitignore

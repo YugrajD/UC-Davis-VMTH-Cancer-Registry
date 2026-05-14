@@ -2,9 +2,10 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   uploadCSV, fetchMyJobs, fetchMyRoleRequests, submitRoleRequest,
   fetchMyExportRequests, submitExportRequest, downloadExportCsv,
-  fetchFilterOptions,
+  fetchFilterOptions, fetchIncidence, fetchCalEnviroScreen,
   type IngestionJob, type RoleRequest, type ExportRequest, type ExportFilters,
 } from '../../api/client';
+import { getHumanCancerRateMap } from '../../data/humanCancerRates';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginModal } from '../LoginModal/LoginModal';
 import { STAGE_LABELS } from '../shared/pipelineStages';
@@ -350,6 +351,7 @@ export function DataUpload() {
   const [exportSubmitting, setExportSubmitting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportDownloading, setExportDownloading] = useState(false);
+  const [combinedDownloading, setCombinedDownloading] = useState(false);
   const [exportCancerType, setExportCancerType] = useState('');
   const [exportCancerTypes, setExportCancerTypes] = useState<{ id: number; name: string }[]>([]);
   const [exportCounty, setExportCounty] = useState('');
@@ -560,6 +562,74 @@ export function DataUpload() {
       setExportError(err instanceof Error ? err.message : 'Download failed');
     } finally {
       setExportDownloading(false);
+    }
+  };
+
+  const handleCombinedDownload = async () => {
+    setCombinedDownloading(true);
+    try {
+      const [incidenceRes, cesData] = await Promise.all([
+        fetchIncidence(),
+        fetchCalEnviroScreen(),
+      ]);
+
+      const hrMap = getHumanCancerRateMap('All Cancer Sites', 'Both Sexes');
+
+      // Aggregate dog cancer cases by county name
+      const dogCasesMap = new Map<string, number>();
+      for (const rec of incidenceRes.data) {
+        if (rec.county) {
+          dogCasesMap.set(rec.county, (dogCasesMap.get(rec.county) ?? 0) + rec.count);
+        }
+      }
+
+      const headers = [
+        'county',
+        'dog_cancer_cases',
+        'human_cancer_rate_per_100k',
+        'human_cancer_cases_per_year',
+        'ces_score', 'pollution_burden', 'ozone', 'pm25', 'diesel_pm',
+        'pesticides', 'toxic_releases', 'traffic', 'drinking_water', 'lead',
+        'cleanup_sites', 'groundwater_threats', 'hazardous_waste', 'solid_waste',
+        'impaired_water', 'pop_characteristics', 'asthma', 'low_birth_weight',
+        'cardiovascular', 'poverty', 'unemployment', 'housing_burden',
+        'education', 'linguistic_isolation',
+      ];
+
+      const toCell = (v: number | null | undefined) => v != null ? String(v) : '';
+      const quoteCell = (s: string) => `"${s.replace(/"/g, '""')}"`;
+
+      const rows = cesData.map(ces => {
+        const hr = hrMap.get(ces.county_name.toLowerCase());
+        const dogCases = dogCasesMap.get(ces.county_name) ?? 0;
+        return [
+          ces.county_name, String(dogCases),
+          toCell(hr?.rate), toCell(hr?.cases),
+          toCell(ces.ces_score), toCell(ces.pollution_burden), toCell(ces.ozone),
+          toCell(ces.pm25), toCell(ces.diesel_pm), toCell(ces.pesticides),
+          toCell(ces.toxic_releases), toCell(ces.traffic), toCell(ces.drinking_water),
+          toCell(ces.lead), toCell(ces.cleanup_sites), toCell(ces.groundwater_threats),
+          toCell(ces.hazardous_waste), toCell(ces.solid_waste), toCell(ces.impaired_water),
+          toCell(ces.pop_characteristics), toCell(ces.asthma), toCell(ces.low_birth_weight),
+          toCell(ces.cardiovascular), toCell(ces.poverty), toCell(ces.unemployment),
+          toCell(ces.housing_burden), toCell(ces.education), toCell(ces.linguistic_isolation),
+        ].map(quoteCell).join(',');
+      });
+
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'vmth_combined_data.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Download failed');
+    } finally {
+      setCombinedDownloading(false);
     }
   };
 
@@ -948,6 +1018,22 @@ export function DataUpload() {
                 </svg>
                 {exportDownloading ? 'Downloading...' : 'Download Export CSV'}
               </button>
+
+              <div className="border-t border-gray-200 pt-3">
+                <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                  County-level combined dataset: dog cancer cases, human cancer rates (NCI/CDC 2017–2021), and CalEnviroScreen environmental indicators.
+                </p>
+                <button
+                  onClick={handleCombinedDownload}
+                  disabled={combinedDownloading}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-white text-[var(--color-teal)] border border-[var(--color-teal)] rounded-md hover:bg-teal-50 disabled:opacity-50 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  {combinedDownloading ? 'Preparing...' : 'Download Combined Data CSV'}
+                </button>
+              </div>
             </div>
           ) : pendingExport ? (
             <div className="flex items-center gap-2">

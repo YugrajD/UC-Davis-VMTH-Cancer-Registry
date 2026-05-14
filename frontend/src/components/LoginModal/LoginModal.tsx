@@ -104,6 +104,9 @@ export function LoginModal({ onClose }: LoginModalProps) {
               <p className="text-sm text-green-700">
                 Check your email for a confirmation link. Once confirmed, you can sign in.
               </p>
+              <p className="text-xs text-green-600 mt-2">
+                If you don&apos;t see it, check your spam or junk folder.
+              </p>
             </div>
             <button
               onClick={toggleMode}

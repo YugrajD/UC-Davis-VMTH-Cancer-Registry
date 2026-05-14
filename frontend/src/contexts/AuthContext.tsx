@@ -12,6 +12,7 @@ interface AuthState {
   isReviewer: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
 }
@@ -110,6 +111,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
   };
 
+  const signInWithGoogle = async () => {
+    if (!supabaseConfigured) throw new Error('Auth is not configured');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) throw error;
+  };
+
   const signOut = async () => {
     if (!supabaseConfigured) return;
     await supabase.auth.signOut();
@@ -125,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, signIn, signUp, signOut, getAccessToken }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, signIn, signUp, signInWithGoogle, signOut, getAccessToken }}>
       {children}
     </AuthContext.Provider>
   );

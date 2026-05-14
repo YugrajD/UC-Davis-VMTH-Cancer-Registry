@@ -1,16 +1,29 @@
+import { useEffect, useState } from 'react';
 import type { FilterState, Sex, RateType } from '../../types';
 import { SEX_OPTIONS, RATE_OPTIONS } from '../../types';
-import { MOCK_BREEDS, MOCK_CANCER_TYPE_INCIDENTS } from '../../data/mockData';
+import { MOCK_BREEDS } from '../../data/mockData';
+import { fetchFilterOptions } from '../../api/client';
 
 interface FiltersProps {
   filters: FilterState;
   onFilterChange: (filters: FilterState) => void;
 }
 
-const cancerTypes = ['All Types', ...MOCK_CANCER_TYPE_INCIDENTS.map(ct => ct.cancer_type)];
 const breeds = ['All Breeds', ...MOCK_BREEDS];
 
 export function Filters({ filters, onFilterChange }: FiltersProps) {
+  const [cancerTypes, setCancerTypes] = useState<string[]>(['All Types']);
+
+  useEffect(() => {
+    fetchFilterOptions()
+      .then(opts => {
+        const names = opts.cancer_types.map(ct => ct.name).sort();
+        setCancerTypes(['All Types', ...names]);
+      })
+      .catch(() => {
+        // keep the default ['All Types'] on failure
+      });
+  }, []);
 
   const handleChange = (key: keyof FilterState, value: string) => {
     onFilterChange({

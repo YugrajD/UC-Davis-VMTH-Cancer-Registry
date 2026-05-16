@@ -59,8 +59,8 @@ def cached_response(namespace: str, maxsize: int = 256, ttl: int = 60):
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
-            # Build key from all kwargs except 'db'
-            key_params = {k: v for k, v in kwargs.items() if k != "db"}
+            # Build key from query params only — exclude FastAPI injected objects
+            key_params = {k: v for k, v in kwargs.items() if k not in ("db", "request")}
             key = _make_cache_key(**key_params)
 
             if key in cache:

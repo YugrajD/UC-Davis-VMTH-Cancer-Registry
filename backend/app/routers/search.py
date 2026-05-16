@@ -40,7 +40,9 @@ async def classify_report(
 
 
 @router.get("/reports", response_model=ReportSearchResponse)
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def search_reports(
+    request: Request,
     keyword: Optional[str] = Query(default=None, max_length=500),
     classification: Optional[str] = Query(default=None, max_length=200),
     limit: int = Query(default=20, le=100),

@@ -68,9 +68,11 @@ class Settings(BaseSettings):
     CACHE_TTL_CALENVIRO: int = 3600     # 1 hour — static reference data
     CACHE_MAX_SIZE: int = 256           # max entries per cache namespace
 
-    # Reverse-proxy trust — comma-separated IPs whose X-Forwarded-For
-    # header is trusted for rate-limiting.  Empty (default) means only
-    # the TCP peer address is used, which is the safe default.
+    # Reverse-proxy trust — comma-separated IPs whose X-Forwarded-For header
+    # is trusted for rate-limiting.  Empty (default) means only the TCP peer
+    # address is used, which is safe.  On Cloud Run, set this to the internal
+    # Google Front End IP range (e.g. "0.0.0.0/0" or the specific GFE range)
+    # so client IPs are not all seen as the same load-balancer address.
     FORWARDED_ALLOW_IPS: str = ""
 
     @property

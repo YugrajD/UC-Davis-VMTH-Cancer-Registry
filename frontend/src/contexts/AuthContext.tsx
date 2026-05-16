@@ -10,11 +10,14 @@ interface AuthState {
   isAdmin: boolean;
   isUploader: boolean;
   isReviewer: boolean;
+  passwordRecovery: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
+  updatePassword: (newPassword: string) => Promise<void>;
+  clearPasswordRecovery: () => void;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -26,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isUploader, setIsUploader] = useState(false);
   const [isReviewer, setIsReviewer] = useState(false);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   // Dedup and backoff refs for refreshRoles
   const inflightRef = useRef(false);
@@ -81,9 +85,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true);
+      }
       if (s?.access_token) {
         refreshRoles(s.access_token);
       } else {
@@ -134,8 +141,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data.session?.access_token ?? null;
   };
 
+  const updatePassword = async (newPassword: string) => {
+    if (!supabaseConfigured) throw new Error('Auth is not configured');
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+    setPasswordRecovery(false);
+  };
+
+  const clearPasswordRecovery = () => setPasswordRecovery(false);
+
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, signIn, signUp, signInWithGoogle, signOut, getAccessToken }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, passwordRecovery, signIn, signUp, signInWithGoogle, signOut, getAccessToken, updatePassword, clearPasswordRecovery }}>
       {children}
     </AuthContext.Provider>
   );

@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, get_current_user, require_admin
@@ -125,19 +125,35 @@ async def resolve_export_request(
     admin: CurrentUser = Depends(require_admin),
 ):
     """Approve or deny an export request (admin-only)."""
-    result = await db.execute(
-        select(ExportRequest).where(ExportRequest.id == request_id)
+    # Check existence first (to give a 404 vs 409 for not-found vs already resolved).
+    exists = await db.execute(
+        select(ExportRequest.id).where(ExportRequest.id == request_id)
     )
-    req = result.scalar_one_or_none()
-    if not req:
+    if not exists.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Export request not found")
-    if req.status != "pending":
-        raise HTTPException(status_code=400, detail=f"Request is already '{req.status}'")
 
     now = datetime.now(timezone.utc)
-    req.resolved_by_email = admin.email
-    req.resolved_at = now
-    req.status = "approved" if body.action == "approve" else "denied"
+    new_status = "approved" if body.action == "approve" else "denied"
+
+    # Atomic: only update if the row is still 'pending' so two admins racing
+    # cannot both approve the same request.
+    result = await db.execute(
+        update(ExportRequest)
+        .where(ExportRequest.id == request_id, ExportRequest.status == "pending")
+        .values(
+            status=new_status,
+            resolved_by_email=admin.email,
+            resolved_at=now,
+        )
+        .returning(ExportRequest)
+    )
+    req = result.scalar_one_or_none()
+    if req is None:
+        current = await db.execute(
+            select(ExportRequest.status).where(ExportRequest.id == request_id)
+        )
+        current_status = current.scalar_one()
+        raise HTTPException(status_code=409, detail=f"Request is already '{current_status}'")
 
     await db.commit()
     await db.refresh(req)
@@ -162,20 +178,26 @@ async def download_export_csv(
     export request — the approval is consumed on download so the user must
     request again for subsequent exports.
     """
-    approved_req = None
     if not user.is_admin:
-        result = await db.execute(
-            select(ExportRequest).where(
+        # Atomically consume the approval so concurrent requests can't both
+        # read 'approved' and both succeed.  The UPDATE returns a row only if
+        # it found and transitioned exactly one 'approved' record.
+        consumed = await db.execute(
+            update(ExportRequest)
+            .where(
                 func.lower(ExportRequest.email) == user.email.lower(),
                 ExportRequest.status == "approved",
             )
+            .values(status="downloaded")
+            .returning(ExportRequest.id)
         )
-        approved_req = result.scalar_one_or_none()
-        if not approved_req:
+        if not consumed.scalar_one_or_none():
+            await db.rollback()
             raise HTTPException(
                 status_code=403,
                 detail="You need an approved export request to download data",
             )
+        await db.commit()
 
     from app.services.export_service import generate_patient_export_csv
 
@@ -189,12 +211,6 @@ async def download_export_csv(
         year_start=year_start,
         year_end=year_end,
     )
-
-    # Consume the approval *after* CSV generation succeeds so the user
-    # doesn't lose their approval if generation fails.
-    if approved_req is not None:
-        approved_req.status = "downloaded"
-        await db.commit()
 
     return StreamingResponse(
         iter([csv_content]),

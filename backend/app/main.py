@@ -71,6 +71,38 @@ class RequestBodySizeLimitMiddleware:
         await self.app(scope, receive, send)
 
 
+class SecurityHeaderMiddleware:
+    """Inject security-related HTTP response headers on every response.
+
+    Pure ASGI middleware to avoid BaseHTTPMiddleware deadlock risk.
+    """
+
+    _HEADERS: list[tuple[bytes, bytes]] = [
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options", b"DENY"),
+        (b"x-xss-protection", b"1; mode=block"),
+        (b"referrer-policy", b"strict-origin-when-cross-origin"),
+        (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
+    ]
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_security_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.extend(self._HEADERS)
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)
+
+
 class CacheHeaderMiddleware:
     """Set Cache-Control headers on public read-only GET endpoints.
 
@@ -314,6 +346,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["authorization", "content-type", "x-requested-with"],
 )
+
+# --- Security headers on every response ---
+app.add_middleware(SecurityHeaderMiddleware)
 
 # --- HTTP cache headers for public read-only endpoints ---
 app.add_middleware(CacheHeaderMiddleware)

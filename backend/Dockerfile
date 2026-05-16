@@ -23,4 +23,12 @@ RUN addgroup --system app && adduser --system --ingroup app app \
 EXPOSE 8000
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form so ${WORKERS:-1} is expanded from the container environment at
+# runtime.  Dev docker-compose overrides this CMD with uvicorn --reload.
+# On Cloud Run set WORKERS to match the vCPU count (only when Redis is
+# available for distributed rate-limiting/caching; default 1 is safe).
+CMD gunicorn -w ${WORKERS:-1} -k uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:8000 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    app.main:app

@@ -17,7 +17,7 @@ from app.config import settings
 from app.rate_limit import limiter
 from app.database import async_session, engine, Base
 from app.models.models import ExportRequest, IngestionJob, UserRole
-from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review, admin_users, role_requests, export
+from app.routers import dashboard, incidence, geo, trends, search, ingest, diagnoses_review, admin_users, role_requests, export, admin as admin_router_module
 from app.routers import auth as auth_router
 from app.services.role_seed import seed_user_roles_from_env
 
@@ -408,6 +408,7 @@ app.include_router(admin_users.router)
 app.include_router(auth_router.router)
 app.include_router(role_requests.router)
 app.include_router(export.router)
+app.include_router(admin_router_module.router)
 
 
 @app.get("/")

@@ -310,7 +310,6 @@ export function ChoroplethMap({
   onCountyClick,
 }: ChoroplethMapProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [showSuperfund, setShowSuperfund] = useState(false);
   const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
 
@@ -358,31 +357,7 @@ export function ChoroplethMap({
     [countyDataMap, colorScale, localHovered, hoveredCounty, geoLevel, onCountyHover, onCountyClick],
   );
 
-  const superfundLayer = useMemo(() => {
-    if (!showSuperfund) return null;
-    return new ScatterplotLayer<SuperfundSite>({
-      id: 'choropleth-superfund',
-      data: MOCK_SUPERFUND_SITES,
-      getPosition: d => d.coordinates,
-      getFillColor: d =>
-        d.status === 'active'
-          ? [239, 68, 68, 230]
-          : d.status === 'proposed'
-            ? [249, 115, 22, 230]
-            : [34, 197, 94, 230],
-      getLineColor: [255, 255, 255, 255],
-      lineWidthMinPixels: 1,
-      radiusMinPixels: 5,
-      radiusMaxPixels: 14,
-      getRadius: 3000,
-      pickable: true,
-    });
-  }, [showSuperfund]);
-
-  const layers = useMemo(
-    () => [geoLayer, ...(superfundLayer ? [superfundLayer] : [])],
-    [geoLayer, superfundLayer],
-  );
+  const layers = useMemo(() => [geoLayer], [geoLayer]);
 
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
@@ -391,13 +366,9 @@ export function ChoroplethMap({
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
       const countyInfo = countyDataMap.get(county.toLowerCase());
-      const sf = SUPERFUND_BY_COUNTY[county];
-      const sfStr = sf
-        ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>`
-        : '';
       const header = tooltipHeader(props, geoLevel, county);
       const body = countyInfo
-        ? `${countyInfo.count.toLocaleString()} cases${sfStr}`
+        ? `${countyInfo.count.toLocaleString()} cases`
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -405,18 +376,6 @@ export function ChoroplethMap({
           backgroundColor: 'white', color: '#1f2937', padding: '8px 12px',
           borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px',
           boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-        },
-      };
-    }
-
-    if (info.layer?.id === 'choropleth-superfund') {
-      const site = info.object as SuperfundSite;
-      return {
-        html: `<strong style="font-size:13px">${site.name}</strong><br/><span style="color:#6b7280">${site.county} Co. · ${site.status}</span><br/><span style="color:#9ca3af;font-size:11px">${site.contaminants.join(', ')}</span>`,
-        style: {
-          backgroundColor: 'white', color: '#1f2937', padding: '8px 12px',
-          borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.12)', maxWidth: '220px',
         },
       };
     }
@@ -443,16 +402,7 @@ export function ChoroplethMap({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setShowSuperfund(v => !v)}
-              className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-full border font-medium transition-colors ${showSuperfund ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${showSuperfund ? 'bg-red-500' : 'bg-gray-400'}`} />
-              Superfund
-            </button>
-            <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
-          </div>
+          <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
           <button
             type="button"
             onClick={() => setIsExpanded(true)}
@@ -475,7 +425,7 @@ export function ChoroplethMap({
           getTooltip={getTooltip}
           style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
         />
-        <MapLegend countRange={countRange} showSuperfund={showSuperfund} />
+        <MapLegend countRange={countRange} showSuperfund={false} />
       </div>
 
       {/* Expanded modal — separate component with its own independent state */}

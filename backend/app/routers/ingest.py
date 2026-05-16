@@ -194,13 +194,24 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
 
 
 def _sanitize_filename(filename: str) -> str:
-    """Strip path separators, control chars, and truncate for safe DB storage."""
+    """Strip path separators, control chars, and truncate for safe DB storage.
+
+    Rejects double extensions (e.g. evil.php.csv) by only allowing a single
+    dot-separated extension after a stem that contains no dots.
+    """
     # Take only the basename (strip directory components).
     name = os.path.basename(filename)
     # Remove any characters that aren't word chars, hyphens, dots, or spaces.
     name = _SAFE_FILENAME_RE.sub("_", name)
-    # Collapse runs of underscores and truncate.
+    # Collapse runs of underscores.
     name = re.sub(r"_+", "_", name).strip("_")
+    # Reject double extensions: stem must not contain a dot.
+    stem, _, ext = name.rpartition(".")
+    if "." in stem:
+        raise HTTPException(
+            status_code=400,
+            detail="Filename must not contain multiple extensions",
+        )
     return name[:255] or "upload"
 
 

@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     DATABASE_URL_SYNC: str
     SUPABASE_JWT_SECRET: str
 
+    DEBUG: bool = False
+
     CORS_ORIGINS: str = '["http://localhost:5173"]'
     APP_TITLE: str = "UC Davis VMTH Cancer Registry API"
     APP_VERSION: str = "1.0.0"

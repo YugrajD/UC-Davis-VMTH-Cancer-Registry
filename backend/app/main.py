@@ -327,11 +327,18 @@ async def lifespan(app: FastAPI):
     yield
 
 
+_docs_url = "/docs" if settings.DEBUG else None
+_redoc_url = "/redoc" if settings.DEBUG else None
+_openapi_url = "/openapi.json" if settings.DEBUG else None
+
 app = FastAPI(
     title=settings.APP_TITLE,
     version=settings.APP_VERSION,
     description="UC Davis Veterinary Medical Teaching Hospital Cancer Registry API",
     lifespan=lifespan,
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
+    openapi_url=_openapi_url,
 )
 
 # --- Rate limiting ---
@@ -374,7 +381,7 @@ async def root():
     return {
         "name": settings.APP_TITLE,
         "version": settings.APP_VERSION,
-        "docs": "/docs",
+        **({"docs": "/docs"} if settings.DEBUG else {}),
     }
 
 

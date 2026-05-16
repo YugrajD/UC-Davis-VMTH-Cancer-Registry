@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, get_current_user, require_admin, require_reviewer
@@ -406,34 +406,39 @@ async def review_job(
     reviewer: CurrentUser = Depends(require_reviewer),
 ):
     """Approve or reject a pending job."""
-    job = await _get_job_or_404(db, job_id)
+    now = datetime.now(timezone.utc)
 
-    if job.status != "pending_review":
+    # Atomic update: only succeeds if job exists AND status is still pending_review.
+    # Prevents two concurrent reviewers from double-approving the same job.
+    is_reject = review.action == "reject"
+    stmt = (
+        update(IngestionJob)
+        .where(IngestionJob.id == job_id, IngestionJob.status == "pending_review")
+        .values(
+            status="rejected" if is_reject else "processing",
+            rejection_reason=review.rejection_reason if is_reject else None,
+            processing_stage=None if is_reject else "queued",
+            reviewed_by_email=reviewer.email,
+            reviewed_at=now,
+            updated_at=now,
+        )
+    )
+    result = await db.execute(stmt)
+
+    if result.rowcount == 0:
+        # Distinguish not-found (404) from wrong-status (409).
+        job = await _get_job_or_404(db, job_id)
         raise HTTPException(
-            status_code=400,
+            status_code=409,
             detail=f"Job is '{job.status}', can only review 'pending_review' jobs",
         )
 
-    now = datetime.now(timezone.utc)
-    job.reviewed_by_email = reviewer.email
-    job.reviewed_at = now
-    job.updated_at = now
-
-    if review.action == "reject":
-        job.status = "rejected"
-        job.rejection_reason = review.rejection_reason
-        await db.commit()
-        await db.refresh(job)
-        return _job_to_dict(job)
-
-    # Approve → kick off background processing
-    job.status = "processing"
-    job.processing_stage = "queued"
     await db.commit()
-    await db.refresh(job)
+    job = await _get_job_or_404(db, job_id)
 
-    task = asyncio.create_task(process_approved_job(job.id))
-    task.add_done_callback(_log_task_exception)
+    if not is_reject:
+        task = asyncio.create_task(process_approved_job(job.id))
+        task.add_done_callback(_log_task_exception)
 
     return _job_to_dict(job)
 

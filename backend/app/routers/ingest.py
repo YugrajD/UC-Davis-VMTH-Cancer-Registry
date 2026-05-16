@@ -4,6 +4,7 @@ import asyncio
 import io
 import logging
 import os
+import pathlib
 import re
 from datetime import datetime, timezone
 
@@ -337,9 +338,12 @@ async def preview_job_dataset(
     filepath = os.path.join(job.storage_path, "dataset_a.csv")
 
     # Defense-in-depth: ensure the resolved path stays inside UPLOAD_DIR.
-    allowed_base = os.path.abspath(settings.UPLOAD_DIR)
-    resolved = os.path.abspath(filepath)
-    if not resolved.startswith(allowed_base + os.sep):
+    # Use pathlib.relative_to() instead of startswith() to prevent symlink
+    # bypass and off-by-one issues with path separator matching.
+    allowed_base = pathlib.Path(settings.UPLOAD_DIR).resolve()
+    try:
+        pathlib.Path(filepath).resolve().relative_to(allowed_base)
+    except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(filepath):

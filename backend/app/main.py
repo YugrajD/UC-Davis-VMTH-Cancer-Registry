@@ -25,10 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 class RequestBodySizeLimitMiddleware:
-    """Reject requests whose Content-Length exceeds a fixed limit.
+    """Reject requests whose body exceeds a fixed size limit.
 
     The upload endpoint gets a larger allowance (50 MB); everything else
     is capped at 10 MB.  Returns 413 Payload Too Large on violation.
+
+    Enforces the limit on actual received bytes, not just the Content-Length
+    header, to catch chunked requests that omit or lie about Content-Length.
+    Cloud Run also enforces a 32 MB hard cap at the infrastructure level.
     """
 
     DEFAULT_MAX_BYTES = 10 * 1024 * 1024   # 10 MB
@@ -50,25 +54,55 @@ class RequestBodySizeLimitMiddleware:
             else self.DEFAULT_MAX_BYTES
         )
 
-        # Check Content-Length header if present
-        headers = dict(
-            (k.lower(), v)
-            for k, v in scope.get("headers", [])
-        )
-        content_length = headers.get(b"content-length")
-        if content_length is not None:
+        # Fast-reject on Content-Length header when present.
+        headers = {k.lower(): v for k, v in scope.get("headers", [])}
+        content_length_raw = headers.get(b"content-length")
+        if content_length_raw is not None:
             try:
-                if int(content_length) > max_bytes:
-                    response = Response(
-                        "Request body too large",
-                        status_code=413,
-                    )
+                if int(content_length_raw) > max_bytes:
+                    response = Response("Request body too large", status_code=413)
                     await response(scope, receive, send)
                     return
             except (ValueError, TypeError):
                 pass
 
-        await self.app(scope, receive, send)
+        # Wrap receive to count actual bytes for chunked or headerless bodies.
+        total_received = 0
+        oversized = False
+        app_response_started = False
+
+        async def limited_receive():
+            nonlocal total_received, oversized
+            message = await receive()
+            if message.get("type") == "http.request" and not oversized:
+                total_received += len(message.get("body", b""))
+                if total_received > max_bytes:
+                    oversized = True
+                    # Return an empty terminal chunk so FastAPI stops reading.
+                    return {"type": "http.request", "body": b"", "more_body": False}
+            return message
+
+        async def intercepting_send(message):
+            nonlocal app_response_started
+            if not oversized:
+                await send(message)
+                return
+            # Replace the first response from the app with 413.
+            if message["type"] == "http.response.start" and not app_response_started:
+                app_response_started = True
+                await send({
+                    "type": "http.response.start",
+                    "status": 413,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": b"Request body too large",
+                    "more_body": False,
+                })
+            # Drop the app's body chunks — we already sent our complete response.
+
+        await self.app(scope, limited_receive, intercepting_send)
 
 
 class SecurityHeaderMiddleware:

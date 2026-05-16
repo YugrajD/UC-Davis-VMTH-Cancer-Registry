@@ -26,8 +26,38 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/ingest", tags=["ingestion"])
 
 
+# Magic-byte signatures for allowed upload types.
+_XLSX_MAGIC = b"PK\x03\x04"   # ZIP-based (Office Open XML)
+_CSV_MAX_NULL_FRACTION = 0.01  # >1 % null bytes → treat as binary
+
+
+def _validate_file_magic(raw_bytes: bytes, filename: str) -> None:
+    """Reject uploads whose content does not match the declared extension.
+
+    Checks magic bytes for XLSX and a null-byte heuristic for CSV to catch
+    binary content uploaded with a .csv extension — without requiring libmagic.
+    """
+    lower = filename.lower()
+    if lower.endswith(".xlsx"):
+        if not raw_bytes.startswith(_XLSX_MAGIC):
+            raise HTTPException(
+                status_code=400,
+                detail="File content does not match .xlsx format",
+            )
+    elif lower.endswith(".csv"):
+        # CSV must be valid text — reject anything with significant null bytes.
+        sample = raw_bytes[:8192]
+        null_count = sample.count(b"\x00")
+        if null_count > len(sample) * _CSV_MAX_NULL_FRACTION:
+            raise HTTPException(
+                status_code=400,
+                detail="CSV file contains binary data",
+            )
+
+
 def _ensure_csv(raw_bytes: bytes, filename: str) -> bytes:
-    """Convert XLSX to CSV bytes; pass CSV through unchanged."""
+    """Validate content type then convert XLSX to CSV bytes; pass CSV through."""
+    _validate_file_magic(raw_bytes, filename)
     lower = filename.lower()
     if lower.endswith(".xlsx"):
         df = pd.read_excel(io.BytesIO(raw_bytes), engine="openpyxl")

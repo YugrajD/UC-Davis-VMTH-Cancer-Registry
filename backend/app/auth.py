@@ -212,9 +212,9 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
         )
-    except jwt.InvalidTokenError as e:
+    except jwt.InvalidTokenError:
         _record_auth_failure(request)
-        logger.warning("JWT decode failed: %s", e)
+        logger.warning("JWT decode failed")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",

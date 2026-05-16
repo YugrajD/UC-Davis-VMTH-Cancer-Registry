@@ -1,6 +1,6 @@
 """Incidence and mortality endpoints with filter support."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional, List
@@ -8,6 +8,7 @@ from typing import Optional, List
 from app.cache import cached_response
 from app.config import settings
 from app.database import get_db
+from app.rate_limit import limiter
 from app.models.models import CancerType, Patient, Species, Breed, County, CaseDiagnosis
 from app.models.views import mv_county_cancer
 from app.schemas.schemas import IncidenceRecord, IncidenceResponse, BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount
@@ -71,8 +72,10 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
 
 
 @router.get("", response_model=IncidenceResponse)
+@limiter.limit("60/minute")
 @cached_response("incidence", ttl=settings.CACHE_TTL_INCIDENCE)
 async def get_incidence(
+    request: Request,
     species: Optional[List[str]] = Query(None, max_length=50),
     cancer_type: Optional[List[str]] = Query(None, max_length=50),
     county: Optional[List[str]] = Query(None, max_length=100),
@@ -116,8 +119,10 @@ async def get_incidence(
 
 
 @router.get("/by-cancer-type", response_model=IncidenceResponse)
+@limiter.limit("60/minute")
 @cached_response("incidence_by_cancer", ttl=settings.CACHE_TTL_INCIDENCE)
 async def get_incidence_by_cancer_type(
+    request: Request,
     species: Optional[List[str]] = Query(None, max_length=50),
     county: Optional[List[str]] = Query(None, max_length=100),
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
@@ -145,8 +150,10 @@ async def get_incidence_by_cancer_type(
 
 
 @router.get("/by-species", response_model=IncidenceResponse)
+@limiter.limit("60/minute")
 @cached_response("incidence_by_species", ttl=settings.CACHE_TTL_INCIDENCE)
 async def get_incidence_by_species(
+    request: Request,
     cancer_type: Optional[List[str]] = Query(None, max_length=50),
     county: Optional[List[str]] = Query(None, max_length=100),
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
@@ -174,8 +181,10 @@ async def get_incidence_by_species(
 
 
 @router.get("/by-breed", response_model=IncidenceResponse)
+@limiter.limit("60/minute")
 @cached_response("incidence_by_breed", ttl=settings.CACHE_TTL_INCIDENCE)
 async def get_incidence_by_breed(
+    request: Request,
     species: Optional[List[str]] = Query(None, max_length=50),
     cancer_type: Optional[List[str]] = Query(None, max_length=50),
     county: Optional[List[str]] = Query(None, max_length=100),
@@ -215,8 +224,10 @@ async def get_incidence_by_breed(
 
 
 @router.get("/breed-detail", response_model=BreedDetailOut)
+@limiter.limit("60/minute")
 @cached_response("breed_detail", ttl=settings.CACHE_TTL_INCIDENCE)
 async def get_breed_detail(
+    request: Request,
     breed: str = Query(..., max_length=200, description="Breed name to look up"),
     db: AsyncSession = Depends(get_db),
 ):

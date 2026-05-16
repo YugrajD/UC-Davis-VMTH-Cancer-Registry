@@ -1,6 +1,6 @@
 """GeoJSON map endpoints using PostGIS spatial queries."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func
 from typing import Optional, List
@@ -9,6 +9,7 @@ import json
 from app.cache import cached_response
 from app.config import settings
 from app.database import get_db
+from app.rate_limit import limiter
 from app.models.models import County, CancerType, Patient, Species, CaseDiagnosis, CalEnviroScreen
 from app.services.review_filter import apply_review_filter, review_status_sql_in
 from app.schemas.schemas import (
@@ -29,8 +30,10 @@ SEX_MAP = {
 
 
 @router.get("/counties", response_model=GeoJSONResponse)
+@limiter.limit("60/minute")
 @cached_response("geo_counties", ttl=settings.CACHE_TTL_GEO)
 async def get_counties_geojson(
+    request: Request,
     species: Optional[List[str]] = Query(None, max_length=50),
     cancer_type: Optional[List[str]] = Query(None, max_length=50),
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
@@ -119,8 +122,10 @@ async def get_counties_geojson(
 
 
 @router.get("/counties/{county_id}", response_model=CountyDetail)
+@limiter.limit("60/minute")
 @cached_response("geo_county_detail", ttl=settings.CACHE_TTL_GEO)
 async def get_county_detail(
+    request: Request,
     county_id: int,
     db: AsyncSession = Depends(get_db),
 ):
@@ -195,8 +200,10 @@ async def get_county_detail(
 
 
 @router.get("/calenviroscreen", response_model=List[CalEnviroScreenOut])
+@limiter.limit("60/minute")
 @cached_response("calenviroscreen", ttl=settings.CACHE_TTL_CALENVIRO)
 async def get_calenviroscreen(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Return county-level CalEnviroScreen 4.0 data for all counties."""

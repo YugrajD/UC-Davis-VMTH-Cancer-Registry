@@ -1,6 +1,6 @@
 """Time series trend endpoints."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional, List
@@ -8,6 +8,7 @@ from typing import Optional, List
 from app.cache import cached_response
 from app.config import settings
 from app.database import get_db
+from app.rate_limit import limiter
 from app.models.models import CancerType, Patient, Species, County, CaseDiagnosis
 from app.models.views import mv_yearly_trends
 from app.schemas.schemas import TrendsResponse, TrendSeries, TrendPoint
@@ -25,8 +26,10 @@ SEX_MAP = {
 
 
 @router.get("/yearly", response_model=TrendsResponse)
+@limiter.limit("60/minute")
 @cached_response("trends_yearly", ttl=settings.CACHE_TTL_TRENDS)
 async def get_yearly_trends(
+    request: Request,
     species: Optional[List[str]] = Query(None, max_length=50),
     cancer_type: Optional[List[str]] = Query(None, max_length=50),
     county: Optional[List[str]] = Query(None, max_length=100),
@@ -76,8 +79,10 @@ async def get_yearly_trends(
 
 
 @router.get("/by-cancer-type", response_model=TrendsResponse)
+@limiter.limit("60/minute")
 @cached_response("trends_by_cancer", ttl=settings.CACHE_TTL_TRENDS)
 async def get_trends_by_cancer_type(
+    request: Request,
     species: Optional[List[str]] = Query(None, max_length=50),
     county: Optional[List[str]] = Query(None, max_length=100),
     sex: Optional[str] = Query(None, max_length=50),

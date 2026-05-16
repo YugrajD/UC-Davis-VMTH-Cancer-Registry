@@ -2,12 +2,13 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../../lib/supabase';
 
+
 interface LoginModalProps {
   onClose: () => void;
 }
 
 export function LoginModal({ onClose }: LoginModalProps) {
-  const { signIn, signUp, signInWithGoogle } = useAuth();
+  const { signIn, signUp, signInWithGoogle, authError, clearAuthError } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -17,6 +18,21 @@ export function LoginModal({ onClose }: LoginModalProps) {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+
+  // If the URL hash contained an auth error (e.g. expired reset link), switch
+  // to forgot-password mode so the user can immediately request a new one.
+  useEffect(() => {
+    if (authError) {
+      setMode('forgot');
+      setError(authError);
+    }
+  }, [authError]);
+
+  // Clear the context-level error when the modal closes.
+  const handleClose = () => {
+    clearAuthError();
+    onClose();
+  };
 
   const handleGoogleSignIn = async () => {
     setError(null);
@@ -31,10 +47,10 @@ export function LoginModal({ onClose }: LoginModalProps) {
   };
 
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { clearAuthError(); onClose(); } };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+  }, [onClose, clearAuthError]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +65,7 @@ export function LoginModal({ onClose }: LoginModalProps) {
     try {
       if (mode === 'signin') {
         await signIn(email, password);
-        onClose();
+        handleClose();
       } else if (mode === 'signup') {
         await signUp(email, password);
         setSignupSuccess(true);
@@ -87,12 +103,13 @@ export function LoginModal({ onClose }: LoginModalProps) {
     setSignupSuccess(false);
     setResetSent(false);
     setConfirmPassword('');
+    clearAuthError();
   };
 
   const modalTitle = mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Reset Password';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={handleClose}>
       <div className="absolute inset-0 bg-black/50" />
       <div
         className="relative bg-white rounded-xl shadow-2xl w-full max-w-md p-6"
@@ -103,7 +120,7 @@ export function LoginModal({ onClose }: LoginModalProps) {
             {modalTitle}
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

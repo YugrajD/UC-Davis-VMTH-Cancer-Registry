@@ -11,6 +11,7 @@ interface AuthState {
   isUploader: boolean;
   isReviewer: boolean;
   passwordRecovery: boolean;
+  authError: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
@@ -18,6 +19,7 @@ interface AuthState {
   getAccessToken: () => Promise<string | null>;
   updatePassword: (newPassword: string) => Promise<void>;
   clearPasswordRecovery: () => void;
+  clearAuthError: () => void;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -30,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isUploader, setIsUploader] = useState(false);
   const [isReviewer, setIsReviewer] = useState(false);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Dedup and backoff refs for refreshRoles
   const inflightRef = useRef(false);
@@ -73,6 +76,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!supabaseConfigured) return;
+
+    // Detect Supabase error callbacks in the URL hash (e.g. expired reset link).
+    // Supabase redirects to: <redirectTo>#error=access_denied&error_code=otp_expired&...
+    const hash = window.location.hash;
+    if (hash.includes('error=')) {
+      const params = new URLSearchParams(hash.slice(1));
+      const errorCode = params.get('error_code');
+      const errorDescription = params.get('error_description');
+      if (errorCode === 'otp_expired') {
+        setAuthError('Your password reset link has expired. Please request a new one.');
+      } else if (errorDescription) {
+        setAuthError(errorDescription.replace(/\+/g, ' '));
+      }
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
 
     // Get initial session
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -149,9 +167,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const clearPasswordRecovery = () => setPasswordRecovery(false);
+  const clearAuthError = () => setAuthError(null);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, passwordRecovery, signIn, signUp, signInWithGoogle, signOut, getAccessToken, updatePassword, clearPasswordRecovery }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, passwordRecovery, authError, signIn, signUp, signInWithGoogle, signOut, getAccessToken, updatePassword, clearPasswordRecovery, clearAuthError }}>
       {children}
     </AuthContext.Provider>
   );

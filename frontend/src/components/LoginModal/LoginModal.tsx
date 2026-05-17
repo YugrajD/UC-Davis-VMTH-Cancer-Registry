@@ -62,10 +62,12 @@ export function LoginModal({ onClose }: LoginModalProps) {
         await signUp(email, password);
         setSignupSuccess(true);
       } else {
-        // The ?type=recovery marker lets AuthContext distinguish a password
-        // reset code from an ordinary sign-in code after exchangeCodeForSession.
+        // redirectTo is plain (no query string) so the Supabase email
+        // template can append ?token_hash=...&type=recovery cleanly.
+        // The template uses {{ .RedirectTo }} so this works in both dev
+        // (localhost:5173) and prod (Vercel) without changing Supabase config.
         const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/?type=recovery`,
+          redirectTo: window.location.origin,
         });
         if (resetError) throw resetError;
         setResetSent(true);

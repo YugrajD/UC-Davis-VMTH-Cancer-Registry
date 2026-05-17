@@ -35,6 +35,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Read any Supabase error from the URL synchronously so it's available on
   // the very first render with no useEffect needed.  Supabase puts the error
   // in the query string (PKCE flow) OR the hash fragment (implicit flow).
+  //
+  // Initializer is pure — no history.replaceState — because React StrictMode
+  // runs lazy initializers twice in dev, and a side effect there would clear
+  // the URL before the second run, making the second run return null and
+  // overwriting the real state value.  URL cleanup happens in a useEffect.
   const [authError, setAuthError] = useState<string | null>(() => {
     const sources = [window.location.search.slice(1), window.location.hash.slice(1)];
     for (const raw of sources) {
@@ -43,7 +48,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const errorCode = params.get('error_code');
       const errorDescription = params.get('error_description');
       if (!errorCode && !errorDescription) continue;
-      history.replaceState(null, '', window.location.pathname);
       if (errorCode === 'otp_expired') {
         return 'Your password reset link has expired. Please request a new one.';
       }
@@ -51,6 +55,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     return null;
   });
+
+  // Strip the error params from the visible URL once we've captured them.
+  useEffect(() => {
+    if (!authError) return;
+    const url = window.location;
+    if (url.search.includes('error=') || url.hash.includes('error=')) {
+      history.replaceState(null, '', url.pathname);
+    }
+  }, [authError]);
 
   // Dedup and backoff refs for refreshRoles
   const inflightRef = useRef(false);

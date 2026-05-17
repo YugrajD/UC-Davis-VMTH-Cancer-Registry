@@ -93,13 +93,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // PKCE code exchange — handles ?code= from password-reset and
     // email-confirmation links.  Must happen before getSession so the
     // session is available when onAuthStateChange fires.
+    //
+    // Supabase fires SIGNED_IN (not PASSWORD_RECOVERY) after
+    // exchangeCodeForSession, so we use the ?type=recovery marker added to
+    // resetPasswordForEmail's redirectTo to know to show the reset modal.
     const searchParams = new URLSearchParams(window.location.search);
     const code = searchParams.get('code');
+    const isRecovery = searchParams.get('type') === 'recovery';
     if (code) {
       history.replaceState(null, '', window.location.pathname);
-      supabase.auth.exchangeCodeForSession(code).catch(() => {
-        setAuthError('Could not verify your link. Please request a new one.');
-        setLoading(false);
+      supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+        if (error) {
+          setAuthError('Could not verify your link. Please request a new one.');
+          setLoading(false);
+        } else if (isRecovery) {
+          setPasswordRecovery(true);
+        }
       });
       // onAuthStateChange below will update session state after exchange.
     }

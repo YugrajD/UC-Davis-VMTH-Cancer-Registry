@@ -32,19 +32,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isUploader, setIsUploader] = useState(false);
   const [isReviewer, setIsReviewer] = useState(false);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
-  // Read any Supabase error from the URL hash synchronously so it's
-  // available on the very first render with no useEffect needed.
+  // Read any Supabase error from the URL synchronously so it's available on
+  // the very first render with no useEffect needed.  Supabase puts the error
+  // in the query string (PKCE flow) OR the hash fragment (implicit flow).
   const [authError, setAuthError] = useState<string | null>(() => {
-    const hash = window.location.hash;
-    if (!hash.includes('error=')) return null;
-    const params = new URLSearchParams(hash.slice(1));
-    history.replaceState(null, '', window.location.pathname + window.location.search);
-    const errorCode = params.get('error_code');
-    const errorDescription = params.get('error_description');
-    if (errorCode === 'otp_expired') {
-      return 'Your password reset link has expired. Please request a new one.';
+    const sources = [window.location.search.slice(1), window.location.hash.slice(1)];
+    for (const raw of sources) {
+      if (!raw.includes('error=')) continue;
+      const params = new URLSearchParams(raw);
+      const errorCode = params.get('error_code');
+      const errorDescription = params.get('error_description');
+      if (!errorCode && !errorDescription) continue;
+      history.replaceState(null, '', window.location.pathname);
+      if (errorCode === 'otp_expired') {
+        return 'Your password reset link has expired. Please request a new one.';
+      }
+      return errorDescription ? errorDescription.replace(/\+/g, ' ') : null;
     }
-    return errorDescription ? errorDescription.replace(/\+/g, ' ') : null;
+    return null;
   });
 
   // Dedup and backoff refs for refreshRoles
@@ -90,17 +95,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!supabaseConfigured) return;
 
-    // PKCE code exchange — handles ?code= from password-reset and
-    // email-confirmation links.  Must happen before getSession so the
-    // session is available when onAuthStateChange fires.
+    // Handle email auth callbacks. Two formats, both verified client-side
+    // so email scanners that pre-fetch the link can't consume the token:
     //
-    // Supabase fires SIGNED_IN (not PASSWORD_RECOVERY) after
-    // exchangeCodeForSession, so we use the ?type=recovery marker added to
-    // resetPasswordForEmail's redirectTo to know to show the reset modal.
+    //   ?token_hash=...&type=recovery   — PKCE email template (preferred)
+    //     verifyOtp is the dedicated entry point for email-confirm flows.
+    //   ?code=...                       — OAuth/PKCE callback
+    //     exchangeCodeForSession is the dedicated entry point for OAuth.
     const searchParams = new URLSearchParams(window.location.search);
     const code = searchParams.get('code');
-    const isRecovery = searchParams.get('type') === 'recovery';
-    if (code) {
+    const tokenHash = searchParams.get('token_hash');
+    const emailType = searchParams.get('type');
+    const isRecovery = emailType === 'recovery';
+
+    if (tokenHash && emailType) {
+      history.replaceState(null, '', window.location.pathname);
+      supabase.auth
+        .verifyOtp({ token_hash: tokenHash, type: emailType as 'recovery' | 'signup' | 'email' | 'invite' | 'email_change' })
+        .then(({ error }) => {
+          if (error) {
+            setAuthError('Could not verify your link. Please request a new one.');
+            setLoading(false);
+          } else if (isRecovery) {
+            setPasswordRecovery(true);
+          }
+        });
+    } else if (code) {
       history.replaceState(null, '', window.location.pathname);
       supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
         if (error) {
@@ -110,7 +130,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setPasswordRecovery(true);
         }
       });
-      // onAuthStateChange below will update session state after exchange.
     }
 
     // Get initial session

@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     DATABASE_URL_SYNC: str
     SUPABASE_JWT_SECRET: str
 
+    DEBUG: bool = False
+
     CORS_ORIGINS: str = '["http://localhost:5173"]'
     APP_TITLE: str = "UC Davis VMTH Cancer Registry API"
     APP_VERSION: str = "1.0.0"
@@ -66,9 +68,23 @@ class Settings(BaseSettings):
     CACHE_TTL_CALENVIRO: int = 3600     # 1 hour — static reference data
     CACHE_MAX_SIZE: int = 256           # max entries per cache namespace
 
-    # Reverse-proxy trust — comma-separated IPs whose X-Forwarded-For
-    # header is trusted for rate-limiting.  Empty (default) means only
-    # the TCP peer address is used, which is the safe default.
+    # Gunicorn workers per container.  Keep at 1 on Cloud Run — the service
+    # scales horizontally (more instances), not vertically (more workers).
+    # Raise only when also running Redis for distributed rate-limiting/caching,
+    # and only to match the container's vCPU count.
+    WORKERS: int = 1
+
+    # PostgreSQL connection pool per worker process.
+    # Capacity rule: DB_POOL_SIZE × WORKERS × max_instances ≤ PG max_connections.
+    # Supabase Pooler users can relax this (PgBouncer multiplexes connections).
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+
+    # Reverse-proxy trust — comma-separated IPs whose X-Forwarded-For header
+    # is trusted for rate-limiting.  Empty (default) means only the TCP peer
+    # address is used, which is safe.  On Cloud Run, set this to the internal
+    # Google Front End IP range (e.g. "0.0.0.0/0" or the specific GFE range)
+    # so client IPs are not all seen as the same load-balancer address.
     FORWARDED_ALLOW_IPS: str = ""
 
     @property

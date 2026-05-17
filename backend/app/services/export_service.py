@@ -32,12 +32,16 @@ CSV_COLUMNS = [
 
 # Characters that spreadsheet applications (Excel, Google Sheets) interpret
 # as formula starters.  Prefixing with a tab prevents execution.
-_FORMULA_CHARS = frozenset("=+-@")
+_FORMULA_CHARS = frozenset("=+-@\t")
 
 
 def _safe_csv_value(value: str) -> str:
-    """Defuse potential CSV formula injection by tab-prefixing dangerous values."""
-    if value and value[0] in _FORMULA_CHARS:
+    """Defuse potential CSV formula injection by tab-prefixing dangerous values.
+
+    Checks the first non-whitespace character so that space-padded formulas
+    like ' =SUM(...)' are also caught.
+    """
+    if value and value.lstrip()[0:1] in _FORMULA_CHARS:
         return "\t" + value
     return value
 

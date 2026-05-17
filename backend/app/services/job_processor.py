@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 from sqlalchemy import select
@@ -81,6 +83,24 @@ async def _mark_failed(job_id: int, error_msg: str) -> None:
             job.processing_error = error_msg[:500]
             job.updated_at = datetime.now(timezone.utc)
             await db.commit()
+
+
+def _delete_upload_dir(storage_path: str) -> None:
+    """Remove the per-job upload directory after processing completes or fails.
+
+    The upload directory is no longer needed once ML processing finishes and
+    raw files should not persist indefinitely on disk.  Rejections are NOT
+    deleted here — the file stays for the audit trail until an admin reviews.
+    """
+    try:
+        path = Path(storage_path).resolve()
+        upload_root = Path(settings.UPLOAD_DIR).resolve()
+        path.relative_to(upload_root)  # raises ValueError if path escapes root
+        if path.is_dir():
+            shutil.rmtree(path)
+            logger.info("Deleted upload directory: %s", path)
+    except (ValueError, OSError):
+        logger.warning("Could not delete upload directory: %s", storage_path, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -195,10 +215,12 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
 
         logger.info("Job %d completed: %d inserted", job_id, ingestion_result.inserted)
         clear_all_caches()
+        _delete_upload_dir(storage_path)
 
     except Exception as e:
         logger.exception("Job %d failed", job_id)
         await _mark_failed(job_id, _safe_error_message(e))
+        _delete_upload_dir(storage_path)
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +355,7 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
         logger.info("Job %d completed via GCP Batch: %d inserted", job_id, ingestion_result.inserted)
         clear_all_caches()
+        _delete_upload_dir(storage_path)
 
         # Cleanup GCS files (best-effort)
         try:
@@ -343,3 +366,4 @@ async def _process_via_gcp_batch(job_id: int) -> None:
     except Exception as e:
         logger.exception("Job %d failed (GCP Batch path)", job_id)
         await _mark_failed(job_id, _safe_error_message(e))
+        _delete_upload_dir(storage_path)

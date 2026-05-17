@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { AuthProvider } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue, DiagnosisReview, UserManagement } from './components';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
@@ -23,6 +23,7 @@ function AppContent() {
 
   const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);
+  const { passwordRecovery } = useAuth();
   const [cancerCategory, setCancerCategory] = useState<VetIcdOCategoryId | 'all'>('all');
 
   // Counts per VET-ICD-O-Canine-1 category for the current cancer-types data.
@@ -235,6 +236,7 @@ function AppContent() {
       </main>
 
       <Footer />
+      {passwordRecovery && <ResetPasswordModal />}
     </div>
   );
 }

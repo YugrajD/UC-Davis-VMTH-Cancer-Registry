@@ -270,7 +270,15 @@ async def review_diagnosis(
     db: AsyncSession = Depends(get_db),
     reviewer: CurrentUser = Depends(require_reviewer),
 ) -> DiagnosisDetail:
-    diag = await _get_or_404(db, diagnosis_id)
+    # Lock the row before reading status to prevent concurrent double-reviews.
+    locked = await db.execute(
+        select(CaseDiagnosis)
+        .where(CaseDiagnosis.id == diagnosis_id)
+        .with_for_update()
+    )
+    diag = locked.scalar_one_or_none()
+    if diag is None:
+        raise HTTPException(status_code=404, detail="Diagnosis not found")
 
     if diag.review_status not in ("pending", "confirmed", "corrected"):
         raise HTTPException(

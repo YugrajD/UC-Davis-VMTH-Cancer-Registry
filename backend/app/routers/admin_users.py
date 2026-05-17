@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, TypeAdapter, EmailStr, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,11 +47,14 @@ class UserRolesIn(BaseModel):
 # --- Helpers --------------------------------------------------------------
 
 
+_email_adapter = TypeAdapter(EmailStr)
+
+
 def _normalize_email(email: str) -> str:
-    e = (email or "").strip().lower()
-    if "@" not in e or len(e) > 255:
+    try:
+        return _email_adapter.validate_python((email or "").strip().lower())
+    except ValidationError:
         raise HTTPException(status_code=400, detail="Invalid email")
-    return e
 
 
 async def _lookup(db: AsyncSession, email: str) -> Optional[UserRole]:

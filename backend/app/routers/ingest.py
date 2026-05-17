@@ -4,13 +4,14 @@ import asyncio
 import io
 import logging
 import os
+import pathlib
 import re
 from datetime import datetime, timezone
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, get_current_user, require_admin, require_reviewer
@@ -26,8 +27,38 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/ingest", tags=["ingestion"])
 
 
+# Magic-byte signatures for allowed upload types.
+_XLSX_MAGIC = b"PK\x03\x04"   # ZIP-based (Office Open XML)
+_CSV_MAX_NULL_FRACTION = 0.01  # >1 % null bytes → treat as binary
+
+
+def _validate_file_magic(raw_bytes: bytes, filename: str) -> None:
+    """Reject uploads whose content does not match the declared extension.
+
+    Checks magic bytes for XLSX and a null-byte heuristic for CSV to catch
+    binary content uploaded with a .csv extension — without requiring libmagic.
+    """
+    lower = filename.lower()
+    if lower.endswith(".xlsx"):
+        if not raw_bytes.startswith(_XLSX_MAGIC):
+            raise HTTPException(
+                status_code=400,
+                detail="File content does not match .xlsx format",
+            )
+    elif lower.endswith(".csv"):
+        # CSV must be valid text — reject anything with significant null bytes.
+        sample = raw_bytes[:8192]
+        null_count = sample.count(b"\x00")
+        if null_count > len(sample) * _CSV_MAX_NULL_FRACTION:
+            raise HTTPException(
+                status_code=400,
+                detail="CSV file contains binary data",
+            )
+
+
 def _ensure_csv(raw_bytes: bytes, filename: str) -> bytes:
-    """Convert XLSX to CSV bytes; pass CSV through unchanged."""
+    """Validate content type then convert XLSX to CSV bytes; pass CSV through."""
+    _validate_file_magic(raw_bytes, filename)
     lower = filename.lower()
     if lower.endswith(".xlsx"):
         df = pd.read_excel(io.BytesIO(raw_bytes), engine="openpyxl")
@@ -163,13 +194,24 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
 
 
 def _sanitize_filename(filename: str) -> str:
-    """Strip path separators, control chars, and truncate for safe DB storage."""
+    """Strip path separators, control chars, and truncate for safe DB storage.
+
+    Rejects double extensions (e.g. evil.php.csv) by only allowing a single
+    dot-separated extension after a stem that contains no dots.
+    """
     # Take only the basename (strip directory components).
     name = os.path.basename(filename)
     # Remove any characters that aren't word chars, hyphens, dots, or spaces.
     name = _SAFE_FILENAME_RE.sub("_", name)
-    # Collapse runs of underscores and truncate.
+    # Collapse runs of underscores.
     name = re.sub(r"_+", "_", name).strip("_")
+    # Reject double extensions: stem must not contain a dot.
+    stem, _, ext = name.rpartition(".")
+    if "." in stem:
+        raise HTTPException(
+            status_code=400,
+            detail="Filename must not contain multiple extensions",
+        )
     return name[:255] or "upload"
 
 
@@ -307,9 +349,12 @@ async def preview_job_dataset(
     filepath = os.path.join(job.storage_path, "dataset_a.csv")
 
     # Defense-in-depth: ensure the resolved path stays inside UPLOAD_DIR.
-    allowed_base = os.path.abspath(settings.UPLOAD_DIR)
-    resolved = os.path.abspath(filepath)
-    if not resolved.startswith(allowed_base + os.sep):
+    # Use pathlib.relative_to() instead of startswith() to prevent symlink
+    # bypass and off-by-one issues with path separator matching.
+    allowed_base = pathlib.Path(settings.UPLOAD_DIR).resolve()
+    try:
+        pathlib.Path(filepath).resolve().relative_to(allowed_base)
+    except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(filepath):
@@ -372,34 +417,39 @@ async def review_job(
     reviewer: CurrentUser = Depends(require_reviewer),
 ):
     """Approve or reject a pending job."""
-    job = await _get_job_or_404(db, job_id)
+    now = datetime.now(timezone.utc)
 
-    if job.status != "pending_review":
+    # Atomic update: only succeeds if job exists AND status is still pending_review.
+    # Prevents two concurrent reviewers from double-approving the same job.
+    is_reject = review.action == "reject"
+    stmt = (
+        update(IngestionJob)
+        .where(IngestionJob.id == job_id, IngestionJob.status == "pending_review")
+        .values(
+            status="rejected" if is_reject else "processing",
+            rejection_reason=review.rejection_reason if is_reject else None,
+            processing_stage=None if is_reject else "queued",
+            reviewed_by_email=reviewer.email,
+            reviewed_at=now,
+            updated_at=now,
+        )
+    )
+    result = await db.execute(stmt)
+
+    if result.rowcount == 0:
+        # Distinguish not-found (404) from wrong-status (409).
+        job = await _get_job_or_404(db, job_id)
         raise HTTPException(
-            status_code=400,
+            status_code=409,
             detail=f"Job is '{job.status}', can only review 'pending_review' jobs",
         )
 
-    now = datetime.now(timezone.utc)
-    job.reviewed_by_email = reviewer.email
-    job.reviewed_at = now
-    job.updated_at = now
-
-    if review.action == "reject":
-        job.status = "rejected"
-        job.rejection_reason = review.rejection_reason
-        await db.commit()
-        await db.refresh(job)
-        return _job_to_dict(job)
-
-    # Approve → kick off background processing
-    job.status = "processing"
-    job.processing_stage = "queued"
     await db.commit()
-    await db.refresh(job)
+    job = await _get_job_or_404(db, job_id)
 
-    task = asyncio.create_task(process_approved_job(job.id))
-    task.add_done_callback(_log_task_exception)
+    if not is_reject:
+        task = asyncio.create_task(process_approved_job(job.id))
+        task.add_done_callback(_log_task_exception)
 
     return _job_to_dict(job)
 

@@ -60,6 +60,10 @@ _AUTH_MAX_FAILURES = 5
 # brute-force with many source addresses.  When the cap is reached the
 # oldest half of entries is evicted.
 _AUTH_MAX_TRACKED_IPS = 10_000
+# NOTE: this dict is per-process. With multiple uvicorn workers (or replicas)
+# each worker tracks failures independently, so the effective threshold is
+# _AUTH_MAX_FAILURES * num_workers before a lockout. Acceptable for current
+# single-worker Cloud Run deployment; replace with Redis if scaling out.
 _failed_attempts: dict[str, list[float]] = defaultdict(list)
 
 
@@ -212,9 +216,9 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
         )
-    except jwt.InvalidTokenError as e:
+    except jwt.InvalidTokenError:
         _record_auth_failure(request)
-        logger.warning("JWT decode failed: %s", e)
+        logger.warning("JWT decode failed")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",

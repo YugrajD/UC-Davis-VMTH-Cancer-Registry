@@ -2,7 +2,12 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// https://vite.dev/config/
+// Ensure VITE_API_URL is always defined so %VITE_API_URL% in index.html
+// is replaced with an empty string in local dev rather than left as a literal.
+if (!process.env.VITE_API_URL) {
+  process.env.VITE_API_URL = '';
+}
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   envDir: '..',

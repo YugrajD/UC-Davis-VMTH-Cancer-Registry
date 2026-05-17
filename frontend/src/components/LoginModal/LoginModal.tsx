@@ -1,21 +1,30 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabaseConfigured } from '../../lib/supabase';
+import { supabase, supabaseConfigured } from '../../lib/supabase';
 
 interface LoginModalProps {
   onClose: () => void;
 }
 
 export function LoginModal({ onClose }: LoginModalProps) {
-  const { signIn, signUp, signInWithGoogle } = useAuth();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const { signIn, signUp, signInWithGoogle, authError, clearAuthError } = useAuth();
+  // If there's a context-level auth error (e.g. expired reset link), start in
+  // forgot-password mode so the user can immediately request a new one.
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>(authError ? 'forgot' : 'signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(authError ?? null);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+
+  // Clear the context-level error when the modal closes.
+  const handleClose = () => {
+    clearAuthError();
+    onClose();
+  };
 
   const handleGoogleSignIn = async () => {
     setError(null);
@@ -30,10 +39,10 @@ export function LoginModal({ onClose }: LoginModalProps) {
   };
 
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { clearAuthError(); onClose(); } };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+  }, [onClose, clearAuthError]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,13 +57,23 @@ export function LoginModal({ onClose }: LoginModalProps) {
     try {
       if (mode === 'signin') {
         await signIn(email, password);
-        onClose();
-      } else {
+        handleClose();
+      } else if (mode === 'signup') {
         await signUp(email, password);
         setSignupSuccess(true);
+      } else {
+        // redirectTo is plain (no query string) so the Supabase email
+        // template can append ?token_hash=...&type=recovery cleanly.
+        // The template uses {{ .RedirectTo }} so this works in both dev
+        // (localhost:5173) and prod (Vercel) without changing Supabase config.
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin,
+        });
+        if (resetError) throw resetError;
+        setResetSent(true);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : `${mode === 'signin' ? 'Sign in' : 'Sign up'} failed`);
+      setError(err instanceof Error ? err.message : `${mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Sign up' : 'Password reset'} failed`);
     } finally {
       setLoading(false);
     }
@@ -67,8 +86,26 @@ export function LoginModal({ onClose }: LoginModalProps) {
     setConfirmPassword('');
   };
 
+  const goToForgot = () => {
+    setMode('forgot');
+    setError(null);
+    setPassword('');
+    setConfirmPassword('');
+  };
+
+  const backToSignIn = () => {
+    setMode('signin');
+    setError(null);
+    setSignupSuccess(false);
+    setResetSent(false);
+    setConfirmPassword('');
+    clearAuthError();
+  };
+
+  const modalTitle = mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Reset Password';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={handleClose}>
       <div className="absolute inset-0 bg-black/50" />
       <div
         className="relative bg-white rounded-xl shadow-2xl w-full max-w-md p-6"
@@ -76,10 +113,10 @@ export function LoginModal({ onClose }: LoginModalProps) {
       >
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
-            {mode === 'signin' ? 'Sign In' : 'Create Account'}
+            {modalTitle}
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -109,12 +146,67 @@ export function LoginModal({ onClose }: LoginModalProps) {
               </p>
             </div>
             <button
-              onClick={toggleMode}
+              onClick={backToSignIn}
               className="w-full py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md hover:bg-[var(--color-teal-dark)] transition-colors"
             >
               Back to Sign In
             </button>
           </div>
+        ) : resetSent ? (
+          <div className="space-y-4">
+            <div className="bg-green-50 border border-green-200 rounded-md p-4">
+              <p className="text-sm font-medium text-green-800 mb-1">Reset email sent</p>
+              <p className="text-sm text-green-700">
+                Check your inbox for a password reset link.
+              </p>
+              <p className="text-xs text-green-600 mt-2">
+                If you don&apos;t see it, check your spam or junk folder.
+              </p>
+            </div>
+            <button
+              onClick={backToSignIn}
+              className="w-full py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md hover:bg-[var(--color-teal-dark)] transition-colors"
+            >
+              Back to Sign In
+            </button>
+          </div>
+        ) : mode === 'forgot' ? (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Enter your email and we&apos;ll send you a link to reset your password.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+                placeholder="you@example.com"
+              />
+            </div>
+
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-md p-3">
+                <p className="text-sm text-red-700">{error}</p>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md hover:bg-[var(--color-teal-dark)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {loading ? 'Sending...' : 'Send Reset Link'}
+            </button>
+
+            <p className="text-center text-sm text-gray-600">
+              <button type="button" onClick={backToSignIn} className="text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium">
+                Back to Sign In
+              </button>
+            </p>
+          </form>
         ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -129,7 +221,18 @@ export function LoginModal({ onClose }: LoginModalProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">Password</label>
+              {mode === 'signin' && (
+                <button
+                  type="button"
+                  onClick={goToForgot}
+                  className="text-xs text-[var(--color-teal)] hover:text-[var(--color-teal-dark)] font-medium"
+                >
+                  Forgot password?
+                </button>
+              )}
+            </div>
             <input
               type="password"
               value={password}

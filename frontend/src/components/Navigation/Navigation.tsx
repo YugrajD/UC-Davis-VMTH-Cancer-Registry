@@ -13,8 +13,10 @@ interface NavigationProps {
 }
 
 export function Navigation({ activeTab, onTabChange }: NavigationProps) {
-  const { user, isAdmin, isReviewer, signOut, loading, getAccessToken } = useAuth();
-  const [showLogin, setShowLogin] = useState(false);
+  const { user, isAdmin, isReviewer, signOut, loading, getAccessToken, authError } = useAuth();
+  // Open modal immediately if the app loaded with an auth error in the URL
+  // (e.g. an expired password reset link) so the user can act right away.
+  const [showLogin, setShowLogin] = useState(!!authError);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [pendingRoleCount, setPendingRoleCount] = useState<number | null>(null);
   const [pendingExportCount, setPendingExportCount] = useState<number | null>(null);

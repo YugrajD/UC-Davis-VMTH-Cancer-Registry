@@ -10,6 +10,11 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _strip_crlf(value: str) -> str:
+    """Remove CR/LF characters to prevent email header injection."""
+    return value.replace("\r", "").replace("\n", "")
+
+
 def send_role_request_email(
     requester_email: str,
     requested_role: str,
@@ -32,9 +37,11 @@ def send_role_request_email(
         logger.warning("No admin emails to notify for role request")
         return
 
-    subject = f"New Role Request: {requested_role}"
+    safe_email = _strip_crlf(requester_email)
+    safe_role = _strip_crlf(requested_role)
+    subject = f"New Role Request: {safe_role}"
     body = (
-        f"{requester_email} has requested the {requested_role} role.\n\n"
+        f"{safe_email} has requested the {safe_role} role.\n\n"
         "Review it in the admin panel under User Management."
     )
 

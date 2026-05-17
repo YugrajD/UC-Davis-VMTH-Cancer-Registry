@@ -1,12 +1,13 @@
 """Dashboard summary endpoints."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func
 
 from app.cache import cached_response
 from app.config import settings
 from app.database import get_db
+from app.rate_limit import limiter
 from app.schemas.schemas import DashboardSummary, SpeciesBreakdown, TopCancer, FilterOptions
 from app.models.models import (
     Species, Breed, CancerType, County, Patient, CaseDiagnosis
@@ -21,8 +22,9 @@ _PETBERT_FILTER = Patient.data_source == "petbert"
 
 
 @router.get("/summary", response_model=DashboardSummary)
+@limiter.limit("60/minute")
 @cached_response("dashboard_summary", ttl=settings.CACHE_TTL_DASHBOARD)
-async def get_summary(db: AsyncSession = Depends(get_db)):
+async def get_summary(request: Request, db: AsyncSession = Depends(get_db)):
     # Total cases (ingested only) — count distinct patients with petbert data
     result = await db.execute(
         select(func.count(Patient.id))
@@ -111,8 +113,9 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/filters", response_model=FilterOptions)
+@limiter.limit("60/minute")
 @cached_response("dashboard_filters", ttl=settings.CACHE_TTL_CALENVIRO)
-async def get_filter_options(db: AsyncSession = Depends(get_db)):
+async def get_filter_options(request: Request, db: AsyncSession = Depends(get_db)):
     species = (await db.execute(select(Species).order_by(Species.name))).scalars().all()
     cancer_types = (await db.execute(select(CancerType).order_by(CancerType.name))).scalars().all()
     counties = (await db.execute(select(County).order_by(County.name))).scalars().all()

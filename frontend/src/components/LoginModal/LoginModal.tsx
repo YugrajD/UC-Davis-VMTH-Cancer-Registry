@@ -2,31 +2,23 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../../lib/supabase';
 
-
 interface LoginModalProps {
   onClose: () => void;
 }
 
 export function LoginModal({ onClose }: LoginModalProps) {
   const { signIn, signUp, signInWithGoogle, authError, clearAuthError } = useAuth();
-  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
+  // If there's a context-level auth error (e.g. expired reset link), start in
+  // forgot-password mode so the user can immediately request a new one.
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>(authError ? 'forgot' : 'signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(authError ?? null);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
   const [resetSent, setResetSent] = useState(false);
-
-  // If the URL hash contained an auth error (e.g. expired reset link), switch
-  // to forgot-password mode so the user can immediately request a new one.
-  useEffect(() => {
-    if (authError) {
-      setMode('forgot');
-      setError(authError);
-    }
-  }, [authError]);
 
   // Clear the context-level error when the modal closes.
   const handleClose = () => {

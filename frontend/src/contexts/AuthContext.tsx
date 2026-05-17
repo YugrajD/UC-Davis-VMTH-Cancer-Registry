@@ -32,7 +32,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isUploader, setIsUploader] = useState(false);
   const [isReviewer, setIsReviewer] = useState(false);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  // Read any Supabase error from the URL hash synchronously so it's
+  // available on the very first render with no useEffect needed.
+  const [authError, setAuthError] = useState<string | null>(() => {
+    const hash = window.location.hash;
+    if (!hash.includes('error=')) return null;
+    const params = new URLSearchParams(hash.slice(1));
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    const errorCode = params.get('error_code');
+    const errorDescription = params.get('error_description');
+    if (errorCode === 'otp_expired') {
+      return 'Your password reset link has expired. Please request a new one.';
+    }
+    return errorDescription ? errorDescription.replace(/\+/g, ' ') : null;
+  });
 
   // Dedup and backoff refs for refreshRoles
   const inflightRef = useRef(false);
@@ -77,19 +90,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!supabaseConfigured) return;
 
-    // Detect Supabase error callbacks in the URL hash (e.g. expired reset link).
-    // Supabase redirects to: <redirectTo>#error=access_denied&error_code=otp_expired&...
-    const hash = window.location.hash;
-    if (hash.includes('error=')) {
-      const params = new URLSearchParams(hash.slice(1));
-      const errorCode = params.get('error_code');
-      const errorDescription = params.get('error_description');
-      if (errorCode === 'otp_expired') {
-        setAuthError('Your password reset link has expired. Please request a new one.');
-      } else if (errorDescription) {
-        setAuthError(errorDescription.replace(/\+/g, ' '));
-      }
-      history.replaceState(null, '', window.location.pathname + window.location.search);
+    // PKCE code exchange — handles ?code= from password-reset and
+    // email-confirmation links.  Must happen before getSession so the
+    // session is available when onAuthStateChange fires.
+    const searchParams = new URLSearchParams(window.location.search);
+    const code = searchParams.get('code');
+    if (code) {
+      history.replaceState(null, '', window.location.pathname);
+      supabase.auth.exchangeCodeForSession(code).catch(() => {
+        setAuthError('Could not verify your link. Please request a new one.');
+        setLoading(false);
+      });
+      // onAuthStateChange below will update session state after exchange.
     }
 
     // Get initial session

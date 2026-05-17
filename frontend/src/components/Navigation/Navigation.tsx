@@ -14,16 +14,12 @@ interface NavigationProps {
 
 export function Navigation({ activeTab, onTabChange }: NavigationProps) {
   const { user, isAdmin, isReviewer, signOut, loading, getAccessToken, authError } = useAuth();
-  const [showLogin, setShowLogin] = useState(false);
+  // Open modal immediately if the app loaded with an auth error in the URL
+  // (e.g. an expired password reset link) so the user can act right away.
+  const [showLogin, setShowLogin] = useState(!!authError);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [pendingRoleCount, setPendingRoleCount] = useState<number | null>(null);
   const [pendingExportCount, setPendingExportCount] = useState<number | null>(null);
-
-  // Auto-open login modal when Supabase returns an auth error via URL hash
-  // (e.g. an expired password reset link). The modal will show the error.
-  useEffect(() => {
-    if (authError) setShowLogin(true);
-  }, [authError]);
 
   // Poll pending diagnosis count for the badge (admins + reviewers). Users
   // without review access never see the tab so we leave stale state alone.

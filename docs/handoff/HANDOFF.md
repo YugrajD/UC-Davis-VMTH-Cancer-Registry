@@ -4,6 +4,7 @@
 **Team:** ECS 193A Team 14  
 **Authors:** Yugraj Dhillon, David Estrella, Chun Ho Li, Justin Pak  
 **Handoff Date:** April 15, 2026  
+**Last Updated:** May 18, 2026  
 **Repository:** https://github.com/ECS-193A-Team-14/UC-Davis-VMTH-Cancer-Registry  
 
 ---
@@ -42,6 +43,7 @@ The VMTH Cancer Registry is a web application for UC Davis veterinary researcher
 |---|---|
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS v4, react-simple-maps, d3-scale |
 | Backend | FastAPI, Python 3.11, SQLAlchemy async, Pydantic v2 |
+| ASGI server | gunicorn + uvicorn workers (production), uvicorn (dev) |
 | Database | PostgreSQL 16 + PostGIS 3.4, hosted on Supabase |
 | NLP Model | PetBERT (110M param BERT pretrained on veterinary EHR data) |
 | ML Inference | GCP Batch (production), local ml-worker container (development) |
@@ -139,10 +141,37 @@ UC-Davis-VMTH-Cancer-Registry/
 - RLS enabled on all Supabase tables (`012_enable_rls.sql`) — direct anon/authenticated key access is blocked; all queries go through FastAPI as the postgres superuser
 
 ### Database
-- 13 migrations applied in order (001–013)
+- 13 migrations applied in order (001–013); migration 023 (sex column on materialized views) auto-applies on startup
 - PostGIS county boundaries for all 58 CA counties
 - `data_source = 'petbert'` distinguishes real ingested data from seed/mock data
 - One case per patient (dog) model — prevents double-counting
+- Materialized views (`mv_county_cancer_incidence`, `mv_yearly_trends`) refreshed after each ingest and via `POST /api/v1/admin/refresh-views`
+
+### Security Hardening (May 2026)
+- Three full security review rounds completed; see `docs/current-architecture.md` for the layer-by-layer summary
+- JWT auth hardened: algorithm pinning (HS256/ES256/RS256/EdDSA only), generic error messages, in-memory failure rate limiting (5/15-minute IP lockout)
+- Per-IP brute-force tracking has a 10 k IP cap with oldest-half eviction to bound memory
+- Request body size enforced on **actual received bytes** (not just `Content-Length`) — 10 MB default, 50 MB for uploads
+- CSV formula injection sanitization on every export cell
+- Path-traversal defense via `pathlib.relative_to()` on every file system operation
+- Race conditions fixed: atomic `UPDATE WHERE status='pending' RETURNING` for export approvals, `SELECT FOR UPDATE` for diagnosis review
+- Supabase PKCE flow for password reset: link arrives at the app as `?token_hash=...&type=recovery`, verified client-side so Gmail/Outlook link previews can't consume the OTP
+- Admin gating on every `/admin/*` and `/diagnoses/*` mutation; reviewer role for read-only review queue access
+- API docs (`/docs`, `/redoc`, `/openapi.json`) are 404 in production (`DEBUG=false`)
+- Strict security response headers on every response: `x-frame-options: DENY`, HSTS, nosniff, referrer-policy
+- `.claudeignore` blocks Claude from reading `.env` or `secrets/`; pre-commit hook blocks committing secrets
+
+### Test Suite (May 2026)
+- Backend: **63 pytest tests** across 6 files (admin users, admin refresh-views, dashboard, incidence, security, review threshold analysis)
+- Frontend: **279 vitest tests** across 13 files (filtered data, cancer types, CalEnviroScreen, password reset PKCE URL parsing, export requests, user management, pipeline stages, etc.)
+- CI: `.github/workflows/ci.yml` runs both suites + TypeScript check + ESLint on every push to `main`/`database` and every PR
+- DB is fully mocked in backend tests; no PostgreSQL container is needed for CI
+
+### Scalability (May 2026)
+- Backend container uses gunicorn with configurable `WORKERS` env var (defaults to 1 for single-vCPU Cloud Run)
+- PostgreSQL connection pool is env-tunable via `DB_POOL_SIZE` (default 5) and `DB_MAX_OVERFLOW` (default 10)
+- Cloud Run service template at `backend/service.yaml` with recommended limits, autoscaling, and Secret Manager refs
+- See `docs/handoff/future_plans.md §6` for the scale-to-thousands-of-users plan
 
 ---
 
@@ -152,15 +181,11 @@ These features have backend support but no frontend UI, or are entirely missing:
 
 | Feature | Backend Status | Frontend Status | Notes |
 |---|---|---|---|
-| **Trend line chart** | `trends.py` endpoints ready | No chart component | Need to install recharts and build `TrendChart.tsx` — see `docs/workstream-5-trend-visualization.md` |
-| **Case detail view** | Data exists in DB | No panel/modal | `case_diagnoses` stores confidence + raw text but no UI surfaces it |
-| **CSV export** | No endpoint | No button | Need `GET /api/v1/export` and a download button |
-| **Plain-language search** | `search.py` classify endpoint exists | No search bar | Endpoint works; just needs a UI input |
-| **Year range filter** | Backend supports `year_start`/`year_end` params | Not wired in `Filters.tsx` | Small frontend change |
-| **Species filter** | Backend supports `species` param | Not wired in `Filters.tsx` | Small frontend change |
-| **Case-level low-confidence review queue** | Pipeline flags `low_confidence` method | No per-case review UI | Current review is job-level (approve/reject entire upload), not case-level |
 | **Fine-tuning trigger** | Local scripts in `ml/scripts/` | No trigger | `run_training_cycle.py` works locally; no GCP Batch integration for training |
 | **Multi-clinic source tagging** | `data_source` column exists | No filter/display | Currently hardcoded to `'petbert'` |
+| **Distributed rate limiting** | In-memory per-process | N/A | SlowAPI + auth-failure tracking are per-instance. See future_plans.md §6 for the Redis migration plan |
+| **Distributed response cache** | `cachetools` per-process | N/A | TTLCache lives in each Cloud Run instance. Cache hit rate drops as instance count grows. Redis migration is documented |
+| **Recently shipped** (April–May 2026) | — | — | CSV export with admin approval, case-level review queue, year/species filters, plain-language search, trend chart (recharts), Google OAuth, password reset PKCE, role-request workflow |
 
 ---
 
@@ -368,31 +393,31 @@ The dashboard shows case counts, not incidence rates. Dog population by Californ
 
 ## 12. Remaining Work
 
-Listed in priority order based on user stories:
+Listed in priority order. Most of the original handoff backlog has shipped (test suite, CSV export, trend chart, case-level review queue, year/species filters, plain-language search). What remains:
 
-### High Priority (user-facing gaps)
+### High Priority — Scale & Reliability
 
-1. **Trend line chart** — Backend endpoints exist (`/api/v1/trends/yearly`, `/api/v1/trends/by-cancer-type`). Install `recharts` and build `TrendChart.tsx`. Full spec in `docs/workstream-5-trend-visualization.md`.
+1. **Distributed rate limiting and response cache** — Both are per-process today (`slowapi` + `cachetools`). With multiple Cloud Run instances, rate limits are effectively `N × WORKERS × limit` and cache hit rate falls off. Migrate both to Redis (Memorystore on GCP, or Upstash). See `docs/handoff/future_plans.md §6.6` for the concrete plan.
 
-2. **Year range and species filters** — Backend already accepts `year_start`, `year_end`, `species` params. Only frontend wiring needed in `Filters.tsx`.
+2. **Materialized view refresh cron** — `POST /api/v1/admin/refresh-views` exists for manual refresh, but the view is otherwise only refreshed at the end of each ingestion. Set up Cloud Scheduler to hit the refresh endpoint nightly so data stays fresh even when no upload happened that day.
 
-3. **Case detail view** — Add a modal or panel that shows raw report text, predicted term/group/code, and confidence score when a user clicks a case. Data is in `case_diagnoses`.
+3. **Observability** — Add structured logging (already partially in place with `logger.info` calls) and ship logs/metrics to Cloud Logging + Cloud Monitoring. Build a dashboard for: request latency p50/p95/p99, error rate per endpoint, DB pool exhaustion events, auth-failure rate.
 
-4. **CSV export** — Add `GET /api/v1/export` endpoint and a download button in the dashboard. Should respect active filters and return all matching `case_diagnoses` rows.
+### Medium Priority — Product
 
-### Medium Priority
+4. **Fine-tuning via GCP Batch** — Local training pipeline exists in `ml/scripts/run_training_cycle.py`. Add a GCP Batch job definition and an API endpoint (`POST /api/v1/training/submit`) to trigger fine-tuning when enough labeled data has accumulated.
 
-5. **Plain-language search UI** — `POST /api/v1/search/classify` endpoint exists and works. Add a search bar that submits free text and shows matching cases without requiring ICD codes.
+5. **Multi-clinic source tagging** — `patients.data_source` column is in place but hardcoded to `'petbert'`. Extend the ingestion pipeline to tag records by clinic and add a source filter to the dashboard. (Prerequisite for any multi-tenant work — see `future_plans.md` for the full multi-clinic plan.)
 
-6. **Case-level low-confidence review** — Current review is job-level (approve/reject entire batch). Build a per-case review queue where predictions with `method = 'low_confidence'` can be individually approved or corrected by authorized reviewers.
+6. **Audit log** — Add an `audit_log` table that records every privileged action (role change, export approval, diagnosis review, refresh-views). Currently `diagnosis_review_events` is the only audit table.
+
+7. **Account deletion / data retention** — No `DELETE /api/v1/users/me` exists. For GDPR/CCPA compliance, add user-initiated account deletion and a clinic-data deletion endpoint for system admins.
 
 ### Low Priority
 
-7. **Fine-tuning via GCP Batch** — Local training pipeline exists in `ml/scripts/run_training_cycle.py`. Add a GCP Batch job definition and an API endpoint (`POST /api/v1/training/submit`) to trigger fine-tuning when enough labeled data has accumulated.
+8. **Federated cross-clinic queries** — Once multi-clinic tagging ships, expose anonymized aggregate-only queries across clinics for state-wide research.
 
-8. **Multi-clinic source tagging** — `patients.data_source` column is in place but hardcoded to `'petbert'`. Extend the ingestion pipeline to tag records by clinic and add a source filter to the dashboard.
-
-9. **Test suite** — No tests exist. See `docs/workstream-8-tests.md` for the planned test suite. Backend: pytest + httpx. Frontend: Vitest + Testing Library.
+9. **FHIR integration** — Long-term, replace manual CSV upload with a FHIR pull from clinic EHR systems. Treat as 2–3 year horizon.
 
 ---
 

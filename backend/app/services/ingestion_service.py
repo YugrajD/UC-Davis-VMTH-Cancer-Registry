@@ -443,6 +443,7 @@ async def ingest_upload(
                 cancer_type_id=cancer_type_id,
                 icd_o_code=diag["icd_o_code"] or None,
                 predicted_term=diag["predicted_term"] or None,
+                original_text=diag.get("original_text") or None,
                 confidence=round(conf, 2) if conf else None,
                 prediction_method=method or None,
                 source_row_index=diag["row_index"],

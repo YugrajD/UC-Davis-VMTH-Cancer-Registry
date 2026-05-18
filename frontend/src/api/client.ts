@@ -406,6 +406,8 @@ export interface DiagnosisDetail extends PendingDiagnosis {
   original_cancer_type_id: number | null;
   original_icd_o_code: string | null;
   original_predicted_term: string | null;
+  /** Raw source text PetBERT classified — null for legacy rows. */
+  original_text: string | null;
   reviewed_by_email: string | null;
   reviewed_at: string | null;
   reviewer_notes: string | null;

@@ -558,3 +558,62 @@ Priority 0 items are infrastructure prerequisites that should be tackled before 
 - Item 10
 - Evaluate FHIR adoption among target clinic EHR vendors
 - Prototype with one willing clinic
+
+---
+
+## 12. Deferred Product Features
+
+These were planned and scoped in May 2026 but consciously deferred. Each has an existing backend surface (so re-activating it is mostly frontend work) and a documented reason for the deferral.
+
+### 12.1 Plain-Language Search UI
+
+**User stories:** US-15, US-NTH-4 from `requirements_doc_v2.md` — *"query with little to no knowledge of the coding system or SQL"*.
+
+**Status:** Deferred.
+
+**Why:** The existing dashboard filters (cancer type, breed, sex, county, year range) already satisfy the spirit of these user stories by providing structured, taxonomy-aligned navigation that does not require knowledge of ICD codes or SQL. Building a free-text search UI on top of filters would create two ways to do the same thing without enough additional research value to justify the maintenance cost.
+
+**What's already in place:**
+- `POST /api/v1/search/classify` — takes free text and returns suggested Vet-ICD-O codes via PetBERT. Auth-required, rate-limited (`RATE_LIMIT_EXPENSIVE`).
+- `GET /api/v1/search/reports?keyword=...` — searches `case_diagnoses.original_text` for a keyword. Auth-required, LIKE-escaped to prevent injection.
+
+**The narrow use case search would unlock:** finding cases by clinical features that exist in raw report text but aren't captured in any structured field (e.g., "lymph node metastasis," "myxoid," specific histological terms). This is a power-user feature for researchers studying histological detail rather than population-level patterns.
+
+**Trigger to revisit:** When a researcher specifically asks for it. Until then, the backend endpoints stay in place (they cost nothing sitting idle) but the UI is not built.
+
+**Estimated effort if reactivated:** 1–2 days. All frontend — `SearchBar.tsx`, `SearchResults.tsx`, API client helpers, and a new tab or inline result view.
+
+### 12.2 Automated PetBERT Fine-Tuning Trigger
+
+**User story:** US-PL-2 — *"model quality to improve as more labeled data becomes available."*
+
+**Status:** Deferred. The acceptance test (fine-tuning produces equal-or-better held-out scores than the previous version) cannot be satisfied without significant infrastructure work.
+
+**Why:**
+- A single A100 fine-tuning run is **$10–25 in GCP compute** (A100 at ~$2–3/hour × 4–8 hours). At the current labeled-data accumulation rate, training runs would be infrequent but each one is non-trivial.
+- The full plan requires three phases (training pipeline → validation comparison + model versioning → held-out set governance), each ~1 week of work. Total ~3 weeks.
+- The team chose to redirect engineering time toward features with broader user impact (Plans 1 and 2 in this same review). Fine-tuning improves accuracy at the margins; the existing zero-shot PetBERT pipeline is already producing usable predictions.
+
+**What's already in place:**
+- Local training pipeline: `ml/scripts/run_training_cycle.py` works end-to-end on a development machine.
+- Labeled data accumulates naturally — `case_diagnoses.review_status IN ('confirmed', 'corrected')` rows are training-ready pairs of `(original_text, predicted_term)`.
+- The validation CSV `ml/data/validation/review_threshold_validation.csv` is a starting held-out set.
+
+**Three-phase implementation when reactivated:**
+
+| Phase | Scope | Effort |
+|---|---|---|
+| 4A: One-shot batch training | New `ml/production/finetune/` package; new `Dockerfile.finetune` and Artifact Registry image; new `training_jobs` table; `POST /api/v1/training/submit` admin endpoint; GCP Batch A100 job submission service mirroring `gcp_batch_service.py` | ~1 week |
+| 4B: Validation comparison + model versioning | Training writes precision/recall/F1 JSON to GCS; new model tagged `petbert:v{N}` in Artifact Registry; `POST /api/v1/training/jobs/{id}/promote` flips `petbert:current` tag; `POST .../rollback` reverts; frontend admin page with side-by-side metrics | ~1 week |
+| 4C: Held-out validation set governance | New `case_diagnoses.held_out: bool` column; stratified-by-cancer-type validation set selection script; training pipeline excludes held-out rows; validation comparison uses only held-out rows | ~3–5 days |
+
+**Open decisions deferred to reactivation:**
+- Trigger model: manual button only, or auto-trigger when N new reviewed labels accumulate? (Recommend manual to start.)
+- Promotion model: manual click required, or auto-promote when validation F1 improves? (Recommend manual — research registry should not silently swap models.)
+- GCP A100 quota: must be requested from GCP support before the first run; new GCP projects start with zero A100 quota.
+
+**Trigger to revisit:**
+- When ≥ 500 reviewed-and-confirmed labels have accumulated in `case_diagnoses` (current count under 100), AND
+- When the team has bandwidth for a multi-week ML-infrastructure project.
+
+**Until then:** zero-shot PetBERT continues to handle inference; the local `run_training_cycle.py` is available for ad-hoc experiments on a dev machine without involving GCP.

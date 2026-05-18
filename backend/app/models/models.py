@@ -92,6 +92,11 @@ class CaseDiagnosis(Base):
     cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=False)
     icd_o_code = Column(String(20), nullable=True)
     predicted_term = Column(Text, nullable=True)
+    # Raw "Clinical Diagnoses" cell from the upload — the text PetBERT
+    # classified.  Surfaced to reviewers so they can sanity-check the model
+    # against the original wording.  Migration 009 created the column;
+    # older rows are NULL.
+    original_text = Column(Text, nullable=True)
     confidence = Column(Numeric(4, 2), nullable=True)
     prediction_method = Column(String(20), nullable=True)
     source_row_index = Column(Integer, nullable=True)

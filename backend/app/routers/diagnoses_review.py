@@ -75,6 +75,10 @@ class DiagnosisDetail(PendingDiagnosis):
     original_cancer_type_id: Optional[int]
     original_icd_o_code: Optional[str]
     original_predicted_term: Optional[str]
+    # Raw source text PetBERT classified — the "Clinical Diagnoses" cell from
+    # the upload.  Reviewers use this to sanity-check the model's prediction.
+    # Null for diagnoses ingested before the May 2026 ingestion-service fix.
+    original_text: Optional[str]
     reviewed_by_email: Optional[str]
     reviewed_at: Optional[datetime]
     reviewer_notes: Optional[str]
@@ -150,6 +154,7 @@ def _to_detail(diag: CaseDiagnosis) -> DiagnosisDetail:
         original_cancer_type_id=diag.original_cancer_type_id,
         original_icd_o_code=diag.original_icd_o_code,
         original_predicted_term=diag.original_predicted_term,
+        original_text=diag.original_text,
         reviewed_by_email=diag.reviewed_by_email,
         reviewed_at=diag.reviewed_at,
         reviewer_notes=diag.reviewer_notes,

@@ -48,7 +48,6 @@ def run(K: int, gap: float) -> dict:
         "--tail-max-predictions", str(K),
         "--tail-max-group-prob-gap", f"{gap:.3f}",
         "--out-dir", str(prod_dir),
-        "--device", "xpu",
         "--local-only",
     ], check=True, cwd=str(REPO_ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 

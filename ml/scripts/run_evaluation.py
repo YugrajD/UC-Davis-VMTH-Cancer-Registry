@@ -31,11 +31,12 @@ from evaluation import (
     evaluate_common_labels,
     evaluate_groups,
     evaluate_label_presence,
+    evaluate_top_n_verdicts,
     log_evaluation,
 )
 
 
-_STAGE_CHOICES = ["pipeline", "case-based", "common-labels", "case-presence", "groups", "label-presence", "all"]
+_STAGE_CHOICES = ["pipeline", "case-based", "common-labels", "top-n-verdicts", "case-presence", "groups", "label-presence", "all"]
 _DEFAULT_THRESHOLDS = {
     "case-presence": 0.5,
     "groups": 0.85,
@@ -113,6 +114,10 @@ def main() -> int:
         "--top-n", type=int, default=20,
         help="Number of most-common labels to report (common-labels stage only).",
     )
+    parser.add_argument(
+        "--top-ns", default="25,50,100",
+        help="Comma-separated Ns for top-n-verdicts stage (default: 25,50,100).",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -147,6 +152,14 @@ def main() -> int:
             Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
             cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups,
             top_n=args.top_n,
+        )
+
+    def _run_top_n_verdicts() -> None:
+        top_ns = tuple(int(x) for x in args.top_ns.split(",") if x.strip())
+        evaluate_top_n_verdicts(
+            Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
+            cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups,
+            top_ns=top_ns,
         )
 
     def _run_case_presence() -> None:
@@ -190,6 +203,8 @@ def main() -> int:
         _run_case_based()
     elif args.stage == "common-labels":
         _run_common_labels()
+    elif args.stage == "top-n-verdicts":
+        _run_top_n_verdicts()
     elif args.stage == "case-presence":
         _run_case_presence()
     elif args.stage == "groups":
@@ -200,6 +215,7 @@ def main() -> int:
         _run_pipeline()
         _run_case_based()
         _run_common_labels()
+        _run_top_n_verdicts()
         _run_case_presence()
         _run_groups()
         _run_label_presence()

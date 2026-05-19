@@ -56,6 +56,12 @@ def metrics_at(rows: list[tuple[float, int]], threshold: float) -> tuple[int, in
     return tp, fp, fn, p, r, f1
 
 
+def f_beta(p: float, r: float, beta: float) -> float:
+    """F-beta score. beta<1 weights precision more; beta>1 weights recall more."""
+    b2 = beta * beta
+    return (1 + b2) * p * r / (b2 * p + r) if (b2 * p + r) > 0 else 0.0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--eval-csv", default=str(DEFAULT_CSV))
@@ -74,6 +80,12 @@ def main() -> int:
             "Output JSON path for {group_name: threshold} — consumed by the "
             "production pipeline. Pass an empty string to skip writing."
         ),
+    )
+    parser.add_argument(
+        "--beta", type=float, default=1.0,
+        help="F-beta to optimize per LP. beta<1 weights precision more "
+             "(e.g. 0.5 to reduce CO); beta>1 weights recall more "
+             "(e.g. 2.0 to reduce FN). Default 1.0 = F1.",
     )
     args = parser.parse_args()
 
@@ -119,12 +131,13 @@ def main() -> int:
         sweep_rows = per_lp_sweep[lp]
         eval_rows = per_lp_eval[lp]
 
-        # Pick threshold on sweep half.
-        best_t, best_f1 = baseline_t, -1.0
+        # Pick threshold on sweep half — maximize F-beta with --beta.
+        best_t, best_score = baseline_t, -1.0
         for t in thresholds:
-            _, _, _, _, _, f1 = metrics_at(sweep_rows, t)
-            if f1 > best_f1:
-                best_f1, best_t = f1, t
+            _, _, _, p_, r_, _ = metrics_at(sweep_rows, t)
+            score = f_beta(p_, r_, args.beta)
+            if score > best_score:
+                best_score, best_t = score, t
 
         # Measure on eval half.
         _, _, _, b_p, b_r, b_f1 = metrics_at(eval_rows, baseline_t)

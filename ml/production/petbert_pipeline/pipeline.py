@@ -1,9 +1,10 @@
 """Top-level orchestration for the 4-stage PetBERT scan pipeline.
 
   1.  Load and clean clinical report text from reportText.csv.
-  2.  Select text using TF-IDF multi-column selector (or explicit --text-cols
-      for debugging).
-  3.  Embed the selected text with PetBERT (768-dim vector).
+  2.  Build three section views per case (HIST, FINAL COMMENT + COMMENT,
+      ANCILLARY TESTS) and embed each independently with PetBERT.
+  3.  Concatenate the three 768-dim section vectors into a single 2304-dim
+      per-case representation ("concat_3").
   4.  Run the 4-stage pipeline:
         Stage 1 — CasePresenceClassifier gates non-cancer cases.
         Stage 2 — GroupClassifier predicts which cancer group(s).
@@ -19,8 +20,8 @@ data prep, output writing, and stage dispatch.
 import json
 from pathlib import Path
 
-# Import torch first — on Windows + Intel XPU, c10.dll load can fail if
-# numpy/scipy/sklearn DLLs initialise before torch's.
+# Import torch first — on Windows + CUDA, MKL DLLs loaded by sklearn can
+# clash with torch's DLL search path; importing torch first avoids it.
 import torch  # noqa: F401
 
 import pandas as pd
@@ -28,7 +29,6 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from .embedding import embed_columns_separate, embed_texts, load_tokenizer_and_model, topk_cosine_neighbors
-from text_selection import SOURCE_COLS as _TFIDF_SOURCE_COLS, get_selector
 from utils.csv_io import strip_bom_from_columns
 from .io import (
     build_outputs,
@@ -51,18 +51,18 @@ from .types import ScanConfig, ScanOutputs
 from .utils import clean_text, device_from_arg, merge_report_columns
 
 
-def _validate_columns(
-    dataframe: pd.DataFrame,
-    id_col: str,
-    text_cols: tuple[str, ...],
-) -> None:
+CONCAT_3_SECTIONS: tuple[tuple[str, ...], ...] = (
+    ("HISTOPATHOLOGICAL SUMMARY",),
+    ("FINAL COMMENT", "COMMENT"),
+    ("ANCILLARY TESTS",),
+)
+
+CONCAT_3_KEY = "concat_3"
+
+
+def _validate_columns(dataframe: pd.DataFrame, id_col: str) -> None:
     if id_col not in dataframe.columns:
         raise ValueError(f"Missing id column {id_col!r}. Available: {dataframe.columns.tolist()}")
-    missing = [c for c in text_cols if c not in dataframe.columns]
-    if missing:
-        raise ValueError(
-            f"Missing text columns {missing!r}. Available: {dataframe.columns.tolist()}"
-        )
 
 
 def _load_uncommon_groups(path: str) -> frozenset[str]:
@@ -88,48 +88,31 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     dataframe.columns = strip_bom_from_columns(dataframe.columns)
     if config.max_rows is not None:
         dataframe = dataframe.head(config.max_rows).copy()
-    _validate_columns(dataframe, config.id_col, config.text_cols)
+    _validate_columns(dataframe, config.id_col)
 
     ids = dataframe[config.id_col].map(clean_text).tolist()
     n = len(ids)
     row_indices = list(range(n))
 
-    # --- Step 2: Select text (concat-3 sections, TF-IDF, or explicit columns) -
-    if config.section_text_cols:
-        # Concat-3 path: build synthetic __sec_N__ columns by joining raw report
-        # fields per section. Each section gets the full token budget. The
-        # "tfidf_selected" alias is added to `cols` so the cache stores it under
-        # that key (downstream trainers hardcode the alias).
-        section_cols = tuple(f"__sec_{i}__" for i in range(len(config.section_text_cols)))
-        for i, group in enumerate(config.section_text_cols):
-            missing = [c for c in group if c not in dataframe.columns]
-            if missing:
-                raise ValueError(
-                    f"Missing source columns for section {i} ({group!r}): {missing!r}. "
-                    f"Available: {dataframe.columns.tolist()}"
-                )
-            dataframe[section_cols[i]] = (
-                dataframe[list(group)].fillna("").astype(str).agg("\n".join, axis=1)
+    # --- Step 2: Build the three section views (concat-3) --------------------
+    # Each section is a synthetic column built by joining the raw report fields
+    # in CONCAT_3_SECTIONS. The CONCAT_3_KEY alias is appended so the cache
+    # stores the per-row 2304-dim concat under a stable name that downstream
+    # trainers hardcode.
+    section_cols = tuple(f"__sec_{i}__" for i in range(len(CONCAT_3_SECTIONS)))
+    for i, group in enumerate(CONCAT_3_SECTIONS):
+        missing = [c for c in group if c not in dataframe.columns]
+        if missing:
+            raise ValueError(
+                f"Missing source columns for section {i} ({group!r}): {missing!r}. "
+                f"Available: {dataframe.columns.tolist()}"
             )
-        cols = list(section_cols) + ["tfidf_selected"]
-        col_texts = {col: dataframe[col].map(clean_text).tolist() for col in section_cols}
-        texts = dataframe.apply(lambda row: merge_report_columns(row, section_cols), axis=1).tolist()
-    elif not config.text_cols:
-        selector = get_selector(config.tfidf_vectorizer_path)
-        cols = ["tfidf_selected"]
-        selected_texts: list[str] = []
-        for i in range(n):
-            row_col_texts = {
-                col: clean_text(dataframe.iloc[i].get(col, ""))
-                for col in _TFIDF_SOURCE_COLS
-            }
-            selected_texts.append(selector.select(row_col_texts, max_tokens=512))
-        col_texts = {"tfidf_selected": selected_texts}
-        texts = selected_texts
-    else:
-        cols = list(config.text_cols)
-        col_texts = {col: dataframe[col].map(clean_text).tolist() for col in cols}
-        texts = dataframe.apply(lambda row: merge_report_columns(row, cols), axis=1).tolist()
+        dataframe[section_cols[i]] = (
+            dataframe[list(group)].fillna("").astype(str).agg("\n".join, axis=1)
+        )
+    cols = list(section_cols) + [CONCAT_3_KEY]
+    col_texts = {col: dataframe[col].map(clean_text).tolist() for col in section_cols}
+    texts = dataframe.apply(lambda row: merge_report_columns(row, section_cols), axis=1).tolist()
     char_lens = np.array([len(t) for t in texts], dtype=np.int32)
 
     # --- Step 3: Embed with PetBERT (or load from cache) ---------------------
@@ -167,9 +150,9 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             max_length=config.max_length,
         )
 
-        # Restrict the masked-mean / concat to the columns that were actually
-        # embedded — under concat-3, "tfidf_selected" appears in `cols` as an
-        # alias but is populated below, not by embed_columns_separate.
+        # The CONCAT_3_KEY alias appears in `cols` but isn't populated by
+        # embed_columns_separate — restrict the masked-mean to the section
+        # columns that were actually embedded.
         embed_cols = [c for c in cols if c in col_embeddings]
         col_emb_stack = np.stack([col_embeddings[c] for c in embed_cols], axis=0)
         content_mask = np.stack([col_has_content[c] for c in embed_cols], axis=0).astype(np.float32)
@@ -177,17 +160,12 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         content_counts = np.maximum(content_mask.sum(axis=0), 1.0)
         embeddings = (col_emb_masked.sum(axis=0) / content_counts[:, None]).astype(np.float32)
 
-        if config.section_text_cols:
-            # Materialise the "tfidf_selected" alias so downstream trainers
-            # (which hardcode that key) load the right view. Under concat_columns
-            # this is the 2304-dim per-row concat; otherwise the masked-mean.
-            if config.concat_columns:
-                col_embeddings["tfidf_selected"] = np.concatenate(
-                    [col_embeddings[c] for c in embed_cols], axis=1
-                ).astype(np.float32)
-            else:
-                col_embeddings["tfidf_selected"] = embeddings
-            col_has_content["tfidf_selected"] = np.ones(n, dtype=bool)
+        # Materialise the 2304-dim per-row concat under the CONCAT_3_KEY alias
+        # so downstream trainers (which hardcode the key) load the right view.
+        col_embeddings[CONCAT_3_KEY] = np.concatenate(
+            [col_embeddings[c] for c in embed_cols], axis=1
+        ).astype(np.float32)
+        col_has_content[CONCAT_3_KEY] = np.ones(n, dtype=bool)
 
         label_catalog = label_catalog_for_config(config.labels_csv_path)
         label_embeddings, _ = embed_texts(
@@ -220,18 +198,14 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         return outputs
 
     # --- Step 4: Run the 4-stage pipeline ------------------------------------
-    # `report_emb_classifier` is the per-case vector fed to the gate and the LP
-    # head. Under concat_3 (concat_columns=True) this is the 2304-dim concat
-    # stored under "tfidf_selected"; otherwise the 768-dim masked-mean.
-    if config.concat_columns and "tfidf_selected" in col_embeddings:
-        report_emb_classifier = col_embeddings["tfidf_selected"].astype(np.float32)
-    else:
-        report_emb_classifier = embeddings
+    # `report_emb_classifier` is the per-case 2304-dim concat fed to the gate
+    # and the LP head.
+    report_emb_classifier = col_embeddings[CONCAT_3_KEY].astype(np.float32)
 
-    # GroupClassifier input: concatenation of the actually-embedded sections
-    # (matches the shape the head was trained on; the "tfidf_selected" alias is
-    # excluded so it isn't double-stacked under concat-3).
-    group_input_cols = [c for c in cols if c != "tfidf_selected"] or cols
+    # GroupClassifier input: concatenation of the per-section views (matches
+    # the head's training shape; the CONCAT_3_KEY alias is excluded so it
+    # isn't double-stacked).
+    group_input_cols = [c for c in cols if c != CONCAT_3_KEY] or cols
     col_emb_concat = np.concatenate(
         [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
          for col in group_input_cols],
@@ -276,10 +250,10 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             )
 
     # Stage 3b: keyword correction lives inside the per-case dispatcher.
-    # The LP head consumes `report_emb_classifier` (2304-dim under concat-3),
-    # but cosine-similarity fallbacks need a view that matches `label_embeddings`
-    # dim (768) — so pass the 768-dim masked-mean as `mean_embeddings` and the
-    # LP-shaped view as `lp_embeddings`.
+    # The LP head consumes `report_emb_classifier` (2304-dim), but cosine-
+    # similarity fallbacks need a view that matches `label_embeddings` dim
+    # (768) — so pass the 768-dim masked-mean as `mean_embeddings` and the
+    # 2304-dim concat as `lp_embeddings`.
     categorization = categorize_per_case(
         texts=texts,
         mean_embeddings=embeddings,
@@ -389,7 +363,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "device": str(torch_device),
         "input_rows": int(n),
         "task": config.task,
-        "text_cols": list(config.text_cols),
+        "sections": [list(s) for s in CONCAT_3_SECTIONS],
         "id_col": config.id_col,
         "max_length": int(config.max_length),
         "batch_size": int(config.batch_size),

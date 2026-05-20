@@ -86,9 +86,9 @@ def evaluate_case_presence(
         _load_cache_minimal(embedding_cache_path)
     print(f"  Loaded embedding cache: {len(case_ids)} cases, columns={col_names}.")
 
-    # Match production: under concat-3 the gate feeds the per-row concat
-    # (col "tfidf_selected" alias, 2304-dim); otherwise the 768-dim mean.
-    concat_input_cols = [c for c in col_names if c != "tfidf_selected"] or col_names
+    # Match production: the gate feeds the 2304-dim concat-3 per-row view.
+    # Exclude the "concat_3" alias so we re-concat the per-section views.
+    concat_input_cols = [c for c in col_names if c != "concat_3"] or col_names
     col_emb_concat = np.concatenate(
         [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
          for col in concat_input_cols],

@@ -137,9 +137,8 @@ Trains a binary MLP that predicts cancer vs. non-cancer at the case level. This 
 first stage of the four-stage production pipeline — it filters non-cancer cases before
 the GroupClassifier runs.
 
-**Input:** 2304-dim concat-3 report embedding (`col_tfidf_selected`, three per-section
-768-dim views concatenated per row). `emb_dim` is auto-detected from the cache, so the
-legacy 768-dim path at `ml-tfidf/` still works for that pipeline.
+**Input:** 2304-dim concat-3 report embedding (`col_concat_3`, three per-section
+768-dim views concatenated per row). `emb_dim` is auto-detected from the cache.
 **Output:** scalar cancer probability per case.
 **Training objective:** recall-weighted (`recall_weight=0.85`) — errs toward letting
 uncertain cases through rather than missing cancer.
@@ -227,7 +226,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
 ```
 
 `--label-presence-col-pair-mode` is on by default; pass `--no-label-presence-col-pair-mode`
-to fall back to the legacy single-MLP concat path (n_cols=1, used by `ml-tfidf/`).
+to fall back to the single-MLP concat path (n_cols=1).
 
 Checkpoints saved to `ml/output/checkpoints/label_presence/{safe_group_name}.pt`.
 The "Uncommon" model saves to `ml/output/checkpoints/label_presence/uncommon.pt`.
@@ -236,7 +235,7 @@ The "Uncommon" model saves to `ml/output/checkpoints/label_presence/uncommon.pt`
 
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --csv ml/data/report.csv --concat-3 \
+  --csv ml/data/report.csv \
   --model ml/output/checkpoints/contrastive --local-only \
   --embedding-cache ml/output/training/embedding_cache.npz \
   --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
@@ -288,22 +287,6 @@ Adapts PetBERT's embedding space so that report text and cancer label text land
 closer together. The adapted backbone is then used as the starting point for
 the downstream classifiers (`train-case-presence`, `train-groups`,
 `train-label-presence`). A cold start is required after adaptation.
-
-### Step 0 — Fit the TF-IDF vectorizer (legacy TF-IDF path only)
-
-> Required only for the legacy TF-IDF text-selection path preserved at `ml-tfidf/`.
-> The concat-3 production path embeds each section independently and does **not** use
-> TF-IDF sentence scoring — skip this step when training the current `ml/` pipeline.
-
-The TF-IDF contrastive training pairs are built from TF-IDF-selected text that must match
-what production embeds. Fit the vectorizer before building pairs:
-
-```bash
-ml/.venv/Scripts/python.exe ml/training/contrastive/fit_text_selector.py
-```
-
-Saved to `ml/output/training/tfidf_selector.joblib`. Skip this step if the vectorizer
-already exists and `report.csv` has not grown significantly since it was last fitted.
 
 ### Step 1 — Adapt the backbone
 
@@ -437,6 +420,5 @@ to fall back to the 3-stage pipeline (KW correction directly within each predict
 | New annotation data | No | No | No — full cold start |
 | Architecture change (e.g. `n_cols`, input pipeline) | No | No | No — full cold start |
 | Backbone adaptation completed | No | No | No — full cold start |
-| TF-IDF vectorizer re-fitted (`tfidf_selector.joblib`) | No | No | No — full cold start |
 | Hyperparameter change (`--hidden-dim`, `--epochs`) | Yes | Yes | No — retrain only |
 | New training cycle (same architecture) | Yes | Yes | Overwritten each cycle |

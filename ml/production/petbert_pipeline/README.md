@@ -2,7 +2,7 @@
 
 This pipeline maps each clinical report from `report.csv` to taxonomy terms from
 `ml/ICD_labels/labels.csv` using PetBERT embeddings, the trained
-`PresenceClassifier`, and group-keyword term correction. It outputs ranked
+4-stage classifier stack, and group-keyword term correction. It outputs ranked
 predictions per case:
 
 - `predicted_term`
@@ -12,10 +12,9 @@ predictions per case:
 ## Run
 
 ```bash
-ml/.venv/bin/python ml/scripts/run_production.py \
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --csv ml/data/report.csv \
   --id-col case_id \
-  --text-cols "HISTOPATHOLOGICAL SUMMARY,FINAL COMMENT,ANCILLARY TESTS" \
   --model SAVSNET/PetBERT \
   --labels-csv ml/ICD_labels/labels.csv \
   --task categorize \
@@ -24,11 +23,15 @@ ml/.venv/bin/python ml/scripts/run_production.py \
 
 Use `--local-only` if the model is already cached and you want to avoid network calls.
 
+The report is split into three sections (HIST, FINAL COMMENT + COMMENT,
+ANCILLARY TESTS) and each is embedded independently; the three 768-dim section
+vectors are concatenated to a 2304-dim per-case representation (concat-3) fed
+to every downstream classifier.
+
 ## Architecture
 
-- `pipeline.py`: thin orchestrator — load → text-select → embed → call each stage → write outputs
+- `pipeline.py`: thin orchestrator — load -> section -> embed -> call each stage -> write outputs
 - `embedding.py`: model/tokenizer loading and per-column mean-pooled embedding
-- `text_selector.py`: TF-IDF multi-column text selection
 - `embedding_cache.py`: save/load cached embeddings
 - `stages/case_presence_classifier.py`: Stage 1 — CasePresenceClassifier gate
 - `stages/group_classifier.py`: Stage 2 — GroupClassifier
@@ -44,7 +47,6 @@ Use `--local-only` if the model is already cached and you want to avoid network 
 ## Outputs
 
 - `petbert_predictions.csv`: ranked predictions per case
-- `petbert_column_scores.csv`: per-column debug breakdown
 - `petbert_provenance.csv`: per-case traceability and debug info
 - `petbert_similarity_scores.csv`: full label-score matrix dump
 - `petbert_visualization.csv`: PCA coordinates for 2-D plotting

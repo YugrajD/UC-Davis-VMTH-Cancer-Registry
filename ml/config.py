@@ -27,7 +27,6 @@ LLM_ANNOTATION_CLEANED_CSV = f"{LLM_ANNOTATION_DIR}/llm_annotation_cleaned.csv"
 # Training intermediates
 # ---------------------------------------------------------------------------
 EMBEDDING_CACHE_NPZ = "ml/output/training/embedding_cache.npz"
-TFIDF_VECTORIZER_PATH = "ml/output/training/tfidf_selector.joblib"
 CONTRASTIVE_PAIRS_CSV = "ml/output/training/contrastive/contrastive_pairs.csv"
 HARD_NEG_PAIRS_CSV = "ml/output/training/contrastive/hard_neg_pairs.csv"
 

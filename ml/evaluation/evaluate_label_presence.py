@@ -38,20 +38,14 @@ from utils.encoding import safe_filename
 
 
 def _load_cache_minimal(path: Path) -> tuple[list[str], np.ndarray, np.ndarray]:
-    """Read case_ids, report embeddings, label_embeddings from the cache NPZ.
-
-    Prefers the concat-3 view at "col_tfidf_selected" (2304-dim under concat_3,
-    or 768-dim under legacy TF-IDF mode) — that's what the LP heads were
-    trained on. Falls back to "mean_embeddings" only if "col_tfidf_selected"
-    is absent.
-    """
+    """Read case_ids, concat-3 report embeddings, and label_embeddings."""
     data = np.load(path, allow_pickle=True)
-    report_embs = (
-        data["col_tfidf_selected"]
-        if "col_tfidf_selected" in data.files
-        else data["mean_embeddings"]
-    )
-    return list(data["case_ids"]), report_embs, data["label_embeddings"]
+    if "col_concat_3" not in data.files:
+        raise ValueError(
+            f"Embedding cache {path} is missing the 'col_concat_3' key. "
+            "Rebuild the cache by deleting it and re-running run_production.py."
+        )
+    return list(data["case_ids"]), data["col_concat_3"], data["label_embeddings"]
 
 
 def _load_annotation(annotation_csv: Path) -> tuple[

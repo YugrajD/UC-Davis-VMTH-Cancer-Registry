@@ -81,7 +81,7 @@ sub-problem — cosine similarity within only the ~20 terms of the predicted gro
 implicitly through argmax after independent scoring. The GroupClassifier directly
 penalises wrong-group assignments in the loss, eliminating CO at the group level.
 
-**Current architecture (concat-3, 2026-05-13):** Uses `col_tfidf_selected` (2304-dim) from
+**Current architecture (concat-3, 2026-05-13):** Uses `col_concat_3` (2304-dim) from
 the per-section-adapted contrastive backbone — three section views (HIST / FC+C /
 ANCILLARY) concatenated per row.
 
@@ -89,7 +89,7 @@ ANCILLARY) concatenated per row.
 
 ```
 GroupClassifier(
-    input_dim   = 2304,    # concat-3 per-row embedding (col_tfidf_selected)
+    input_dim   = 2304,    # concat-3 per-row embedding (col_concat_3)
     hidden_dim  = 512,
     num_classes = 25,      # 25 groups (post-uncommon-bucket consolidation)
     dropout     = 0.1
@@ -101,8 +101,7 @@ forward(x):
     x = Sigmoid(Linear(512 → 25))   # independent probability per class
 ```
 
-`emb_dim` is parameter-driven and auto-detected from the training NPZ shape, so the same
-trainer transparently handles the legacy 768-dim path at `ml-tfidf/` if needed.
+`emb_dim` is parameter-driven and auto-detected from the training NPZ shape.
 
 Sigmoid (not softmax) because a report can belong to multiple groups simultaneously.
 Loss: `BCEWithLogitsLoss` with per-class inverse-frequency weights, capped at
@@ -169,7 +168,6 @@ Four sequential stages, each with a single distinct responsibility:
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --csv ml/data/report.csv \
-  --concat-3 \
   --model ml/output/checkpoints/contrastive --local-only \
   --embedding-cache ml/output/training/embedding_cache.npz \
   --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
@@ -179,13 +177,13 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --label-presence-classifier-dir ml/output/checkpoints/label_presence \
   --label-presence-thresholds-json ml/output/checkpoints/label_presence/lp_thresholds.json \
   --tail-max-predictions 2 --tail-max-group-prob-gap 0.08 \
-  --out-dir ml/output/production --device xpu
+  --out-dir ml/output/production --device cuda
 ```
 
-`--concat-3` selects the per-section text path and ensures the 2304-dim view (`col_tfidf_selected`)
-is routed to the case gate, group classifier, and LP head. Cosine-similarity fallbacks inside
-`categorize_per_case` use the 768-dim masked-mean (`mean_embeddings`) so the comparison dim matches
-the 768-dim label embeddings.
+The 2304-dim concat-3 view (`col_concat_3`) is built unconditionally and routed to the
+case gate, group classifier, and LP head. Cosine-similarity fallbacks inside
+`categorize_per_case` use the 768-dim masked-mean (`mean_embeddings`) so the comparison
+dim matches the 768-dim label embeddings.
 
 **Run 9 (2026-04-29, superseded):** Used the label-level `PresenceClassifier` score matrix (N × M)
 as the gate instead of `CasePresenceClassifier`. Replaced because `CasePresenceClassifier` is simpler
@@ -515,7 +513,6 @@ See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sw
   ```bash
   ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
     --csv ml/data/report.csv \
-    --concat-3 \
     --model ml/output/checkpoints/contrastive --local-only \
     --embedding-cache ml/output/training/embedding_cache.npz \
     --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
@@ -525,11 +522,11 @@ See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sw
     --label-presence-classifier-dir ml/output/checkpoints/label_presence \
     --label-presence-thresholds-json ml/output/checkpoints/label_presence/lp_thresholds.json \
     --tail-max-predictions 2 --tail-max-group-prob-gap 0.08 \
-    --out-dir ml/output/production --device xpu
+    --out-dir ml/output/production --device cuda
   ```
   Stage 1 (2304-dim gate) filters non-cancer; Stage 2 assigns the ICD group with argmax fallback and tail-gate trimming; Stage 3a (per-group LP head, `n_cols=3, col_pair_mode=True, col_combine="learned"`) picks the within-group term using per-LP calibrated thresholds; Stage 3b (KW correction) applies behavior-code and subtype discriminators.
 
-- **Legacy TF-IDF 4-stage (`ml-tfidf/`):** preserved baseline at G+S 56.6% on eval-half. Same CLI flags, but `--no-concat-3` (or omit `--concat-3`) and 768-dim checkpoints.
+- **Legacy TF-IDF 4-stage (`ml-tfidf/`):** preserved baseline at G+S 56.6% on eval-half. Separate pipeline directory, not driven by `ml/scripts/run_production.py`.
 - **Phase 23 GroupClassifier alone (Run 8 baseline):** `--group-classifier` only, no gate — 50.1% G+S, 8.9% FP, 15.5% FN at threshold=0.90.
 - **Phase 23 binary:** legacy iterative LabelPresenceClassifier (since deleted) — 47.2% G+S, higher FP, lower FN.
 - **Phase 18 contrastive (keyword annotation):** highest single-classifier G+S (86.5%) but evaluated on a smaller dataset — not directly comparable to LLM-annotation results.

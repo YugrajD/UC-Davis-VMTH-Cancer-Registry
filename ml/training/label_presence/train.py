@@ -1,12 +1,10 @@
 """Train a LabelPresenceClassifier for a single ICD group.
 
-Reads the cache entry under "tfidf_selected" (alias). Under the canonical
-concat-3 pipeline this is a 2304-dim per-row concat (3 sections × 768) and the
-LP head is built with n_cols=3, col_pair_mode=True, col_combine="learned" so
-each section scores the label independently through a shared MLP, then a
-learned 3→1 weighted sum combines per-section logits. Under legacy single-col
-mode (n_cols=1) the report embedding is 768-dim and col_pair_mode=False
-collapses to the original [report | label] → MLP concat path.
+Reads the cache entry under "concat_3" — the 2304-dim per-row concat
+(3 sections × 768) produced by the production pipeline. The LP head is built
+with n_cols=3, col_pair_mode=True, col_combine="learned" so each section
+scores the label independently through a shared MLP, then a learned 3→1
+weighted sum combines per-section logits.
 
 Designed to be called once per ICD group by run_training.py --mode train-label-presence.
 """
@@ -113,13 +111,13 @@ def train_label_presence(
     case_id_to_idx = {cid: i for i, cid in enumerate(cache["case_ids"])}
     label_text_to_idx = {t: i for i, t in enumerate(cache["label_texts"])}
 
-    # Use TF-IDF selected embedding (768-dim, single column) as report embedding
-    tfidf_col = "tfidf_selected"
-    if tfidf_col not in cache["col_embeddings"]:
-        print(f"  Error: 'tfidf_selected' column not found in cache. Run TF-IDF pipeline first.")
+    # Use the concat-3 per-row embedding (2304-dim) as report embedding.
+    concat_col = "concat_3"
+    if concat_col not in cache["col_embeddings"]:
+        print(f"  Error: 'concat_3' column not found in cache. Rebuild the embedding cache first.")
         return 0.0
-    tfidf_embs = cache["col_embeddings"][tfidf_col]   # (N_cases, 768)
-    label_embs_all = cache["label_embeddings"]          # (M_labels, 768)
+    report_embs_all = cache["col_embeddings"][concat_col]  # (N_cases, 2304)
+    label_embs_all = cache["label_embeddings"]              # (M_labels, 768)
 
     report_list, label_list, target_list, kept_case_ids = [], [], [], []
     skipped = 0
@@ -129,7 +127,7 @@ def train_label_presence(
         if cidx is None or lidx is None:
             skipped += 1
             continue
-        report_list.append(tfidf_embs[cidx])
+        report_list.append(report_embs_all[cidx])
         label_list.append(label_embs_all[lidx])
         target_list.append(float(row["target"]))
         kept_case_ids.append(cid)

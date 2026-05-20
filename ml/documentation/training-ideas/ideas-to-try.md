@@ -264,14 +264,14 @@ Implemented as `ml/scripts/sweep_lp_thresholds.py` (one consolidated JSON, not p
 
 ---
 
-### LB2 — Round 2 backbone fine-tuning (hard-neg) on the post-TF-IDF backbone
+### LB2 — Round 2 backbone fine-tuning (hard-neg) on the concat-3 backbone
 
 **Status:** Not started. **(Refreshed from previous Tier 4a.)** Now more attractive given QW1 (LP-layer hard-neg) was net-negative at fraction=0.7 (Phase 30, 2026-05-10) — the same hard-neg signal at the *embedding* layer is the next place to try.
 
-**Problem:** The current production backbone (`ml/output/checkpoints/contrastive/model.safetensors`, 2026-05-07 05:18) was trained **Round 1 only** — single 3-epoch InfoNCE pass with in-batch negatives on TF-IDF-selected text, no hard-negative loss. The last hard-neg backbone pass on record is Phase 23 Run 8 (2026-04-28), which predates the TF-IDF text-selector format and is no longer the production backbone. The on-disk `hard_neg_pairs.csv` (2026-04-28 12:35) was built from pre-TF-IDF report text — it must be re-mined before any Round 2 attempt.
+**Problem:** The current production backbone (`ml/output/checkpoints/contrastive/model.safetensors`) was last adapted with per-section InfoNCE only — no hard-negative margin loss. The on-disk `hard_neg_pairs.csv` from the pre-concat-3 era must be re-mined before any Round 2 attempt so the triplets match the current per-section text distribution.
 
 **Approach:**
-1. Mine fresh hard-neg triplets from current Phase 28 production errors. New script `ml/scripts/mine_phase28_confusions.py` — read `output/production/contrastive/petbert_predictions.csv` + annotation CSV, emit `output/training/contrastive/hard_neg_pairs.csv` with (report, correct_label, wrong_label) triplets where `report` is the same TF-IDF-selected text the current backbone was trained on (use `text_selection.get_selector(...)`).
+1. Mine fresh hard-neg triplets from current production errors. The per-section triplet builder lives at `ml/training/contrastive/build_contrastive_dataset.py::build_hard_neg_pairs` — feed it the CO-bank CSV; it emits one triplet per (case, correct, wrong, section).
 2. Warm-start from current backbone: `--mode adapt-backbone --model ml/output/checkpoints/contrastive --skip-pair-build --hard-neg-csv … --hard-neg-weight 0.25 --hard-neg-margin 0.3 --lr 1e-5 --epochs 2`. Phase 21 found weight=0.25 the right setting; weight=0.5 (Phase 20) regressed.
 3. Cold-start cache + Stage 1 + Stage 2 + Stage 3a per CLAUDE.md "Cold Start Protocol":
    ```bash

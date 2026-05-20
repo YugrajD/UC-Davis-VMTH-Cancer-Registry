@@ -63,17 +63,20 @@ pipeline before calling `run_scan`:
 | Default | Source |
 |---|---|
 | `--model` | `ml/output/checkpoints/contrastive/` (per-section-adapted PetBERT backbone) |
-| `--embedding-cache` | `ml/output/training/embedding_cache.npz` (stores 2304-dim `col_tfidf_selected`) |
+| `--embedding-cache` | `ml/output/training/embedding_cache.npz` (stores 2304-dim `col_concat_3`) |
 | `--case-presence-classifier` | `config.CASE_PRESENCE_CLASSIFIER_PT` (Stage 1 gate, 2304-dim) |
 | `--case-presence-threshold` | `0.85` (recommended) |
 | `--group-classifier` | `ml/output/checkpoints/group/group_classifier_best.pt` (Stage 2, 2304-dim) |
 | `--label-presence-classifier-dir` | `ml/output/checkpoints/label_presence/` (Stage 3a, optional) |
 | `--label-presence-thresholds-json` | `ml/output/checkpoints/label_presence/lp_thresholds.json` (per-group calibration) |
-| `--concat-3` | **Required** for the current 2304-dim stack. Builds per-section synthetic columns and concatenates per-row to 2304-dim. |
 | `--embed-only` | False. Set to short-circuit after the embed step (cache-building runs). |
 | `--out-dir` | `ml/output/production/contrastive/` |
-| `--text-cols` | empty (concat-3 path overrides TF-IDF selection when `--concat-3` is set) |
 | `--local-only` | True |
+
+The concat-3 sectioning is hardcoded in `pipeline.py::CONCAT_3_SECTIONS` (HIST, FC+C,
+ANCILLARY) — there is no per-run override. The legacy `--concat-3` opt-in flag and
+`--text-cols`/`--tfidf-vectorizer` overrides were removed on 2026-05-20 along with the
+TF-IDF text-selection fallback.
 
 These defaults can be overridden via CLI flags. To disable Stage 3a, pass
 `--label-presence-classifier-dir ""`. To disable Stage 1 (gate), pass
@@ -95,18 +98,16 @@ Important columns:
 | `GROSS DESCRIPTION` | Macroscopic specimen description (excluded — adds noise, not signal) |
 | `CLINICAL ABSTRACT` | Referring clinician history (excluded — adds noise, not signal) |
 
-**Concat-3 text representation (production default).** When `--concat-3` is set, the pipeline
-builds three synthetic columns (`__sec_0__`, `__sec_1__`, `__sec_2__`) by joining the raw
-columns above, embeds each section independently through PetBERT (each gets the full token
-budget), then concatenates the three 768-dim section embeddings per row into a single
-**2304-dim view stored under the cache key `tfidf_selected`**. This aligned shape feeds Stage 1
-(case gate), Stage 2 (GroupClassifier), and Stage 3a (LabelPresenceClassifier with
+**Concat-3 text representation (the only production path).** The pipeline builds three
+synthetic columns (`__sec_0__`, `__sec_1__`, `__sec_2__`) by joining the raw columns above,
+embeds each section independently through PetBERT (each gets the full token budget), then
+concatenates the three 768-dim section embeddings per row into a single **2304-dim view
+stored under the cache key `concat_3`**. This aligned shape feeds Stage 1 (case gate),
+Stage 2 (GroupClassifier), and Stage 3a (LabelPresenceClassifier with
 `n_cols=3, col_pair_mode=True`).
 
-The earlier production path used `TextSelector` (TF-IDF sentence scoring within a single
-512-token budget) to produce a single 768-dim view. That path is still available via
-`--text-cols` overrides; it is the input format used by the `ml-tfidf/` preserved baseline
-and is not the current production default. See `text_selection/text_selector.py`.
+The earlier TF-IDF sentence-scoring path (single 512-token budget producing one 768-dim
+view) is preserved at `../ml-tfidf/` and was removed from `ml/` on 2026-05-20.
 
 ## Step-by-Step Runtime Flow
 
@@ -117,24 +118,19 @@ The main implementation lives in `ml/production/petbert_pipeline/pipeline.py`.
 The pipeline reads `ml/data/report.csv` using `latin-1`, strips BOM artifacts from
 column names, and normalizes missing values to empty strings.
 
-### 1b. Concat-3 section build (default production path)
+### 1b. Concat-3 section build
 
-When `--concat-3` is set, the pipeline builds three synthetic per-row columns
-(`__sec_0__`, `__sec_1__`, `__sec_2__`) by joining the relevant raw columns:
+The pipeline builds three synthetic per-row columns (`__sec_0__`, `__sec_1__`, `__sec_2__`)
+by joining the relevant raw columns:
 
 - `__sec_0__` = `HISTOPATHOLOGICAL SUMMARY`
 - `__sec_1__` = `FINAL COMMENT` + `\n` + `COMMENT`
 - `__sec_2__` = `ANCILLARY TESTS`
 
 Empty cells become empty strings (tracked via the `has_*` content masks). Section grouping
-lives in `production/petbert_pipeline/cli.py::_SECTIONS_3` and matches the data pipeline used
-to train the per-section contrastive backbone — see [[project-ml-pipeline]] memory.
-
-For the legacy TF-IDF text-selection path (used by the preserved `ml-tfidf/` baseline),
-`TextSelector` walks `SOURCE_COLS` in order, packs each column whole into the 512-token
-budget if it fits, and falls back to per-column TF-IDF sentence selection when a column
-overflows. Per-column vectorizers must exist at `ml/output/training/tfidf_selector.joblib`
-before that path can be used. The current ml/ pipeline does not require those vectorizers.
+lives in `production/petbert_pipeline/pipeline.py::CONCAT_3_SECTIONS` and matches the data
+pipeline used to train the per-section contrastive backbone — see [[project-ml-pipeline]]
+memory.
 
 ### 2. Reuse embedding cache when possible
 
@@ -157,9 +153,8 @@ This is what keeps repeated production and training-cycle runs fast.
 
 ### 3. Otherwise embed each report column separately
 
-On a cache miss, the pipeline loads PetBERT and embeds each selected report column
-independently. Under `--concat-3`, the three `__sec_N__` synthetic columns are what get
-embedded.
+On a cache miss, the pipeline loads PetBERT and embeds each of the three `__sec_N__`
+synthetic section columns independently.
 
 Important details:
 
@@ -167,7 +162,7 @@ Important details:
 - Mean pooling over non-padding tokens produces one 768-d embedding per column.
 - Empty cells are tracked separately with boolean masks.
 - After per-section embedding, the three section vectors are concatenated per-row into a
-  2304-dim view and stored under the cache alias `tfidf_selected`. That alias is what the
+  2304-dim view and stored under the cache alias `concat_3`. That alias is what the
   Stage 1 gate, Stage 2 GroupClassifier, and Stage 3a LP head consume.
 
 ### 4. Build a mean report embedding for analysis outputs
@@ -183,9 +178,9 @@ That mean embedding is used for:
 - cosine-similarity fallbacks inside `categorize_per_case` (where the comparison set is the
   768-dim `label_embeddings` — dim must match)
 
-It is **not** the main tensor used by the production classifier under concat-3; that is the
-2304-dim view. The dispatcher receives both: `mean_embeddings=embeddings` (768-d) and
-`lp_embeddings=report_emb_classifier` (2304-d under concat-3).
+It is **not** the main tensor used by the production classifier; that is the 2304-dim
+concat-3 view. The dispatcher receives both: `mean_embeddings=embeddings` (768-d) and
+`lp_embeddings=report_emb_classifier` (2304-d).
 
 ### 5. Embed every ICD label with the same base model
 
@@ -197,13 +192,12 @@ producing a label embedding matrix aligned with the report embedding space.
 ### 6. Concatenate report columns for Stage 2 input
 
 For Stage 2 inference, the pipeline concatenates the per-column report embeddings into
-one wide vector per case, zeroing out empty columns first. Under `--concat-3` the alias
-`tfidf_selected` (already 2304-dim) is the concat — the helper excludes it from a second
-round of stacking to avoid double-counting (`group_input_cols = [c for c in cols if c !=
-"tfidf_selected"]`). This `col_emb_concat` tensor is what the `GroupClassifier` consumes
-(2304-dim under concat-3). The same 2304-dim view goes to Stage 1 (case gate) and Stage 3a
-(LP head); the 768-dim masked-mean is reserved for cosine-similarity fallbacks against
-the 768-dim label embeddings.
+one wide vector per case, zeroing out empty columns first. The `concat_3` alias (already
+2304-dim) is the per-row concat — the helper excludes it from a second round of stacking
+to avoid double-counting (`group_input_cols = [c for c in cols if c != "concat_3"]`). This
+`col_emb_concat` tensor is what the `GroupClassifier` consumes (2304-dim). The same
+2304-dim view goes to Stage 1 (case gate) and Stage 3a (LP head); the 768-dim masked-mean
+is reserved for cosine-similarity fallbacks against the 768-dim label embeddings.
 
 ## Output Files
 
@@ -229,13 +223,13 @@ through `run_production.py`.
 ## Current CLI Behaviors That Matter
 
 - `run_production.py` pre-wires all four stage checkpoints by default (see "Entry Point And Defaults").
-- `--concat-3` switches the text/embed path to per-section concat-3 (2304-dim). Required when running against the current classifier set (case-presence, group, LP heads all trained on 2304-dim).
+- The text/embed path is fixed to per-section concat-3 (2304-dim). All current classifiers (case-presence, group, LP heads) are trained on 2304-dim input.
 - `--embed-only` short-circuits after the embed step; useful for cache-building runs without running classifiers (e.g., when bringing up a new arm or a fresh backbone).
 - `--label-presence-classifier-dir` enables Stage 3a; default is the production directory.
   Pass an empty string to disable and fall back to KW correction directly.
 - `--label-presence-threshold` (default 0.5) is the within-group label selection threshold and the fallback when no per-group threshold is set.
 - `--label-presence-thresholds-json` (default `ml/output/checkpoints/label_presence/lp_thresholds.json`) is a `{group_name: threshold}` map that overrides the global threshold per LP. Produced by `ml/scripts/sweep_lp_thresholds.py`; loaded automatically by `run_production.py`. Missing file → warn and fall back to the global threshold.
-- `--case-presence-threshold` (recommended **0.85**) — gate the GroupClassifier behind the case-presence cancer probability. Sweep with `sweep_case_gate_threshold.py` in `ml-3-stage/scripts/` (the script is currently in `ml-3-stage/`; future cleanup item to port into `ml/`).
+- `--case-presence-threshold` (recommended **0.85**) — gate the GroupClassifier behind the case-presence cancer probability.
 - `--tail-max-predictions` (default **2**) caps the number of group predictions emitted per case. Set to 1 to keep only the top group.
 - `--tail-max-group-prob-gap` (default **0.08**) drops tail group predictions whose probability is more than this far below the top group. Set to 1.0 to disable. Defaults calibrated 2026-05-11 on the held-out test set — see `ml/scripts/sweep_tail_gate.py` for the trade-off curve.
 - `--no-group-classifier-fallback-to-argmax` turns off the GroupClassifier argmax fallback
@@ -251,7 +245,6 @@ Run after training `CasePresenceClassifier`, `GroupClassifier`, and per-group `L
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --csv ml/data/report.csv \
-  --concat-3 \
   --model ml/output/checkpoints/contrastive --local-only \
   --embedding-cache ml/output/training/embedding_cache.npz \
   --case-presence-classifier ml/output/checkpoints/case_presence/case_presence_classifier.pt \
@@ -261,7 +254,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
   --label-presence-classifier-dir ml/output/checkpoints/label_presence \
   --label-presence-thresholds-json ml/output/checkpoints/label_presence/lp_thresholds.json \
   --tail-max-predictions 2 --tail-max-group-prob-gap 0.08 \
-  --out-dir ml/output/production --device xpu
+  --out-dir ml/output/production --device cuda
 ```
 
 **Stage 1 — CasePresenceClassifier gate (2304-dim):**
@@ -277,7 +270,7 @@ For cases that passed the gate, predicts which cancer group(s) the case belongs 
 is applied: the top-scoring group is used regardless of confidence, so gate-passed cases
 always receive a concrete group prediction rather than "Unidentified Cancer". MLP on
 the 2304-dim per-section concat from the contrastive backbone. **Current production: macro
-F1 = 0.5712** (up from 0.4475 on the TF-IDF baseline; +28% relative).
+F1 = 0.5712** (up from 0.4475 on the preserved `ml-tfidf/` baseline; +28% relative).
 Tail-gate: at most `--tail-max-predictions` (default 2) groups are kept per case, and any
 tail group more than `--tail-max-group-prob-gap` (default 0.08) below the top group's
 probability is dropped. Calibrated 2026-05-11 — gives +0.9pp G+S vs no-gate at the cost
@@ -326,5 +319,4 @@ If this file and an older architecture doc disagree, trust the implementation in
 - `ml/production/petbert_pipeline/pipeline.py`
 - `ml/production/petbert_pipeline/stages/` (one file per stage; `stages/__init__.py` is the per-case dispatcher with the `lp_embeddings` parameter)
 - `ml/production/petbert_pipeline/embedding.py`
-- `ml/production/petbert_pipeline/cli.py` (defines `_SECTIONS_3` for `--concat-3`)
-- `ml/text_selection/text_selector.py` (legacy TF-IDF path, used by `ml-tfidf/` only)
+- `ml/production/petbert_pipeline/pipeline.py` (defines `CONCAT_3_SECTIONS` and `CONCAT_3_KEY`)

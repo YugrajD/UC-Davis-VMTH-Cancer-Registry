@@ -101,9 +101,9 @@ def evaluate_groups(
     filter_ids = load_filter_ids(cases_txt)
 
     # Build col_emb_concat in the same order as production (pipeline.py):
-    # exclude the "tfidf_selected" per-row concat alias so the input matches
+    # exclude the "concat_3" per-row concat alias so the input matches
     # the head's training shape (concat of the per-section views only).
-    concat_input_cols = [c for c in col_names if c != "tfidf_selected"] or col_names
+    concat_input_cols = [c for c in col_names if c != "concat_3"] or col_names
     col_emb_concat = np.concatenate(
         [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
          for col in concat_input_cols],

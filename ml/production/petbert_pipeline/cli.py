@@ -13,14 +13,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--csv", default=config.REPORTS_CSV, help="Path to input CSV")
     parser.add_argument("--id-col", default="case_id", help="ID column name")
-    parser.add_argument(
-        "--text-cols",
-        default="",
-        help=(
-            "Comma-separated column names to embed independently. "
-            "Empty string (default) activates TF-IDF multi-column text selection."
-        ),
-    )
     parser.add_argument("--model", default="SAVSNET/PetBERT", help="HF model name or local path")
     parser.add_argument(
         "--local-only",
@@ -181,26 +173,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--tfidf-vectorizer",
-        default=config.TFIDF_VECTORIZER_PATH,
-        help=(
-            "Path to the fitted TF-IDF vectorizer joblib file. "
-            "Used for multi-column text selection when --text-cols is empty. "
-            f"Default: {config.TFIDF_VECTORIZER_PATH}"
-        ),
-    )
-    parser.add_argument(
-        "--concat-3",
-        action="store_true",
-        default=False,
-        help=(
-            "Use the concat-3 text representation: embed three sections "
-            "(HIST, FINAL COMMENT+COMMENT, ANCILLARY TESTS) independently and "
-            "concatenate to 2304-dim. Overrides --text-cols and the TF-IDF path. "
-            "Required when running against classifiers trained on 2304-dim input."
-        ),
-    )
-    parser.add_argument(
         "--embed-only",
         action="store_true",
         default=False,
@@ -212,25 +184,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-_SECTIONS_3: tuple[tuple[str, ...], ...] = (
-    ("HISTOPATHOLOGICAL SUMMARY",),
-    ("FINAL COMMENT", "COMMENT"),
-    ("ANCILLARY TESTS",),
-)
-
-
 def build_config(args: argparse.Namespace) -> ScanConfig:
-    text_cols = tuple(c.strip() for c in args.text_cols.split(",") if c.strip())
     label_presence_dir = getattr(args, "label_presence_classifier_dir", None)
     if label_presence_dir == "":
         label_presence_dir = None
-    section_text_cols = _SECTIONS_3 if getattr(args, "concat_3", False) else None
-    concat_columns = bool(getattr(args, "concat_3", False))
     embed_only = bool(getattr(args, "embed_only", False))
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
-        text_cols=text_cols,
         model_name=args.model,
         local_only=args.local_only,
         out_dir=args.out_dir,
@@ -254,9 +215,6 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         tail_max_predictions=args.tail_max_predictions,
         tail_max_group_prob_gap=args.tail_max_group_prob_gap,
         rerank_stage3=args.rerank_stage3,
-        tfidf_vectorizer_path=args.tfidf_vectorizer,
-        section_text_cols=section_text_cols,
-        concat_columns=concat_columns,
         embed_only=embed_only,
     )
 

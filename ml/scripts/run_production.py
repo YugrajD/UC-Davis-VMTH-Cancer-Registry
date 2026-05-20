@@ -2,9 +2,9 @@
 
 No env PYTHONPATH needed — this script adds ml/ to sys.path automatically.
 
-Pipeline: TF-IDF text selection → PetBERT (contrastive backbone) →
-          CasePresenceClassifier gate → GroupClassifier →
-          LabelPresenceClassifier (per-group) → ICD-O KW correction.
+Pipeline: concat-3 sectioning -> PetBERT (contrastive backbone) ->
+          CasePresenceClassifier gate -> GroupClassifier ->
+          LabelPresenceClassifier (per-group) -> ICD-O KW correction.
 
 Usage:
   python ml/scripts/run_production.py --local-only
@@ -32,7 +32,6 @@ def main() -> int:
         label_presence_thresholds_json=config.LABEL_PRESENCE_THRESHOLDS_JSON,
         out_dir=f"{config.OUTPUT_PRODUCTION_DIR}/contrastive",
         local_only=True,
-        text_cols="",  # empty = TF-IDF text selection
     )
     run_scan(build_config(parser.parse_args()))
     return 0

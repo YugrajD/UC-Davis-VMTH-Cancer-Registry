@@ -14,28 +14,21 @@ export const GEO_URLS: Record<GeoLevel, string> = {
   zcta: ZCTA_GEO_URL,
 };
 
-export const INITIAL_VIEW_STATE = {
-  longitude: -119.5,
-  latitude: 37.6,
-  zoom: 5.1,
-  pitch: 0,
-  bearing: 0,
-};
-
-// Tighter framing tuned for the small (~400 px tall) Analysis-page maps,
-// where INITIAL_VIEW_STATE's zoom crops off the corners of California.
+// Default Web Mercator camera that fits the entire state of California
+// with visible margin on all four sides.
 //
-// California's true extent is roughly 32.5°N–42°N latitude and
-// -124.4°W to -114.1°W longitude.  In Web Mercator the latitude midpoint
-// is ~37.4°N (slightly north of the geographic midpoint because Mercator
-// stretches higher latitudes) and the longitude midpoint is -119.25°W.
-// Zoom 4.5 leaves visible margin around the entire state even when a
-// map cell is narrow (~290 px wide in the 4-across xl grid layout).
-export const ANALYSIS_INITIAL_VIEW_STATE = {
-  ...INITIAL_VIEW_STATE,
+// California's extent: 32.5°N–42°N latitude, -124.4°W to -114.1°W longitude.
+// Latitude midpoint in Mercator is ~37.4°N (slightly north of the
+// geographic midpoint because Mercator stretches higher latitudes).
+// Longitude midpoint is -119.25°W.  Zoom 4.5 leaves the full state
+// visible even on narrow ~290 px-wide map cells in the Analysis 4-across
+// grid layout.
+export const INITIAL_VIEW_STATE = {
   longitude: -119.25,
   latitude: 37.4,
   zoom: 4.5,
+  pitch: 0,
+  bearing: 0,
 };
 
 export const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];

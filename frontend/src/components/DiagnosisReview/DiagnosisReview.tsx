@@ -49,6 +49,48 @@ function formatTs(iso: string): string {
   return new Date(iso).toLocaleString();
 }
 
+// Source text panel: truncates to ~3 lines / 240 chars by default with a
+// "Show more / Show less" toggle.  Renders nothing when the text is null
+// (legacy diagnoses ingested before the May 2026 fix don't have it).
+const SOURCE_TEXT_TRUNCATE_AT = 240;
+
+function SourceText({ text }: { text: string | null }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!text || !text.trim()) {
+    return (
+      <div>
+        <p className="text-xs text-gray-500 mb-1">Source text (Clinical Diagnoses)</p>
+        <p className="text-xs text-gray-400 italic">Source text not available for this diagnosis.</p>
+      </div>
+    );
+  }
+
+  const trimmed = text.trim();
+  const needsTruncation = trimmed.length > SOURCE_TEXT_TRUNCATE_AT;
+  const shown = expanded || !needsTruncation
+    ? trimmed
+    : trimmed.slice(0, SOURCE_TEXT_TRUNCATE_AT).trimEnd() + '…';
+
+  return (
+    <div>
+      <p className="text-xs text-gray-500 mb-1">Source text (Clinical Diagnoses)</p>
+      <p className="text-sm whitespace-pre-wrap text-[var(--color-text-primary)]">
+        {shown}
+      </p>
+      {needsTruncation && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-xs font-medium text-blue-600 hover:text-blue-800"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface DetailPanelProps {
   detail: DiagnosisDetail | null;
   loading: boolean;
@@ -113,6 +155,8 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           <p className="font-medium">{detail.prediction_method ?? '—'}</p>
         </div>
       </div>
+
+      <SourceText text={detail.original_text} />
 
       {detail.predicted_term && (
         <div>

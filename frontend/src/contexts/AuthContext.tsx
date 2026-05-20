@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase, supabaseConfigured } from '../lib/supabase';
+import { parseAuthCallback } from '../lib/authUrl';
 import { fetchMe } from '../api/client';
 
 interface AuthState {
@@ -33,28 +34,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isReviewer, setIsReviewer] = useState(false);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   // Read any Supabase error from the URL synchronously so it's available on
-  // the very first render with no useEffect needed.  Supabase puts the error
-  // in the query string (PKCE flow) OR the hash fragment (implicit flow).
-  //
-  // Initializer is pure — no history.replaceState — because React StrictMode
-  // runs lazy initializers twice in dev, and a side effect there would clear
-  // the URL before the second run, making the second run return null and
-  // overwriting the real state value.  URL cleanup happens in a useEffect.
-  const [authError, setAuthError] = useState<string | null>(() => {
-    const sources = [window.location.search.slice(1), window.location.hash.slice(1)];
-    for (const raw of sources) {
-      if (!raw.includes('error=')) continue;
-      const params = new URLSearchParams(raw);
-      const errorCode = params.get('error_code');
-      const errorDescription = params.get('error_description');
-      if (!errorCode && !errorDescription) continue;
-      if (errorCode === 'otp_expired') {
-        return 'Your password reset link has expired. Please request a new one.';
-      }
-      return errorDescription ? errorDescription.replace(/\+/g, ' ') : null;
-    }
-    return null;
-  });
+  // the very first render with no useEffect needed.  parseAuthCallback is
+  // pure (no DOM writes) because React StrictMode runs lazy initializers
+  // twice in dev — a side effect here would be applied twice or, worse,
+  // applied on the first run and then make the second run return null
+  // and overwrite the real state value.  URL cleanup is in a useEffect.
+  const [authError, setAuthError] = useState<string | null>(
+    () => parseAuthCallback(window.location.search, window.location.hash).error,
+  );
 
   // Strip the error params from the visible URL once we've captured them.
   useEffect(() => {
@@ -115,11 +102,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     //     verifyOtp is the dedicated entry point for email-confirm flows.
     //   ?code=...                       — OAuth/PKCE callback
     //     exchangeCodeForSession is the dedicated entry point for OAuth.
-    const searchParams = new URLSearchParams(window.location.search);
-    const code = searchParams.get('code');
-    const tokenHash = searchParams.get('token_hash');
-    const emailType = searchParams.get('type');
-    const isRecovery = emailType === 'recovery';
+    const { code, tokenHash, type: emailType, isRecovery } = parseAuthCallback(
+      window.location.search,
+      window.location.hash,
+    );
 
     if (tokenHash && emailType) {
       history.replaceState(null, '', window.location.pathname);

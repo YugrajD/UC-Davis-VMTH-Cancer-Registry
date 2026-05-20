@@ -14,10 +14,19 @@ export const GEO_URLS: Record<GeoLevel, string> = {
   zcta: ZCTA_GEO_URL,
 };
 
+// Default Web Mercator camera that fits the entire state of California
+// with visible margin on all four sides.
+//
+// California's extent: 32.5°N–42°N latitude, -124.4°W to -114.1°W longitude.
+// Latitude midpoint in Mercator is ~37.4°N (slightly north of the
+// geographic midpoint because Mercator stretches higher latitudes).
+// Longitude midpoint is -119.25°W.  Zoom 4.5 leaves the full state
+// visible even on narrow ~290 px-wide map cells in the Analysis 4-across
+// grid layout.
 export const INITIAL_VIEW_STATE = {
-  longitude: -119.5,
-  latitude: 37.6,
-  zoom: 5.1,
+  longitude: -119.25,
+  latitude: 37.4,
+  zoom: 4.5,
   pitch: 0,
   bearing: 0,
 };

@@ -18,6 +18,7 @@ import {
   hoverKeyFromFeature,
   type GeoLevel,
 } from '../../lib/mapUtils';
+import { MapResetButton } from '../MapResetButton/MapResetButton';
 
 // Local NO_DATA_COLOR — slightly transparent so the map background shows through.
 const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
@@ -25,7 +26,18 @@ const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
 // Background applied to both the container div and the DeckGL canvas container.
 const MAP_BG_CSS = '#f1f5f9';
 
-const EXPANDED_VIEW_STATE = { ...INITIAL_VIEW_STATE, zoom: 4.9 };
+// Both the normal and expanded maps default to INITIAL_VIEW_STATE, which is
+// already sized to fit all of California with margin.
+
+function isAtDefaultView(v: typeof INITIAL_VIEW_STATE): boolean {
+  return (
+    v.longitude === INITIAL_VIEW_STATE.longitude &&
+    v.latitude === INITIAL_VIEW_STATE.latitude &&
+    v.zoom === INITIAL_VIEW_STATE.zoom &&
+    v.pitch === INITIAL_VIEW_STATE.pitch &&
+    v.bearing === INITIAL_VIEW_STATE.bearing
+  );
+}
 
 const GEO_LEVEL_OPTIONS: { value: GeoLevel; label: string }[] = [
   { value: 'county', label: 'County' },
@@ -127,6 +139,8 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
   const [showSuperfund, setShowSuperfund] = useState(false);
   const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
+  const [expandedViewState, setExpandedViewState] =
+    useState<typeof INITIAL_VIEW_STATE>(INITIAL_VIEW_STATE);
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const colorScale = useMemo(() => makeColorScale(countRange), [countRange]);
@@ -277,13 +291,20 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
         </div>
         <div className="relative" style={{ height: 560, backgroundColor: MAP_BG_CSS }}>
           <DeckGL
-            initialViewState={EXPANDED_VIEW_STATE}
+            viewState={expandedViewState}
+            onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
+              setExpandedViewState(params.viewState)
+            }
             controller
             layers={layers}
             getTooltip={getTooltip}
             style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
           />
           <MapLegend countRange={countRange} showSuperfund={showSuperfund} />
+          <MapResetButton
+            onClick={() => setExpandedViewState(INITIAL_VIEW_STATE)}
+            disabled={isAtDefaultView(expandedViewState)}
+          />
         </div>
       </div>
     </div>
@@ -312,6 +333,8 @@ export function ChoroplethMap({
   const [isExpanded, setIsExpanded] = useState(false);
   const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
+  const [viewState, setViewState] =
+    useState<typeof INITIAL_VIEW_STATE>(INITIAL_VIEW_STATE);
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const colorScale = useMemo(() => makeColorScale(countRange), [countRange]);
@@ -419,13 +442,20 @@ export function ChoroplethMap({
       {/* Normal map — always mounted so it renders immediately */}
       <div className="relative" style={{ height: 450, backgroundColor: MAP_BG_CSS }}>
         <DeckGL
-          initialViewState={INITIAL_VIEW_STATE}
+          viewState={viewState}
+          onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
+            setViewState(params.viewState)
+          }
           controller
           layers={layers}
           getTooltip={getTooltip}
           style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
         />
         <MapLegend countRange={countRange} showSuperfund={false} />
+        <MapResetButton
+          onClick={() => setViewState(INITIAL_VIEW_STATE)}
+          disabled={isAtDefaultView(viewState)}
+        />
       </div>
 
       {/* Expanded modal — separate component with its own independent state */}

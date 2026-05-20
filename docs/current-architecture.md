@@ -49,6 +49,13 @@ The backend enforces multiple layers of security:
 | **Docker hardening** | Non-root user, no `--reload` in CMD | ML worker port not exposed to host |
 | **SMTP** | TLS with `ssl.create_default_context()` | 30-second connection timeout |
 | **CSP** | `<meta>` Content Security Policy | Restricts script/style/connect sources |
+| **Security response headers** | ASGI middleware | `x-content-type-options`, `x-frame-options: DENY`, HSTS, `referrer-policy` |
+| **HTTP cache headers** | ASGI middleware | `Cache-Control` + `Vary` on public read endpoints |
+| **Cache invalidation** | `clear_all_caches()` | Cleared after every ingestion and admin refresh-views call |
+| **API docs gating** | `DEBUG` env flag (default false) | `/docs`, `/redoc`, `/openapi.json` are 404 in production |
+| **Race condition protection** | Atomic UPDATE WHERE + SELECT FOR UPDATE | Export approvals, diagnosis review, job review |
+| **Path traversal** | `pathlib.relative_to()` | All file-system operations checked against `UPLOAD_DIR` |
+| **PKCE auth flow** | Supabase `flowType: 'pkce'` | Password reset uses `verifyOtp(token_hash)` so email scanners can't consume OTPs by pre-fetching |
 
 ## Data Flow
 
@@ -114,6 +121,8 @@ diagnoses:        GET  /api/v1/diagnoses/pending         (reviewer)
                   POST /api/v1/diagnoses/{id}/review     (reviewer)
 admin:            GET  /api/v1/admin/users/{email}/roles (admin)
                   PUT  /api/v1/admin/users/{email}/roles (admin)
+                  GET  /api/v1/admin/users/roles         (admin)
+                  POST /api/v1/admin/refresh-views       (admin)
 role-requests:    POST /api/v1/role-requests/            (auth required)
                   GET  /api/v1/role-requests/            (auth required)
                   GET  /api/v1/role-requests/pending/count (admin)

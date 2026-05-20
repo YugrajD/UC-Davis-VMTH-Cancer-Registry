@@ -5,6 +5,9 @@ import type { PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import { useFilteredData } from '../../hooks/useFilteredData';
+import { useYearlyTrendsData } from '../../hooks/useYearlyTrendsData';
+import { yearRange, countForYear, OTHER_SERIES_NAME } from '../../lib/trends';
+import { MapResetButton } from '../MapResetButton/MapResetButton';
 import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState } from '../../types';
 import { CES_INDICATORS, CANCER_TYPES, BREEDS, SEX_OPTIONS } from '../../types';
 import {
@@ -196,6 +199,17 @@ interface DeckMapProps {
 }
 
 function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
+  // Controlled view state so the "Reset view" button can snap back to
+  // INITIAL_VIEW_STATE (CA-wide framing).  Each map manages its own camera.
+  const [viewState, setViewState] = useState<typeof INITIAL_VIEW_STATE>(INITIAL_VIEW_STATE);
+  const resetView = () => setViewState(INITIAL_VIEW_STATE);
+  const isDefaultView =
+    viewState.longitude === INITIAL_VIEW_STATE.longitude &&
+    viewState.latitude === INITIAL_VIEW_STATE.latitude &&
+    viewState.zoom === INITIAL_VIEW_STATE.zoom &&
+    viewState.pitch === INITIAL_VIEW_STATE.pitch &&
+    viewState.bearing === INITIAL_VIEW_STATE.bearing;
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
@@ -211,7 +225,10 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
       </div>
       <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
         <DeckGL
-          initialViewState={INITIAL_VIEW_STATE}
+          viewState={viewState}
+          onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
+            setViewState(params.viewState)
+          }
           controller
           layers={layers}
           getTooltip={getTooltip}
@@ -221,6 +238,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
         <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
           {legend}
         </div>
+        <MapResetButton onClick={resetView} disabled={isDefaultView} />
       </div>
     </div>
   );
@@ -1006,6 +1024,325 @@ function CorrelationScatterPlot({
 const TREND_YEARS = [2015, 2016, 2017, 2018, 2019];
 const TREND_COLORS = ['#1A6B77', '#E87722', '#9C27B0', '#EF4444', '#2563EB', '#059669', '#D97706', '#6366F1'];
 
+// ---------------------------------------------------------------------------
+// Yearly cancer trend chart (US-11 / US-NTH-2)
+//
+// One line per top-5 cancer type plus an aggregated "Other" line; a
+// dropdown lets the user toggle individual lines on/off via the legend.
+// Hand-built SVG to match the visual style of the surrounding charts.
+// ---------------------------------------------------------------------------
+
+function CancerTrendChart() {
+  const { series, loading, error } = useYearlyTrendsData();
+
+  const allNames = useMemo(() => series.map((s) => s.name), [series]);
+  // null = "use the default (show everything)". When the user toggles a line
+  // we record their explicit choice as an array. This avoids syncing default
+  // state from data via an effect or a ref-during-render.
+  const [userSelection, setUserSelection] = useState<string[] | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  const selectedNames = userSelection ?? allNames;
+
+  const margin = { top: 20, right: 140, bottom: 40, left: 60 };
+  const width = 600;
+  const height = 300;
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+
+  const visible = useMemo(
+    () => series.filter((s) => selectedNames.includes(s.name)),
+    [series, selectedNames],
+  );
+
+  const years = useMemo(() => yearRange(series), [series]);
+
+  const yMax = useMemo(() => {
+    let max = 0;
+    for (const s of visible) {
+      for (const p of s.data) {
+        if (p.count > max) max = p.count;
+      }
+    }
+    return max || 1;
+  }, [visible]);
+
+  const xScale = useMemo(() => {
+    if (years.length === 0) {
+      return scaleLinear().domain([2020, 2024]).range([0, innerW]);
+    }
+    if (years.length === 1) {
+      // Single-year corner case: pad domain by ±1 so the dot has somewhere to land.
+      return scaleLinear()
+        .domain([years[0] - 1, years[0] + 1])
+        .range([0, innerW]);
+    }
+    return scaleLinear()
+      .domain([years[0], years[years.length - 1]])
+      .range([0, innerW]);
+  }, [years, innerW]);
+
+  const yScale = useMemo(
+    () => scaleLinear().domain([0, yMax * 1.1]).range([innerH, 0]).nice(),
+    [innerH, yMax],
+  );
+
+  const yTicks = yScale.ticks(5);
+
+  // X-axis labels: thin out so 4-digit year labels don't collide.  d3-scale's
+  // .ticks() returns nicely-rounded values inside the domain (e.g. every 5 yrs
+  // for a 30-year range) — exactly what we want for the visible labels.
+  // Data points and the line are still drawn at every actual year in `years`.
+  const xTicks = useMemo(() => {
+    if (years.length === 0) return [];
+    if (years.length === 1) return years;
+    return xScale.ticks(Math.min(8, years.length));
+  }, [xScale, years]);
+
+  const toggleName = (name: string) => {
+    const current = userSelection ?? allNames;
+    setUserSelection(
+      current.includes(name) ? current.filter((n) => n !== name) : [...current, name],
+    );
+  };
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+            Cancer Cases by Year
+          </h3>
+          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+            Top 5 cancer types plus "Other" · annual case counts
+          </p>
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setDropdownOpen((v) => !v)}
+            disabled={loading || allNames.length === 0}
+            className="text-xs border border-gray-300 rounded-md px-3 py-1.5 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Cancer types ({selectedNames.length})
+            <svg className="inline-block w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {dropdownOpen && (
+            <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-56 max-h-72 overflow-y-auto">
+              {allNames.map((name) => (
+                <label
+                  key={name}
+                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedNames.includes(name)}
+                    onChange={() => toggleName(name)}
+                    className="rounded border-gray-300 text-[var(--color-teal)] focus:ring-[var(--color-teal)]"
+                  />
+                  <span
+                    className={`text-[var(--color-text-primary)] ${
+                      name === OTHER_SERIES_NAME ? 'italic' : ''
+                    }`}
+                  >
+                    {name}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="p-4">
+        {loading ? (
+          <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">
+            Loading trend data…
+          </div>
+        ) : error ? (
+          <div className="flex items-center justify-center h-40 text-sm text-red-600">
+            {error}
+          </div>
+        ) : series.length === 0 ? (
+          <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">
+            No yearly trend data available.
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">
+            Select cancer types to view trends.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <svg
+              width="100%"
+              viewBox={`0 0 ${width} ${height}`}
+              style={{ maxWidth: `${width}px`, display: 'block', margin: '0 auto' }}
+            >
+              <g transform={`translate(${margin.left},${margin.top})`}>
+                {/* Grid lines */}
+                {yTicks.map((t) => (
+                  <line
+                    key={t}
+                    x1={0}
+                    x2={innerW}
+                    y1={yScale(t)}
+                    y2={yScale(t)}
+                    stroke="#E5E7EB"
+                    strokeWidth={1}
+                  />
+                ))}
+                {xTicks.map((yr) => (
+                  <line
+                    key={yr}
+                    x1={xScale(yr)}
+                    x2={xScale(yr)}
+                    y1={0}
+                    y2={innerH}
+                    stroke="#E5E7EB"
+                    strokeWidth={1}
+                  />
+                ))}
+
+                {/* Lines */}
+                {visible.map((s) => {
+                  const colorIndex = allNames.indexOf(s.name);
+                  const color = TREND_COLORS[colorIndex % TREND_COLORS.length];
+                  const isHov = hovered === s.name;
+                  const pathD = years
+                    .map((yr, j) => {
+                      const x = xScale(yr);
+                      const y = yScale(countForYear(s, yr));
+                      return `${j === 0 ? 'M' : 'L'}${x},${y}`;
+                    })
+                    .join(' ');
+                  const lastYear = years[years.length - 1];
+                  const lastCount = countForYear(s, lastYear);
+                  return (
+                    <g
+                      key={s.name}
+                      onMouseEnter={() => setHovered(s.name)}
+                      onMouseLeave={() => setHovered(null)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <path
+                        d={pathD}
+                        fill="none"
+                        stroke={color}
+                        strokeWidth={isHov ? 3 : 1.5}
+                        strokeDasharray={s.name === OTHER_SERIES_NAME ? '4 3' : undefined}
+                        opacity={hovered && !isHov ? 0.3 : 1}
+                      />
+                      {years.map((yr) => (
+                        <circle
+                          key={yr}
+                          cx={xScale(yr)}
+                          cy={yScale(countForYear(s, yr))}
+                          r={isHov ? 5 : 3}
+                          fill={color}
+                          opacity={hovered && !isHov ? 0.3 : 1}
+                        />
+                      ))}
+                      {isHov && (
+                        <g>
+                          <rect
+                            x={xScale(lastYear) + 8}
+                            y={yScale(lastCount) - 18}
+                            width={140}
+                            height={24}
+                            rx={4}
+                            fill="white"
+                            stroke="#E5E7EB"
+                            strokeWidth={1}
+                            filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))"
+                          />
+                          <text
+                            x={xScale(lastYear) + 14}
+                            y={yScale(lastCount) - 2}
+                            fontSize={10}
+                            fontWeight="600"
+                            fill="#1F2937"
+                          >
+                            {s.name}: {lastCount}
+                          </text>
+                        </g>
+                      )}
+                    </g>
+                  );
+                })}
+
+                {/* X axis — labels only at thinned ticks; the line draws
+                    through every year, but labels every year would collide. */}
+                <line x1={0} x2={innerW} y1={innerH} y2={innerH} stroke="#9CA3AF" strokeWidth={1} />
+                {xTicks.map((yr) => (
+                  <g key={yr} transform={`translate(${xScale(yr)},${innerH})`}>
+                    <line y2={4} stroke="#9CA3AF" />
+                    <text y={18} textAnchor="middle" fontSize={10} fill="#6B7280">
+                      {Math.round(yr)}
+                    </text>
+                  </g>
+                ))}
+                <text x={innerW / 2} y={innerH + 34} textAnchor="middle" fontSize={10} fill="#374151">
+                  Year
+                </text>
+
+                {/* Y axis */}
+                <line x1={0} x2={0} y1={0} y2={innerH} stroke="#9CA3AF" strokeWidth={1} />
+                {yTicks.map((t) => (
+                  <g key={t} transform={`translate(0,${yScale(t)})`}>
+                    <line x2={-4} stroke="#9CA3AF" />
+                    <text x={-8} textAnchor="end" dominantBaseline="middle" fontSize={9} fill="#6B7280">
+                      {t.toLocaleString()}
+                    </text>
+                  </g>
+                ))}
+                <text
+                  transform={`translate(${-44},${innerH / 2}) rotate(-90)`}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fill="#374151"
+                >
+                  Cases
+                </text>
+
+                {/* Legend on the right */}
+                {visible.map((s, i) => {
+                  const colorIndex = allNames.indexOf(s.name);
+                  return (
+                    <g
+                      key={s.name}
+                      transform={`translate(${innerW + 12},${i * 18 + 4})`}
+                    >
+                      <line
+                        x1={0}
+                        x2={14}
+                        y1={0}
+                        y2={0}
+                        stroke={TREND_COLORS[colorIndex % TREND_COLORS.length]}
+                        strokeWidth={2}
+                        strokeDasharray={s.name === OTHER_SERIES_NAME ? '3 2' : undefined}
+                      />
+                      <text
+                        x={18}
+                        dominantBaseline="middle"
+                        fontSize={9}
+                        fill="#374151"
+                        fontStyle={s.name === OTHER_SERIES_NAME ? 'italic' : undefined}
+                      >
+                        {s.name}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            </svg>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PesticideTrendChart() {
   // Default: top 5 counties by lbs/sq mi
   const sortedCounties = useMemo(
@@ -1379,6 +1716,9 @@ export function AnalysisView() {
           </p>
         </div>
       </div>
+
+      {/* Cancer Cases by Year */}
+      <CancerTrendChart />
 
       {/* Pesticide Trend Chart */}
       <PesticideTrendChart />

@@ -146,6 +146,36 @@ export async function fetchCountiesGeoJSON(filters: FilterParams = {}): Promise<
   return fetchJson(url);
 }
 
+// --- Yearly trends ---
+
+export interface TrendPointApi {
+  year: number;
+  count: number;
+  deceased: number | null;
+  alive: number | null;
+}
+
+export interface TrendSeriesApi {
+  name: string;
+  data: TrendPointApi[];
+}
+
+export interface TrendsResponse {
+  series: TrendSeriesApi[];
+}
+
+export async function fetchYearlyTrends(filters: FilterParams = {}): Promise<TrendsResponse> {
+  const params = filtersToParams(filters);
+  const url = params.toString() ? `/api/v1/trends/yearly?${params}` : '/api/v1/trends/yearly';
+  return fetchJson(url);
+}
+
+export async function fetchTrendsByCancerType(filters: FilterParams = {}): Promise<TrendsResponse> {
+  const params = filtersToParams(filters);
+  const url = params.toString() ? `/api/v1/trends/by-cancer-type?${params}` : '/api/v1/trends/by-cancer-type';
+  return fetchJson(url);
+}
+
 // --- Breed Detail ---
 
 export interface BreedDetail {
@@ -406,6 +436,8 @@ export interface DiagnosisDetail extends PendingDiagnosis {
   original_cancer_type_id: number | null;
   original_icd_o_code: string | null;
   original_predicted_term: string | null;
+  /** Raw source text PetBERT classified — null for legacy rows. */
+  original_text: string | null;
   reviewed_by_email: string | null;
   reviewed_at: string | null;
   reviewer_notes: string | null;

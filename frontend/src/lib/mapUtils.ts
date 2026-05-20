@@ -22,6 +22,17 @@ export const INITIAL_VIEW_STATE = {
   bearing: 0,
 };
 
+// Tighter framing tuned for the small (~400 px tall) Analysis-page maps,
+// where INITIAL_VIEW_STATE's zoom crops off the northern + southern ends
+// of California.  Lower zoom widens the visible area; the latitude is
+// re-centered on the geographic middle of the state (~37.25°N) so the
+// margin is even on top and bottom.
+export const ANALYSIS_INITIAL_VIEW_STATE = {
+  ...INITIAL_VIEW_STATE,
+  latitude: 37.25,
+  zoom: 4.7,
+};
+
 export const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];
 export const HOVER_COLOR: [number, number, number, number] = [245, 166, 35, 220];
 

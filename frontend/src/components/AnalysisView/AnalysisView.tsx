@@ -31,7 +31,7 @@ import {
 } from '../../data/pesticideData';
 import {
   GEO_URLS,
-  INITIAL_VIEW_STATE,
+  ANALYSIS_INITIAL_VIEW_STATE,
   NO_DATA_COLOR,
   HOVER_COLOR,
   hexToRgba,
@@ -199,15 +199,15 @@ interface DeckMapProps {
 
 function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
   // Controlled view state so the "Reset view" button can snap back to
-  // INITIAL_VIEW_STATE (CA-wide framing).  Each map manages its own camera.
-  const [viewState, setViewState] = useState<typeof INITIAL_VIEW_STATE>(INITIAL_VIEW_STATE);
-  const resetView = () => setViewState(INITIAL_VIEW_STATE);
+  // ANALYSIS_INITIAL_VIEW_STATE (CA-wide framing).  Each map manages its own camera.
+  const [viewState, setViewState] = useState<typeof ANALYSIS_INITIAL_VIEW_STATE>(ANALYSIS_INITIAL_VIEW_STATE);
+  const resetView = () => setViewState(ANALYSIS_INITIAL_VIEW_STATE);
   const isDefaultView =
-    viewState.longitude === INITIAL_VIEW_STATE.longitude &&
-    viewState.latitude === INITIAL_VIEW_STATE.latitude &&
-    viewState.zoom === INITIAL_VIEW_STATE.zoom &&
-    viewState.pitch === INITIAL_VIEW_STATE.pitch &&
-    viewState.bearing === INITIAL_VIEW_STATE.bearing;
+    viewState.longitude === ANALYSIS_INITIAL_VIEW_STATE.longitude &&
+    viewState.latitude === ANALYSIS_INITIAL_VIEW_STATE.latitude &&
+    viewState.zoom === ANALYSIS_INITIAL_VIEW_STATE.zoom &&
+    viewState.pitch === ANALYSIS_INITIAL_VIEW_STATE.pitch &&
+    viewState.bearing === ANALYSIS_INITIAL_VIEW_STATE.bearing;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
@@ -225,7 +225,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
       <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
         <DeckGL
           viewState={viewState}
-          onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
+          onViewStateChange={(params: { viewState: typeof ANALYSIS_INITIAL_VIEW_STATE }) =>
             setViewState(params.viewState)
           }
           controller

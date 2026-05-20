@@ -17,7 +17,7 @@ function seededRandom(seed: string) {
   };
 }
 
-function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
+export function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
   const isDefault =
     (!filters.sex || filters.sex === 'all') &&
     (!filters.cancerType || filters.cancerType === 'All Types') &&
@@ -43,6 +43,15 @@ function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
   }).filter(c => c.count > 0);
 }
 
+export function getCountRange(countyData: CountyData[]): { min: number; max: number } {
+  const counts = countyData.map(c => c.count).filter(n => n > 0);
+  if (counts.length === 0) return { min: 0, max: 1 };
+  return {
+    min: Math.min(...counts),
+    max: Math.max(...counts),
+  };
+}
+
 export function useFilteredData(filters: FilterState) {
   const [countyData, setCountyData] = useState<CountyData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,12 +69,7 @@ export function useFilteredData(filters: FilterState) {
   }, [countyData]);
 
   const countRange = useMemo(() => {
-    const counts = countyData.map(c => c.count).filter(n => n > 0);
-    if (counts.length === 0) return { min: 0, max: 1 };
-    return {
-      min: Math.min(...counts),
-      max: Math.max(...counts),
-    };
+    return getCountRange(countyData);
   }, [countyData]);
 
   return {
@@ -88,7 +92,7 @@ export function useCountyDataMap(countyData: CountyData[]): Map<string, CountyDa
 }
 
 // Generate hierarchical summary for the summary table
-function generateRegionSummary(countyData: CountyData[]): RegionSummary {
+export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   const regionMap = new Map<string, CountyData[]>();
 
   countyData.forEach(county => {

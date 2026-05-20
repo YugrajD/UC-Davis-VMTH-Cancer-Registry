@@ -1,44 +1,76 @@
 # UC Davis VMTH Cancer Registry
 
-A full-stack veterinary cancer catchment area dashboard modeled after the UCSF Helen Diller Comprehensive Cancer Center dashboard, adapted for UC Davis VMTH pet cancer data.
+A full-stack veterinary cancer registry for UC Davis VMTH researchers. Pathology reports are uploaded, classified by a BERT-based NLP model against the Vet-ICD-O-canine-1 taxonomy, and visualized on an interactive California county choropleth alongside human-cancer and environmental-exposure data.
+
+> **Documentation**
+> - `docs/handoff/HANDOFF.md` — project handoff guide (architecture, what's implemented, remaining work)
+> - `docs/handoff/future_plans.md` — scaling plan and deferred-feature roadmap
+> - `docs/current-architecture.md` — security layers, data flow, API endpoint summary
+> - `docs/GCP_BATCH_SETUP.md` — GCP Batch ML pipeline setup
+> - `docs/DATA_PIPELINE.md` — ingestion + PetBERT classification details
 
 ## Tech Stack
 
-- **Frontend**: React 18 + TypeScript (Vite), Tailwind CSS, react-simple-maps, d3-scale
-- **Backend**: Python 3.12 + FastAPI, SQLAlchemy + GeoAlchemy2
-- **Database**: PostgreSQL 16 + PostGIS 3.4
-- **ML/NLP**: PetBERT cancer classification pipeline
-- **Auth**: Supabase Auth (JWT)
-- **Orchestration**: Docker Compose
+- **Frontend**: React 19 + TypeScript (Vite), Tailwind CSS v4, deck.gl, d3-scale, react-simple-maps
+- **Backend**: Python 3.11 + FastAPI, SQLAlchemy async, Pydantic v2, gunicorn + uvicorn workers
+- **Database**: PostgreSQL 16 + PostGIS 3.4 (hosted on Supabase)
+- **ML/NLP**: PetBERT (110M-param BERT pretrained on veterinary EHR data) with Vet-ICD-O-canine-1 classification
+- **ML inference**: GCP Batch (production) or local `ml-worker` container (development)
+- **Auth**: Supabase Auth — email/password, Google OAuth, PKCE-flow password reset (JWT HS256/ES256)
+- **Frontend hosting**: Vercel
+- **Backend hosting**: GCP Cloud Run
+- **CI/CD**: GitHub Actions (357 tests: 63 backend pytest + 294 frontend vitest)
+- **Local orchestration**: Docker Compose
 
 ## Features
 
-| Tab | Description |
-|-----|-------------|
-| **Overview** | Summary stats cards, top-level metrics, species breakdown |
-| **Map** | Interactive choropleth of Northern CA catchment area (16 counties) |
-| **Incidence** | Cancer incidence rates by type with bar charts |
-| **Trends** | Time series with multi-line charts |
-| **Species & Breed** | Pie charts and horizontal bar charts for demographic breakdowns |
-| **County Data** | County-level stacked bar comparisons and data tables |
-| **Data Upload** | CSV upload with admin approval workflow |
-| **Review Queue** | Admin-only queue to preview, approve, or reject uploads |
+| Tab | Description | Access |
+|-----|-------------|--------|
+| **Overview** | Summary stats, top-level metrics, species/breed breakdown, county choropleth | Public |
+| **Cancer Types** | Vet-ICD-O-canine-1 cancer-type breakdown filtered by category | Public |
+| **Breed Disparities** | Breed-level case counts and demographic comparisons | Public |
+| **Analysis** | Multi-map comparison (VMTH vs CalEnviroScreen vs human cancer vs pesticides), correlation scatter plot, yearly cancer trend chart, pesticide trend chart | Public |
+| **Data Upload** | CSV/XLSX upload with file-content validation and rate limiting | Uploader / Admin |
+| **Review Queue** | Admin-only queue to preview, approve, or reject ingestion jobs | Reviewer / Admin |
+| **Diagnosis Review** | Per-diagnosis review queue with source-text panel and audit log | Reviewer / Admin |
+| **User Management** | DB-backed user role assignment + role-request approval queue | Admin |
+| **Data Export** | Filtered CSV download with admin-approval workflow (one-time-use approvals) | Authenticated + approved |
 
 ## API Endpoints
 
-- `GET /api/v1/dashboard/summary` — Dashboard summary stats
-- `GET /api/v1/dashboard/filters` — Available filter options
-- `GET /api/v1/incidence` — Cancer incidence with filters
-- `GET /api/v1/incidence/by-cancer-type` — Grouped by cancer type
-- `GET /api/v1/incidence/by-species` — Grouped by species
-- `GET /api/v1/incidence/by-breed` — Grouped by breed
-- `GET /api/v1/geo/counties` — GeoJSON FeatureCollection with case counts
-- `GET /api/v1/trends/yearly` — Yearly case trends
-- `GET /api/v1/trends/by-cancer-type` — Trends by cancer type
-- `POST /api/v1/ingest/upload` — Upload CSV datasets for review
-- `GET /api/v1/ingest/jobs` — List ingestion jobs
-- `POST /api/v1/ingest/jobs/{id}/review` — Approve or reject a job (admin)
-- `GET /api/v1/auth/me` — Current user info
+11 routers expose the surface below. Full details in `docs/current-architecture.md`.
+
+```
+auth:             GET  /api/v1/auth/me
+dashboard:        GET  /api/v1/dashboard/{summary,filters}
+incidence:        GET  /api/v1/incidence
+                  GET  /api/v1/incidence/{by-cancer-type,by-species,by-breed,breed-detail}
+geo:              GET  /api/v1/geo/counties
+                  GET  /api/v1/geo/counties/{county_id}
+trends:           GET  /api/v1/trends/{yearly,by-cancer-type}
+search:           POST /api/v1/search/classify              (auth required)
+                  GET  /api/v1/search/reports               (auth required)
+ingest:           POST /api/v1/ingest/upload                (auth required)
+                  GET  /api/v1/ingest/{status,jobs}
+                  GET  /api/v1/ingest/jobs/{id}/preview     (reviewer)
+                  POST /api/v1/ingest/jobs/{id}/{review,cancel}  (reviewer)
+diagnoses:        GET  /api/v1/diagnoses/pending            (reviewer)
+                  GET  /api/v1/diagnoses/{id}               (reviewer)
+                  POST /api/v1/diagnoses/{id}/review        (reviewer)
+admin-users:      GET  /api/v1/admin/users/{email}/roles    (admin)
+                  PUT  /api/v1/admin/users/{email}/roles    (admin)
+                  GET  /api/v1/admin/users/roles            (admin)
+admin:            POST /api/v1/admin/refresh-views          (admin)
+role-requests:    POST /api/v1/role-requests/               (auth required)
+                  GET  /api/v1/role-requests/               (auth required)
+                  POST /api/v1/role-requests/{id}/resolve   (admin)
+export-requests:  POST /api/v1/export-requests/             (auth required)
+                  POST /api/v1/export-requests/{id}/resolve (admin)
+                  GET  /api/v1/export-requests/download     (approved user)
+health:           GET  /health
+```
+
+In production (`DEBUG=false`), `/docs`, `/redoc`, and `/openapi.json` return 404 to avoid leaking the API surface. Set `DEBUG=true` locally to expose them.
 
 ---
 
@@ -96,25 +128,29 @@ All found at: Supabase Dashboard → **Settings** → **API**
 | `VITE_SUPABASE_ANON_KEY` | Project API Keys → **anon** / **public** / **publishable** |
 | `VITE_API_URL` | Deployed FastAPI backend base URL for static frontend deployments; leave blank for local Vite proxy |
 
-#### Admin Emails
+#### Role allow-lists (env-var bootstrap)
 
-Set `ADMIN_EMAILS` to a comma-separated list of email addresses that should have admin access:
+Three comma-separated env vars seed the `user_roles` table on startup. They're only used for first-boot bootstrapping; ongoing role management happens through the **User Management** tab (admins) which writes to the DB directly.
 
 ```
 ADMIN_EMAILS=alice@example.com,bob@example.com
+UPLOADER_EMAILS=charlie@example.com
+REVIEWER_EMAILS=dana@example.com
 ```
 
-These emails must exactly match the accounts registered in Supabase Auth (see step 5).
+Admins implicitly hold uploader and reviewer privileges, so `UPLOADER_EMAILS` / `REVIEWER_EMAILS` only need to list users who don't also appear in `ADMIN_EMAILS`. Emails must exactly match the accounts registered in Supabase Auth (see step 5).
 
 **Never commit `.env` to git.**
 
 ### 4. Run Database Migrations
 
-The migration SQL files are in `database/migrations/` and must be run in order (001 through 011). Run them through the Supabase SQL Editor:
+The migration SQL files are in `database/migrations/` and must be run in numeric order (currently 001 through 023). Run them through the Supabase SQL Editor:
 
 1. Supabase Dashboard → **SQL Editor**
 2. Open each migration file locally, copy its contents, paste into the SQL Editor, and click **Run**
-3. Run them in numeric order: `001_extensions.sql`, `002_lookup_tables.sql`, ..., `011_ingestion_jobs.sql`
+3. Run them in numeric order: `001_extensions.sql`, `002_lookup_tables.sql`, …, `023_update_materialized_views.sql`
+
+Migration 023 is also auto-applied on backend startup if the `sex` column is missing from the materialized views, but running it explicitly is recommended for a clean install.
 
 Alternatively, you can run them from the command line using `psql`:
 
@@ -140,18 +176,17 @@ Replace `$DATABASE_URL_SYNC` with your actual sync connection string (or `source
 3. Enter the email and a password
 4. Make sure this email is listed in `ADMIN_EMAILS` in your `.env`
 
-Admin users can:
-- Access the **Review Queue** tab
-- Preview, approve, or reject uploads from any user
-- Upload without rate limits
+Roles (most-privileged at the top — each implies the ones below it):
 
-#### Create regular user accounts (optional)
+| Role | Permissions |
+|---|---|
+| **Admin** | Everything below + user-role management, refresh materialized views, resolve role/export requests |
+| **Reviewer** | Approve/reject ingestion jobs, work the Diagnosis Review queue |
+| **Uploader** | Submit CSV/XLSX uploads via Data Upload |
+| **Authenticated** | View dashboards, request an export, request a role upgrade |
+| **Anonymous** | View public dashboards only (rate-limited at 30 req/min/IP) |
 
-Same process as above, but don't add the email to `ADMIN_EMAILS`. Regular users can:
-- Upload CSV files (limited to 3 per day)
-- View their own upload history
-
-Anonymous uploads (without signing in) are also allowed.
+Anonymous *uploads* are not allowed. All write endpoints require auth.
 
 ### 6. Start the Application
 
@@ -208,11 +243,12 @@ This loads all 58 California county boundaries into PostGIS.
 ### 8. Verify Everything Works
 
 1. Open http://localhost:5173 — you should see the dashboard
-2. Check the API docs at http://localhost:8000/docs
+2. Check the API docs at http://localhost:8000/docs (only available when `DEBUG=true`; 404 in production)
 3. Click **Sign In** in the top-right corner and log in with your admin account
-4. You should see the **Review Queue** tab appear in the navigation
-5. Go to **Data Upload**, select two CSV files, and click **Submit for Review**
+4. You should see **Review Queue**, **Diagnosis Review**, and **User Management** tabs appear in the navigation
+5. Go to **Data Upload**, select a CSV file, and click **Submit for Review**
 6. Switch to **Review Queue** to see the pending upload with approve/reject options
+7. After approval, switch to **Diagnosis Review** to see PetBERT predictions with their source-text context
 
 ---
 
@@ -281,7 +317,11 @@ docker compose logs backend --tail 30
 
 ### Upload rate limit (429 error)
 
-Non-admin users are limited to 3 uploads per day. Admin accounts have no limit. To increase or remove the limit, modify the check in `backend/app/routers/ingest.py`.
+Uploads share the global rate limit defined by `RATE_LIMIT_WRITE` in `backend/app/config.py` (default 10/minute per IP). Authenticated users see `RATE_LIMIT_DEFAULT` (120/minute) on other endpoints; anonymous IPs get `RATE_LIMIT_ANONYMOUS` (30/minute). All values are env-tunable.
+
+### Password reset email arrives but link says "expired"
+
+This is almost always an email-link pre-fetch issue (Gmail / Outlook scanners follow the URL on receipt). The app is configured for Supabase's PKCE flow which is resistant to this, but the Supabase **email template** must also be set to use `{{ .TokenHash }}` not the default `{{ .ConfirmationURL }}`. See `docs/handoff/HANDOFF.md` and the password-reset template snippet in the project's Supabase dashboard.
 
 ### Docker build fails
 

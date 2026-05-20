@@ -220,22 +220,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
             <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{subtitle}</p>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={resetView}
-            disabled={isDefaultView}
-            title="Reset map to default view"
-            aria-label="Reset map to default view"
-            className="inline-flex items-center gap-1 text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M20 8A8 8 0 006.7 5.3L4 8m16 8a8 8 0 01-13.3 2.7L4 16" />
-            </svg>
-            Reset
-          </button>
-          {headerRight}
-        </div>
+        {headerRight}
       </div>
       <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
         <DeckGL
@@ -252,6 +237,19 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
         <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
           {legend}
         </div>
+        {/* Reset-view button — bottom-right corner overlay */}
+        <button
+          type="button"
+          onClick={resetView}
+          disabled={isDefaultView}
+          title="Reset map to default view"
+          aria-label="Reset map to default view"
+          className="absolute bottom-4 right-4 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M20 8A8 8 0 006.7 5.3L4 8m16 8a8 8 0 01-13.3 2.7L4 16" />
+          </svg>
+        </button>
       </div>
     </div>
   );

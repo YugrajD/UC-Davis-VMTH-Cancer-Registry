@@ -23,14 +23,19 @@ export const INITIAL_VIEW_STATE = {
 };
 
 // Tighter framing tuned for the small (~400 px tall) Analysis-page maps,
-// where INITIAL_VIEW_STATE's zoom crops off the northern + southern ends
-// of California.  Lower zoom widens the visible area; the latitude is
-// re-centered on the geographic middle of the state (~37.25°N) so the
-// margin is even on top and bottom.
+// where INITIAL_VIEW_STATE's zoom crops off the corners of California.
+//
+// California's true extent is roughly 32.5°N–42°N latitude and
+// -124.4°W to -114.1°W longitude.  In Web Mercator the latitude midpoint
+// is ~37.4°N (slightly north of the geographic midpoint because Mercator
+// stretches higher latitudes) and the longitude midpoint is -119.25°W.
+// Zoom 4.5 leaves visible margin around the entire state even when a
+// map cell is narrow (~290 px wide in the 4-across xl grid layout).
 export const ANALYSIS_INITIAL_VIEW_STATE = {
   ...INITIAL_VIEW_STATE,
-  latitude: 37.25,
-  zoom: 4.7,
+  longitude: -119.25,
+  latitude: 37.4,
+  zoom: 4.5,
 };
 
 export const NO_DATA_COLOR: [number, number, number, number] = [229, 231, 235, 180];

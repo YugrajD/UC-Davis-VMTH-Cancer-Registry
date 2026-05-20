@@ -242,8 +242,8 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
           type="button"
           onClick={resetView}
           disabled={isDefaultView}
-          title="Reset map to default view"
-          aria-label="Reset map to default view"
+          title="Reset to default view"
+          aria-label="Reset to default view"
           className="absolute bottom-4 right-4 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

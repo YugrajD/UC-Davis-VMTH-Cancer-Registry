@@ -21,6 +21,7 @@ lerna-debug.log*
 # Build output
 frontend/dist/
 frontend/.vite/
+frontend/coverage/
 dist-ssr/
 *.local
 

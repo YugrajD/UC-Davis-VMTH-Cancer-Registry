@@ -2,50 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { uploadCSV, fetchMyJobs, type IngestionJob } from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
 import { STAGE_LABELS } from '../shared/pipelineStages';
-
-interface CsvPreview {
-  headers: string[];
-  rows: string[][];
-  totalRows: number;
-}
-
-function parseCsv(text: string): CsvPreview {
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length === 0) return { headers: [], rows: [], totalRows: 0 };
-
-  const parseLine = (line: string): string[] => {
-    const result: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (inQuotes) {
-        if (ch === '"' && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else if (ch === '"') {
-          inQuotes = false;
-        } else {
-          current += ch;
-        }
-      } else if (ch === '"') {
-        inQuotes = true;
-      } else if (ch === ',') {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += ch;
-      }
-    }
-    result.push(current.trim());
-    return result;
-  };
-
-  const headers = parseLine(lines[0]);
-  const dataLines = lines.slice(1);
-  const rows = dataLines.map(parseLine);
-  return { headers, rows, totalRows: dataLines.length };
-}
+import { parseCsvPreview, type CsvPreview } from './csvPreview';
 
 function PreviewModal({ file, onClose }: { file: File; onClose: () => void }) {
   const [preview, setPreview] = useState<CsvPreview | null>(null);
@@ -55,7 +12,7 @@ function PreviewModal({ file, onClose }: { file: File; onClose: () => void }) {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        setPreview(parseCsv(e.target?.result as string));
+        setPreview(parseCsvPreview(e.target?.result as string));
       } catch {
         setError('Could not parse file');
       }

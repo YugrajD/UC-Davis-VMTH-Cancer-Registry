@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import DeckGL from '@deck.gl/react';
 import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
-import type { PickingInfo } from '@deck.gl/core';
+import type { MapViewState, PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
 import type { CountyData } from '../../types';
 import {
@@ -29,7 +29,7 @@ const MAP_BG_CSS = '#f1f5f9';
 // Both the normal and expanded maps default to INITIAL_VIEW_STATE, which is
 // already sized to fit all of California with margin.
 
-function isAtDefaultView(v: typeof INITIAL_VIEW_STATE): boolean {
+function isAtDefaultView(v: MapViewState): boolean {
   return (
     v.longitude === INITIAL_VIEW_STATE.longitude &&
     v.latitude === INITIAL_VIEW_STATE.latitude &&
@@ -140,7 +140,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
   const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const [expandedViewState, setExpandedViewState] =
-    useState<typeof INITIAL_VIEW_STATE>(INITIAL_VIEW_STATE);
+    useState<MapViewState>(INITIAL_VIEW_STATE);
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const colorScale = useMemo(() => makeColorScale(countRange), [countRange]);
@@ -292,8 +292,8 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
         <div className="relative" style={{ height: 560, backgroundColor: MAP_BG_CSS }}>
           <DeckGL
             viewState={expandedViewState}
-            onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
-              setExpandedViewState(params.viewState)
+            onViewStateChange={({ viewState: nextViewState }) =>
+              setExpandedViewState(nextViewState as MapViewState)
             }
             controller
             layers={layers}
@@ -334,7 +334,7 @@ export function ChoroplethMap({
   const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const [viewState, setViewState] =
-    useState<typeof INITIAL_VIEW_STATE>(INITIAL_VIEW_STATE);
+    useState<MapViewState>(INITIAL_VIEW_STATE);
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const colorScale = useMemo(() => makeColorScale(countRange), [countRange]);
@@ -443,8 +443,8 @@ export function ChoroplethMap({
       <div className="relative" style={{ height: 450, backgroundColor: MAP_BG_CSS }}>
         <DeckGL
           viewState={viewState}
-          onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
-            setViewState(params.viewState)
+          onViewStateChange={({ viewState: nextViewState }) =>
+            setViewState(nextViewState as MapViewState)
           }
           controller
           layers={layers}

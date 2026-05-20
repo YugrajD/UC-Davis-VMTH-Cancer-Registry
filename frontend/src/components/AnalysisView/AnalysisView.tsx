@@ -198,6 +198,17 @@ interface DeckMapProps {
 }
 
 function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
+  // Controlled view state so the "Reset view" button can snap back to
+  // INITIAL_VIEW_STATE (CA-wide framing).  Each map manages its own camera.
+  const [viewState, setViewState] = useState<typeof INITIAL_VIEW_STATE>(INITIAL_VIEW_STATE);
+  const resetView = () => setViewState(INITIAL_VIEW_STATE);
+  const isDefaultView =
+    viewState.longitude === INITIAL_VIEW_STATE.longitude &&
+    viewState.latitude === INITIAL_VIEW_STATE.latitude &&
+    viewState.zoom === INITIAL_VIEW_STATE.zoom &&
+    viewState.pitch === INITIAL_VIEW_STATE.pitch &&
+    viewState.bearing === INITIAL_VIEW_STATE.bearing;
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
@@ -209,11 +220,29 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
             <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{subtitle}</p>
           )}
         </div>
-        {headerRight}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={resetView}
+            disabled={isDefaultView}
+            title="Reset map to default view"
+            aria-label="Reset map to default view"
+            className="inline-flex items-center gap-1 text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M20 8A8 8 0 006.7 5.3L4 8m16 8a8 8 0 01-13.3 2.7L4 16" />
+            </svg>
+            Reset
+          </button>
+          {headerRight}
+        </div>
       </div>
       <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
         <DeckGL
-          initialViewState={INITIAL_VIEW_STATE}
+          viewState={viewState}
+          onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
+            setViewState(params.viewState)
+          }
           controller
           layers={layers}
           getTooltip={getTooltip}

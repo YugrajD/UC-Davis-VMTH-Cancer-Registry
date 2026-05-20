@@ -1074,6 +1074,16 @@ function CancerTrendChart() {
 
   const yTicks = yScale.ticks(5);
 
+  // X-axis labels: thin out so 4-digit year labels don't collide.  d3-scale's
+  // .ticks() returns nicely-rounded values inside the domain (e.g. every 5 yrs
+  // for a 30-year range) — exactly what we want for the visible labels.
+  // Data points and the line are still drawn at every actual year in `years`.
+  const xTicks = useMemo(() => {
+    if (years.length === 0) return [];
+    if (years.length === 1) return years;
+    return xScale.ticks(Math.min(8, years.length));
+  }, [xScale, years]);
+
   const toggleName = (name: string) => {
     const current = userSelection ?? allNames;
     setUserSelection(
@@ -1166,7 +1176,7 @@ function CancerTrendChart() {
                     strokeWidth={1}
                   />
                 ))}
-                {years.map((yr) => (
+                {xTicks.map((yr) => (
                   <line
                     key={yr}
                     x1={xScale(yr)}
@@ -1245,13 +1255,14 @@ function CancerTrendChart() {
                   );
                 })}
 
-                {/* X axis */}
+                {/* X axis — labels only at thinned ticks; the line draws
+                    through every year, but labels every year would collide. */}
                 <line x1={0} x2={innerW} y1={innerH} y2={innerH} stroke="#9CA3AF" strokeWidth={1} />
-                {years.map((yr) => (
+                {xTicks.map((yr) => (
                   <g key={yr} transform={`translate(${xScale(yr)},${innerH})`}>
                     <line y2={4} stroke="#9CA3AF" />
                     <text y={18} textAnchor="middle" fontSize={10} fill="#6B7280">
-                      {yr}
+                      {Math.round(yr)}
                     </text>
                   </g>
                 ))}

@@ -275,6 +275,7 @@ export interface IngestionJob {
   dataset_a_filename: string;
   status: string;
   processing_stage?: string | null;
+  model_folder?: string | null;
   reviewed_by_email?: string | null;
   reviewed_at?: string | null;
   rejection_reason?: string | null;
@@ -377,6 +378,7 @@ export async function reviewJob(
   jobId: number,
   action: 'approve' | 'reject',
   rejectionReason?: string,
+  modelFolder?: string,
 ): Promise<IngestionJob> {
   const response = await fetch(apiUrl(`/api/v1/ingest/jobs/${jobId}/review`), {
     method: 'POST',
@@ -387,6 +389,7 @@ export async function reviewJob(
     body: JSON.stringify({
       action,
       rejection_reason: rejectionReason || null,
+      model_folder: modelFolder || null,
     }),
   });
 
@@ -396,6 +399,11 @@ export async function reviewJob(
   }
 
   return response.json();
+}
+
+export async function fetchAvailableModels(token: string): Promise<string[]> {
+  const data = await fetchJsonAuth('/api/v1/ingest/models', token);
+  return (data as { models: string[] }).models;
 }
 
 

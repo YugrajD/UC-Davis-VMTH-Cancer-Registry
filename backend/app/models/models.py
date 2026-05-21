@@ -237,6 +237,7 @@ class IngestionJob(Base):
     batch_job_name = Column(String(500), nullable=True)
     processing_stage = Column(String(50), nullable=True)
     result_summary = Column(JSONB, nullable=True)
+    model_folder = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
 

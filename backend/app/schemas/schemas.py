@@ -257,3 +257,4 @@ class IngestionJobOut(BaseModel):
 class IngestionJobReview(BaseModel):
     action: Literal["approve", "reject"]
     rejection_reason: Optional[str] = Field(default=None, max_length=2000)
+    model_folder: Optional[str] = Field(default=None, max_length=255)

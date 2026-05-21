@@ -259,6 +259,7 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
         storage_path = job.storage_path
         dataset_a_filename = job.dataset_a_filename
+        model_folder = job.model_folder or "production"
 
         job.status = "processing"
         job.processing_stage = "uploading_to_gcs"
@@ -279,9 +280,9 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
         # --- Phase 3: submit Batch job ----------------------------------
         await _update_job(job_id, processing_stage="submitting_batch_job")
-        logger.info("Job %d: submitting GCP Batch job", job_id)
+        logger.info("Job %d: submitting GCP Batch job (model_folder=%s)", job_id, model_folder)
         batch_job_name = await loop.run_in_executor(
-            None, submit_batch_job, job_id
+            None, submit_batch_job, job_id, model_folder
         )
 
         await _update_job(

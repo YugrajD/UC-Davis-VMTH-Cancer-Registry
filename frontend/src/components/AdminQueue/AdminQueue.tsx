@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { fetchJobs, reviewJob, fetchJobPreview, cancelJob, type IngestionJob } from '../../api/client';
+import { fetchJobs, reviewJob, fetchJobPreview, cancelJob, fetchAvailableModels, type IngestionJob } from '../../api/client';
 import { STAGE_LABELS, LOCAL_STAGES, GCP_STAGES } from '../shared/pipelineStages';
 
 const ACTIVE_STATUSES = ['pending_review', 'processing'];
@@ -197,9 +197,15 @@ function JobCard({
   job,
   actionLoading,
   previewLoading,
+  approveJobId,
+  selectedModelFolder,
+  availableModels,
   rejectJobId,
   rejectReason,
-  onApprove,
+  onApproveOpen,
+  onApproveConfirm,
+  onApproveCancel,
+  onModelFolderChange,
   onRejectOpen,
   onRejectConfirm,
   onRejectCancel,
@@ -210,9 +216,15 @@ function JobCard({
   job: IngestionJob;
   actionLoading: number | null;
   previewLoading: string | null;
+  approveJobId: number | null;
+  selectedModelFolder: string;
+  availableModels: string[];
   rejectJobId: number | null;
   rejectReason: string;
-  onApprove: (id: number) => void;
+  onApproveOpen: (id: number) => void;
+  onApproveConfirm: (id: number) => void;
+  onApproveCancel: () => void;
+  onModelFolderChange: (v: string) => void;
   onRejectOpen: (id: number) => void;
   onRejectConfirm: (id: number) => void;
   onRejectCancel: () => void;
@@ -234,6 +246,7 @@ function JobCard({
             <p>Uploaded by: <span className="font-medium text-[var(--color-text-primary)]">{job.uploaded_by_email}</span></p>
             <p>Date: {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}</p>
             <p>File: <span className="font-mono">{job.dataset_a_filename}</span></p>
+            {job.model_folder && <p>Model: <span className="font-medium text-[var(--color-text-primary)]">{job.model_folder}</span></p>}
             {job.reviewed_by_email && <p>Reviewed by: {job.reviewed_by_email}</p>}
             {job.reviewed_at && <p>Reviewed: {new Date(job.reviewed_at).toLocaleString()}</p>}
             {job.rejection_reason && <p className="text-red-600">Reason: {job.rejection_reason}</p>}
@@ -256,11 +269,11 @@ function JobCard({
           {job.status === 'pending_review' && (
             <>
               <button
-                onClick={() => onApprove(job.id)}
+                onClick={() => onApproveOpen(job.id)}
                 disabled={actionLoading === job.id}
                 className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
               >
-                {actionLoading === job.id ? '...' : 'Approve'}
+                Approve
               </button>
               <button
                 onClick={() => onRejectOpen(job.id)}
@@ -293,6 +306,39 @@ function JobCard({
         <ResultSummary summary={job.result_summary} />
       )}
 
+      {/* Approve confirmation panel with model selector */}
+      {approveJobId === job.id && (
+        <div className="mt-3 border-t border-gray-100 pt-3 space-y-2">
+          <p className="text-xs font-medium text-[var(--color-text-secondary)]">Select model</p>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedModelFolder}
+              onChange={(e) => onModelFolderChange(e.target.value)}
+              disabled={actionLoading === job.id}
+              className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-green-300 disabled:opacity-50"
+            >
+              {availableModels.map(folder => (
+                <option key={folder} value={folder}>{folder}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => onApproveConfirm(job.id)}
+              disabled={actionLoading === job.id}
+              className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {actionLoading === job.id ? '...' : 'Confirm Approve'}
+            </button>
+            <button
+              onClick={onApproveCancel}
+              className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Reject confirmation panel */}
       {rejectJobId === job.id && (
         <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3">
           <input
@@ -327,6 +373,9 @@ export function AdminQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [approveJobId, setApproveJobId] = useState<number | null>(null);
+  const [selectedModelFolder, setSelectedModelFolder] = useState('production');
+  const [availableModels, setAvailableModels] = useState<string[]>(['production']);
   const [rejectJobId, setRejectJobId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [preview, setPreview] = useState<{ content: string; filename: string } | null>(null);
@@ -354,6 +403,25 @@ export function AdminQueue() {
     loadJobs(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [loadJobs]);
 
+  // Fetch available model folders once on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token || cancelled) return;
+        const models = await fetchAvailableModels(token);
+        if (!cancelled) {
+          setAvailableModels(models.length > 0 ? models : ['production']);
+          setSelectedModelFolder(models.includes('production') ? 'production' : (models[0] ?? 'production'));
+        }
+      } catch {
+        // keep the default ['production'] on error
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [getAccessToken]);
+
   // Auto-poll when any job is processing
   useEffect(() => {
     const hasProcessing = jobs.some(j => j.status === 'processing');
@@ -362,13 +430,19 @@ export function AdminQueue() {
     return () => clearInterval(interval);
   }, [jobs, loadJobs]);
 
-  const handleApprove = async (jobId: number) => {
-    if (!confirm('Approve this upload for processing?')) return;
+  const handleApproveOpen = (jobId: number) => {
+    setRejectJobId(null);
+    setRejectReason('');
+    setApproveJobId(approveJobId === jobId ? null : jobId);
+  };
+
+  const handleApproveConfirm = async (jobId: number) => {
     setActionLoading(jobId);
     try {
       const token = await getAccessToken();
       if (!token) return;
-      await reviewJob(token, jobId, 'approve');
+      await reviewJob(token, jobId, 'approve', undefined, selectedModelFolder);
+      setApproveJobId(null);
       await loadJobs();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Approve failed');
@@ -376,6 +450,8 @@ export function AdminQueue() {
       setActionLoading(null);
     }
   };
+
+  const handleApproveCancel = () => setApproveJobId(null);
 
   const handleReject = async (jobId: number) => {
     setActionLoading(jobId);
@@ -436,10 +512,16 @@ export function AdminQueue() {
   const sharedJobCardProps = {
     actionLoading,
     previewLoading,
+    approveJobId,
+    selectedModelFolder,
+    availableModels,
     rejectJobId,
     rejectReason,
-    onApprove: handleApprove,
-    onRejectOpen: (id: number) => setRejectJobId(rejectJobId === id ? null : id),
+    onApproveOpen: handleApproveOpen,
+    onApproveConfirm: handleApproveConfirm,
+    onApproveCancel: handleApproveCancel,
+    onModelFolderChange: setSelectedModelFolder,
+    onRejectOpen: (id: number) => { setApproveJobId(null); setRejectJobId(rejectJobId === id ? null : id); },
     onRejectConfirm: handleReject,
     onRejectCancel: () => { setRejectJobId(null); setRejectReason(''); },
     onRejectReasonChange: setRejectReason,

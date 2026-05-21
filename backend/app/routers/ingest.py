@@ -290,6 +290,31 @@ async def upload_datasets(
     return _job_to_dict(job)
 
 
+@router.get("/models")
+async def list_models(
+    _reviewer: CurrentUser = Depends(require_reviewer),
+):
+    """Return the top-level model folder names available in GCS.
+
+    Falls back to ["production"] when GCP Batch is disabled (local dev).
+    """
+    if not settings.USE_GCP_BATCH:
+        return {"models": ["production"]}
+
+    loop = asyncio.get_running_loop()
+    try:
+        from app.services.gcp_batch_service import list_model_folders
+        folders = await loop.run_in_executor(None, list_model_folders)
+    except Exception:
+        logger.warning("Failed to list model folders from GCS", exc_info=True)
+        folders = []
+
+    if not folders:
+        folders = ["production"]
+
+    return {"models": folders}
+
+
 @router.get("/jobs")
 async def list_jobs(
     db: AsyncSession = Depends(get_db),
@@ -429,6 +454,7 @@ async def review_job(
             status="rejected" if is_reject else "processing",
             rejection_reason=review.rejection_reason if is_reject else None,
             processing_stage=None if is_reject else "queued",
+            model_folder=None if is_reject else (review.model_folder or "production"),
             reviewed_by_email=reviewer.email,
             reviewed_at=now,
             updated_at=now,
@@ -482,6 +508,7 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "dataset_a_filename": job.dataset_a_filename,
         "status": job.status,
         "processing_stage": job.processing_stage,
+        "model_folder": job.model_folder,
         "reviewed_by_email": job.reviewed_by_email,
         "reviewed_at": job.reviewed_at.isoformat() if job.reviewed_at else None,
         "rejection_reason": job.rejection_reason,

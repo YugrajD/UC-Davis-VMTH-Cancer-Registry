@@ -55,6 +55,29 @@ def cleanup_gcs_job_files(job_id: int) -> None:
         logger.info("Cleaned up %d GCS objects for job %d", len(blobs), job_id)
 
 
+def list_model_folders() -> list[str]:
+    """Return the top-level folder names under gs://{bucket}/models/.
+
+    Each folder is expected to be a self-contained model bundle with the
+    same internal structure: petbert/, labels/, checkpoints/.
+    Returns an empty list when no folders exist or GCS is unreachable.
+    """
+    client = _get_storage_client()
+    iterator = client.list_blobs(
+        settings.GCS_BUCKET,
+        prefix="models/",
+        delimiter="/",
+    )
+    list(iterator)  # consume iterator so .prefixes is populated
+    folders = []
+    for prefix in iterator.prefixes:
+        # prefix is e.g. "models/production/" — extract the folder name
+        name = prefix.removeprefix("models/").rstrip("/")
+        if name:
+            folders.append(name)
+    return sorted(folders)
+
+
 # ── GCP Batch helpers ───────────────────────────────────────────────────
 
 
@@ -62,11 +85,14 @@ def _get_batch_client() -> batch_v1.BatchServiceClient:
     return batch_v1.BatchServiceClient()
 
 
-def submit_batch_job(job_id: int) -> str:
+def submit_batch_job(job_id: int, model_folder: str = "production") -> str:
     """Submit a GCP Batch job for PetBERT inference.
 
     Returns the full job resource name
     (e.g. projects/{p}/locations/{l}/jobs/{j}).
+
+    model_folder selects which GCS bundle under gs://{bucket}/models/ to use.
+    Each folder must contain petbert/, labels/, and checkpoints/ subdirectories.
 
     Uses gsutil to download/upload files instead of gcsfuse volume mount
     to avoid compatibility issues with non-DNS-compliant bucket names.
@@ -80,6 +106,7 @@ def submit_batch_job(job_id: int) -> str:
     model_path = f"{local_data}/models/petbert"
     labels_csv = f"{local_data}/models/labels/labels.csv"
     presence_ckpt = f"{local_data}/models/checkpoints/presence_classifier_best.pt"
+    gcs_model_root = f"gs://{bucket}/models/{model_folder}"
 
     # Pre-task: download input CSV, model weights, labels, and classifiers from GCS
     # Uses google/cloud-sdk container since COS doesn't have gcloud installed
@@ -92,12 +119,12 @@ def submit_batch_job(job_id: int) -> str:
                 f"mkdir -p {local_data}/models/petbert {local_data}/models/labels {local_data}/models/checkpoints && "
                 f"echo 'Downloading input CSV...' && "
                 f"gcloud storage cp 'gs://{bucket}/{_GCS_PREFIX}/{job_id}/dataset_a.csv' {input_csv} && "
-                f"echo 'Downloading model weights...' && "
-                f"gcloud storage cp -r 'gs://{bucket}/models/petbert/*' {model_path}/ && "
+                f"echo 'Downloading model weights from {gcs_model_root}...' && "
+                f"gcloud storage cp -r '{gcs_model_root}/petbert/*' {model_path}/ && "
                 f"echo 'Downloading labels...' && "
-                f"gcloud storage cp 'gs://{bucket}/models/labels/labels.csv' {labels_csv} && "
+                f"gcloud storage cp '{gcs_model_root}/labels/labels.csv' {labels_csv} && "
                 f"echo 'Downloading classifier checkpoints...' && "
-                f"gcloud storage cp 'gs://{bucket}/models/checkpoints/presence_classifier_best.pt' {presence_ckpt} && "
+                f"gcloud storage cp '{gcs_model_root}/checkpoints/presence_classifier_best.pt' {presence_ckpt} && "
                 f"echo 'Download complete.'"
             ),
         ],

@@ -122,7 +122,7 @@ export function createFilteredDataState(
 }
 
 export function useFilteredData(filters: FilterState): FilteredDataState {
-  const { cancerType, sex } = filters;
+  const { cancerType, sex, yearStart, yearEnd } = filters;
   const [countyData, setCountyData] = useState<CountyData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +137,8 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
         const response = await fetchIncidence({
           cancerTypes: cancerTypeFilterValue(cancerType),
           sex: sexFilterValue(sex),
+          yearStart,
+          yearEnd,
         });
         if (cancelled) return;
 
@@ -157,7 +159,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
     return () => {
       cancelled = true;
     };
-  }, [cancerType, sex]);
+  }, [cancerType, sex, yearStart, yearEnd]);
 
   const derivedState = useMemo(
     () => createFilteredDataState(countyData, filters, { applyServerSideFilters: false }),

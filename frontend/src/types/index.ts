@@ -40,6 +40,8 @@ export interface FilterState {
   sex: Sex;
   cancerType: string;
   breed: string;
+  yearStart?: number;
+  yearEnd?: number;
 }
 
 export interface Tab {

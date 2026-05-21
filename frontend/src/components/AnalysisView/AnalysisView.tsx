@@ -6,6 +6,7 @@ import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import { useFilteredData } from '../../hooks/useFilteredData';
 import { useYearlyTrendsData } from '../../hooks/useYearlyTrendsData';
+import { fetchFilterOptions } from '../../api/client';
 import { yearRange, countForYear, OTHER_SERIES_NAME } from '../../lib/trends';
 import { MapResetButton } from '../MapResetButton/MapResetButton';
 import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState } from '../../types';
@@ -331,6 +332,23 @@ function CancerMap({
     cancerType: 'All Types',
     breed: 'All Breeds',
   });
+  const [yearOptions, setYearOptions] = useState<number[]>([]);
+
+  useEffect(() => {
+    fetchFilterOptions()
+      .then(opts => {
+        const [min, max] = opts.year_range;
+        const years: number[] = [];
+        for (let y = min; y <= max; y++) years.push(y);
+        setYearOptions(years);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleYearChange = (key: 'yearStart' | 'yearEnd', value: string) => {
+    setFilters(f => ({ ...f, [key]: value ? Number(value) : undefined }));
+  };
+
   const { countyData, countRange } = useFilteredData(filters);
 
   const countyDataMap = useMemo(() => {
@@ -436,6 +454,24 @@ function CancerMap({
               {SEX_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </label>
+          {yearOptions.length > 0 && (
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year Start</span>
+              <select value={filters.yearStart ?? ''} onChange={e => handleYearChange('yearStart', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                <option value="">All Years</option>
+                {yearOptions.filter(y => !filters.yearEnd || y <= filters.yearEnd).map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </label>
+          )}
+          {yearOptions.length > 0 && (
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year End</span>
+              <select value={filters.yearEnd ?? ''} onChange={e => handleYearChange('yearEnd', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                <option value="">All Years</option>
+                {yearOptions.filter(y => !filters.yearStart || y >= filters.yearStart).map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </label>
+          )}
         </MapFilterButton>
       }
       legend={

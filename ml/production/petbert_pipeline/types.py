@@ -3,6 +3,10 @@
 from dataclasses import dataclass
 from typing import Literal
 
+import numpy as np
+
+import config as _config
+
 
 TaskMode = Literal["categorize", "neighbors", "both"]
 
@@ -11,8 +15,6 @@ TaskMode = Literal["categorize", "neighbors", "both"]
 class ScanConfig:
     csv_path: str
     id_col: str
-    text_cols: tuple[str, ...]  # columns to embed independently; best-match label wins
-    col_weights: dict[str, float]  # per-column weight multipliers; not yet used for scoring
     model_name: str
     local_only: bool
     out_dir: str
@@ -24,20 +26,20 @@ class ScanConfig:
     embedding_min_sim: float
     device: str
     labels_csv_path: str
-    presence_classifier_path: str | None
     embedding_cache_path: str | None = None
     group_classifier_path: str | None = None
     group_classifier_threshold: float = 0.3
-    finetuned_model_path: str | None = None
-    categorization_mode: str = "default"  # "default" | "group-keyword"
-    cascade_threshold: float = 0.0  # >0 enables kNN fallback for low-confidence predictions
-    cascade_k: int = 5
-    cascade_adaptive_path: str = ""  # path to per-group thresholds JSON
-    strip_tissue_lists: bool = False  # drop necropsy tissue-list segments before embedding
-    apply_low_confidence_rescue: bool = False  # rescue low-confidence labels with direct text support
-    low_confidence_rescue_k: int = 10  # top scored labels scanned by the rescue layer
-    apply_subtype_gate: bool = False  # demote hallucinated subtype qualifiers to NOS variant
-    apply_non_neoplastic_gate: bool = False  # suppress predictions when report describes non-neoplasia
+    group_classifier_fallback_to_argmax: bool = True
+    case_presence_classifier_path: str | None = None
+    case_presence_threshold: float = 0.5
+    label_presence_classifier_dir: str | None = None
+    label_presence_threshold: float = 0.5
+    label_presence_thresholds_json: str | None = None
+    tail_max_predictions: int = 2
+    tail_max_group_prob_gap: float = 0.08
+    rerank_stage3: bool = False
+    uncommon_groups_path: str = _config.UNCOMMON_GROUPS_TXT
+    embed_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -49,3 +51,18 @@ class ScanOutputs:
     neighbors_csv: str | None
     npz: str
     summary_json: str
+
+
+@dataclass(frozen=True)
+class CategorizationResult:
+    final_labels: list[str]          # chosen taxonomy term, "Uncategorized", or ""
+    final_indices: list[int]         # index into labels (-1 if empty)
+    final_scores: list[float]        # cosine similarity of chosen label
+    methods: list[str]               # "embedding", "low_confidence", or "empty"
+    embedding_labels: np.ndarray     # top-1 label before thresholding (N,)
+    embedding_scores: np.ndarray     # top-1 score before thresholding (N,)
+    label_scores: np.ndarray         # full similarity matrix (N, M)
+    labels: list[str]                # all taxonomy term strings
+    top_k_indices: list[list[int]]   # per row: up to max_predictions label indices
+    top_k_scores: list[list[float]]  # per row: corresponding scores
+    top_k_methods: list[list[str]]   # per row: "embedding" or "low_confidence"

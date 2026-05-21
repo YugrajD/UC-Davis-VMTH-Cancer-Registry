@@ -1,6 +1,6 @@
 """Multi-class group classifier for the PetBERT pipeline.
 
-Replaces the binary PresenceClassifier pair-wise approach with a single global
+Replaces the LabelPresenceClassifier pair-wise approach with a single global
 group decision per report. Instead of scoring each (report, label) pair
 independently, this classifier takes a report mean embedding and outputs
 independent sigmoid probabilities for each of the cancer groups.
@@ -92,17 +92,11 @@ class GroupClassifier(nn.Module):
     @classmethod
     def load(cls, path: str | Path) -> tuple["GroupClassifier", list[str]]:
         """Load model and return (model, group_names)."""
-        data = torch.load(path, map_location="cpu", weights_only=False)
-        # Older checkpoints didn't save hidden_dim — recover it from the first
-        # linear layer's weight shape so legacy artifacts load without errors.
-        if "hidden_dim" in data:
-            hidden_dim = int(data["hidden_dim"])
-        else:
-            hidden_dim = int(data["state_dict"]["net.0.weight"].shape[0])
+        data = torch.load(path, map_location="cpu", weights_only=True)
         model = cls(
             num_groups=data["num_groups"],
             emb_dim=data["emb_dim"],
-            hidden_dim=hidden_dim,
+            hidden_dim=data.get("hidden_dim", DEFAULT_HIDDEN_DIM),
         )
         model.load_state_dict(data["state_dict"])
         return model, data["group_names"]

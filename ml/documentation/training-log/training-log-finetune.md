@@ -625,6 +625,548 @@ backbone backups remain at `model_phase18_backup.safetensors`.
 
 ---
 
+### contrastive_kw Production Re-evaluation vs LLM Annotation (2026-04-27)
+
+**Context:** Two bugs fixed before this run:
+1. `score_prediction` was returning `completely_off` when the model predicted `Uncategorized`
+   on a confirmed cancer case — now returns `false_negative`, eliminating the duplicate row.
+2. Default annotation CSV changed from `keyword_annotation.csv` to `llm_annotation.csv` in
+   both `evaluate.py` and `run_evaluation.py`.
+
+**Command:**
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
+  --prediction-csv ml/output/production/contrastive_kw/petbert_predictions.csv \
+  --out-dir ml/output/evaluation/contrastive_kw \
+  --label "post-FN-fix re-eval (llm annotation default)"
+```
+
+**Results (all cases, LLM annotation ground truth, 54,938 prediction-cases, 28,229 true negatives excluded):**
+
+| Metric | Value |
+|--------|-------|
+| Good% | 30.7% |
+| Slightly off% | 19.0% |
+| **Good+Slight** | **49.7%** |
+| Completely off% | 16.2% |
+| False positive% | 5.8% |
+| **False negative%** | **28.4%** |
+
+**Results after second fix (2026-04-27) — completely_off dedup (51,129 prediction-cases, 28,229 true negatives excluded):**
+
+| Metric | After FN-fix (#1) | After CO-dedup fix (#2) |
+|--------|-------------------|-------------------------|
+| Good% | 30.7% | **33.0%** |
+| Slightly off% | 19.0% | **20.4%** |
+| **Good+Slight** | **49.7%** | **53.4%** |
+| Completely off% | 16.2% | 17.4% |
+| False positive% | 5.8% | 6.2% |
+| **False negative%** | **28.4%** | **23.1%** |
+| Total rows | 54,938 | 51,129 |
+
+**Bugs fixed across two passes:**
+1. `score_prediction` returned `completely_off` for `Uncategorized` predictions on cancer cases
+   → now returns `false_negative` (first fix).
+2. `completely_off` cancer cases also received a synthesized `false_negative` row → fixed by
+   changing `fn_case_ids = cancer_case_ids - predicted_case_ids` so any case with ANY prediction
+   row is never double-counted (second fix).
+
+**Key finding (post fix #2):** G+S is 53.4% against LLM ground truth (vs 86.5% against keyword
+ground truth). The 23.1% FN rate reflects LLM annotation identifying many cancer cases the
+keyword scan missed — the model says `Uncategorized` for those. Numbers are **not** directly
+comparable to Phase 17–22 training evaluations (all used keyword annotation).
+
+---
+
+### Production Re-run + Evaluation after Prediction Dedup Fix (2026-04-27)
+
+**Bug fixed:** `run_categorization_group_keyword` (and `run_categorization_group`) could return
+the same predicted term multiple times for a single case. When multiple Stage-1 top-k labels
+belong to the same group, Stage-2 keyword resolution maps them all to the same group winner —
+producing duplicate rows (e.g. CASE-0216 had 4× "Hemangiosarcoma, NOS"). Fixed by tracking
+`seen_winners` per case in both functions.
+
+**Impact on previous metrics:** Entries #1 and #2 in the evaluation history were run on
+production output that still contained duplicates. Duplicate "good" predictions inflated G+S
+(each duplicate counted as a separate good row). Entry #3 reflects the first clean numbers.
+
+**Results (all cases, LLM annotation, 35,057 prediction-cases, 28,229 true negatives excluded):**
+
+| Metric | #2 (pre-dedup, stale) | **#3 (post-dedup, clean)** |
+|--------|-----------------------|---------------------------|
+| Good% | 33.0% | **23.4%** |
+| Slightly off% | 20.4% | **13.1%** |
+| **Good+Slight** | **53.4%** | **36.5%** |
+| Completely off% | 17.4% | 22.1% |
+| False positive% | 6.2% | 7.8% |
+| **False negative%** | **23.1%** | **33.6%** |
+| Total prediction rows | 51,129 | 35,057 |
+
+**Key finding:** The true G+S baseline against LLM annotation is **36.5%**, not 53.4%.
+The previous higher number was inflated by duplicate predictions being counted as separate
+good verdicts. This is the correct baseline for evaluating future improvements.
+
+---
+
+## Framework Change — Fallback Chain Input (2026-04-27)
+
+### Problem
+
+826 cases (1.4% of 58,313) were silently absent from `petbert_predictions.csv`. Investigation
+triggered by CASE-0192: the pipeline found no content in `HISTOPATHOLOGICAL SUMMARY`, `FINAL COMMENT`,
+or `ANCILLARY TESTS` — the only three columns the pipeline read. These are necropsy and gross-only
+cases whose diagnostic text lives in other columns.
+
+### Analysis
+
+All 8 text columns in `report.csv` were profiled by coverage and median content length:
+
+| Column | Coverage | Median len | Diagnostic role |
+|--------|----------|------------|-----------------|
+| `HISTOPATHOLOGICAL SUMMARY` | 97.2% | 914 | Microscopic diagnosis — primary signal |
+| `FINAL COMMENT` | 32.0% | 547 | Vet's interpretive summary |
+| `COMMENT` | 66.4% | 398 | Older equivalent of FINAL COMMENT |
+| `GROSS DESCRIPTION` | 99.0% | 511 | Gross pathology — primary for necropsy |
+| `ADDITIONAL INFORMATION` | 8.5% | 435 | Supplementary reports |
+| `CLINICAL ABSTRACT` | 99.4% | 385 | Clinical history — weakest cancer signal |
+| `ANCILLARY TESTS` | 15.0% | 140 | Short lab values — not used |
+| `ADDENDUM` | 5.1% | 285 | Too sparse — not used |
+
+Of the 826 empty cases: 82.9% had `COMMENT`, 81.2% had `GROSS DESCRIPTION`, 88.0% had
+`CLINICAL ABSTRACT`.
+
+### Change
+
+Replaced the fixed 3-column multi-column concat with a single **fallback chain**: the first
+non-empty column per case in priority order is used as the sole text input. No CLI flag —
+this is now just how the pipeline works.
+
+**Chain (defined in `model/constants.py` as `FALLBACK_CHAIN`):**
+1. `HISTOPATHOLOGICAL SUMMARY`
+2. `FINAL COMMENT`
+3. `COMMENT`
+4. `GROSS DESCRIPTION`
+5. `ADDITIONAL INFORMATION`
+6. `CLINICAL ABSTRACT`
+
+The selected text is embedded as a single 768-dim vector (stored in the cache as `"fallback_selected"`).
+
+### Architecture Impact
+
+| | Before | After |
+|---|---|---|
+| Report embedding dim | 2304 (3 × 768) | 768 (1 column) |
+| Classifier input dim | 3072 (2304 + label 768) | 1536 (768 + label 768) |
+| `n_cols` in checkpoint | 3 | 1 |
+
+**Full cold start required before retraining.** Existing checkpoints are incompatible.
+
+### Dry Run Results (selection logic only, no PetBERT run)
+
+| Source column | Cases | % |
+|---|---|---|
+| `HISTOPATHOLOGICAL SUMMARY` | 56,697 | 97.2% |
+| `FINAL COMMENT` | 772 | 1.3% |
+| `COMMENT` | 685 | 1.2% |
+| `GROSS DESCRIPTION` | 86 | 0.1% |
+| `ADDITIONAL INFORMATION` | 61 | 0.1% |
+| `CLINICAL ABSTRACT` | 10 | 0.0% |
+| Empty (no chain column had content) | 2 | 0.0% |
+
+825 of 826 previously-silent cases are now covered. 2 cases remain empty (no content in any
+chain column) — these are genuinely unrepresentable.
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `model/constants.py` | Added `FALLBACK_CHAIN` |
+| `production/petbert_pipeline/types.py` | `ScanConfig.fallback_chain` defaults to `FALLBACK_CHAIN` |
+| `production/petbert_pipeline/pipeline.py` | Fallback selection replaces `embed_columns_separate` multi-col concat |
+
+---
+
+### Run 7 — 2026-04-28 (Phase 23 — Fallback-chain backbone + LLM annotation)
+
+**Context:** Three changes since Phase 22 made a full retrain mandatory:
+
+1. **Architecture — fallback chain (2026-04-27):** Report embedding switched from
+   3-column concatenation (2304-dim) to a single fallback-chain column (768-dim). Classifier
+   input dim changed from 3072 → 1536. All Phase 22 checkpoints are incompatible.
+2. **Annotation — LLM replaces keyword:** `llm_annotation.csv` used throughout. This
+   produced 27,013 contrastive pairs from 21,853 train cases vs keyword's 7,398 pairs from
+   ~5,800 cases — 3.6× more training signal.
+3. **Expanded train/test split:** `create_split.py` was re-run on all 58,313 reports
+   (not just the original 12,620-case cohort). New split: 46,652 train / 11,661 test.
+   Previous evaluation history (Phases 17–22) backed up to
+   `evaluation_history_phases17-22_backup.csv` and a fresh history started for Phase 23.
+
+**Backbone fine-tuning config:** epochs=3, batch=32, lr=2e-5, temperature=0.07, device=xpu,
+starting weights=`SAVSNET/PetBERT` (fresh — old backbone was trained on 3-col text).
+Train-cases filter active: pairs restricted to 46,652 train cases.
+
+| Epoch | Avg InfoNCE Loss |
+|-------|-----------------|
+| 1 | 2.3004 |
+| 2 | 1.8847 |
+| 3 | 1.7447 |
+
+Loss decreased steadily (started higher than Phase 17's 1.9 because batch is harder with
+3.6× more diverse label pairs). Checkpoint saved to `ml/output/checkpoints/contrastive/`.
+
+**Cold start:** Deleted `embedding_cache.npz`, `evaluation_co_bank.csv`,
+`presence_classifier_current.pt`. Note: `presence_classifier_best.pt` from Phase 22 was
+already absent from the checkpoint directory.
+
+**PresenceClassifier retraining (cold start, hd=512, co=5, fp=10, epochs=25,
+recall-weight=0.25, fallback-chain 1-col architecture, 46,652 train cases, LLM annotation):**
+
+| Cycle | Good% | Slight% | Good+Slight | CO% | FP% | FN% | Rows |
+|-------|-------|---------|-------------|-----|-----|-----|------|
+| c1 | 4.5 | 19.4 | **23.9%** | 25.0 | 51.1 | 0.0 | 221,962 |
+| c2 | 12.7 | 25.6 | **38.3%** | 36.6 | 25.0 | 0.0 | 137,350 |
+| c3 | 10.2 | 22.0 | 32.2% | 21.3 | 46.5 | 0.0 | 196,669 |
+| c4 | 15.9 | 30.2 | **46.1%** | 29.7 | 24.2 | 0.1 | 130,881 |
+| c5 | 10.5 | 22.4 | 32.9% | 20.5 | 46.6 | 0.0 | 196,959 |
+| c6 | 16.0 | 30.8 | **46.8%** | 29.2 | 23.9 | 0.1 | 130,467 |
+| c7 | 10.6 | 22.2 | 32.8% | 20.5 | 46.6 | 0.0 | 196,735 |
+| c8 | 15.7 | 31.4 | **47.1%** | 28.7 | 24.1 | 0.1 | 131,791 |
+| c9 | 10.6 | 22.7 | 33.3% | 20.8 | 45.8 | 0.0 | 193,591 |
+| c10 | 15.8 | 31.4 | **47.2%** | 28.6 | 24.2 | 0.1 | 131,951 |
+
+**Best: c10 — 47.2% Good+Slight, CO=28.6%, FP=24.2%**
+
+**Best checkpoint:** `ml/output/checkpoints/contrastive/presence_classifier_best.pt` (c10)
+
+**Key observations:**
+
+- **Odd/even alternation** persists: odd cycles are "low" (~33% G+S, FP~46%) because they
+  build FP negatives from the prior low-FP cycle's evaluation; even cycles are "high"
+  (~47% G+S, FP~24%) with dense FP negative feedback.
+- **Even-cycle peaks climbing but decelerating:** c2→c4 +7.8pp, c4→c6 +0.7pp,
+  c6→c8 +0.3pp, c8→c10 +0.1pp. Plateau confirmed at ~47.2%.
+- **CO floor stabilised:** odd-cycle CO% flattened at ~20.5–20.8% by c5–c9. The CO bank
+  is feeding correctly but the model cannot resolve further wrong-group errors with current
+  data.
+- **FP rate on high cycles stable at ~24%** — substantially above Phase 22's 2.3% on train
+  cases. This reflects a harder evaluation: LLM annotation labels more cancer cases with
+  more diverse and numerous positive terms, so each missed label is counted as a FP.
+
+**Comparison to previous phases (notes on comparability):**
+
+These numbers are **not directly comparable** to Phases 17–22, which used keyword annotation
+on the original 12,620-case cohort. The LLM evaluation is harder on two axes:
+
+- More annotated cancer cases (~21,853 vs ~5,800): the denominator for FP% includes many
+  more cases.
+- More labels per case: each missed or wrong label counts individually.
+
+The closest prior reference: Phase 18 model evaluated against LLM annotation (post-dedup
+fix, 2026-04-27) scored **36.5% G+S** on the full dataset. Phase 23 achieves **47.2%
+G+S on the training set** — a +10.7pp improvement with the same LLM ground truth.
+
+The CO rate (28.6% on high cycles) remains high. Next lever: a second round of contrastive
+fine-tuning using hard negatives from the Phase 23 CO bank, once enough cycles have
+accumulated wrong-group signal.
+
+---
+
+### Run 8 — 2026-04-28: Round 2 Backbone + GroupClassifier (Phase 23)
+
+**Goal:** Reduce CO using hard-negative backbone fine-tuning, then evaluate the
+GroupClassifier on the improved embedding space.
+
+#### Step 1: Round 2 Backbone Fine-tuning
+
+CO bank accumulated across Phase 23 c1–c10: **257,079 hard-negative triplets** from
+wrong-group predictions (completely_off). Positive pairs: **27,013** (same as Round 1).
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode adapt-backbone \
+  --epochs 2 --lr 1e-5 --temperature 0.07 --batch-size 32 \
+  --hard-neg-csv ml/output/training/contrastive/hard_neg_pairs.csv \
+  --hard-neg-weight 0.25 --hard-neg-margin 0.3 \
+  --device xpu --local-only \
+  --train-cases ml/output/splits/train_cases.txt \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv \
+  --skip-pair-build
+```
+
+Lower LR (1e-5 vs 2e-5 in Round 1) to preserve Round 1 alignment while pushing
+wrong-group label pairs apart. Hard-neg weight 0.25 — supplementary, not dominant.
+
+Cold start performed after backbone update:
+```bash
+rm -f ml/output/training/embedding_cache.npz
+rm -f ml/output/training/contrastive/evaluation_co_bank.csv
+rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
+```
+
+#### Step 2: GroupClassifier v1 — Overfitting Failure
+
+Without hyperparameter guards, BCE pos_weights reached up to **3,587×** for rare
+groups. The model predicted every group for every case.
+
+| | v1 (uncapped) |
+|---|---|
+| Max class weight | up to 3,587× |
+| Weight decay | 0.0 |
+| Train loss | 0.23 |
+| Val loss | 1.13 |
+
+#### Step 3: GroupClassifier v2 — Fixed Hyperparameters
+
+Two guards added to `run_training.py --mode train-groups`:
+- `--max-class-weight 50` — clips BCE pos_weight (prevents rare-group dominance)
+- `--weight-decay 1e-3` — Adam L2 regularisation
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode train-groups \
+  --epochs 50 --lr 5e-5 \
+  --max-class-weight 50 --weight-decay 1e-3 \
+  --device xpu --local-only \
+  --train-cases ml/output/splits/train_cases.txt \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv
+```
+
+| | v1 (uncapped) | v2 (capped, wd=1e-3) |
+|---|---|---|
+| Max class weight | ~3,587× | 50× |
+| Weight decay | 0.0 | 1e-3 |
+| Train loss | 0.23 | 0.247 |
+| Val loss | 1.13 | 0.258 |
+| Macro F1 (Round 1 backbone) | — | 0.1815 |
+| **Macro F1 (Round 2 backbone)** | — | **0.1922** |
+
+Round 2 backbone improved GroupClassifier generalisation: F1 0.1815 → 0.1922.
+
+#### Step 4: Production Evaluation — Threshold Sweep
+
+Evaluated GroupClassifier (Round 2 backbone, v2) vs binary baseline (Phase 23 c10).
+
+**Binary baseline:** G+S=47.2%, CO=28.6%, FP=24.2% — 131,951 rows (top-k output)
+
+| Threshold | G+S | CO% | FP% | FN% | Rows |
+|-----------|-----|-----|-----|-----|------|
+| 0.88 | 49.1% | 29.1% | 10.0% | 11.8% | 40,927 |
+| **0.90** | **50.1%** | **25.5%** | **8.9%** | **15.5%** | **37,760** |
+| 0.92 | 50.2% | 21.0% | 7.6% | 21.2% | 34,745 |
+
+**Recommended operating point: threshold=0.90**
+
+vs binary at threshold=0.90:
+- G+S **+2.9pp** (50.1% vs 47.2%)
+- FP **−15.3pp** (8.9% vs 24.2%) — explicit group gate eliminates most FP cases
+- CO **−3.1pp** (25.5% vs 28.6%) — group-level loss directly penalises wrong-group
+- FN **+15.5pp** — cases where no group clears the threshold are Uncategorized
+
+This is the first time GroupClassifier has outperformed binary end-to-end.
+The FN trade-off is acceptable for the primary goal of group accuracy.
+
+**Note on row counts:** Binary outputs up to 5 top-k labels per case; GroupClassifier
+outputs one prediction per predicted group. Lower rows = single-output mode, not
+fewer evaluated cases.
+
+---
+
+### Run 9 — 2026-04-29: Presence Gate + GroupClassifier + KW (current experiment)
+
+**Goal:** Test whether using the PresenceClassifier as a hard gate *before* the GroupClassifier
+improves results over the Run 8 baseline (where PresenceClassifier was a fallback for
+low-confidence cases).
+
+**Hypothesis:**
+- PresenceClassifier gate filters most FP and FN cases before GroupClassifier runs
+- GroupClassifier (seeing only plausible cancer cases) can focus on group discrimination → better G+S
+- KW correction within predicted groups converts Slight → Good as before
+
+**Pipeline change (2026-04-29):**
+
+```
+PetBERT → PresenceClassifier gate → GroupClassifier → KW correction
+```
+
+Stage 1 (gate): Run `PresenceClassifier.score_matrix()` (N × M), center per-label, compute
+per-case max. Cases where `max_centered_score < --embedding-min-sim` have `group_probs` zeroed
+→ fall through to Uncategorized in `run_categorization_group`. No fallback path.
+
+Stage 2: GroupClassifier runs on all cases; zeroed cases go straight to Uncategorized.
+
+Stage 3: Within each predicted group, behavior keyword matching + cosine similarity selects term.
+
+**Checkpoints used:**
+- Backbone: `ml/output/checkpoints/contrastive/` (Phase 23 Round 2)
+- PresenceClassifier: `ml/output/checkpoints/contrastive/presence_classifier_best.pt` (Phase 23 c10)
+- GroupClassifier: `ml/output/checkpoints/group/group_classifier_best.pt` (Phase 23 Run 8 v2)
+
+**Command:**
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
+  --presence-classifier ml/output/checkpoints/contrastive/presence_classifier_best.pt \
+  --group-classifier-threshold 0.90 \
+  --embedding-min-sim 0.05 \
+  --device xpu --local-only
+```
+
+**Results:** Superseded before evaluation — replaced by Run 10 (CasePresenceClassifier gate).
+
+**Run 8 baseline (no gate, threshold=0.90):** G+S=50.1%, CO=25.5%, FP=8.9%, FN=15.5%
+
+---
+
+### Run 10 — 2026-04-29: CasePresenceClassifier + GroupClassifier + KW (current design)
+
+**Goal:** Replace the label-level PresenceClassifier gate (Run 9) with a purpose-built
+case-level classifier (`CasePresenceClassifier`) trained specifically to distinguish
+cancer from non-cancer cases. Each stage of the pipeline has one distinct job.
+
+**Pipeline design:**
+
+```
+PetBERT → CasePresenceClassifier gate → GroupClassifier → KW correction
+```
+
+| Stage | Classifier | Input | Responsibility |
+|-------|-----------|-------|---------------|
+| 1 | `CasePresenceClassifier` | mean_emb (768-dim) | Filter non-cancer → reduce FP |
+| 2 | `GroupClassifier` | report_emb (768-dim) | Assign ICD group → reduce CO |
+| 3 | KW correction | report text | Pick best term within group → convert Slight → Good |
+
+**Why `CasePresenceClassifier` over the Run 9 label-level gate:**
+- Trained end-to-end for the case-level binary task (cancer / not-cancer)
+- No label matrix needed — one forward pass on the 768-dim mean embedding
+- Recall-weighted training (`recall_weight=0.7`) makes the gate conservative by design —
+  uncertain cases pass through rather than being missed
+- Threshold is independently tunable without touching `--embedding-min-sim`
+
+**Training commands:**
+
+```bash
+# Step 1: Train CasePresenceClassifier (one-shot, requires embedding cache)
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
+  --mode train-case-presence \
+  --train-cases ml/output/splits/train_cases.txt \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --epochs 20 --device xpu
+
+# Step 2: Run three-stage production pipeline
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --case-presence-classifier ml/output/checkpoints/contrastive/case_presence_classifier.pt \
+  --case-presence-threshold 0.5 \
+  --group-classifier ml/output/checkpoints/group/group_classifier_best.pt \
+  --group-classifier-threshold 0.90 \
+  --embedding-cache ml/output/training/embedding_cache.npz \
+  --device xpu --local-only
+```
+
+**Checkpoints:**
+- Backbone: `ml/output/checkpoints/contrastive/` (Phase 23 Round 2)
+- CasePresenceClassifier: `ml/output/checkpoints/contrastive/case_presence_classifier.pt`
+- GroupClassifier: `ml/output/checkpoints/group/group_classifier_best.pt` (Phase 23 Run 8 v2)
+
+#### CasePresenceClassifier Training Results (2026-04-29)
+
+Training config: epochs=20, recall_weight=0.7 (default), pos_weight=1.0, device=xpu.
+Dataset: 46,652 cases (21,853 cancer / 24,799 non-cancer), 85/15 train/val split.
+
+| Epoch | Loss  | F1    | P     | R     | Score |
+|-------|-------|-------|-------|-------|-------|
+| 1     | 0.318 | 0.875 | 0.922 | 0.832 | 0.859 |
+| 5     | 0.261 | 0.894 | 0.881 | 0.908 | 0.900 |
+| 10    | 0.235 | 0.895 | 0.878 | 0.912 | 0.902 |
+| **17**| **0.208** | **0.896** | **0.882** | **0.911** | **0.902** ← best |
+| 20    | 0.208 | 0.895 | 0.893 | 0.898 | 0.896 |
+
+Best score 0.902 at epoch 17 (P=88.2%, R=91.1%). Gate passes 28,149/58,313 cases (48.3%) at threshold=0.5.
+Saved: `ml/output/checkpoints/contrastive/case_presence_classifier.pt`
+
+#### Production + Evaluation Results (test set, 2026-04-29)
+
+Evaluated on 11,661 held-out test cases (6,858 prediction rows, 5,485 true negatives excluded).
+
+| Metric | Run 10 (test set) | Run 8 GroupCLF baseline (test set) |
+|--------|-------------------|------------------------------------|
+| Good%  | 9.1%  | 9.1%  |
+| Slightly off% | 35.7% | 24.9% |
+| **Good+Slight** | **44.8%** | **34.0%** |
+| Completely off% | 36.8% | 35.8% |
+| False positive% | 10.9% | 27.9% |
+| False negative% | 7.6%  | 2.2%  |
+| Rows   | 6,858 | 12,330 |
+
+**vs Run 8 GroupCLF baseline (test set):**
+- G+S **+10.8pp** (44.8% vs 34.0%) — gate removes many misclassified non-cancer cases
+- FP **−17.0pp** (10.9% vs 27.9%) — CasePresenceClassifier gate suppresses most false positives
+- CO essentially flat (+1.0pp) — "Unidentified Cancer" group (1,201 rows, 100% CO) is the main drag
+- FN **+5.4pp** — expected trade-off; gate blocks some true cancer cases
+
+**Key issue:** "Unidentified Cancer" group contributes 1,201 rows all scored as CO, accounting for
+~17.5% of the total rows. This group's predictions are systematically wrong — the GroupClassifier
+assigns this group but the correct label is in a specific cancer group. Investigate whether
+excluding or reweighting "Unidentified Cancer" during GroupClassifier training would help.
+
+**Run 8 baseline (train set, no gate, threshold=0.90):** G+S=50.1%, CO=25.5%, FP=8.9%, FN=15.5%
+
+---
+
+### Run 11 — 2026-05-01: Phase 25 — CasePresenceClassifier rw=0.85 + PresenceClassifier c11–c14
+
+**Context:** Phase 24 3-stage pipeline had FN=25.0% on the test set. Root cause: CasePresenceClassifier
+was trained with default recall_weight=0.7, making the gate too conservative at threshold=0.5.
+
+**Bug fixes applied:**
+- `ml/model/constants.py` — restored `DEFAULT_TEXT_COLS` (needed by `training/binary/build_training_pairs.py` and `train.py`)
+- `ml/training/binary/train.py` — default `out_dir` changed from missing `config.CHECKPOINT_BINARY_DIR` to `config.CHECKPOINT_CONTRASTIVE_DIR`
+
+#### CasePresenceClassifier Retraining (recall_weight=0.85)
+
+Config: epochs=25, recall_weight=0.85, pos_weight=1.0, device=xpu.
+Dataset: 46,652 cases (21,853 cancer / 24,799 non-cancer), 85/15 split.
+
+| Epoch | Loss  | F1    | P     | R     | Score |
+|-------|-------|-------|-------|-------|-------|
+| 1     | 0.239 | 0.920 | 0.945 | 0.897 | 0.904 |
+| 6     | 0.167 | 0.933 | 0.928 | 0.937 | 0.936 |
+| **10**| **0.152** | **0.934** | **0.927** | **0.941** | **0.939** ← best |
+| 15    | 0.139 | 0.937 | 0.938 | 0.935 | 0.936 |
+| 25    | 0.119 | 0.937 | 0.943 | 0.931 | 0.933 |
+
+Best score 0.939 at epoch 10 (P=92.7%, R=94.1%). Saved: `case_presence_classifier.pt`.
+
+#### Threshold Sweep (test set, with Phase 24 GroupClassifier)
+
+| Config | G+S | CO | FP | FN | Total |
+|--------|-----|----|----|-----|-------|
+| Ph24 rw=0.7 gate=0.5 | 49.1% | 22.1% | 3.7% | 25.0% | 6,748 |
+| Ph25 rw=0.85 gate=0.3 | 61.1% | 26.3% | 9.7% | 3.0% | 7,324 |
+| **Ph25 rw=0.85 gate=0.5** | **62.6%** | **26.2%** | **6.7%** | **4.5%** | **7,084** |
+
+**Key finding:** recall_weight=0.85 fixed the FN=25% problem. At gate=0.5, G+S=62.6% vs 49.1%
+(+13.5pp) and FN=4.5% vs 25.0% (−20.5pp). Threshold=0.3 has lower FN (3.0%) but higher FP (9.7%).
+
+**Best 3-stage config: gate=0.5 group-t=0.90** with rw=0.85 CasePresenceClassifier.
+
+#### PresenceClassifier Cycles c11–c14 (binary mode only)
+
+PresenceClassifier cycles improve binary predictions only — NOT used in the 3-stage pipeline.
+
+| Cycle | G+S | FP | CO | Notes |
+|-------|-----|----|----|-------|
+| c10 (prev best) | 63.8% | 19.2% | 16.9% | Phase 24 |
+| c11 | 55.2% | 30.0% | 14.8% | Odd cycle |
+| **c12** | **65.5%** | **17.7%** | **16.6%** | **New best** |
+| c13 | 53.9% | 31.6% | 14.4% | Odd cycle |
+| **c14** | **65.7%** | **17.1%** | **17.1%** | **New best** |
+
+Best checkpoint (binary): `presence_classifier_best.pt` (65.7%, c14).
+Odd/even alternation continues. Marginal gain c12→c14 (+0.2pp) suggests plateau approaching.
+
+---
+
 ## Approach B — End-to-end Group Classification (WIP, blocked)
 
 Fine-tunes PetBERT as a sequence classifier directly predicting Vet-ICD-O groups.
@@ -648,3 +1190,140 @@ needs to prove competitive (~10,000 cases) before this is worth the compute cost
 1. Resolve bugs above
 2. Wait until GroupClassifier proves competitive with binary (~10,000 confirmed cases)
 3. Benchmark against GroupClassifier
+
+---
+
+## Approach B — Phase A/B/Sweep — End-to-end FinetuneGroupClassifier (2026-05-07/08, ABANDONED)
+
+**Verdict:** integrated, benchmarked, reverted. End-to-end fine-tuning lifted standalone val macro F1 from 0.4475 (Phase 27 GroupCLF) to 0.5774, but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9%. The F1 win was absorbed by LP coupling: LabelPresenceClassifiers were trained on Phase 27 GroupCLF outputs and don't realign without Phase C (cache regeneration + Stage 1/3a retrain). The cost of Phase C (~5h compute, embedding-cache invalidation, ~30× slower inference forever after) wasn't justified by the projected ~+1–3pp ceiling.
+
+**Hypothesis tested:** end-to-end finetuning of PetBERT (backbone + linear head) would produce better per-group probabilities than the Phase 27 frozen-embedding GroupClassifier MLP, and the gain would carry through to test-set G+S.
+
+### Code added (now reverted)
+
+| File | Purpose |
+|---|---|
+| `ml/model/finetune_group_classifier.py` | Backbone + linear head; tokenizes raw text at inference |
+| `ml/training/finetune/{__init__,build_dataset,train}.py` | 25-group multi-label trainer with BCE-with-logits + pos_weights |
+| `ml/production/finetune_pipeline/{__init__,cli,pipeline,categorization,types}.py` | Standalone inference pipeline (Phase A benchmark harness) |
+| `ml/scripts/run_{training,production}_finetune.py` | Standalone entry points |
+| `ml/production/petbert_pipeline/{cli,pipeline,types}.py` modifications | Stage 2 conditional dispatch via `--finetune-group-classifier`; `--uncommon-groups` flag; mutex with `--group-classifier` |
+
+### Phase A — standalone benchmark (3 epochs)
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_training_finetune.py --mode build-dataset \
+  --annotation-csv ml/output/annotation/llm/llm_annotation.csv \
+  --train-cases ml/output/splits/train_cases.txt
+# 46,626 cases written (21,851 cancer / 24,775 non-cancer)
+
+ml/.venv/Scripts/python.exe ml/scripts/run_training_finetune.py --mode train \
+  --model ml/output/checkpoints/contrastive \
+  --epochs 3 --batch-size 8 --lr 2e-5 --device xpu --local-only
+
+ml/.venv/Scripts/python.exe ml/scripts/run_production_finetune.py --local-only
+ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
+  --prediction-csv ml/output/production/finetune/finetune_predictions.csv \
+  --out-dir ml/output/evaluation/finetune \
+  --test-cases ml/output/splits/test_cases.txt \
+  --uncommon-groups ml/output/training/finetune/uncommon_groups.txt \
+  --label "Phase A — finetune benchmark vs Phase 28"
+```
+
+**Train**: 37,301 / **Val**: 9,325 / **Groups**: 25 (24 common + Uncommon)
+
+| Epoch | Train Loss | Val Loss | Macro F1 |
+|---|---|---|---|
+| 1 | 0.520 | 0.450 | 0.4071 |
+| 2 | 0.374 | 0.417 | 0.3946 |
+| 3 | 0.290 | 0.452 | **0.4789** |
+
+Standalone test G+S: 32.2% (Good 3.3%, CO 27.0%, FP 36.3%, FN 4.5%). Note: standalone benchmark has no CasePresenceClassifier gate, no LP, no KW correction — not directly comparable to 4-stage results.
+
+### Phase B — 4-stage swap-in (CLI defaults: group-t=0.5, lp-t=0.5)
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
+  --finetune-group-classifier ml/output/checkpoints/finetune/finetune_group_classifier_best.pt \
+  --group-classifier "" \
+  --uncommon-groups ml/output/training/finetune/uncommon_groups.txt \
+  --group-classifier-threshold 0.5 --label-presence-threshold 0.5 \
+  --device xpu --local-only
+```
+
+**Result**: G+S 42.8% (Good 18.4%, Slight 24.4%, CO 44.9%, FP 8.5%, FN 3.8%) — 15pp behind Phase 28.
+
+**Diagnosis**: threshold mismatch (Phase 28 uses group-t=0.85, not 0.5) + LP coupling (only 17/25 LPs match the finetune classifier's group set; 8 fall back to cosine).
+
+### Threshold sweep (3-epoch model, group-t=0.85)
+
+| Config | Good | Slight | G+S | CO | FP | FN |
+|---|---|---|---|---|---|---|
+| lp-t=0.5 | 25.4% | 30.2% | **55.6%** | 26.4% | 8.8% | 9.3% |
+| lp-t=0.9 | 35.1% | 20.6% | **55.7%** | 23.1% | 7.5% | 13.7% |
+
+Threshold change recovered ~13pp. Remaining ~2pp gap to Phase 28 is the LP coupling penalty.
+
+### 8-epoch retrain + re-sweep
+
+| Epoch | Train Loss | Val Loss | Macro F1 |
+|---|---|---|---|
+| 1 | 0.564 | 0.422 | 0.2932 |
+| 2 | 0.405 | 0.442 | 0.4169 |
+| 3 | 0.332 | 0.491 | 0.4700 |
+| 4 | 0.266 | 0.549 | 0.4982 |
+| 5 | 0.203 | 0.612 | 0.4922 |
+| 6 | 0.152 | 0.737 | 0.5507 |
+| 7 | 0.113 | 0.844 | 0.5729 |
+| 8 | 0.084 | 0.870 | **0.5774** |
+
+Val loss climbed monotonically while train loss fell — typical loss/F1 paradox in imbalanced multi-label BCE. F1 (the metric that matters here) was still climbing at epoch 8.
+
+| Config | Good | Slight | G+S | CO | FP | FN |
+|---|---|---|---|---|---|---|
+| 8ep, lp-t=0.5 | 26.2% | 30.2% | **56.4%** | 23.0% | 9.1% | 11.6% |
+| 8ep, lp-t=0.9 | **35.6%** | 20.3% | **55.9%** | **19.7%** | 7.8% | 16.7% |
+| Phase 28 lp-t=0.5 (baseline) | — | — | **57.9%** | 25.3% | — | — |
+| Phase 28 lp-t=0.9 (baseline) | — | — | **55.9%** | 22.9% | — | — |
+
+**+0.10 absolute F1 (3ep→8ep) → only +0.8pp G+S.** CO% dropped (good) but FN% climbed (sharper, more confident probs reject more cases below threshold).
+
+At lp-t=0.9, 8-epoch finetune **ties Phase 28** on G+S with qualitatively better predictions (Good +0.5pp absolute, CO −3.2pp), but loses on FN (+3.0pp).
+
+### Why F1 didn't translate to G+S
+
+The LPs in `ml/production/petbert_pipeline/pipeline.py` use cached embeddings from the contrastive backbone (via `embedding_cache.npz`), NOT the finetune backbone's outputs. The finetune Stage 2 chooses which LPs to consult, but the LPs themselves see the same text embeddings as before. Two consequences:
+
+1. **LP coverage gap**: 8 of 25 finetune-classifier groups have no matching LP `.pt` file → cosine fallback produces high CO% on those groups (Acinar cell 84%, Mature T/NK 85%, Lymphoid leukemias 67% in the 8ep-lp-t=0.5 run).
+2. **Embedding-space mismatch**: even on covered groups, LPs were trained on (case, group, label) triplets where the group came from Phase 27 GroupCLF — calibration drift when the group choice comes from a different distribution.
+
+### What would close the gap (Phase C, not run)
+
+1. Regenerate `embedding_cache.npz` against the finetune backbone (~30–60 min)
+2. Retrain CasePresenceCLF on new embeddings (~30 min)
+3. Retrain all 25 LPs on new embeddings (~2h)
+4. Add LPs for the 8 missing groups (lower uncommon_threshold or train on smaller positive sets)
+
+Estimated probability of beating Phase 28 after Phase C: ~60% with expected gain +1–3pp G+S in the win case.
+
+### Why we abandoned
+
+1. **Inference cost is permanent**: ~9 min/run vs ~10 sec for the embedding path. Even with the gate-before-tokenize fix (cuts to ~4.5 min), still ~30× slower forever.
+2. **Iteration speed cost**: every Stage 2 retrain becomes a 90-min job (vs lightweight MLP fits). Phase 23→28 progress depended on fast iteration.
+3. **Expected-value math is poor**: 60% × +2pp ≈ +1.2pp G+S expected gain, against permanent operational tax + ~5h compute commitment now plus cache invalidation cascade.
+4. **F1→G+S conversion is weak**: +0.10 F1 → only +0.8pp G+S. Suggests the upstream gain doesn't compound through the pipeline as cleanly as we hoped.
+
+### Resurrection notes
+
+If revisited:
+- (a) Apply the **gate-before-tokenize fix** in `pipeline.py` first — index `texts` by `presence_gate_mask` before tokenizing/predicting, then scatter results into a full `(n, num_groups)` array. Cuts inference roughly in half for free.
+- (b) Train ≥10 epochs (val F1 still climbing at epoch 8; ceiling not yet observed).
+- (c) Phase C is **non-optional** for closing the LP gap — don't waste time on threshold sweeps without it.
+- (d) Worth doing if there's a *separate* motivation for owning a finetune backbone (e.g., embeddings for similar-case retrieval, dataset deduplication, or other downstream tasks). Stage-2-only swap is not enough motivation.
+
+### Archived artifacts
+
+Moved to `ml/output/archive/2026-05-08_finetune-stage2-abandoned/`:
+- `checkpoints/` — 3-epoch and 8-epoch best/current `.pt` files
+- `training/` — `finetune_dataset.csv`, `uncommon_groups.txt`
+- `evaluation_phase_a/`, `evaluation_phase_b/`, `evaluation_sweep_3ep_lp{50,90}/`, `evaluation_sweep_8ep_lp{50,90}/`

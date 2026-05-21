@@ -16,9 +16,13 @@ datasets>=4.8.4
 tqdm==4.67.3
 requests>=2.32.0
 python-dotenv>=1.0.0
+matplotlib>=3.10.0
 
 # TUI
 textual>=0.47.0
 
-# Install torch from the XPU index for Intel GPU support:
+# Install torch from the CUDA 12.8 index for NVIDIA GPU support (Blackwell / sm_120, e.g. RTX 5070 Ti):
+# pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+#
+# For the legacy Intel XPU build instead:
 # pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/xpu

@@ -27,44 +27,28 @@ _ROOT    = Path(__file__).parent.parent
 _PYTHON  = str(Path(__file__).parent / ".venv" / "Scripts" / "python.exe")
 _SCRIPTS = Path(__file__).parent / "scripts"
 
-CHECKPOINT_BINARY      = config.CHECKPOINT_BINARY_DIR
 CHECKPOINT_CONTRASTIVE = config.CHECKPOINT_CONTRASTIVE_DIR
 CHECKPOINT_GROUP       = config.CHECKPOINT_GROUP_DIR
-KEYWORD_ANNOTATION_CSV = config.KEYWORD_ANNOTATION_CSV
+ANNOTATION_CSV         = config.ANNOTATION_CSV
 LLM_ANNOTATION_CSV     = config.LLM_ANNOTATION_CSV
-CO_NEG_BANK_CSV        = f"{config.OUTPUT_TRAINING_DIR}/binary/evaluation_co_bank.csv"
 OUTPUT_PRODUCTION_DIR  = config.OUTPUT_PRODUCTION_DIR
-
-_COLD_START_FILES = [
-    config.EMBEDDING_CACHE_NPZ,
-    f"{config.OUTPUT_TRAINING_DIR}/contrastive/evaluation_co_bank.csv",
-    f"{config.CHECKPOINT_CONTRASTIVE_DIR}/presence_classifier_current.pt",
-]
 
 _DEVICE_OPTIONS: list[tuple[str, str]] = [
     ("xpu", "xpu"), ("cuda", "cuda"), ("cpu", "cpu"), ("auto", "auto"),
 ]
 
 _ANNOTATION_OPTIONS: list[tuple[str, str]] = [
-    ("keyword", KEYWORD_ANNOTATION_CSV),
+    ("unified", ANNOTATION_CSV),
     ("llm",     LLM_ANNOTATION_CSV),
 ]
 
 _TRAINING_MODES: list[tuple[str, str]] = [
-    ("Binary Presence Classifier",  "train-classifier"),
-    ("Group Classifier",            "train-groups"),
-    ("Contrastive Fine-Tuning",     "adapt-backbone"),
-]
-
-_CLASSIFIER_MODEL_OPTIONS: list[tuple[str, str]] = [
-    ("Fine-tuned PetBERT  [dim](contrastive checkpoint)[/]", CHECKPOINT_CONTRASTIVE),
-    ("Default PetBERT  [dim](SAVSNET/PetBERT)[/]",           "SAVSNET/PetBERT"),
-    ("Other (specify path)…",                                 "other"),
+    ("Group Classifier",        "train-groups"),
+    ("Contrastive Fine-Tuning", "adapt-backbone"),
 ]
 
 
 _MODE_SECTION = {
-    "train-classifier": "classifier",
     "adapt-backbone":   "backbone",
     "train-groups":     "groups",
 }
@@ -105,20 +89,15 @@ class ConfirmModal(ModalScreen[bool]):
 # ---------------------------------------------------------------------------
 class AnnotateView(VerticalScroll):
     def compose(self) -> ComposeResult:
-        yield Label("Method")
-        yield Select(
-            [("keyword — fast rule-based", "keyword"), ("llm — Ollama", "llm")],
-            value="keyword", id="ann-method",
-        )
         yield Label("Max rows  [dim](blank = all)[/]")
         yield Input(placeholder="e.g. 100", id="ann-maxrows")
-        yield Label("Ollama model  [dim](llm only)[/]")
+        yield Label("LLM model")
         yield Input(placeholder="e.g. mistral", id="ann-llm-model")
-        yield Label("LLM timeout (s)  [dim](llm only)[/]")
+        yield Label("LLM timeout (s)")
         yield Input(value="60", id="ann-llm-timeout")
-        yield Label("List models  [dim](llm only — lists and exits)[/]")
+        yield Label("List models  [dim](lists and exits)[/]")
         yield Switch(value=False, id="ann-list-models")
-        yield Label("Compare models  [dim](llm only — runs all models on max-rows rows)[/]")
+        yield Label("Compare models  [dim](runs all models on max-rows rows)[/]")
         yield Switch(value=False, id="ann-compare-models")
         yield Button("Run Annotation", id="btn-annotate-run", variant="primary")
 
@@ -126,22 +105,20 @@ class AnnotateView(VerticalScroll):
         if event.button.id != "btn-annotate-run":
             return
         event.stop()
-        method = str(self.query_one("#ann-method", Select).value)
-        cmd = [_PYTHON, str(_SCRIPTS / "run_annotation.py"), "--method", method]
+        cmd = [_PYTHON, str(_SCRIPTS / "run_annotation.py")]
         maxrows = self.query_one("#ann-maxrows", Input).value.strip()
         if maxrows:
             cmd += ["--max-rows", maxrows]
-        if method == "llm":
-            model = self.query_one("#ann-llm-model", Input).value.strip()
-            if model:
-                cmd += ["--model", model]
-            timeout = self.query_one("#ann-llm-timeout", Input).value.strip()
-            if timeout:
-                cmd += ["--llm-timeout", timeout]
-            if self.query_one("#ann-list-models", Switch).value:
-                cmd.append("--list-models")
-            if self.query_one("#ann-compare-models", Switch).value:
-                cmd.append("--compare-models")
+        model = self.query_one("#ann-llm-model", Input).value.strip()
+        if model:
+            cmd += ["--model", model]
+        timeout = self.query_one("#ann-llm-timeout", Input).value.strip()
+        if timeout:
+            cmd += ["--llm-timeout", timeout]
+        if self.query_one("#ann-list-models", Switch).value:
+            cmd.append("--list-models")
+        if self.query_one("#ann-compare-models", Switch).value:
+            cmd.append("--compare-models")
         self.app.run_cmd(cmd)
 
 
@@ -151,37 +128,7 @@ class AnnotateView(VerticalScroll):
 class TrainingView(VerticalScroll):
     def compose(self) -> ComposeResult:
         yield Label("Mode")
-        yield Select(_TRAINING_MODES, value="train-classifier", id="tr-mode")
-
-        # ── train-classifier ─────────────────────────────────────────────
-        with Vertical(id="sec-classifier"):
-            yield Label("Model  [dim]embedding backbone used to encode reports and labels[/]")
-            yield Select(_CLASSIFIER_MODEL_OPTIONS, value=CHECKPOINT_CONTRASTIVE, id="cl-model-select")
-            yield Input(placeholder="HuggingFace ID or local path", id="cl-model-custom")
-            yield Label("Label  [dim]identifies this cycle in evaluation history (e.g. c21)[/]")
-            yield Input(value="", placeholder="e.g. c21", id="cl-label")
-            yield Label("Epochs  [dim]training passes per cycle — 25 is the production default[/]")
-            yield Input(value="25", id="cl-epochs")
-            yield Label("Hidden dim  [dim]MLP hidden layer width — 512 is the production best[/]")
-            yield Input(value="512", id="cl-hidden")
-            yield Label("CO neg/case  [dim]wrong-group negatives from the CO bank per case — always use 5[/]")
-            yield Input(value="5", id="cl-co-neg")
-            yield Label("FP neg/case  [dim]extra hard negatives per false-positive case — default 10[/]")
-            yield Input(value="10", id="cl-fp-neg")
-            yield Label("Recall weight  [dim]0 = pure F1 · 1 = pure recall — 0.25 balances both[/]")
-            yield Input(value="0.25", id="cl-recall")
-            yield Label("Min similarity  [dim]floor for surfacing predictions — 0.05 keeps uncertain cases[/]")
-            yield Input(value="0.05", id="cl-minsim")
-            yield Label("CO bank CSV  [dim]rolling wrong-label feedback bank (~24k pairs)[/]")
-            yield Input(value=CO_NEG_BANK_CSV, id="cl-co-bank")
-            yield Label("Annotation CSV")
-            yield Select(_ANNOTATION_OPTIONS, value=KEYWORD_ANNOTATION_CSV, id="cl-ann-csv")
-            yield Label("Device")
-            yield Select(_DEVICE_OPTIONS, value="xpu", id="cl-device")
-            yield Label("Local only"); yield Switch(value=True, id="cl-local-only")
-            with Horizontal():
-                yield Button("Run Cycle",  id="btn-classifier-run", variant="primary")
-                yield Button("Cold Start", id="btn-cold-start",     variant="error")
+        yield Select(_TRAINING_MODES, value="train-groups", id="tr-mode")
 
         # ── adapt-backbone ───────────────────────────────────────────────
         with Vertical(id="sec-backbone"):
@@ -213,7 +160,7 @@ class TrainingView(VerticalScroll):
             yield Label("LR  [dim]peak learning rate with cosine schedule — 5e-5 default[/]")
             yield Input(value="5e-5", id="gr-lr")
             yield Label("Annotation CSV")
-            yield Select(_ANNOTATION_OPTIONS, value=KEYWORD_ANNOTATION_CSV, id="gr-ann-csv")
+            yield Select(_ANNOTATION_OPTIONS, value=ANNOTATION_CSV, id="gr-ann-csv")
             yield Label("Device")
             yield Select(_DEVICE_OPTIONS, value="xpu", id="gr-device")
             yield Label("Local only"); yield Switch(value=True, id="gr-local-only")
@@ -221,14 +168,11 @@ class TrainingView(VerticalScroll):
 
 
     def on_mount(self) -> None:
-        self._show_section("classifier")
-        self.query_one("#cl-model-custom").display = False
+        self._show_section("groups")
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "tr-mode":
-            self._show_section(_MODE_SECTION.get(str(event.value), "classifier"))
-        elif event.select.id == "cl-model-select":
-            self.query_one("#cl-model-custom").display = (str(event.value) == "other")
+            self._show_section(_MODE_SECTION.get(str(event.value), "groups"))
 
     def _show_section(self, active: str) -> None:
         for name in _MODE_SECTION.values():
@@ -236,12 +180,10 @@ class TrainingView(VerticalScroll):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
-        if bid == "btn-classifier-run":
-            event.stop(); self._run_classifier()
-        elif bid == "btn-cold-start":
+        if bid == "btn-cold-start":
             event.stop()
             self.app.push_screen(
-                ConfirmModal("Delete embedding cache + current checkpoint?"),
+                ConfirmModal("Delete embedding cache?"),
                 self._cold_start,
             )
         elif bid == "btn-backbone-run":
@@ -249,43 +191,18 @@ class TrainingView(VerticalScroll):
         elif bid == "btn-groups-run":
             event.stop(); self._run_groups()
 
-    def _run_classifier(self) -> None:
-        g = lambda wid: self.query_one(wid, Input).value.strip()
-        model_val = str(self.query_one("#cl-model-select", Select).value)
-        model = g("#cl-model-custom") if model_val == "other" else model_val
-        cmd = [
-            _PYTHON, str(_SCRIPTS / "run_training.py"),
-            "--mode", "train-classifier",
-            "--model",             model,
-            "--epochs",            g("#cl-epochs"),
-            "--hidden-dim",        g("#cl-hidden"),
-            "--co-neg-per-case",   g("#cl-co-neg"),
-            "--fp-neg-per-case",   g("#cl-fp-neg"),
-            "--recall-weight",     g("#cl-recall"),
-            "--embedding-min-sim", g("#cl-minsim"),
-            "--device",            str(self.query_one("#cl-device", Select).value),
-            "--co-neg-bank-csv",   g("#cl-co-bank"),
-            "--annotation-csv",    str(self.query_one("#cl-ann-csv", Select).value),
-        ]
-        label = g("#cl-label")
-        if label:
-            cmd += ["--label", label]
-        if self.query_one("#cl-local-only", Switch).value:
-            cmd.append("--local-only")
-        self.app.run_cmd(cmd)
-
     def _cold_start(self, confirmed: bool) -> None:
         if not confirmed:
             return
         log = self.app.query_one(RichLog)
         log.write("[yellow]── Cold start ──[/]")
-        for rel in _COLD_START_FILES:
-            p = _ROOT / rel
-            if p.exists():
-                p.unlink()
-                log.write(f"  [red]deleted[/]  {rel}")
-            else:
-                log.write(f"  [dim]missing[/]  {rel}")
+        rel = config.EMBEDDING_CACHE_NPZ
+        p = _ROOT / rel
+        if p.exists():
+            p.unlink()
+            log.write(f"  [red]deleted[/]  {rel}")
+        else:
+            log.write(f"  [dim]missing[/]  {rel}")
         log.write("[green]── Done ──[/]")
 
     def _run_backbone(self) -> None:
@@ -334,7 +251,7 @@ class EvaluateView(VerticalScroll):
         yield Label("Label  [dim](optional)[/]")
         yield Input(placeholder="e.g. manual check", id="ev-label")
         yield Label("Annotation CSV")
-        yield Select(_ANNOTATION_OPTIONS, value=KEYWORD_ANNOTATION_CSV, id="ev-ann-csv")
+        yield Select(_ANNOTATION_OPTIONS, value=ANNOTATION_CSV, id="ev-ann-csv")
         yield Label("Prediction CSV  [dim](blank = auto-detect)[/]")
         yield Input(placeholder="ml/output/production/.../petbert_predictions.csv", id="ev-pred-csv")
         yield Label("Out dir  [dim](blank = auto-detect)[/]")
@@ -365,25 +282,12 @@ class EvaluateView(VerticalScroll):
 # ---------------------------------------------------------------------------
 # Production tab  (run_production.py)
 # ---------------------------------------------------------------------------
-_MODEL_OPTIONS: list[tuple[str, str]] = [
-    ("Contrastive PetBERT  [dim](fine-tuned)[/]", "contrastive"),
-    ("Default PetBERT",                            "petbert"),
-]
-
-_CLASSIFIER_OPTIONS: list[tuple[str, str]] = [
-    ("Binary presence classifier", "binary"),
-    ("Group classifier",           "group"),
-]
-
-
 class ProductionView(VerticalScroll):
     def compose(self) -> ComposeResult:
-        yield Label("Model")
-        yield Select(_MODEL_OPTIONS, value="contrastive", id="prod-model")
-        yield Label("Classifier", id="prod-clf-label")
-        yield Select(_CLASSIFIER_OPTIONS, value="binary", id="prod-classifier")
-        yield Label("Group keyword  [dim](stage 2 behavior matching)[/]", id="prod-kw-label")
-        yield Switch(value=True, id="prod-kw")
+        yield Label("Group classifier threshold  [dim](0.85 is current production)[/]")
+        yield Input(value="0.85", id="prod-group-threshold")
+        yield Label("Label-presence threshold  [dim](Stage 3a — 0.5 default)[/]")
+        yield Input(value="0.5", id="prod-lp-threshold")
         yield Label("Device")
         yield Select(_DEVICE_OPTIONS, value="xpu", id="prod-device")
         yield Label("Local only"); yield Switch(value=True, id="prod-local-only")
@@ -391,55 +295,20 @@ class ProductionView(VerticalScroll):
         yield Input(placeholder="e.g. 100", id="prod-maxrows")
         yield Button("Run Production", id="btn-prod-run", variant="primary")
 
-    def on_mount(self) -> None:
-        self._sync_visibility()
-
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id in ("prod-model", "prod-classifier"):
-            self._sync_visibility()
-
-    def _sync_visibility(self) -> None:
-        is_contrastive = self.query_one("#prod-model", Select).value == "contrastive"
-        # Group classifier only exists for default PetBERT
-        self.query_one("#prod-clf-label").display  = not is_contrastive
-        self.query_one("#prod-classifier").display = not is_contrastive
-        # Group keyword only applies to binary classifier
-        clf_key   = str(self.query_one("#prod-classifier", Select).value)
-        is_binary = is_contrastive or clf_key == "binary"
-        self.query_one("#prod-kw-label").display = is_binary
-        self.query_one("#prod-kw").display        = is_binary
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id != "btn-prod-run":
             return
         event.stop()
 
-        model_key  = str(self.query_one("#prod-model",      Select).value)
-        clf_key    = "binary" if model_key == "contrastive" else str(self.query_one("#prod-classifier", Select).value)
-        device     = str(self.query_one("#prod-device",      Select).value)
-        group_kw   = self.query_one("#prod-kw", Switch).value and clf_key == "binary"
-
-        model_path = CHECKPOINT_CONTRASTIVE if model_key == "contrastive" else "SAVSNET/PetBERT"
-        model_slug = "contrastive" if model_key == "contrastive" else "binary"
-
-        cmd = [_PYTHON, str(_SCRIPTS / "run_production.py"), "--device", device,
-               "--model", model_path]
-
-        if clf_key == "group":
-            cmd += [
-                "--group-classifier", f"{CHECKPOINT_GROUP}/group_classifier_best.pt",
-                "--out-dir", f"{OUTPUT_PRODUCTION_DIR}/{model_slug}_group",
-            ]
-        else:
-            ckpt_dir = CHECKPOINT_CONTRASTIVE if model_key == "contrastive" else CHECKPOINT_BINARY
-            cat_mode = "group-keyword" if group_kw else "default"
-            out_slug  = f"{model_slug}_kw" if group_kw else model_slug
-            cmd += [
-                "--presence-classifier", f"{ckpt_dir}/presence_classifier_best.pt",
-                "--categorization-mode", cat_mode,
-                "--out-dir",             f"{OUTPUT_PRODUCTION_DIR}/{out_slug}",
-            ]
-
+        device = str(self.query_one("#prod-device", Select).value)
+        cmd = [
+            _PYTHON, str(_SCRIPTS / "run_production.py"),
+            "--device", device,
+            "--group-classifier-threshold",
+            self.query_one("#prod-group-threshold", Input).value.strip() or "0.85",
+            "--label-presence-threshold",
+            self.query_one("#prod-lp-threshold", Input).value.strip() or "0.5",
+        ]
         if self.query_one("#prod-local-only", Switch).value:
             cmd.append("--local-only")
         maxrows = self.query_one("#prod-maxrows", Input).value.strip()

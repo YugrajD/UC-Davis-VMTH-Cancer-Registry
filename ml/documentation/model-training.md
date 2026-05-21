@@ -1,14 +1,17 @@
 # Model Training — Approaches and Architecture
 
 The goal is to map veterinary pathology report text to standardized Vet-ICD-O-canine-1
-cancer labels (term, group, ICD code). Three classifier approaches have been explored.
+cancer labels (term, group, ICD code). Several classifier approaches have been explored.
 
 | Approach | Status | Best result |
 |---|---|---|
-| Binary PresenceClassifier | Superseded by Approach 3 | 41.9% Good+Slight (Phase 16, `hidden_dim=512`) |
-| GroupClassifier | Implemented, not yet competitive | 9.3% Good+Slight end-to-end |
-| Contrastive fine-tuning (InfoNCE) | **Production best** | **69.0% Good+Slight (Phase 17, c8)** |
-| End-to-end fine-tuned PetBERT | WIP, blocked on data volume | — |
+| Binary PresenceClassifier (single all-label) | Removed in Phase 28 | 65.7% G+S train (Phase 25 c14, contrastive backbone, 5,788 cases) |
+| GroupClassifier (2304-dim concat-3) | **Stage 2 of 4-stage pipeline** | **macro F1=0.5712** (concat-3 + per-section contrastive backbone, dropout=0.1, epoch 258/300) |
+| Per-group LabelPresenceClassifier (`n_cols=3, col_pair_mode=True, col_combine="learned"`) | **Stage 3a of 4-stage pipeline (concat-3, 25 LPs)** | Mean val score ~0.88 across groups; G+S 62.1% as part of full pipeline |
+| Concat-3 + per-section contrastive PetBERT + 4-stage pipeline | **Production best (2026-05-13)** | **G+S 62.1% on unbiased eval-half** (G 46.1 / S 16.0 / CO 14.7 / FP 2.3 / FN 20.8, n=4,414); 62.3% on full test (n=8,835) |
+| Prior TF-IDF 4-stage baseline | Preserved at `../ml-tfidf/` | G+S 56.6% on eval-half — superseded 2026-05-13 (+5.5 pp G+S, +8.8 pp Good) |
+
+> For full current results and Phase 25 details see [classifiers.md](classifiers.md).
 
 ---
 
@@ -203,15 +206,15 @@ End-to-end results after fixing the pipeline to use 2304-dim `col_emb_concat`:
 | FP% | 27.2% | 33.3% |
 | FN% | 1.2% | 16.8% |
 
-The GroupClassifier overfits at current data volumes. Only 17 of 43 groups have ≥100
-training cases; the other 26 are unreachable at inference. Binary wins by a large
-margin. Expected crossover at ~15,000 confirmed cases.
+The results above are from Phase 16 (keyword annotation, 5,788 cases). GroupClassifier
+became competitive in Phase 23 with ~21,853 LLM-annotated train cases:
 
-| Confirmed cases | Expected outcome |
-|---|---|
-| ~5,788 (current) | Overfits — binary wins by large margin (41.9% vs 9.3%) |
-| ~10,000 | More groups cross 100-case threshold; GroupClassifier starts generalizing |
-| ~15,000+ | Meaningful CO reduction expected — GroupClassifier should pull ahead |
+| Phase | Train cases | GroupClassifier G+S @ t=0.90 | Notes |
+|-------|-------------|------------------------------|-------|
+| Phase 16 | 5,788 (keyword) | 9.3% | Severely overfits |
+| Phase 23 | 21,853 (LLM, 46,652 total) | **50.1%** | Beats binary (+2.9pp), FP −15.3pp |
+
+See [classifiers.md](classifiers.md) for Phase 23+ full results and the three-stage pipeline (Phase 25).
 
 ### Advantages
 
@@ -284,8 +287,7 @@ pushed away from all other labels in the batch. The fine-tuned backbone then pro
 better per-column embeddings, which the PresenceClassifier (retrained from scratch
 after a cold start) uses as input.
 
-Unlike Approach 4 (end-to-end group classification), this does not require group-level
-generalization and works at current data volumes.
+Unlike end-to-end group classification (attempted and reverted in 2026-05; see `training-log/training-log-finetune.md` Approach B), this does not require group-level generalization and works at current data volumes.
 
 ### Architecture
 
@@ -304,8 +306,8 @@ Inference (after cold start + PresenceClassifier retraining):
     identical to current pipeline — pass --model <checkpoint> --local-only
 ```
 
-Training data: keyword-confirmed `(case_id, matched_term, matched_group)` pairs from
-`keyword_annotation.csv` joined with report text from `report.csv`.
+Training data: confirmed `(case_id, matched_term, matched_group)` pairs from
+`llm_annotation.csv` joined with report text from `report.csv`.
 
 Label text format: `"{term} {group}"` — exactly what the pipeline uses for label embeddings.
 
@@ -364,56 +366,40 @@ ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
   --device xpu --local-only
 
 # Step 2: Cold start
-rm -f ml/data/embedding_cache.npz
-rm -f ml/output/training/contrastive/evaluation_co_bank.csv
-rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt
+rm -f ml/output/training/embedding_cache.npz
 
-# Step 3: Retrain label classifier with the adapted backbone
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-classifier \
-  --model ml/output/checkpoints/contrastive \
-  --label "adapted backbone c1" \
-  --co-neg-per-case 5 --fp-neg-per-case 10 \
-  --embedding-min-sim 0.05 --epochs 25 \
-  --recall-weight 0.25 --hidden-dim 512 \
-  --device xpu --local-only
+# Step 3: Retrain downstream classifiers in order — pass --model and --local-only
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-case-presence ...
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-groups        ...
+ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-label-presence ...
 ```
 
 ---
 
-## Approach 4 — End-to-end Fine-tuned PetBERT (WIP)
+## End-to-end fine-tuning (attempted, reverted 2026-05)
 
-Fine-tunes PetBERT as a group sequence classifier — architecturally the same two-stage
-design as the GroupClassifier (group prediction → within-group cosine term selection),
-but replaces the frozen-embedding MLP with a full transformer fine-tuned end-to-end.
-
-This approach shares the GroupClassifier's data ceiling: it needs ~10,000+ confirmed
-cases before it can generalize across the 44 groups. It is not recommended until the
-GroupClassifier proves competitive.
-
-> **Known code issues** must be resolved before running. See [training-log/training-log-finetune.md](training-log/training-log-finetune.md) for the full list.
+End-to-end fine-tuning of PetBERT as a Stage 2 classifier was integrated and benchmarked in 2026-05. Standalone val macro F1 reached 0.5774 (vs Phase 27 GroupCLF's 0.4475), but end-to-end test G+S landed at 56.4% — a 1.5pp loss vs Phase 28's 57.9% (the contemporary baseline at that comparison; the **current** baseline is G+S 62.1% on eval-half under concat-3 + per-section contrastive + 4-stage with per-LP thresholds + tail-gate). Reverted. See `training-log/training-log-finetune.md` Approach B for the full Phase A/B/sweep/8-epoch findings, the cost analysis, and the resurrection path.
 
 ---
 
 ## Comparison
 
-| | Binary PresenceClassifier | GroupClassifier | Contrastive fine-tuning | End-to-end fine-tuning |
-|---|---|---|---|---|
-| **Status** | Superseded by Approach 3 | Not competitive | **Production best** | WIP, blocked |
-| **Best result** | 41.9% Good+Slight | 9.3% Good+Slight | **69.0% Good+Slight (Phase 17, c8)** | Not yet benchmarked |
-| **PetBERT** | Frozen | Frozen | Fine-tuned (InfoNCE) | Fine-tuned (classification) |
-| **Training style** | Iterative (CO feedback) | One-shot | One-shot fine-tune + iterative PresenceClassifier | One-shot |
-| **Data requirement** | Works from ~1,273 cases | Needs ~15,000+ cases | Works at ~5,788 cases | Needs ~10,000+ cases |
-| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (full transformer) + fast iterative | Slow (full transformer) |
-| **Inference speed** | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) | Slow (~857 pair scores/report) | Fast (~45 group scores + cosine) |
-| **CO floor** | ~30% | Designed to eliminate it | **~7%** — dramatically reduced | Designed to eliminate it |
-| **Main constraint** | CO floor eliminated by Approach 3 | Overfits at current volume | Keyword data ceiling | Compute cost, data volume |
+| | Binary PresenceClassifier | GroupClassifier (alone) | Contrastive + 4-stage (concat-3) |
+|---|---|---|---|
+| **Status** | Removed Phase 28 | Stage 2 of 4-stage | **Production best (2026-05-13)** |
+| **Best result** | 41.9% G+S (Phase 16) | **macro F1=0.5712 (epoch 258, concat-3 + per-section contrastive)** | **G+S 62.1% on eval-half** (Good 46.1, Slight 16.0, CO 14.7, FP 2.3, FN 20.8, n=4,414) |
+| **PetBERT** | Frozen | Per-section contrastive fine-tuned | Per-section contrastive fine-tuned |
+| **Training style** | Iterative (CO feedback) | One-shot | Four one-shot stages + per-LP threshold sweep |
+| **Data requirement** | Works from ~1,273 cases | Competitive at ~21,853 LLM cases | 46,652 train cases |
+| **Training speed** | Fast (MLP on cached embeddings) | Fast (MLP on cached embeddings) | Slow once (backbone) + fast (four downstream heads) |
+| **Inference speed** | Slow (~857 pair scores/report) | Fast (25 group scores + cosine) | Fast (gate + 25 group scores + within-group LP) |
+| **CO floor** | ~30% | ~25.5% @ t=0.90 (legacy) | **14.7% (concat-3, 4-stage)** |
+| **Main constraint** | Removed | FN trade-off at high threshold | FN at gate-t=0.85 (20.8%); LLM annotation ceiling |
 
 ### Roadmap
 
-- **Now**: Use Phase 17 contrastive checkpoint as production best (69.0%)
-- **When keyword coverage reaches ~10,000 cases**: Re-train GroupClassifier; implement discriminating-keyword term selection; re-run contrastive fine-tuning
-- **After GroupClassifier proves competitive (~15,000 cases)**: Consider end-to-end fine-tuning (Approach 4)
+- **Now**: 4-stage pipeline (concat-3 + per-section contrastive backbone, 25 LPs with per-LP calibrated thresholds, Stage-2 tail-gate) — see `ideas-accepted.md` for the per-improvement breakdown. **Current baseline: G+S 62.1% on eval-half** (Good 46.1 / Slight 16.0 / CO 14.7 / FP 2.3 / FN 20.8; verified 2026-05-13 in `pipeline_eval_half/evaluation_history.csv`). The legacy TF-IDF stack (G+S 56.6%) is preserved at `ml-tfidf/`. See [classifiers.md](classifiers.md) for full details.
+- **Next**: Tier 1 quick wins (QW4 Adenomas keywords, QW5 soft-tissue threshold; QW1 fallback at fraction=0.5) in `training-ideas/ideas-to-try.md`. Backbone Round 2 (hard-neg) is LB2 in Tier 3 — current backbone has no hard-neg pass, so this is genuinely untried in the concat-3 embedding space.
 
 ---
 

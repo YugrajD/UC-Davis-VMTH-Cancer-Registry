@@ -28,7 +28,7 @@ import config
 
 def create_split(
     *,
-    annotation_csv: str = config.KEYWORD_ANNOTATION_CSV,
+    annotation_csv: str = config.LLM_ANNOTATION_CSV,
     reports_csv: str = config.REPORTS_CSV,
     train_out: str = config.TRAIN_CASES_TXT,
     test_out: str = config.TEST_CASES_TXT,
@@ -95,7 +95,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate a case-level train/test split."
     )
-    parser.add_argument("--annotation-csv", default=config.KEYWORD_ANNOTATION_CSV)
+    parser.add_argument("--annotation-csv", default=config.LLM_ANNOTATION_CSV)
     parser.add_argument("--reports-csv", default=config.REPORTS_CSV)
     parser.add_argument("--train-out", default=config.TRAIN_CASES_TXT)
     parser.add_argument("--test-out", default=config.TEST_CASES_TXT)

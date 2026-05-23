@@ -74,11 +74,12 @@ describe('MOCK_COUNTY_DATA', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('covers the three UC Davis catchment regions', () => {
+  it('covers the dashboard catchment regions represented in mock data', () => {
     const regions = new Set(MOCK_COUNTY_DATA.map(c => c.region));
-    expect(regions.has('Bay Area')).toBe(true);
-    expect(regions.has('Central Valley')).toBe(true);
-    expect(regions.has('Northern CA')).toBe(true);
+    expect(regions.has('San Francisco Bay Area')).toBe(true);
+    expect(regions.has('Sacramento Valley')).toBe(true);
+    expect(regions.has('San Joaquin Valley')).toBe(true);
+    expect(regions.has('Sierra Nevada')).toBe(true);
   });
 
   it('Sacramento has the highest case count in the dataset', () => {

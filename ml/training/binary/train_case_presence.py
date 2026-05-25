@@ -120,7 +120,11 @@ def train(
 
     print(f"Split: {len(train_ds)} train / {len(val_ds)} val")
 
-    model = CasePresenceClassifier(hidden_dim=hidden_dim, dropout=dropout).to(dev)
+    model = CasePresenceClassifier(
+        emb_dim=embeddings.shape[1],
+        hidden_dim=hidden_dim,
+        dropout=dropout,
+    ).to(dev)
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)

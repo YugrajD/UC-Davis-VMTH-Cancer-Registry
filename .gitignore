@@ -61,6 +61,9 @@ ml-3-stage/
 ml-4-stage/
 ml-*/
 
+# Local archive (gitignored experimental/legacy artifacts moved out of ml/)
+_archive/
+
 # ML model weights
 ml/model/weights/
 ml/model/checkpoints/binary/

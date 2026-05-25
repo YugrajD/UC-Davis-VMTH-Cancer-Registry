@@ -118,6 +118,17 @@ def main() -> int:
         "--top-ns", default="25,50,100",
         help="Comma-separated Ns for top-n-verdicts stage (default: 25,50,100).",
     )
+    parser.add_argument(
+        "--exclude-macro-groups", default="Neoplasms, NOS",
+        help=("Pipe-separated ICD group names whose terms still appear in the "
+              "top-n-verdicts CSV/table but are excluded from the MACRO row "
+              "(default: 'Neoplasms, NOS'). Pass empty string to disable."),
+    )
+    parser.add_argument(
+        "--min-frequency", type=int, default=0,
+        help=("Drop top-n-verdicts terms with annotation frequency <= this value. "
+              "0 disables (default)."),
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -156,10 +167,14 @@ def main() -> int:
 
     def _run_top_n_verdicts() -> None:
         top_ns = tuple(int(x) for x in args.top_ns.split(",") if x.strip())
+        exclude_macro_groups = frozenset(
+            g.strip() for g in args.exclude_macro_groups.split("|") if g.strip()
+        )
         evaluate_top_n_verdicts(
             Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
             cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups,
-            top_ns=top_ns,
+            top_ns=top_ns, exclude_macro_groups=exclude_macro_groups,
+            min_frequency=args.min_frequency,
         )
 
     def _run_case_presence() -> None:

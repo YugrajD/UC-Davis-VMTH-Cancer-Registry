@@ -9,7 +9,9 @@ annotation frequency, precision, recall, and F1.
 A MACRO row at the bottom averages the per-term percentages and the per-term
 precision/recall/F1 with equal weight (no frequency weighting).
 
-Output (in --out-dir): top_n_verdicts_{N}.csv, one per requested N.
+Output (in --out-dir): top_n_verdicts_{N}.csv, one per requested N. When
+``--min-frequency`` > 0 the filename becomes top_n_verdicts_freq_gt_{N}.csv
+and terms with frequency <= the floor are dropped from the selection.
 """
 
 import argparse
@@ -75,14 +77,14 @@ def _per_term_row(rank: int, term: str, group: str, frequency: int,
     }
 
 
-def _macro_row(per_term: list[dict]) -> dict:
-    n = len(per_term)
-    if n == 0:
+def _macro_row(per_term: list[dict], exclude_groups: frozenset[str] = frozenset()) -> dict:
+    eligible = [r for r in per_term if r["group"] not in exclude_groups]
+    if not eligible:
         return {k: "" for k in _FIELDNAMES} | {"label": "MACRO"}
 
     def _mean(key: str) -> float:
-        return sum(float(r[key]) for r in per_term if r[key] != "") / max(
-            1, sum(1 for r in per_term if r[key] != "")
+        return sum(float(r[key]) for r in eligible if r[key] != "") / max(
+            1, sum(1 for r in eligible if r[key] != "")
         )
     return {
         "rank": "", "label": "MACRO", "group": "", "frequency": "",
@@ -105,7 +107,8 @@ def _write_csv(rows: list[dict], path: Path) -> None:
         writer.writerows(rows)
 
 
-def _print_table(top_n: int, rows: list[dict], macro: dict) -> None:
+def _print_table(top_n: int, rows: list[dict], macro: dict,
+                 exclude_groups: frozenset[str] = frozenset()) -> None:
     print(f"\n=== Top-{top_n} verdict breakdown (per expected term) ===")
     header = (
         f"{'#':>3}  {'Label':<48}  {'Freq':>5}  "
@@ -117,20 +120,30 @@ def _print_table(top_n: int, rows: list[dict], macro: dict) -> None:
     for r in rows:
         prec = r["precision"] if r["precision"] != "" else "  n/a"
         prec = f"{float(prec):.3f}" if prec != "  n/a" else "  n/a"
+        marker = "*" if r["group"] in exclude_groups else " "
         print(
-            f"{r['rank']:>3}  {r['label'][:48]:<48}  {r['frequency']:>5}  "
+            f"{r['rank']:>3}{marker} {r['label'][:48]:<48}  {r['frequency']:>5}  "
             f"{r['good_pct']:>5.1f}  {r['slight_pct']:>5.1f}  "
             f"{r['completely_off_pct']:>5.1f}  {r['fn_pct']:>5.1f}  "
             f"{r['fp']:>5}  {prec:>6}  {r['recall']:>6.3f}  {r['f1']:>6.3f}"
         )
     mp = macro["precision"] if macro["precision"] != "" else "  n/a"
     mp = f"{float(mp):.3f}" if mp != "  n/a" else "  n/a"
+    macro_label = "MACRO (unweighted mean of per-term metrics)"
+    if exclude_groups:
+        excluded_terms = [r["label"] for r in rows if r["group"] in exclude_groups]
+        if excluded_terms:
+            macro_label += f"  [excl: {', '.join(sorted(exclude_groups))}]"
     print(
-        f"{'':>3}  {'MACRO (unweighted mean of per-term metrics)':<48}  {'':>5}  "
+        f"{'':>3}  {macro_label[:48]:<48}  {'':>5}  "
         f"{macro['good_pct']:>5.1f}  {macro['slight_pct']:>5.1f}  "
         f"{macro['completely_off_pct']:>5.1f}  {macro['fn_pct']:>5.1f}  "
         f"{'':>5}  {mp:>6}  {macro['recall']:>6.3f}  {macro['f1']:>6.3f}"
     )
+    if exclude_groups:
+        excluded_terms = [r["label"] for r in rows if r["group"] in exclude_groups]
+        if excluded_terms:
+            print(f"  * Rows excluded from MACRO: {', '.join(excluded_terms)}")
 
 
 def evaluate_top_n_verdicts(
@@ -140,6 +153,8 @@ def evaluate_top_n_verdicts(
     cases_txt: str = "",
     uncommon_groups_file: str = "",
     top_ns: tuple[int, ...] = (25, 50, 100),
+    exclude_macro_groups: frozenset[str] = frozenset(),
+    min_frequency: int = 0,
 ) -> None:
     pb_rows = load_csv(prediction_csv)
     kw_rows = load_csv(expectation_csv)
@@ -191,6 +206,8 @@ def evaluate_top_n_verdicts(
 
     for n in top_ns:
         top_terms = top_terms_full[:n]
+        if min_frequency > 0:
+            top_terms = [t for t in top_terms if term_counts[t] > min_frequency]
         top_set = set(top_terms)
         rows_out: list[dict] = []
 
@@ -241,11 +258,14 @@ def evaluate_top_n_verdicts(
                 rank, term, canonical_group, frequency, good, slight, co, fn, fp,
             ))
 
-        macro = _macro_row(rows_out)
-        out_path = out_dir / f"top_n_verdicts_{n}.csv"
+        macro = _macro_row(rows_out, exclude_macro_groups)
+        if min_frequency > 0:
+            out_path = out_dir / f"top_n_verdicts_freq_gt_{min_frequency}.csv"
+        else:
+            out_path = out_dir / f"top_n_verdicts_{n}.csv"
         _write_csv(rows_out + [macro], out_path)
 
-        _print_table(n, rows_out, macro)
+        _print_table(n, rows_out, macro, exclude_macro_groups)
         print(f"\nWrote: {out_path}")
         del top_terms, top_set
 
@@ -269,12 +289,27 @@ def main() -> int:
         "--top-ns", default="25,50,100",
         help="Comma-separated Ns (default: 25,50,100).",
     )
+    parser.add_argument(
+        "--exclude-macro-groups", default="Neoplasms, NOS",
+        help=("Pipe-separated group names whose terms still appear in the CSV/table "
+              "but are excluded from the MACRO row (default: 'Neoplasms, NOS'). "
+              "Pass empty string to disable."),
+    )
+    parser.add_argument(
+        "--min-frequency", type=int, default=0,
+        help=("Drop terms with annotation frequency <= this value from each top-N "
+              "selection. 0 disables (default)."),
+    )
     args = parser.parse_args()
     top_ns = tuple(int(x) for x in args.top_ns.split(",") if x.strip())
+    exclude_macro_groups = frozenset(
+        g.strip() for g in args.exclude_macro_groups.split("|") if g.strip()
+    )
     evaluate_top_n_verdicts(
         Path(args.prediction_csv), Path(args.expectation_csv), Path(args.out_dir),
         cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups,
-        top_ns=top_ns,
+        top_ns=top_ns, exclude_macro_groups=exclude_macro_groups,
+        min_frequency=args.min_frequency,
     )
     return 0
 

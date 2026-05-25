@@ -3,7 +3,11 @@
 Positive: any case with at least one confirmed cancer annotation.
 Negative: cases present in the embedding cache with no cancer annotation.
 
-Output NPZ keys: case_ids, embeddings (N, 768), targets (N,) float32.
+Output NPZ keys: case_ids, embeddings (N, 2304), targets (N,) float32.
+
+Embeddings come from the cache's `col_concat_3` key (per-section concat
+HIST+FC+C+ANCILLARY) — this matches what the production pipeline feeds to
+CasePresenceClassifier at inference time.
 """
 
 import argparse
@@ -52,7 +56,7 @@ def build_dataset(
         )
     raw = np.load(cache_path, allow_pickle=True)
     cached_ids: list[str] = raw["case_ids"].tolist()
-    mean_embs: np.ndarray = raw["mean_embeddings"]  # (N, 768)
+    mean_embs: np.ndarray = raw["col_concat_3"]  # (N, 2304)
 
     # --- Build dataset ---
     out_ids: list[str] = []

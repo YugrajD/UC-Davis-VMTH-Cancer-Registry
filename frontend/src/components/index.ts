@@ -9,3 +9,6 @@ export { AnalysisView } from './AnalysisView/AnalysisView';
 export { BreedDisparitiesView } from './BreedDisparitiesView/BreedDisparitiesView';
 export { LoginModal } from './LoginModal/LoginModal';
 export { AdminQueue } from './AdminQueue/AdminQueue';
+export { DiagnosisReview } from './DiagnosisReview/DiagnosisReview';
+export { UserManagement } from './UserManagement/UserManagement';
+export { ResetPasswordModal } from './ResetPasswordModal/ResetPasswordModal';

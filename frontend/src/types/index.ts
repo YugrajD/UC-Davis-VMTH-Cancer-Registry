@@ -3,7 +3,7 @@ export type Sex = 'all' | 'male_intact' | 'male_neutered' | 'female_intact' | 'f
 
 export type RateType = 'incidence' | 'mortality';
 
-export type TabType = 'overview' | 'breed-disparities' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue';
+export type TabType = 'overview' | 'breed-disparities' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management';
 
 export interface CancerRecord {
   county: string;
@@ -40,6 +40,8 @@ export interface FilterState {
   sex: Sex;
   cancerType: string;
   breed: string;
+  yearStart?: number;
+  yearEnd?: number;
 }
 
 export interface Tab {
@@ -55,6 +57,8 @@ export const TABS: Tab[] = [
   { id: 'analysis', label: 'Analysis' },
   { id: 'data-upload', label: 'Data Upload' },
   { id: 'review-queue', label: 'Review Queue' },
+  { id: 'diagnosis-review', label: 'Diagnosis Review' },
+  { id: 'user-management', label: 'User Management' },
 ] as const;
 
 export interface CalEnviroScreenData {

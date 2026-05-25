@@ -6,7 +6,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>California Canine Cancer Registry Dashboard | UC Davis VMTH</title>
     <meta name="description" content="Population-based cancer incidence and mortality data for dogs across California counties" />
-    
+
+    <!-- Content Security Policy -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self';
+      script-src  'self';
+      style-src   'self' 'unsafe-inline' https://fonts.googleapis.com;
+      font-src    'self' https://fonts.gstatic.com;
+      connect-src 'self' https://*.supabase.co https://raw.githubusercontent.com %VITE_API_URL%;
+      img-src     'self' data: blob:;
+      object-src  'none';
+      frame-ancestors 'none';
+      base-uri    'self';
+      form-action 'self';
+    ">
+
     <!-- Google Fonts - Source Sans 3 -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: block secrets, credentials, and sensitive data files
+# from being committed to the repository.
+#
+# Install:  git config core.hooksPath .githooks
+#
+
+set -euo pipefail
+
+RED='\033[0;31m'
+NC='\033[0m'
+
+error() {
+    echo -e "${RED}BLOCKED${NC}: $1" >&2
+    echo "  $2" >&2
+}
+
+BLOCKED=0
+
+# ── 1. Block sensitive file types in data directories ──────────────────────
+
+SENSITIVE_PATTERNS=(
+    '*.env'
+    '.env.*'
+    '*.pem'
+    '*.key'
+    '*credentials*.json'
+    '*service-account*.json'
+    'secrets/*'
+    'database/data/*.csv'
+    'database/data/*.tsv'
+    'database/data/*.xlsx'
+    'database/data/*.json'
+    'database/data/output/*'
+)
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACR)
+
+for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+    # Use git check-ignore-style matching via bash glob
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        case "$file" in
+            $pattern)
+                error "Sensitive file staged: $file" \
+                      "Pattern '$pattern' is blocked. Remove with: git reset HEAD $file"
+                BLOCKED=1
+                ;;
+        esac
+    done <<< "$STAGED_FILES"
+done
+
+# ── 2. Block large data files at repo root ─────────────────────────────────
+
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    case "$file" in
+        AllVisits_*|[0-9][0-9][0-9][0-9].csv|new_data/*|preprocessed/*)
+            error "Patient data file staged: $file" \
+                  "Data files must never be committed. Remove with: git reset HEAD $file"
+            BLOCKED=1
+            ;;
+    esac
+done <<< "$STAGED_FILES"
+
+# ── 3. Scan staged diffs for secret patterns ───────────────────────────────
+
+SECRET_PATTERNS=(
+    # AWS
+    'AKIA[0-9A-Z]{16}'
+    # Google API key
+    'AIza[0-9A-Za-z_-]{35}'
+    # Generic private key header
+    '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
+    # Supabase JWT secret (UUID format in a config context)
+    'SUPABASE_JWT_SECRET=[0-9a-f]{8}-'
+    # Connection strings with embedded passwords
+    'postgresql://[^:]+:[^@]+@[^/]+/'
+    'postgres://[^:]+:[^@]+@[^/]+/'
+    # Generic secret/token/password assignments with real values
+    # (skip placeholders like your-*, changeme, test-*)
+    '(api_key|apikey|secret_key|auth_token|access_token)\s*[:=]\s*["\x27][A-Za-z0-9+/=_-]{20,}'
+)
+
+DIFF=$(git diff --cached --diff-filter=ACM -U0 -- '*.py' '*.ts' '*.tsx' '*.js' '*.json' '*.yml' '*.yaml' '*.env*' '*.toml' '*.cfg' '*.ini' 2>/dev/null || true)
+
+for pattern in "${SECRET_PATTERNS[@]}"; do
+    MATCHES=$(echo "$DIFF" | grep -nP "^\+.*${pattern}" 2>/dev/null || true)
+    if [[ -n "$MATCHES" ]]; then
+        # Filter out test files and comments
+        REAL_MATCHES=$(echo "$MATCHES" | grep -v 'test[_/]' | grep -v '# ' | grep -v '\.example' || true)
+        if [[ -n "$REAL_MATCHES" ]]; then
+            error "Potential secret detected matching pattern: ${pattern:0:40}..." \
+                  "Review staged changes for leaked credentials."
+            BLOCKED=1
+            break
+        fi
+    fi
+done
+
+# ── 4. Block GCP service account key files ─────────────────────────────────
+
+SA_KEYS=$(echo "$DIFF" | grep -cP '^\+.*"type"\s*:\s*"service_account"' 2>/dev/null || true)
+if [[ "$SA_KEYS" -gt 0 ]]; then
+    error "GCP service account key detected in staged changes" \
+          "Never commit service account JSON files. Use secrets/ directory (git-ignored)."
+    BLOCKED=1
+fi
+
+# ── Done ───────────────────────────────────────────────────────────────────
+
+if [[ "$BLOCKED" -ne 0 ]]; then
+    echo "" >&2
+    echo "Commit blocked. Fix the issues above or bypass with: git commit --no-verify" >&2
+    exit 1
+fi
+
+exit 0

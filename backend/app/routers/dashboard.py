@@ -1,14 +1,18 @@
 """Dashboard summary endpoints."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func
 
+from app.cache import cached_response
+from app.config import settings
 from app.database import get_db
+from app.rate_limit import limiter
 from app.schemas.schemas import DashboardSummary, SpeciesBreakdown, TopCancer, FilterOptions
 from app.models.models import (
     Species, Breed, CancerType, County, Patient, CaseDiagnosis
 )
+from app.services.review_filter import apply_review_filter
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
@@ -18,7 +22,9 @@ _PETBERT_FILTER = Patient.data_source == "petbert"
 
 
 @router.get("/summary", response_model=DashboardSummary)
-async def get_summary(db: AsyncSession = Depends(get_db)):
+@limiter.limit("60/minute")
+@cached_response("dashboard_summary", ttl=settings.CACHE_TTL_DASHBOARD)
+async def get_summary(request: Request, db: AsyncSession = Depends(get_db)):
     # Total cases (ingested only) — count distinct patients with petbert data
     result = await db.execute(
         select(func.count(Patient.id))
@@ -66,8 +72,8 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
         for name, cnt in species_rows
     ]
 
-    # Top cancers (ingested only; count diagnoses from case_diagnoses)
-    result = await db.execute(
+    # Top cancers (ingested only; count confirmed/corrected diagnoses)
+    top_cancers_query = (
         select(CancerType.name, func.count(CaseDiagnosis.id).label("cnt"))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -77,6 +83,7 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
         .order_by(func.count(CaseDiagnosis.id).desc())
         .limit(8)
     )
+    result = await db.execute(apply_review_filter(top_cancers_query))
     top_cancers = [TopCancer(cancer_type=name, count=cnt) for name, cnt in result.all()]
 
     # Top county (ingested only)
@@ -106,7 +113,9 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/filters", response_model=FilterOptions)
-async def get_filter_options(db: AsyncSession = Depends(get_db)):
+@limiter.limit("60/minute")
+@cached_response("dashboard_filters", ttl=settings.CACHE_TTL_CALENVIRO)
+async def get_filter_options(request: Request, db: AsyncSession = Depends(get_db)):
     species = (await db.execute(select(Species).order_by(Species.name))).scalars().all()
     cancer_types = (await db.execute(select(CancerType).order_by(CancerType.name))).scalars().all()
     counties = (await db.execute(select(County).order_by(County.name))).scalars().all()

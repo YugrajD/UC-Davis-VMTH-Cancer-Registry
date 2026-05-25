@@ -1,0 +1,14 @@
+Requirements Doc v2
+- Authors, Team, Project Title
+- Introduction
+- System architecture overview
+    - SW architecture with significant detail; components; APIs; dependencies
+- Requirements
+    - Update original user stories as needed - reprioritize
+    - An additional 5-10 user stories -- prioritized
+    - Acceptance test
+- Technologies employed
+- Real-world constraint analysis
+- Social/legal aspect of the product
+- Glossary of Terms
+- References (engineering standard, coding standard, etc)

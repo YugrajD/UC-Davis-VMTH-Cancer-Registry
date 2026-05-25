@@ -165,7 +165,7 @@ Important details:
   2304-dim view and stored under the cache alias `concat_3`. That alias is what the
   Stage 1 gate, Stage 2 GroupClassifier, and Stage 3a LP head consume.
 
-### 4. Build a mean report embedding for analysis outputs 
+### 4. Build a mean report embedding for analysis outputs
 
 After per-section embedding, the pipeline averages the non-empty section embeddings into a
 single 768-d masked-mean per case.

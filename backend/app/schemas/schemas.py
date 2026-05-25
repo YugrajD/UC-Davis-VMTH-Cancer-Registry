@@ -1,8 +1,9 @@
 """Pydantic request/response models for the API."""
 
-from pydantic import BaseModel
-from typing import Optional, List, Any
+from typing import Literal, Optional, List, Any
 from datetime import date
+
+from pydantic import BaseModel, Field
 
 
 # --- Lookup Schemas ---
@@ -157,7 +158,7 @@ class TrendsResponse(BaseModel):
 # --- Search / BERT ---
 
 class ClassifyRequest(BaseModel):
-    text: str
+    text: str = Field(..., min_length=1, max_length=50_000)
 
 
 class ClassifyResult(BaseModel):
@@ -233,6 +234,7 @@ class IngestionResponse(BaseModel):
     warnings: List[str] = []
     row_results: List[IngestionRowResult] = []
     ingestion_log_id: Optional[int] = None
+    result_summary: Optional[dict] = None
 
 
 # --- Ingestion Jobs ---
@@ -241,7 +243,6 @@ class IngestionJobOut(BaseModel):
     id: int
     uploaded_by_email: str
     dataset_a_filename: str
-    dataset_b_filename: str
     status: str
     reviewed_by_email: Optional[str] = None
     reviewed_at: Optional[str] = None
@@ -254,5 +255,6 @@ class IngestionJobOut(BaseModel):
 
 
 class IngestionJobReview(BaseModel):
-    action: str  # "approve" or "reject"
-    rejection_reason: Optional[str] = None
+    action: Literal["approve", "reject"]
+    rejection_reason: Optional[str] = Field(default=None, max_length=2000)
+    model_folder: Optional[str] = Field(default=None, max_length=255)

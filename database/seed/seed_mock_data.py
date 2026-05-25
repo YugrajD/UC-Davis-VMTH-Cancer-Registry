@@ -14,10 +14,9 @@ from pathlib import Path
 import psycopg2
 from psycopg2.extras import execute_values
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL_SYNC",
-    "postgresql://postgres:postgres@localhost:5432/vmth_cancer"
-)
+DATABASE_URL = os.getenv("DATABASE_URL_SYNC")
+if not DATABASE_URL:
+    sys.exit("ERROR: DATABASE_URL_SYNC environment variable is required")
 
 random.seed(42)
 

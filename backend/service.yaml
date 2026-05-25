@@ -1,0 +1,135 @@
+##############################################################################
+# Cloud Run service definition for the VMTH Cancer Registry backend.
+#
+# Deploy / update:
+#   gcloud run services replace backend/service.yaml --region=us-central1
+#
+# First deploy (service doesn't exist yet):
+#   gcloud run services replace backend/service.yaml --region=us-central1
+#   gcloud run services set-iam-policy vmth-backend backend/policy.yaml \
+#     --region=us-central1   # (optional — only if you restrict public access)
+#
+# Build the image first:
+#   gcloud builds submit ./backend --config ./backend/cloudbuild.yaml \
+#     --substitutions=_TAG=$(git rev-parse --short HEAD)
+#
+# Secrets (DATABASE_URL, SUPABASE_JWT_SECRET, etc.) should be stored in
+# Google Secret Manager and referenced via the env.valueFrom.secretKeyRef
+# blocks below, NOT hardcoded here.  See:
+# https://cloud.google.com/run/docs/configuring/secrets
+##############################################################################
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: vmth-backend
+  # Replace with your GCP project ID
+  namespace: "YOUR_PROJECT_ID"
+  annotations:
+    run.googleapis.com/ingress: all   # or "internal-and-cloud-load-balancing"
+spec:
+  template:
+    metadata:
+      annotations:
+        # Max concurrent requests per container instance.  With async FastAPI
+        # and a single uvicorn worker this should be ~80-100.  Cloud Run adds
+        # new instances when this threshold is crossed.
+        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/minScale: "0"   # set to "1" to eliminate cold starts
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      # How long a request can run before Cloud Run cancels it (seconds).
+      # Raise for long-running admin operations (e.g. large ingestions).
+      timeoutSeconds: 300
+      containerConcurrency: 80
+
+      containers:
+        - image: us-central1-docker.pkg.dev/YOUR_PROJECT_ID/backend/api:latest
+
+          ports:
+            - containerPort: 8000
+
+          resources:
+            limits:
+              # 1 vCPU is right for WORKERS=1 (single async worker).
+              # Raise to "2" and set WORKERS=2 if you add Redis.
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: "0.5"
+              memory: 256Mi
+
+          env:
+            # --- Worker count (see Dockerfile CMD) ---
+            # Keep at 1 unless you've added Redis for distributed
+            # rate-limiting and caching, and have raised cpu above to match.
+            - name: WORKERS
+              value: "1"
+
+            # --- Connection pool (per worker) ---
+            # Rule: DB_POOL_SIZE × WORKERS × maxScale ≤ PG max_connections.
+            # Example: 5 × 1 × 10 = 50 connections — safe under Supabase's
+            # default 60-connection pooler limit.
+            - name: DB_POOL_SIZE
+              value: "5"
+            - name: DB_MAX_OVERFLOW
+              value: "10"
+
+            # --- Rate-limiting: trust Google's frontend IP so client IPs
+            # are visible rather than the GFE load-balancer address.
+            - name: FORWARDED_ALLOW_IPS
+              value: "0.0.0.0/0"
+
+            # --- App settings ---
+            - name: DEBUG
+              value: "false"
+            - name: APP_TITLE
+              value: "UC Davis VMTH Cancer Registry API"
+            - name: UPLOAD_DIR
+              value: "/app/uploads"
+
+            # CORS: replace with your Vercel production URL
+            - name: CORS_ORIGINS
+              value: '["https://YOUR_VERCEL_APP.vercel.app"]'
+
+            # Supabase project URL (public — not a secret)
+            - name: SUPABASE_URL
+              value: "https://YOUR_PROJECT.supabase.co"
+
+            # --- Secrets from Google Secret Manager ---
+            # Create secrets first:
+            #   echo -n "postgresql+asyncpg://..." | \
+            #     gcloud secrets create DATABASE_URL --data-file=-
+            #   (repeat for DATABASE_URL_SYNC, SUPABASE_JWT_SECRET)
+
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: DATABASE_URL
+                  key: latest
+
+            - name: DATABASE_URL_SYNC
+              valueFrom:
+                secretKeyRef:
+                  name: DATABASE_URL_SYNC
+                  key: latest
+
+            - name: SUPABASE_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_JWT_SECRET
+                  key: latest
+
+            # Optional: admin/reviewer email allow-lists
+            # - name: ADMIN_EMAILS
+            #   value: "admin@example.com"
+
+            # Optional: GCP Batch ML pipeline
+            # - name: USE_GCP_BATCH
+            #   value: "true"
+            # - name: GCP_PROJECT_ID
+            #   value: "YOUR_PROJECT_ID"
+            # - name: GCS_BUCKET
+            #   value: "YOUR_BUCKET"
+            # - name: GCP_BATCH_IMAGE_URI
+            #   value: "us-central1-docker.pkg.dev/YOUR_PROJECT_ID/ml-images/petbert-batch:latest"

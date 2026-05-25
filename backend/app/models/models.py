@@ -1,7 +1,7 @@
 """SQLAlchemy + GeoAlchemy2 models for the VMTH Cancer Registry."""
 
 from sqlalchemy import (
-    Boolean, Column, Integer, String, Numeric, Date, Text, ForeignKey, CheckConstraint, DateTime
+    Boolean, Column, Integer, String, Numeric, Date, Text, ForeignKey, CheckConstraint, DateTime, func
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -37,8 +37,15 @@ class CancerType(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False, unique=True)
     description = Column(Text)
+    # FALSE for types auto-created from a reviewer correction; admin must
+    # confirm before they appear in dashboard filters.
+    confirmed = Column(Boolean, nullable=False, server_default="true")
 
-    case_diagnoses = relationship("CaseDiagnosis", back_populates="cancer_type")
+    case_diagnoses = relationship(
+        "CaseDiagnosis",
+        back_populates="cancer_type",
+        foreign_keys="CaseDiagnosis.cancer_type_id",
+    )
 
 
 class County(Base):
@@ -85,26 +92,81 @@ class CaseDiagnosis(Base):
     cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=False)
     icd_o_code = Column(String(20), nullable=True)
     predicted_term = Column(Text, nullable=True)
+    pathology_report_id = Column(Integer, ForeignKey("pathology_reports.id"), nullable=True)
     confidence = Column(Numeric(4, 2), nullable=True)
     prediction_method = Column(String(20), nullable=True)
     source_row_index = Column(Integer, nullable=True)
     diagnosis_index = Column(Integer, nullable=True)
 
+    # Review workflow — see database/migrations/010_diagnosis_review.sql
+    review_status = Column(String(20), nullable=False, server_default="confirmed")
+    reviewed_by_email = Column(String(255), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    reviewer_notes = Column(Text, nullable=True)
+    original_cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=True)
+    original_icd_o_code = Column(String(20), nullable=True)
+    original_predicted_term = Column(Text, nullable=True)
+    top2_margin = Column(Numeric(4, 2), nullable=True)
+    ingestion_job_id = Column(Integer, ForeignKey("ingestion_jobs.id"), nullable=True)
+
     patient = relationship("Patient", back_populates="diagnoses")
-    cancer_type = relationship("CancerType", back_populates="case_diagnoses")
+    pathology_report = relationship("PathologyReport", back_populates="diagnoses")
+    ingestion_job = relationship("IngestionJob")
+    cancer_type = relationship(
+        "CancerType",
+        back_populates="case_diagnoses",
+        foreign_keys=[cancer_type_id],
+    )
+    review_events = relationship(
+        "DiagnosisReviewEvent",
+        back_populates="case_diagnosis",
+        cascade="all, delete-orphan",
+        order_by="DiagnosisReviewEvent.created_at.desc()",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "review_status IN ('pending', 'confirmed', 'corrected', 'rejected')",
+            name="case_diagnoses_review_status_check",
+        ),
+    )
+
+
+class DiagnosisReviewEvent(Base):
+    """Append-only audit log of every state change to a case_diagnosis review."""
+    __tablename__ = "diagnosis_review_events"
+
+    id = Column(Integer, primary_key=True)
+    case_diagnosis_id = Column(
+        Integer,
+        ForeignKey("case_diagnoses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    actor_email = Column(String(255), nullable=False)
+    action = Column(String(20), nullable=False)
+    from_status = Column(String(20), nullable=True)
+    to_status = Column(String(20), nullable=False)
+    cancer_type_id_before = Column(Integer, ForeignKey("cancer_types.id"), nullable=True)
+    cancer_type_id_after = Column(Integer, ForeignKey("cancer_types.id"), nullable=True)
+    icd_o_code_before = Column(String(20), nullable=True)
+    icd_o_code_after = Column(String(20), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    case_diagnosis = relationship("CaseDiagnosis", back_populates="review_events")
 
 
 class PathologyReport(Base):
     __tablename__ = "pathology_reports"
 
     id = Column(Integer, primary_key=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
-    report_text = Column(Text, nullable=False)
-    classification = Column(String(100))
-    confidence_score = Column(Numeric(5, 4))
-    report_date = Column(Date, nullable=False)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    gcs_path = Column(String(1000), nullable=True)
+    report_date = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     patient = relationship("Patient", back_populates="reports")
+    diagnoses = relationship("CaseDiagnosis", back_populates="pathology_report")
 
 
 class CalEnviroScreen(Base):
@@ -145,7 +207,6 @@ class IngestionLog(Base):
 
     id = Column(Integer, primary_key=True)
     dataset_a_filename = Column(String(255))
-    dataset_b_filename = Column(String(255))
     started_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     rows_processed = Column(Integer, default=0)
@@ -163,7 +224,6 @@ class IngestionJob(Base):
     uploaded_by_email = Column(String(255), nullable=False)
     uploaded_by_sub = Column(String(255), nullable=False)
     dataset_a_filename = Column(String(255), nullable=False)
-    dataset_b_filename = Column(String(255), nullable=False)
     storage_path = Column(String(500), nullable=False)
     status = Column(String(20), nullable=False, default="pending_review")
     reviewed_by_email = Column(String(255))
@@ -171,5 +231,52 @@ class IngestionJob(Base):
     rejection_reason = Column(Text)
     ingestion_log_id = Column(Integer, ForeignKey("ingestion_logs.id"))
     processing_error = Column(Text)
+    batch_job_name = Column(String(500), nullable=True)
+    processing_stage = Column(String(50), nullable=True)
+    result_summary = Column(JSONB, nullable=True)
+    model_folder = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
+
+
+class UserRole(Base):
+    """Per-email role assignments managed via the admin panel.
+
+    DB rows take precedence over the *_EMAILS env vars, which are now
+    only used as a startup seed.
+    """
+    __tablename__ = "user_roles"
+
+    email = Column(String(255), primary_key=True)
+    is_admin = Column(Boolean, nullable=False, server_default="false")
+    is_uploader = Column(Boolean, nullable=False, server_default="false")
+    is_reviewer = Column(Boolean, nullable=False, server_default="false")
+    updated_by_email = Column(String(255), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class RoleRequest(Base):
+    """User-submitted requests for uploader/reviewer roles."""
+    __tablename__ = "role_requests"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False)
+    requested_role = Column(String(20), nullable=False)
+    status = Column(String(20), nullable=False, server_default="pending")
+    reason = Column(Text, nullable=True)
+    resolved_by_email = Column(String(255), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ExportRequest(Base):
+    """User-submitted requests for data export access."""
+    __tablename__ = "export_requests"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False)
+    status = Column(String(20), nullable=False, server_default="pending")
+    reason = Column(Text, nullable=True)
+    resolved_by_email = Column(String(255), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -1,21 +1,44 @@
+import { useEffect, useState } from 'react';
 import type { FilterState, Sex, RateType } from '../../types';
 import { SEX_OPTIONS, RATE_OPTIONS } from '../../types';
-import { MOCK_BREEDS, MOCK_CANCER_TYPE_INCIDENTS } from '../../data/mockData';
+import { MOCK_BREEDS } from '../../data/mockData';
+import { fetchFilterOptions } from '../../api/client';
 
 interface FiltersProps {
   filters: FilterState;
   onFilterChange: (filters: FilterState) => void;
 }
 
-const cancerTypes = ['All Types', ...MOCK_CANCER_TYPE_INCIDENTS.map(ct => ct.cancer_type)];
 const breeds = ['All Breeds', ...MOCK_BREEDS];
 
 export function Filters({ filters, onFilterChange }: FiltersProps) {
+  const [cancerTypes, setCancerTypes] = useState<string[]>(['All Types']);
+  const [yearOptions, setYearOptions] = useState<number[]>([]);
+
+  useEffect(() => {
+    fetchFilterOptions()
+      .then(opts => {
+        const names = opts.cancer_types.map(ct => ct.name).sort();
+        setCancerTypes(['All Types', ...names]);
+        const [min, max] = opts.year_range;
+        const years: number[] = [];
+        for (let y = min; y <= max; y++) years.push(y);
+        setYearOptions(years);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleChange = (key: keyof FilterState, value: string) => {
     onFilterChange({
       ...filters,
       [key]: value,
+    });
+  };
+
+  const handleYearChange = (key: 'yearStart' | 'yearEnd', value: string) => {
+    onFilterChange({
+      ...filters,
+      [key]: value ? Number(value) : undefined,
     });
   };
 
@@ -105,16 +128,66 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
             ))}
           </select>
         </div>
+
+        {/* Year Start */}
+        {yearOptions.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5 uppercase tracking-wide">
+              Year Start
+            </label>
+            <select
+              value={filters.yearStart ?? ''}
+              onChange={(e) => handleYearChange('yearStart', e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white
+                         focus:ring-2 focus:ring-[var(--color-teal)] focus:border-[var(--color-teal)]
+                         transition-colors duration-150"
+            >
+              <option value="">All Years</option>
+              {yearOptions
+                .filter(y => !filters.yearEnd || y <= filters.yearEnd)
+                .map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        )}
+
+        {/* Year End */}
+        {yearOptions.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5 uppercase tracking-wide">
+              Year End
+            </label>
+            <select
+              value={filters.yearEnd ?? ''}
+              onChange={(e) => handleYearChange('yearEnd', e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white
+                         focus:ring-2 focus:ring-[var(--color-teal)] focus:border-[var(--color-teal)]
+                         transition-colors duration-150"
+            >
+              <option value="">All Years</option>
+              {yearOptions
+                .filter(y => !filters.yearStart || y >= filters.yearStart)
+                .map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Active Filters Summary */}
       <div className="mt-4 pt-4 border-t border-gray-100">
         <p className="text-xs text-[var(--color-text-secondary)]">
           <span className="font-medium">Active filters:</span>{' '}
-          {filters.cancerType !== 'All Types' && <span className="text-[var(--color-teal)]">{filters.cancerType}</span>}
-          {filters.breed !== 'All Breeds' && <span className="text-[var(--color-teal)]">{filters.cancerType !== 'All Types' ? ', ' : ''}{filters.breed}</span>}
-          {filters.sex !== 'all' && <span className="text-[var(--color-teal)]">{(filters.cancerType !== 'All Types' || filters.breed !== 'All Breeds') ? ', ' : ''}{SEX_OPTIONS.find(s => s.value === filters.sex)?.label}</span>}
-          {filters.cancerType === 'All Types' && filters.breed === 'All Breeds' && filters.sex === 'all' && <span className="italic">None</span>}
+          {(() => {
+            const parts: string[] = [];
+            if (filters.cancerType !== 'All Types') parts.push(filters.cancerType);
+            if (filters.breed !== 'All Breeds') parts.push(filters.breed);
+            if (filters.sex !== 'all') parts.push(SEX_OPTIONS.find(s => s.value === filters.sex)?.label ?? '');
+            if (filters.yearStart && filters.yearEnd) parts.push(`${filters.yearStart}–${filters.yearEnd}`);
+            else if (filters.yearStart) parts.push(`from ${filters.yearStart}`);
+            else if (filters.yearEnd) parts.push(`to ${filters.yearEnd}`);
+            return parts.length > 0
+              ? <span className="text-[var(--color-teal)]">{parts.join(', ')}</span>
+              : <span className="italic">None</span>;
+          })()}
         </p>
       </div>
     </div>

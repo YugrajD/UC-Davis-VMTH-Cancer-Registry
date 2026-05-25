@@ -12,6 +12,32 @@ interface CountyTableProps {
 type SortField = 'county' | 'count';
 type SortDirection = 'asc' | 'desc';
 
+interface SortIconProps {
+  field: SortField;
+  activeField: SortField;
+  direction: SortDirection;
+}
+
+function SortIcon({ field, activeField, direction }: SortIconProps) {
+  return (
+    <svg
+      className={`w-3 h-3 ml-1 inline-block transition-transform ${
+        activeField === field
+          ? direction === 'asc' ? 'rotate-180' : ''
+          : 'opacity-30'
+      }`}
+      fill="currentColor"
+      viewBox="0 0 20 20"
+    >
+      <path
+        fillRule="evenodd"
+        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
 export function CountyTable({ data, countRange, onCountyHover, selectedCounty }: CountyTableProps) {
   const [sortField, setSortField] = useState<SortField>('count');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -46,24 +72,6 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty }:
     }
   };
 
-  const SortIcon = ({ field }: { field: SortField }) => (
-    <svg
-      className={`w-3 h-3 ml-1 inline-block transition-transform ${
-        sortField === field 
-          ? sortDirection === 'asc' ? 'rotate-180' : '' 
-          : 'opacity-30'
-      }`}
-      fill="currentColor"
-      viewBox="0 0 20 20"
-    >
-      <path
-        fillRule="evenodd"
-        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-
   const getCellColor = (count: number) => {
     const bg = colorScale(count);
     const hex = bg.replace('#', '');
@@ -94,13 +102,13 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty }:
                 className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors"
                 onClick={() => handleSort('county')}
               >
-                County <SortIcon field="county" />
+                County <SortIcon field="county" activeField={sortField} direction={sortDirection} />
               </th>
               <th 
                 className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors"
                 onClick={() => handleSort('count')}
               >
-                Count <SortIcon field="count" />
+                Count <SortIcon field="count" activeField={sortField} direction={sortDirection} />
               </th>
             </tr>
           </thead>

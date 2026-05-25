@@ -39,7 +39,8 @@ export function Footer({ onShare }: FooterProps) {
               animals or owners.
             </p>
             <p className="text-[var(--color-teal)] italic">
-              Note: This is a demonstration dashboard with simulated data for educational purposes.
+              Note: This is a demonstration dashboard using preliminary model-derived data.
+              Counts are not finalized registry statistics.
             </p>
           </div>
         </div>

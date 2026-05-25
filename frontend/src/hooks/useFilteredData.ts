@@ -1,6 +1,30 @@
-import { useMemo, useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
-import { MOCK_COUNTY_DATA } from '../data/mockData';
+import { fetchIncidence, type IncidenceRecord } from '../api/client';
+import { isUcDavisCatchmentRegion, regionForCounty } from '../data/californiaRegions';
+
+export interface FilteredDataState {
+  countyData: CountyData[];
+  regionSummary: RegionSummary;
+  countRange: { min: number; max: number };
+  loading: boolean;
+  error: string | null;
+}
+
+const EMPTY_REGION_SUMMARY: RegionSummary = {
+  name: 'California',
+  type: 'state',
+  count: 0,
+  children: [],
+};
+
+function sexFilterValue(sex: FilterState['sex']) {
+  return sex && sex !== 'all' ? sex : undefined;
+}
+
+function cancerTypeFilterValue(cancerType: string) {
+  return cancerType && cancerType !== 'All Types' ? [cancerType] : undefined;
+}
 
 // Deterministic pseudo-random from a string seed so the same filter
 // always produces the same numbers (no flicker on re-render).
@@ -17,7 +41,24 @@ function seededRandom(seed: string) {
   };
 }
 
-function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
+export function buildCountyDataFromIncidence(records: IncidenceRecord[]): CountyData[] {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    if (!record.county) continue;
+    counts.set(record.county, (counts.get(record.county) ?? 0) + record.count);
+  }
+
+  return Array.from(counts.entries())
+    .map(([county, count]) => ({
+      county,
+      region: regionForCounty(county),
+      count,
+      fips: '',
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export function applyCountyDemoFilters(base: CountyData[], filters: FilterState): CountyData[] {
   const isDefault =
     (!filters.sex || filters.sex === 'all') &&
     (!filters.cancerType || filters.cancerType === 'All Types') &&
@@ -43,35 +84,82 @@ function applyFilters(base: CountyData[], filters: FilterState): CountyData[] {
   }).filter(c => c.count > 0);
 }
 
-export function useFilteredData(filters: FilterState) {
+export function getCountRange(countyData: CountyData[]) {
+  const counts = countyData.map(c => c.count).filter(n => n > 0);
+  if (counts.length === 0) return { min: 0, max: 1 };
+  return {
+    min: Math.min(...counts),
+    max: Math.max(...counts),
+  };
+}
+
+export function createFilteredDataState(
+  countyData: CountyData[],
+  filters: FilterState,
+  options: { applyServerSideFilters?: boolean } = {},
+): Omit<FilteredDataState, 'loading' | 'error'> {
+  const filteredCountyData = applyCountyDemoFilters(
+    countyData,
+    options.applyServerSideFilters === false
+      ? ({ cancerType: 'All Types', breed: filters.breed, sex: 'all' } as FilterState)
+      : filters,
+  );
+  const regionSummary = generateRegionSummary(filteredCountyData);
+
+  return {
+    countyData: filteredCountyData,
+    regionSummary: filteredCountyData.length > 0 ? regionSummary : EMPTY_REGION_SUMMARY,
+    countRange: getCountRange(filteredCountyData),
+  };
+}
+
+export function useFilteredData(filters: FilterState): FilteredDataState {
+  const { cancerType, sex, yearStart, yearEnd } = filters;
   const [countyData, setCountyData] = useState<CountyData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    setCountyData(applyFilters(MOCK_COUNTY_DATA, filters));
-    setLoading(false);
-  }, [filters.cancerType, filters.breed, filters.sex]);
+    let cancelled = false;
 
-  const regionSummary = useMemo(() => {
-    return generateRegionSummary(countyData);
-  }, [countyData]);
+    async function loadCountyData() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetchIncidence({
+          cancerTypes: cancerTypeFilterValue(cancerType),
+          sex: sexFilterValue(sex),
+          yearStart,
+          yearEnd,
+        });
+        if (cancelled) return;
 
-  const countRange = useMemo(() => {
-    const counts = countyData.map(c => c.count).filter(n => n > 0);
-    if (counts.length === 0) return { min: 0, max: 1 };
-    return {
-      min: Math.min(...counts),
-      max: Math.max(...counts),
+        setCountyData(buildCountyDataFromIncidence(response.data));
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Unable to load dashboard data');
+        setCountyData([]);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadCountyData();
+
+    return () => {
+      cancelled = true;
     };
-  }, [countyData]);
+  }, [cancerType, sex, yearStart, yearEnd]);
+
+  const derivedState = useMemo(
+    () => createFilteredDataState(countyData, filters, { applyServerSideFilters: false }),
+    [countyData, filters],
+  );
 
   return {
-    countyData,
-    regionSummary,
-    countRange,
+    ...derivedState,
     loading,
     error,
   };
@@ -88,7 +176,7 @@ export function useCountyDataMap(countyData: CountyData[]): Map<string, CountyDa
 }
 
 // Generate hierarchical summary for the summary table
-function generateRegionSummary(countyData: CountyData[]): RegionSummary {
+export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   const regionMap = new Map<string, CountyData[]>();
 
   countyData.forEach(county => {
@@ -103,9 +191,8 @@ function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   // Calculate totals
   const totalCount = countyData.reduce((sum, c) => sum + c.count, 0);
 
-  // Catchment area (Northern CA + Bay Area + Central Valley for UC Davis)
-  const catchmentRegions = ['Bay Area', 'Northern CA', 'Central Valley'];
-  const catchmentCounties = countyData.filter(c => catchmentRegions.includes(c.region));
+  // Dashboard grouping only; this does not change stored county-level data.
+  const catchmentCounties = countyData.filter(c => isUcDavisCatchmentRegion(c.region));
   const catchmentCount = catchmentCounties.reduce((sum, c) => sum + c.count, 0);
 
   const regions: RegionSummary[] = Array.from(regionMap.entries()).map(([regionName, counties]) => {
@@ -131,9 +218,9 @@ function generateRegionSummary(countyData: CountyData[]): RegionSummary {
         name: 'UC Davis Catchment Area',
         type: 'catchment',
         count: catchmentCount,
-        children: regions.filter(r => catchmentRegions.includes(r.name)),
+        children: regions.filter(r => isUcDavisCatchmentRegion(r.name)),
       },
-      ...regions.filter(r => !catchmentRegions.includes(r.name)),
+      ...regions.filter(r => !isUcDavisCatchmentRegion(r.name)),
     ],
   };
 }

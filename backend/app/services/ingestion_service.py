@@ -6,6 +6,7 @@ upserting patients, upserting cancer_types, inserting case_diagnoses,
 and logging the ingestion run.
 """
 
+import asyncio
 import csv
 import io
 import re
@@ -25,6 +26,7 @@ from app.models.models import (
     County,
     DiagnosisReviewEvent,
     IngestionLog,
+    PathologyReport,
     Patient,
     Species,
 )
@@ -53,10 +55,7 @@ def normalize_anon_id(raw: str) -> str:
     if s.isdigit():
         return f"ID_{s}"
     try:
-        n = float(s)
-        if n == int(n):
-            return f"ID_{int(n)}"
-        return f"ID_{int(n)}"
+        return f"ID_{int(float(s))}"
     except ValueError:
         pass
     if s.upper().startswith("ID_"):
@@ -378,11 +377,62 @@ async def ingest_upload(
 
     patient_ids = [anon_to_patient_id[a] for a in ids_to_process if a in anon_to_patient_id]
 
-    # --- Delete existing case_diagnoses for these patients (idempotent) ---
+    # --- Delete existing diagnoses and reports for these patients (idempotent) ---
     if patient_ids:
         await db.execute(
             delete(CaseDiagnosis).where(CaseDiagnosis.patient_id.in_(patient_ids))
         )
+        await db.execute(
+            delete(PathologyReport).where(PathologyReport.patient_id.in_(patient_ids))
+        )
+
+    # --- Upload report texts to GCS, then create one PathologyReport per patient ---
+    # Collect anon_id → text pairs for patients that have text.
+    text_by_anon_id: dict[str, str] = {}
+    for anon_id in ids_to_process:
+        report_text = next(
+            (d["original_text"] for d in petbert.get(anon_id, []) if d.get("original_text")),
+            None,
+        )
+        if report_text:
+            text_by_anon_id[anon_id] = report_text
+
+    # Upload to GCS whenever a bucket is configured — works for both GCP Batch
+    # and local ml-worker runs as long as GCS credentials are available.
+    # Falls back to None (no GCS path) only when GCS is not configured at all.
+    gcs_path_by_anon_id: dict[str, str] = {}
+    if settings.GCS_BUCKET and ingestion_job_id and text_by_anon_id:
+        from app.services.gcp_batch_service import upload_report_text_to_gcs
+        loop = asyncio.get_running_loop()
+        _UPLOAD_CHUNK = 50  # limit concurrent GCS connections
+
+        items = list(text_by_anon_id.items())
+        for i in range(0, len(items), _UPLOAD_CHUNK):
+            chunk = items[i : i + _UPLOAD_CHUNK]
+            results = await asyncio.gather(*[
+                loop.run_in_executor(
+                    None, upload_report_text_to_gcs, ingestion_job_id, anon_id, txt
+                )
+                for anon_id, txt in chunk
+            ])
+            for (anon_id, _), gcs_path in zip(chunk, results):
+                gcs_path_by_anon_id[anon_id] = gcs_path
+
+    report_by_anon_id: dict[str, PathologyReport] = {}
+    for anon_id in ids_to_process:
+        patient_id = anon_to_patient_id.get(anon_id)
+        if not patient_id or anon_id not in text_by_anon_id:
+            continue
+        demo = demographics.get(anon_id, {})
+        report = PathologyReport(
+            patient_id=patient_id,
+            gcs_path=gcs_path_by_anon_id.get(anon_id),
+            report_date=demo.get("diagnosis_date"),
+        )
+        db.add(report)
+        report_by_anon_id[anon_id] = report
+
+    await db.flush()  # populates report IDs before diagnoses reference them
 
     # --- Upsert cancer_types & insert case_diagnoses ---
     diagnoses_inserted = 0
@@ -438,12 +488,13 @@ async def ingest_upload(
             )
             review_status = "pending" if needs_review else "confirmed"
 
+            report = report_by_anon_id.get(anon_id)
             diagnosis = CaseDiagnosis(
                 patient_id=patient_id,
                 cancer_type_id=cancer_type_id,
                 icd_o_code=diag["icd_o_code"] or None,
                 predicted_term=diag["predicted_term"] or None,
-                original_text=diag.get("original_text") or None,
+                pathology_report_id=report.id if report else None,
                 confidence=round(conf, 2) if conf else None,
                 prediction_method=method or None,
                 source_row_index=diag["row_index"],

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DeckGL from '@deck.gl/react';
 import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
-import type { PickingInfo } from '@deck.gl/core';
+import type { MapViewState, PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import { useFilteredData } from '../../hooks/useFilteredData';
@@ -202,7 +202,7 @@ interface DeckMapProps {
 function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
   // Controlled view state so the "Reset view" button can snap back to
   // INITIAL_VIEW_STATE (CA-wide framing).  Each map manages its own camera.
-  const [viewState, setViewState] = useState<typeof INITIAL_VIEW_STATE>(INITIAL_VIEW_STATE);
+  const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
   const resetView = () => setViewState(INITIAL_VIEW_STATE);
   const isDefaultView =
     viewState.longitude === INITIAL_VIEW_STATE.longitude &&
@@ -227,7 +227,9 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
       <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
         <DeckGL
           viewState={viewState}
-          onViewStateChange={(params) => setViewState(params.viewState as typeof INITIAL_VIEW_STATE)}
+          onViewStateChange={({ viewState: nextViewState }) =>
+            setViewState(nextViewState as MapViewState)
+          }
           controller
           layers={layers}
           getTooltip={getTooltip}

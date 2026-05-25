@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary } from '../types';
-import { MOCK_COUNTY_DATA } from '../data/mockData';
 import { fetchIncidence, type IncidenceRecord } from '../api/client';
+import { isUcDavisCatchmentRegion, regionForCounty } from '../data/californiaRegions';
 
 export interface FilteredDataState {
   countyData: CountyData[];
@@ -17,14 +17,6 @@ const EMPTY_REGION_SUMMARY: RegionSummary = {
   count: 0,
   children: [],
 };
-
-const COUNTY_REGION_MAP = new Map(
-  MOCK_COUNTY_DATA.map((county) => [county.county.toLowerCase(), county.region]),
-);
-
-function regionForCounty(county: string): string {
-  return COUNTY_REGION_MAP.get(county.toLowerCase()) ?? 'Other California';
-}
 
 function sexFilterValue(sex: FilterState['sex']) {
   return sex && sex !== 'all' ? sex : undefined;
@@ -199,9 +191,8 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   // Calculate totals
   const totalCount = countyData.reduce((sum, c) => sum + c.count, 0);
 
-  // Catchment area (Northern CA + Bay Area + Central Valley for UC Davis)
-  const catchmentRegions = ['Bay Area', 'Northern CA', 'Central Valley'];
-  const catchmentCounties = countyData.filter(c => catchmentRegions.includes(c.region));
+  // Dashboard grouping only; this does not change stored county-level data.
+  const catchmentCounties = countyData.filter(c => isUcDavisCatchmentRegion(c.region));
   const catchmentCount = catchmentCounties.reduce((sum, c) => sum + c.count, 0);
 
   const regions: RegionSummary[] = Array.from(regionMap.entries()).map(([regionName, counties]) => {
@@ -227,9 +218,9 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
         name: 'UC Davis Catchment Area',
         type: 'catchment',
         count: catchmentCount,
-        children: regions.filter(r => catchmentRegions.includes(r.name)),
+        children: regions.filter(r => isUcDavisCatchmentRegion(r.name)),
       },
-      ...regions.filter(r => !catchmentRegions.includes(r.name)),
+      ...regions.filter(r => !isUcDavisCatchmentRegion(r.name)),
     ],
   };
 }

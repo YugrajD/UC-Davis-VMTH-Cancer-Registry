@@ -175,7 +175,7 @@ function AppContent() {
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
             This dashboard provides a customized interface for querying and visualizing
             cancer incidence data for dogs across California. The data covers the
-            UC Davis VMTH catchment area, which includes Northern California and the Central Valley
+            UC Davis VMTH catchment area, which includes Northern and Central California
             regions. Use the filters on the right to explore data by cancer type, breed, and sex.
         </p>
       </div>

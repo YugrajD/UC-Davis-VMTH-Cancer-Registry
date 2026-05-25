@@ -203,25 +203,25 @@ describe('useFilteredData — regionSummary', () => {
     expect(catchment?.type).toBe('catchment');
   });
 
-  it('catchment area includes Bay Area region', () => {
+  it('catchment area includes San Francisco Bay Area region', () => {
     const { regionSummary } = getFilteredData(DEFAULT_FILTERS);
     const catchment = regionSummary.children?.[0];
     const regions = catchment?.children?.map(r => r.name) ?? [];
-    expect(regions).toContain('Bay Area');
+    expect(regions).toContain('San Francisco Bay Area');
   });
 
-  it('catchment area includes Central Valley region', () => {
+  it('catchment area includes Sacramento Valley region', () => {
     const { regionSummary } = getFilteredData(DEFAULT_FILTERS);
     const catchment = regionSummary.children?.[0];
     const regions = catchment?.children?.map(r => r.name) ?? [];
-    expect(regions).toContain('Central Valley');
+    expect(regions).toContain('Sacramento Valley');
   });
 
-  it('catchment area includes Northern CA region', () => {
+  it('catchment area includes San Joaquin Valley region', () => {
     const { regionSummary } = getFilteredData(DEFAULT_FILTERS);
     const catchment = regionSummary.children?.[0];
     const regions = catchment?.children?.map(r => r.name) ?? [];
-    expect(regions).toContain('Northern CA');
+    expect(regions).toContain('San Joaquin Valley');
   });
 
   it('catchment count equals sum of its region counts', () => {

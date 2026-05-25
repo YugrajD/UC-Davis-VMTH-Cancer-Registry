@@ -45,7 +45,7 @@ async def get_yearly_trends(
         )
         .select_from(Patient)
         .join(Species, Patient.species_id == Species.id)
-        .join(County, Patient.county_id == County.id)
+        .outerjoin(County, Patient.county_id == County.id)
         .where(Patient.data_source == "petbert")
     )
     if cancer_type:

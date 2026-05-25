@@ -167,21 +167,6 @@ class ClassifyResult(BaseModel):
     top_predictions: List[dict]
 
 
-class ReportOut(BaseModel):
-    id: int
-    patient_id: int
-    report_text: str
-    classification: Optional[str] = None
-    confidence_score: Optional[float] = None
-    report_date: date
-    model_config = {"from_attributes": True}
-
-
-class ReportSearchResponse(BaseModel):
-    reports: List[ReportOut]
-    total: int
-
-
 # --- Breed Detail ---
 
 class BreedCancerTypeCount(BaseModel):

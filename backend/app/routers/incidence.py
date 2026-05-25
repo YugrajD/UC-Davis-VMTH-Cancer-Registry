@@ -204,7 +204,7 @@ async def get_incidence_by_breed(
         .join(Species, Patient.species_id == Species.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-        .join(County, Patient.county_id == County.id)
+        .outerjoin(County, Patient.county_id == County.id)
     )
     stmt = _apply_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
     stmt = stmt.group_by(Breed.name, Species.name).order_by(func.count(CaseDiagnosis.id).desc())

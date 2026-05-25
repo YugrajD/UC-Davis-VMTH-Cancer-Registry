@@ -9,8 +9,11 @@ and logging the ingestion run.
 import asyncio
 import csv
 import io
+import logging
 import re
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -451,9 +454,12 @@ async def ingest_upload(
                     None, upload_report_text_to_gcs, ingestion_job_id, anon_id, txt
                 )
                 for anon_id, txt in chunk
-            ])
+            ], return_exceptions=True)
             for (anon_id, _), gcs_path in zip(chunk, results):
-                gcs_path_by_anon_id[anon_id] = gcs_path
+                if isinstance(gcs_path, Exception):
+                    logger.warning("GCS upload failed for %s: %s", anon_id, gcs_path)
+                else:
+                    gcs_path_by_anon_id[anon_id] = gcs_path
 
     report_by_anon_id: dict[str, PathologyReport] = {}
     for anon_id in ids_to_process:

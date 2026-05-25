@@ -170,3 +170,9 @@ ml/documentation/fallback-model-notes.md
 # Database dumps — never commit; they contain patient data.
 *_dump.sql
 local_dump.sql
+
+# Local restructure/legacy ML directories (never committed)
+ml-*/
+
+# Local archive (gitignored experimental/legacy artifacts moved out of ml/)
+_archive/

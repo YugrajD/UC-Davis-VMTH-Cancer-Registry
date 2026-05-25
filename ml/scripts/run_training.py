@@ -156,22 +156,27 @@ def _train_case_presence(args: argparse.Namespace) -> None:
 
 
 def _train_label_presence(args: argparse.Namespace) -> None:
-    from model.group_classifier import GroupClassifier
     from production.petbert_pipeline.embedding_cache import load_cache
 
     print("\n=== Step 2: Train per-group LabelPresenceClassifier ===")
 
-    _, group_names = GroupClassifier.load(args.group_classifier_path)
-    print(f"GroupClassifier groups ({len(group_names)}): {group_names}")
-
     uncommon_group_names: list[str] = []
-    uncommon_path = Path(config.UNCOMMON_GROUPS_TXT)
-    if uncommon_path.exists():
-        uncommon_group_names = [
-            l.strip() for l in uncommon_path.read_text(encoding="utf-8").splitlines()
-            if l.strip()
-        ]
-        print(f"Uncommon groups ({len(uncommon_group_names)}): {uncommon_group_names}")
+    if args.label_presence_groups_from_taxonomy:
+        from ICD_labels import load_labels_taxonomy
+        group_names = sorted({tl.group for tl in load_labels_taxonomy(config.LABELS_CSV)})
+        print(f"Taxonomy groups ({len(group_names)}): {group_names}")
+    else:
+        from model.group_classifier import GroupClassifier
+        _, group_names = GroupClassifier.load(args.group_classifier_path)
+        print(f"GroupClassifier groups ({len(group_names)}): {group_names}")
+
+        uncommon_path = Path(config.UNCOMMON_GROUPS_TXT)
+        if uncommon_path.exists():
+            uncommon_group_names = [
+                l.strip() for l in uncommon_path.read_text(encoding="utf-8").splitlines()
+                if l.strip()
+            ]
+            print(f"Uncommon groups ({len(uncommon_group_names)}): {uncommon_group_names}")
 
     # Load label embeddings once for hard-negative mining (QW1).
     label_emb_lookup: dict | None = None
@@ -474,6 +479,14 @@ def main() -> int:
         help="[train-label-presence] Pipe-separated group names to train. "
              "Empty = train all groups. Include 'Uncommon' to retrain the Uncommon bucket. "
              "Example: 'Thymic epithelial neoplasms|Myxomatous neoplasms|Uncommon'",
+    )
+    parser.add_argument(
+        "--label-presence-groups-from-taxonomy",
+        action="store_true",
+        help="[train-label-presence] Source group names directly from the taxonomy CSV "
+             "(all 52 groups) instead of from the GroupClassifier checkpoint (24 common + "
+             "'Uncommon'). Use with --label-presence-groups to train heads for groups "
+             "that the GroupClassifier merged into 'Uncommon' or excluded.",
     )
     parser.add_argument(
         "--label-presence-n-cols",

@@ -14,6 +14,7 @@ reviewer corrects to a brand-new cancer type, the type is auto-created
 with confirmed=False and surfaces for admin sign-off elsewhere.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
@@ -23,7 +24,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth import CurrentUser, require_reviewer
+from app.auth import CurrentUser, get_current_user, require_reviewer
+from app.config import settings
 from app.database import get_db
 from app.models.models import (
     CancerType,
@@ -32,6 +34,8 @@ from app.models.models import (
     IngestionJob,
     Patient,
 )
+
+_VALID_STATUSES = frozenset({"pending", "confirmed", "corrected", "rejected"})
 
 
 router = APIRouter(prefix="/api/v1/diagnoses", tags=["diagnoses-review"])
@@ -107,6 +111,7 @@ async def _get_or_404(db: AsyncSession, diagnosis_id: int) -> CaseDiagnosis:
             selectinload(CaseDiagnosis.cancer_type),
             selectinload(CaseDiagnosis.patient),
             selectinload(CaseDiagnosis.review_events),
+            selectinload(CaseDiagnosis.pathology_report),
         )
         .where(CaseDiagnosis.id == diagnosis_id)
     )
@@ -138,7 +143,23 @@ async def _resolve_or_create_cancer_type(
     return new_type.id, True
 
 
-def _to_detail(diag: CaseDiagnosis) -> DiagnosisDetail:
+async def _fetch_report_text(diag: CaseDiagnosis) -> str | None:
+    """Fetch pathology report text from GCS if available, else return None."""
+    if not diag.pathology_report or not diag.pathology_report.gcs_path:
+        return None
+    if not settings.GCS_BUCKET:
+        return None
+    try:
+        from app.services.gcp_batch_service import download_report_text_from_gcs
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, download_report_text_from_gcs, diag.pathology_report.gcs_path
+        )
+    except Exception:
+        return None
+
+
+def _to_detail(diag: CaseDiagnosis, report_text: str | None = None) -> DiagnosisDetail:
     return DiagnosisDetail(
         id=diag.id,
         patient_anon_id=diag.patient.anon_id if diag.patient else None,
@@ -154,7 +175,7 @@ def _to_detail(diag: CaseDiagnosis) -> DiagnosisDetail:
         original_cancer_type_id=diag.original_cancer_type_id,
         original_icd_o_code=diag.original_icd_o_code,
         original_predicted_term=diag.original_predicted_term,
-        original_text=diag.original_text,
+        original_text=report_text,
         reviewed_by_email=diag.reviewed_by_email,
         reviewed_at=diag.reviewed_at,
         reviewer_notes=diag.reviewer_notes,
@@ -178,6 +199,74 @@ def _to_detail(diag: CaseDiagnosis) -> DiagnosisDetail:
 
 
 # --- Endpoints ------------------------------------------------------------
+
+
+@router.get("")
+async def list_diagnoses(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+    status: Optional[str] = Query(default=None, max_length=20),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    ingestion_job_id: Optional[int] = None,
+) -> list[PendingDiagnosis]:
+    """All diagnoses with optional status filter; non-admins scoped to their own jobs."""
+    if not user.is_uploader:
+        raise HTTPException(status_code=403, detail="Uploader or admin role required")
+
+    query = (
+        select(
+            CaseDiagnosis,
+            CancerType.name,
+            Patient.anon_id,
+            IngestionJob.dataset_a_filename,
+            IngestionJob.created_at,
+        )
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .outerjoin(IngestionJob, IngestionJob.id == CaseDiagnosis.ingestion_job_id)
+    )
+
+    if status and status in _VALID_STATUSES:
+        query = query.where(CaseDiagnosis.review_status == status)
+
+    if not user.is_admin:
+        uploader_job_ids = select(IngestionJob.id).where(
+            IngestionJob.uploaded_by_sub == user.sub
+        )
+        query = query.where(CaseDiagnosis.ingestion_job_id.in_(uploader_job_ids))
+
+    if ingestion_job_id is not None:
+        query = query.where(CaseDiagnosis.ingestion_job_id == ingestion_job_id)
+
+    query = (
+        query.order_by(
+            CaseDiagnosis.ingestion_job_id.desc().nulls_last(),
+            CaseDiagnosis.confidence.asc().nulls_first(),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await db.execute(query)).all()
+    return [
+        PendingDiagnosis(
+            id=d.id,
+            patient_anon_id=anon_id,
+            cancer_type_id=d.cancer_type_id,
+            cancer_type_name=ct_name,
+            icd_o_code=d.icd_o_code,
+            predicted_term=d.predicted_term,
+            confidence=float(d.confidence) if d.confidence is not None else None,
+            top2_margin=float(d.top2_margin) if d.top2_margin is not None else None,
+            prediction_method=d.prediction_method,
+            diagnosis_index=d.diagnosis_index,
+            review_status=d.review_status,
+            ingestion_job_id=d.ingestion_job_id,
+            job_filename=job_filename,
+            job_created_at=job_created_at,
+        )
+        for d, ct_name, anon_id, job_filename, job_created_at in rows
+    ]
 
 
 @router.get("/pending/count")
@@ -265,7 +354,8 @@ async def get_diagnosis(
     _reviewer: CurrentUser = Depends(require_reviewer),
 ) -> DiagnosisDetail:
     diag = await _get_or_404(db, diagnosis_id)
-    return _to_detail(diag)
+    report_text = await _fetch_report_text(diag)
+    return _to_detail(diag, report_text)
 
 
 @router.post("/{diagnosis_id}/review")
@@ -341,4 +431,5 @@ async def review_diagnosis(
     await db.commit()
 
     refreshed = await _get_or_404(db, diagnosis_id)
-    return _to_detail(refreshed)
+    report_text = await _fetch_report_text(refreshed)
+    return _to_detail(refreshed, report_text)

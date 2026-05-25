@@ -481,6 +481,23 @@ export async function fetchPendingDiagnoses(
   return fetchJsonAuth(url, token);
 }
 
+export async function fetchAllDiagnoses(
+  token: string,
+  params: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+    ingestion_job_id?: number;
+  } = {},
+): Promise<PendingDiagnosis[]> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) qs.append(k, String(v));
+  }
+  const url = `/api/v1/diagnoses${qs.toString() ? `?${qs}` : ''}`;
+  return fetchJsonAuth(url, token);
+}
+
 export async function fetchPendingCount(token: string): Promise<{ count: number }> {
   return fetchJsonAuth('/api/v1/diagnoses/pending/count', token);
 }

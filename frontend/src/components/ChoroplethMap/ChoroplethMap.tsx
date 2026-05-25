@@ -292,9 +292,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
         <div className="relative" style={{ height: 560, backgroundColor: MAP_BG_CSS }}>
           <DeckGL
             viewState={expandedViewState}
-            onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
-              setExpandedViewState(params.viewState)
-            }
+            onViewStateChange={(params) => setExpandedViewState(params.viewState as typeof INITIAL_VIEW_STATE)}
             controller
             layers={layers}
             getTooltip={getTooltip}
@@ -443,9 +441,7 @@ export function ChoroplethMap({
       <div className="relative" style={{ height: 450, backgroundColor: MAP_BG_CSS }}>
         <DeckGL
           viewState={viewState}
-          onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
-            setViewState(params.viewState)
-          }
+          onViewStateChange={(params) => setViewState(params.viewState as typeof INITIAL_VIEW_STATE)}
           controller
           layers={layers}
           getTooltip={getTooltip}

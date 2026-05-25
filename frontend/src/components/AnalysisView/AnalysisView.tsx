@@ -227,9 +227,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
       <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
         <DeckGL
           viewState={viewState}
-          onViewStateChange={(params: { viewState: typeof INITIAL_VIEW_STATE }) =>
-            setViewState(params.viewState)
-          }
+          onViewStateChange={(params) => setViewState(params.viewState as typeof INITIAL_VIEW_STATE)}
           controller
           layers={layers}
           getTooltip={getTooltip}

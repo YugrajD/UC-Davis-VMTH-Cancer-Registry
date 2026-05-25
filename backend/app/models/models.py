@@ -92,11 +92,7 @@ class CaseDiagnosis(Base):
     cancer_type_id = Column(Integer, ForeignKey("cancer_types.id"), nullable=False)
     icd_o_code = Column(String(20), nullable=True)
     predicted_term = Column(Text, nullable=True)
-    # Raw "Clinical Diagnoses" cell from the upload — the text PetBERT
-    # classified.  Surfaced to reviewers so they can sanity-check the model
-    # against the original wording.  Migration 009 created the column;
-    # older rows are NULL.
-    original_text = Column(Text, nullable=True)
+    pathology_report_id = Column(Integer, ForeignKey("pathology_reports.id"), nullable=True)
     confidence = Column(Numeric(4, 2), nullable=True)
     prediction_method = Column(String(20), nullable=True)
     source_row_index = Column(Integer, nullable=True)
@@ -114,6 +110,7 @@ class CaseDiagnosis(Base):
     ingestion_job_id = Column(Integer, ForeignKey("ingestion_jobs.id"), nullable=True)
 
     patient = relationship("Patient", back_populates="diagnoses")
+    pathology_report = relationship("PathologyReport", back_populates="diagnoses")
     ingestion_job = relationship("IngestionJob")
     cancer_type = relationship(
         "CancerType",
@@ -163,13 +160,13 @@ class PathologyReport(Base):
     __tablename__ = "pathology_reports"
 
     id = Column(Integer, primary_key=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
-    report_text = Column(Text, nullable=False)
-    classification = Column(String(100))
-    confidence_score = Column(Numeric(5, 4))
-    report_date = Column(Date, nullable=False)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    gcs_path = Column(String(1000), nullable=True)
+    report_date = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     patient = relationship("Patient", back_populates="reports")
+    diagnoses = relationship("CaseDiagnosis", back_populates="pathology_report")
 
 
 class CalEnviroScreen(Base):

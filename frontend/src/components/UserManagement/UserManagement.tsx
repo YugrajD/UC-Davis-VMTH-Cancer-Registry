@@ -120,6 +120,9 @@ export function UserManagement() {
   const isSelf =
     user?.email && roles?.email && roles.email.toLowerCase() === user.email.toLowerCase();
 
+  const isOtherAdmin = roles?.is_admin && !isSelf;
+  const isReadOnly = Boolean(isSelf) || Boolean(isOtherAdmin);
+
   const lookup = useCallback(async () => {
     setError(null);
     setSavedAt(null);
@@ -192,8 +195,8 @@ export function UserManagement() {
         </h2>
         <p className="text-sm text-[var(--color-text-secondary)] mt-1">
           Look up a user by email and edit their roles. Admin implies
-          uploader and reviewer; un-checking those while admin is on has
-          no effect. You cannot remove your own admin role.
+          uploader and reviewer. Admins cannot edit their own roles or
+          the roles of other admins.
         </p>
       </div>
 
@@ -370,25 +373,31 @@ export function UserManagement() {
             </div>
           </div>
 
-          <fieldset className="border-t border-gray-200 pt-4 space-y-2">
+          {isSelf && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              You cannot edit your own roles.
+            </p>
+          )}
+          {isOtherAdmin && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              This user is an admin. Admin roles cannot edit other admins.
+            </p>
+          )}
+
+          <fieldset className="border-t border-gray-200 pt-4 space-y-2" disabled={isReadOnly}>
             <legend className="sr-only">Roles</legend>
             <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={formAdmin}
                 onChange={(e) => setFormAdmin(e.target.checked)}
-                disabled={Boolean(isSelf) && roles.is_admin}
+                disabled={isReadOnly}
                 className="mt-1"
               />
               <span>
                 <span className="font-medium">Admin</span>
                 <span className="block text-xs text-gray-500">
                   Full access; implicitly grants uploader and reviewer.
-                  {isSelf && roles.is_admin && (
-                    <span className="ml-1 text-amber-700">
-                      Locked — you cannot demote yourself.
-                    </span>
-                  )}
                 </span>
               </span>
             </label>
@@ -397,7 +406,7 @@ export function UserManagement() {
                 type="checkbox"
                 checked={formAdmin || formUploader}
                 onChange={(e) => setFormUploader(e.target.checked)}
-                disabled={formAdmin}
+                disabled={isReadOnly || formAdmin}
                 className="mt-1"
               />
               <span>
@@ -412,7 +421,7 @@ export function UserManagement() {
                 type="checkbox"
                 checked={formAdmin || formReviewer}
                 onChange={(e) => setFormReviewer(e.target.checked)}
-                disabled={formAdmin}
+                disabled={isReadOnly || formAdmin}
                 className="mt-1"
               />
               <span>
@@ -424,21 +433,23 @@ export function UserManagement() {
             </label>
           </fieldset>
 
-          <div className="flex items-center gap-3 pt-2 border-t border-gray-200">
-            <button
-              onClick={save}
-              disabled={saving || !dirty}
-              className="px-4 py-2 text-sm font-medium bg-[var(--color-teal)] text-white rounded hover:bg-[var(--color-teal-dark)] disabled:opacity-50"
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-            {savedAt && (
-              <span className="text-xs text-emerald-700">Saved at {savedAt}</span>
-            )}
-            {dirty && !saving && !savedAt && (
-              <span className="text-xs text-gray-500">Unsaved changes.</span>
-            )}
-          </div>
+          {!isReadOnly && (
+            <div className="flex items-center gap-3 pt-2 border-t border-gray-200">
+              <button
+                onClick={save}
+                disabled={saving || !dirty}
+                className="px-4 py-2 text-sm font-medium bg-[var(--color-teal)] text-white rounded hover:bg-[var(--color-teal-dark)] disabled:opacity-50"
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              {savedAt && (
+                <span className="text-xs text-emerald-700">Saved at {savedAt}</span>
+              )}
+              {dirty && !saving && !savedAt && (
+                <span className="text-xs text-gray-500">Unsaved changes.</span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

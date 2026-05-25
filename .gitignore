@@ -141,6 +141,7 @@ database/data/output/report.csv
 *manual_labels*
 *manual-labels*
 *_review*
+!backend/tests/test_*_review*
 *manual_review*
 *gate_flagged*
 *gate-flagged*

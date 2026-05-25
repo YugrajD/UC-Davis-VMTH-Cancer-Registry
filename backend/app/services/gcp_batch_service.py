@@ -55,6 +55,53 @@ def cleanup_gcs_job_files(job_id: int) -> None:
         logger.info("Cleaned up %d GCS objects for job %d", len(blobs), job_id)
 
 
+_REPORTS_PREFIX = "reports"
+
+
+def upload_report_text_to_gcs(job_id: int, anon_id: str, text: str) -> str:
+    """Upload a single patient's pathology report text to GCS.
+
+    Returns the blob path (without gs:// prefix) stored in pathology_reports.gcs_path.
+    """
+    blob_path = f"{_REPORTS_PREFIX}/{job_id}/{anon_id}.txt"
+    blob = _get_bucket().blob(blob_path)
+    blob.upload_from_string(text, content_type="text/plain; charset=utf-8")
+    return blob_path
+
+
+def download_report_text_from_gcs(gcs_path: str) -> str:
+    """Download a patient's pathology report text from GCS."""
+    blob = _get_bucket().blob(gcs_path)
+    return blob.download_as_text(encoding="utf-8")
+
+
+_LEGACY_MODEL_DIRS = frozenset({"checkpoints", "labels", "petbert"})
+
+
+def list_model_folders() -> list[str]:
+    """Return versioned model bundle names under gs://{bucket}/models/.
+
+    Only returns proper bundle folders (e.g. production, model_a, model_b).
+    Excludes the legacy flat-structure directories (checkpoints/, labels/,
+    petbert/) that pre-date the versioned layout.
+    Returns an empty list when no folders exist or GCS is unreachable.
+    """
+    client = _get_storage_client()
+    iterator = client.list_blobs(
+        settings.GCS_BUCKET,
+        prefix="models/",
+        delimiter="/",
+    )
+    list(iterator)  # consume iterator so .prefixes is populated
+    folders = []
+    for prefix in iterator.prefixes:
+        # prefix is e.g. "models/production/" — extract the folder name
+        name = prefix.removeprefix("models/").rstrip("/")
+        if name and name not in _LEGACY_MODEL_DIRS:
+            folders.append(name)
+    return sorted(folders)
+
+
 # ── GCP Batch helpers ───────────────────────────────────────────────────
 
 
@@ -62,11 +109,14 @@ def _get_batch_client() -> batch_v1.BatchServiceClient:
     return batch_v1.BatchServiceClient()
 
 
-def submit_batch_job(job_id: int) -> str:
+def submit_batch_job(job_id: int, model_folder: str = "production") -> str:
     """Submit a GCP Batch job for PetBERT inference.
 
     Returns the full job resource name
     (e.g. projects/{p}/locations/{l}/jobs/{j}).
+
+    model_folder selects which GCS bundle under gs://{bucket}/models/ to use.
+    Each folder must contain petbert/, labels/, and checkpoints/ subdirectories.
 
     Uses gsutil to download/upload files instead of gcsfuse volume mount
     to avoid compatibility issues with non-DNS-compliant bucket names.
@@ -79,27 +129,39 @@ def submit_batch_job(job_id: int) -> str:
     output_dir = local_data
     model_path = f"{local_data}/models/petbert"
     labels_csv = f"{local_data}/models/labels/labels.csv"
-    presence_ckpt = f"{local_data}/models/checkpoints/presence_classifier_best.pt"
+    case_presence_ckpt = f"{local_data}/models/checkpoints/case_presence_classifier.pt"
+    group_ckpt = f"{local_data}/models/checkpoints/group_classifier_best.pt"
+    lp_thresholds = f"{local_data}/models/checkpoints/lp_thresholds.json"
+    uncommon_groups_file = f"{local_data}/models/checkpoints/uncommon_groups.txt"
+    gcs_model_root = f"gs://{bucket}/models/{model_folder}"
 
     # Pre-task: download input CSV, model weights, labels, and classifiers from GCS
-    # Uses google/cloud-sdk container since COS doesn't have gcloud installed
+    # Uses google/cloud-sdk container since COS doesn't have gcloud installed.
+    # Required files use set -e (hard failure); optional files use || echo so a
+    # missing file degrades gracefully rather than aborting the job.
     setup_container = batch_v1.Runnable.Container(
         image_uri="gcr.io/google.com/cloudsdktool/google-cloud-cli:slim",
         commands=[
             "/bin/bash", "-c",
-            (
-                f"set -e && "
-                f"mkdir -p {local_data}/models/petbert {local_data}/models/labels {local_data}/models/checkpoints && "
-                f"echo 'Downloading input CSV...' && "
-                f"gcloud storage cp 'gs://{bucket}/{_GCS_PREFIX}/{job_id}/dataset_a.csv' {input_csv} && "
-                f"echo 'Downloading model weights...' && "
-                f"gcloud storage cp -r 'gs://{bucket}/models/petbert/*' {model_path}/ && "
-                f"echo 'Downloading labels...' && "
-                f"gcloud storage cp 'gs://{bucket}/models/labels/labels.csv' {labels_csv} && "
-                f"echo 'Downloading classifier checkpoints...' && "
-                f"gcloud storage cp 'gs://{bucket}/models/checkpoints/presence_classifier_best.pt' {presence_ckpt} && "
-                f"echo 'Download complete.'"
-            ),
+            " && ".join([
+                "set -e",
+                f"mkdir -p {local_data}/models/petbert {local_data}/models/labels {local_data}/models/checkpoints",
+                # Required
+                f"echo 'Downloading input CSV...'",
+                f"gcloud storage cp 'gs://{bucket}/{_GCS_PREFIX}/{job_id}/dataset_a.csv' {input_csv}",
+                f"echo 'Downloading model weights from {gcs_model_root}...'",
+                f"gcloud storage cp -r '{gcs_model_root}/petbert/*' {model_path}/",
+                f"echo 'Downloading labels...'",
+                f"gcloud storage cp '{gcs_model_root}/labels/labels.csv' {labels_csv}",
+                f"echo 'Downloading group classifier (required)...'",
+                f"gcloud storage cp '{gcs_model_root}/checkpoints/group_classifier_best.pt' {group_ckpt}",
+                # Optional — missing files disable the corresponding pipeline stage
+                f"echo 'Downloading optional checkpoints...'",
+                f"gcloud storage cp '{gcs_model_root}/checkpoints/case_presence_classifier.pt' {case_presence_ckpt} || echo 'No case_presence_classifier.pt; Stage 1 gate disabled.'",
+                f"gcloud storage cp '{gcs_model_root}/checkpoints/lp_thresholds.json' {lp_thresholds} || echo 'No lp_thresholds.json; using global LP threshold.'",
+                f"gcloud storage cp '{gcs_model_root}/checkpoints/uncommon_groups.txt' {uncommon_groups_file} || echo 'No uncommon_groups.txt; using empty set.'",
+                f"echo 'Download complete.'",
+            ]),
         ],
         volumes=[f"{local_data}:{local_data}"],
     )
@@ -121,7 +183,10 @@ def submit_batch_job(job_id: int) -> str:
                 "OUTPUT_DIR": output_dir,
                 "MODEL_PATH": model_path,
                 "LABELS_CSV_PATH": labels_csv,
-                "PRESENCE_CLASSIFIER_PATH": presence_ckpt,
+                "CASE_PRESENCE_CLASSIFIER_PATH": case_presence_ckpt,
+                "GROUP_CLASSIFIER_PATH": group_ckpt,
+                "LP_THRESHOLDS_JSON_PATH": lp_thresholds,
+                "UNCOMMON_GROUPS_PATH": uncommon_groups_file,
             },
         ),
     )

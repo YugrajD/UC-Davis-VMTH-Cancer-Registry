@@ -1,5 +1,15 @@
 # Binary Classifier Training Log
 
+> **Historical reference only.** This log documents Phases 1–22 using the
+> single all-label `LabelPresenceClassifier` with iterative CO-bank training
+> (`--mode train-classifier`). That mode, the `binary/` cycle scripts
+> (`build_training_pairs.py`, `run_cycle.py`, `update_co_bank.py`,
+> `train.py`, `update_co_bank.py`), and `model/presence_classifier.py`
+> were deleted in Phase 28 when the per-group LabelPresenceClassifier
+> (4-stage pipeline) replaced them. See
+> `training-log-label-presence.md` and `training-log-group.md` for
+> current training history.
+
 ## Development History
 
 All runs on 2026-03-03–04, device: mps.

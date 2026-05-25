@@ -26,10 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-
-def _safe(col: str) -> str:
-    """Convert a column name to a key safe for npz storage."""
-    return col.replace(" ", "_").replace(",", "").replace("/", "_")
+from utils.encoding import npz_col_key
 
 
 def save_cache(
@@ -60,7 +57,7 @@ def save_cache(
         "labels_mtime":     np.array([os.path.getmtime(labels_csv_path)]),
     }
     for col in col_names:
-        s = _safe(col)
+        s = npz_col_key(col)
         arrays[f"col_{s}"] = col_embeddings[col]
         arrays[f"has_{s}"] = col_has_content[col]
     np.savez(path, **arrays)
@@ -105,7 +102,7 @@ def load_cache(
         col_embeddings: dict[str, np.ndarray] = {}
         col_has_content: dict[str, np.ndarray] = {}
         for col in col_names:
-            s = _safe(col)
+            s = npz_col_key(col)
             col_embeddings[col] = data[f"col_{s}"]
             col_has_content[col] = data[f"has_{s}"]
 

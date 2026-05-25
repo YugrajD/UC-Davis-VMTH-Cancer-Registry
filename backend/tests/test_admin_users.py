@@ -215,10 +215,12 @@ async def test_put_roles_admin_implies_uploader_and_reviewer():
 
 
 @pytest.mark.asyncio
-async def test_put_roles_blocks_self_demotion():
+async def test_put_roles_blocks_self_edit():
+    """Any self-edit is rejected with 400 regardless of the requested roles."""
     me = _admin_user(email="me@ucdavis.edu")
     _override_admin(me)
-    _override_db([])  # should reject before any DB call
+    # _lookup runs before the self-edit check; return no existing row.
+    _override_db([_scalar_one_or_none_result(None)])
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.put(
@@ -226,31 +228,14 @@ async def test_put_roles_blocks_self_demotion():
                 json={"is_admin": False, "is_uploader": True, "is_reviewer": True},
             )
         assert r.status_code == 400
-        assert "own admin role" in r.json()["detail"]
+        assert "own" in r.json()["detail"].lower()
     finally:
         _cleanup()
 
 
 @pytest.mark.asyncio
-async def test_put_roles_self_demotion_check_is_case_insensitive():
+async def test_put_roles_self_edit_check_is_case_insensitive():
     me = _admin_user(email="Me@UCDavis.edu")
-    _override_admin(me)
-    _override_db([])
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            r = await client.put(
-                "/api/v1/admin/users/me@ucdavis.edu/roles",
-                json={"is_admin": False, "is_uploader": True, "is_reviewer": True},
-            )
-        assert r.status_code == 400
-    finally:
-        _cleanup()
-
-
-@pytest.mark.asyncio
-async def test_put_roles_lets_admin_keep_their_admin_role():
-    """Self-edit is fine as long as is_admin stays true."""
-    me = _admin_user(email="me@ucdavis.edu")
     _override_admin(me)
     _override_db([_scalar_one_or_none_result(None)])
     try:
@@ -258,6 +243,42 @@ async def test_put_roles_lets_admin_keep_their_admin_role():
             r = await client.put(
                 "/api/v1/admin/users/me@ucdavis.edu/roles",
                 json={"is_admin": True, "is_uploader": True, "is_reviewer": True},
+            )
+        assert r.status_code == 400
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_put_roles_blocks_editing_another_admin():
+    """An admin cannot modify another admin's roles — returns 403."""
+    acting_admin = _admin_user(email="admin@ucdavis.edu")
+    _override_admin(acting_admin)
+    other_admin_row = _row(email="other@ucdavis.edu", is_admin=True)
+    _override_db([_scalar_one_or_none_result(other_admin_row)])
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.put(
+                "/api/v1/admin/users/other@ucdavis.edu/roles",
+                json={"is_admin": False, "is_uploader": True, "is_reviewer": True},
+            )
+        assert r.status_code == 403
+        assert "admin" in r.json()["detail"].lower()
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_put_roles_allows_editing_non_admin():
+    """An admin can freely edit a non-admin user's roles."""
+    acting_admin = _admin_user(email="admin@ucdavis.edu")
+    _override_admin(acting_admin)
+    _override_db([_scalar_one_or_none_result(None)])
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.put(
+                "/api/v1/admin/users/regular@ucdavis.edu/roles",
+                json={"is_admin": False, "is_uploader": True, "is_reviewer": False},
             )
         assert r.status_code == 200
     finally:

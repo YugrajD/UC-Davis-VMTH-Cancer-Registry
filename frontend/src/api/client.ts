@@ -275,6 +275,7 @@ export interface IngestionJob {
   dataset_a_filename: string;
   status: string;
   processing_stage?: string | null;
+  model_folder?: string | null;
   reviewed_by_email?: string | null;
   reviewed_at?: string | null;
   rejection_reason?: string | null;
@@ -377,6 +378,7 @@ export async function reviewJob(
   jobId: number,
   action: 'approve' | 'reject',
   rejectionReason?: string,
+  modelFolder?: string,
 ): Promise<IngestionJob> {
   const response = await fetch(apiUrl(`/api/v1/ingest/jobs/${jobId}/review`), {
     method: 'POST',
@@ -387,6 +389,7 @@ export async function reviewJob(
     body: JSON.stringify({
       action,
       rejection_reason: rejectionReason || null,
+      model_folder: modelFolder || null,
     }),
   });
 
@@ -396,6 +399,11 @@ export async function reviewJob(
   }
 
   return response.json();
+}
+
+export async function fetchAvailableModels(token: string): Promise<string[]> {
+  const data = await fetchJsonAuth('/api/v1/ingest/models', token);
+  return (data as { models: string[] }).models;
 }
 
 
@@ -470,6 +478,23 @@ export async function fetchPendingDiagnoses(
     if (v !== undefined && v !== null) qs.append(k, String(v));
   }
   const url = `/api/v1/diagnoses/pending${qs.toString() ? `?${qs}` : ''}`;
+  return fetchJsonAuth(url, token);
+}
+
+export async function fetchAllDiagnoses(
+  token: string,
+  params: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+    ingestion_job_id?: number;
+  } = {},
+): Promise<PendingDiagnosis[]> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) qs.append(k, String(v));
+  }
+  const url = `/api/v1/diagnoses${qs.toString() ? `?${qs}` : ''}`;
   return fetchJsonAuth(url, token);
 }
 

@@ -114,6 +114,11 @@ services:
     environment:
       HF_HOME: /ml/.cache/huggingface
       PETBERT_MODEL_PATH: ${PETBERT_MODEL_PATH:-/ml/models/petbert}
+      LABELS_CSV_PATH: ${LABELS_CSV_PATH:-/ml/ICD_labels/labels.csv}
+      GROUP_CLASSIFIER_PATH: ${GROUP_CLASSIFIER_PATH:-/ml/output/checkpoints/group/group_classifier_best.pt}
+      CASE_PRESENCE_CLASSIFIER_PATH: ${CASE_PRESENCE_CLASSIFIER_PATH:-}
+      LP_THRESHOLDS_JSON_PATH: ${LP_THRESHOLDS_JSON_PATH:-}
+      UNCOMMON_GROUPS_PATH: ${UNCOMMON_GROUPS_PATH:-}
     command: uvicorn app:app --host 0.0.0.0 --port 8001 --reload
 
 volumes:

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  fetchAllDiagnoses,
   fetchDiagnosisDetail,
   fetchPendingDiagnoses,
   reviewDiagnosis,
@@ -8,6 +9,9 @@ import {
   type PendingDiagnosis,
   type ReviewActionKind,
 } from '../../api/client';
+
+type StatusFilter = 'pending' | 'confirmed' | 'corrected' | 'rejected' | 'all';
+const STATUS_FILTERS: StatusFilter[] = ['pending', 'confirmed', 'corrected', 'rejected', 'all'];
 
 const PAGE_SIZE = 50;
 
@@ -60,8 +64,8 @@ function SourceText({ text }: { text: string | null }) {
   if (!text || !text.trim()) {
     return (
       <div>
-        <p className="text-xs text-gray-500 mb-1">Source text (Clinical Diagnoses)</p>
-        <p className="text-xs text-gray-400 italic">Source text not available for this diagnosis.</p>
+        <p className="text-xs text-gray-500 mb-1">Pathology report text</p>
+        <p className="text-xs text-gray-400 italic">Pathology report text not available for this diagnosis.</p>
       </div>
     );
   }
@@ -74,7 +78,7 @@ function SourceText({ text }: { text: string | null }) {
 
   return (
     <div>
-      <p className="text-xs text-gray-500 mb-1">Source text (Clinical Diagnoses)</p>
+      <p className="text-xs text-gray-500 mb-1">Pathology report text</p>
       <p className="text-sm whitespace-pre-wrap text-[var(--color-text-primary)]">
         {shown}
       </p>
@@ -174,70 +178,72 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
         </div>
       )}
 
-      <div className="border-t border-gray-200 pt-4 space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-700">
-          Review action
-        </h4>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="text-xs text-gray-600">
-            Cancer type (for correction)
-            <input
-              type="text"
-              value={correctName}
-              onChange={(e) => setCorrectName(e.target.value)}
-              className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+      {detail.review_status !== 'rejected' && (
+        <div className="border-t border-gray-200 pt-4 space-y-3">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-700">
+            Review action
+          </h4>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs text-gray-600">
+              Cancer type (for correction)
+              <input
+                type="text"
+                value={correctName}
+                onChange={(e) => setCorrectName(e.target.value)}
+                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+              />
+            </label>
+            <label className="text-xs text-gray-600">
+              ICD-O code
+              <input
+                type="text"
+                value={correctIcd}
+                onChange={(e) => setCorrectIcd(e.target.value)}
+                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+              />
+            </label>
+          </div>
+          <label className="text-xs text-gray-600 block">
+            Notes (optional)
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded resize-none"
             />
           </label>
-          <label className="text-xs text-gray-600">
-            ICD-O code
-            <input
-              type="text"
-              value={correctIcd}
-              onChange={(e) => setCorrectIcd(e.target.value)}
-              className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
-            />
-          </label>
-        </div>
-        <label className="text-xs text-gray-600 block">
-          Notes (optional)
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded resize-none"
-          />
-        </label>
 
-        <div className="flex gap-2">
-          <button
-            onClick={() => onAction('confirm', { notes: notes || undefined })}
-            disabled={busy}
-            className="px-3 py-1.5 text-sm font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
-          >
-            Confirm
-          </button>
-          <button
-            onClick={() =>
-              onAction('correct', {
-                cancer_type_name: correctName.trim(),
-                icd_o_code: correctIcd.trim() || undefined,
-                notes: notes || undefined,
-              })
-            }
-            disabled={busy || !correctName.trim() || correctName === detail.cancer_type_name}
-            className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            Correct
-          </button>
-          <button
-            onClick={() => onAction('reject', { notes: notes || undefined })}
-            disabled={busy}
-            className="px-3 py-1.5 text-sm font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-          >
-            Reject
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onAction('confirm', { notes: notes || undefined })}
+              disabled={busy}
+              className="px-3 py-1.5 text-sm font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
+            >
+              Confirm
+            </button>
+            <button
+              onClick={() =>
+                onAction('correct', {
+                  cancer_type_name: correctName.trim(),
+                  icd_o_code: correctIcd.trim() || undefined,
+                  notes: notes || undefined,
+                })
+              }
+              disabled={busy || !correctName.trim() || correctName === detail.cancer_type_name}
+              className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              Correct
+            </button>
+            <button
+              onClick={() => onAction('reject', { notes: notes || undefined })}
+              disabled={busy}
+              className="px-3 py-1.5 text-sm font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+            >
+              Reject
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="border-t border-gray-200 pt-4">
         <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-700 mb-2">
@@ -269,7 +275,9 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
 }
 
 export function DiagnosisReview() {
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, isUploader, isAdmin } = useAuth();
+  const canAudit = isUploader || isAdmin;
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
   const [pending, setPending] = useState<PendingDiagnosis[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -285,14 +293,23 @@ export function DiagnosisReview() {
     setLoadingList(true);
     setError(null);
     try {
-      const rows = await fetchPendingDiagnoses(token, { limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+      let rows: PendingDiagnosis[];
+      if (canAudit && statusFilter !== 'pending') {
+        rows = await fetchAllDiagnoses(token, {
+          status: statusFilter === 'all' ? undefined : statusFilter,
+          limit: PAGE_SIZE,
+          offset: page * PAGE_SIZE,
+        });
+      } else {
+        rows = await fetchPendingDiagnoses(token, { limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+      }
       setPending(rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
       setLoadingList(false);
     }
-  }, [getAccessToken, page]);
+  }, [getAccessToken, page, canAudit, statusFilter]);
 
   useEffect(() => {
     load(); // eslint-disable-line react-hooks/set-state-in-effect
@@ -345,6 +362,13 @@ export function DiagnosisReview() {
     [getAccessToken, selectedId],
   );
 
+  const handleFilterChange = useCallback((f: StatusFilter) => {
+    setStatusFilter(f);
+    setPage(0);
+    setSelectedId(null);
+    setDetail(null);
+  }, []);
+
   const headerCount = useMemo(() => pending.length, [pending]);
 
   // Group diagnoses by ingestion_job_id, preserving server sort order within
@@ -366,14 +390,35 @@ export function DiagnosisReview() {
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
-          Diagnosis Review
-        </h2>
-        <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-          Triage low-confidence and ambiguous predictions before they enter
-          public dashboard stats. Confirm to accept, Correct to assign a
-          different cancer type, or Reject to drop the prediction.
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
+              Diagnosis Review
+            </h2>
+            <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+              Triage low-confidence and ambiguous predictions before they enter
+              public dashboard stats. Confirm to accept, Correct to assign a
+              different cancer type, or Reject to drop the prediction.
+            </p>
+          </div>
+          {canAudit && (
+            <div className="flex gap-1 shrink-0 flex-wrap justify-end">
+              {STATUS_FILTERS.map((f) => (
+                <button
+                  key={f}
+                  onClick={() => handleFilterChange(f)}
+                  className={`px-3 py-1 text-xs rounded-full font-medium border transition-colors ${
+                    statusFilter === f
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {error && (

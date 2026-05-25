@@ -16,7 +16,7 @@ After training, the full AutoModelForMaskedLM checkpoint is saved to
 
 A cold start is required after fine-tuning: delete the embedding cache,
 CO bank, and current classifier checkpoint before retraining the
-PresenceClassifier from scratch with the new backbone.
+LabelPresenceClassifier from scratch with the new backbone.
 """
 
 import argparse
@@ -93,6 +93,21 @@ def _infonce_loss(
 
 
 # ---------------------------------------------------------------------------
+# Dataset helpers
+# ---------------------------------------------------------------------------
+
+def _load_csv_rows(path: str, fields: list[str]) -> list[tuple[str, ...]]:
+    """Read rows from a CSV, keeping only rows where every field is non-empty."""
+    rows: list[tuple[str, ...]] = []
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            vals = tuple(row.get(fld, "").strip() for fld in fields)
+            if all(vals):
+                rows.append(vals)
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 
@@ -102,21 +117,14 @@ class ContrastivePairDataset(Dataset):
     so that each batch can be padded to its own maximum length."""
 
     def __init__(self, pairs_csv: str) -> None:
-        self.pairs: list[tuple[str, str]] = []
-        with open(pairs_csv, encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rt = row.get("report_text", "").strip()
-                lt = row.get("label_text", "").strip()
-                if rt and lt:
-                    self.pairs.append((rt, lt))
+        self.pairs = _load_csv_rows(pairs_csv, ["report_text", "label_text"])
         print(f"  Loaded {len(self.pairs)} pairs from {pairs_csv}")
 
     def __len__(self) -> int:
         return len(self.pairs)
 
     def __getitem__(self, idx: int) -> tuple[str, str]:
-        return self.pairs[idx]
+        return self.pairs[idx]  # type: ignore[return-value]
 
 
 class HardNegPairDataset(Dataset):
@@ -127,22 +135,16 @@ class HardNegPairDataset(Dataset):
     predict the wrong label for a report that has a known correct label."""
 
     def __init__(self, hard_neg_csv: str) -> None:
-        self.triplets: list[tuple[str, str, str]] = []
-        with open(hard_neg_csv, encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rt = row.get("report_text", "").strip()
-                cl = row.get("correct_label_text", "").strip()
-                wl = row.get("wrong_label_text", "").strip()
-                if rt and cl and wl:
-                    self.triplets.append((rt, cl, wl))
+        self.triplets = _load_csv_rows(
+            hard_neg_csv, ["report_text", "correct_label_text", "wrong_label_text"]
+        )
         print(f"  Loaded {len(self.triplets)} hard-negative triplets from {hard_neg_csv}")
 
     def __len__(self) -> int:
         return len(self.triplets)
 
     def __getitem__(self, idx: int) -> tuple[str, str, str]:
-        return self.triplets[idx]
+        return self.triplets[idx]  # type: ignore[return-value]
 
 
 def _make_collator(tokenizer: AutoTokenizer, max_length: int):
@@ -223,6 +225,7 @@ def train(
     hard_neg_csv: str | None = None,
     hard_neg_weight: float = 0.5,
     hard_neg_margin: float = 0.3,
+    hard_neg_batch_size: int | None = None,
 ) -> None:
 
     device = device_from_arg(device_arg)
@@ -262,15 +265,19 @@ def train(
         if len(hn_dataset) == 0:
             print("  Warning: hard-neg CSV is empty — skipping hard-neg loss.")
         else:
+            hn_batch_size = hard_neg_batch_size if hard_neg_batch_size else batch_size
             hard_neg_loader = DataLoader(
                 hn_dataset,
-                batch_size=batch_size,
+                batch_size=hn_batch_size,
                 shuffle=True,
                 collate_fn=_make_hard_neg_collator(tokenizer, max_length),
                 drop_last=True,
             )
             hn_iter_box.append(iter(hard_neg_loader))
-            print(f"  Hard-neg weight={hard_neg_weight}, margin={hard_neg_margin}")
+            print(
+                f"  Hard-neg weight={hard_neg_weight}, margin={hard_neg_margin}, "
+                f"batch_size={hn_batch_size}"
+            )
 
     # --- Optimiser and scheduler --------------------------------------------
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
@@ -301,13 +308,34 @@ def train(
         ).last_hidden_state
         return F.normalize(_mean_pool(hidden, attention_mask), dim=-1)
 
+    pad_id = tokenizer.pad_token_id or 0
+
+    def _pad_to(t: torch.Tensor, target_len: int, value: int = 0) -> torch.Tensor:
+        if t.shape[1] >= target_len:
+            return t
+        return F.pad(t, (0, target_len - t.shape[1]), value=value)
+
+    def _cat_padded(
+        tensors_ids: list[torch.Tensor],
+        tensors_mask: list[torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Pad all to the longest in the group, then concat along batch dim.
+        # Two forward passes per step (reports / labels) — fewer than 5 separate
+        # forwards trims per-call XPU kernel-launch overhead.
+        max_len = max(t.shape[1] for t in tensors_ids)
+        return (
+            torch.cat([_pad_to(t, max_len, pad_id) for t in tensors_ids], dim=0),
+            torch.cat([_pad_to(t, max_len, 0)      for t in tensors_mask], dim=0),
+        )
+
     global_step = 0
-    for epoch in range(1, epochs + 1):
+    epoch_pbar = tqdm(range(1, epochs + 1), desc="Contrastive training", unit="epoch")
+    for epoch in epoch_pbar:
         epoch_loss = 0.0
         epoch_hn_loss = 0.0
         n_batches = 0
 
-        pbar = tqdm(loader, desc=f"Epoch {epoch}/{epochs}", unit="batch")
+        pbar = tqdm(loader, desc=f"  Epoch {epoch}/{epochs}", unit="batch", leave=False)
         for batch in pbar:
             report_input_ids      = batch["report_input_ids"].to(device)
             report_attention_mask = batch["report_attention_mask"].to(device)
@@ -316,13 +344,11 @@ def train(
 
             # Forward through PetBERT base transformer only — MLM head is never
             # called so its parameters receive no gradients and are not updated.
-            report_emb = _embed(report_input_ids, report_attention_mask)
-            label_emb  = _embed(label_input_ids,  label_attention_mask)
-
-            loss = _infonce_loss(report_emb, label_emb, temperature)
-
-            # Hard-negative margin loss (optional)
-            if hn_iter_box:
+            if not hn_iter_box:
+                report_emb = _embed(report_input_ids, report_attention_mask)
+                label_emb  = _embed(label_input_ids,  label_attention_mask)
+                loss = _infonce_loss(report_emb, label_emb, temperature)
+            else:
                 try:
                     hn_batch = next(hn_iter_box[0])
                 except StopIteration:
@@ -330,13 +356,36 @@ def train(
                     hn_iter_box[0] = iter(hard_neg_loader)
                     hn_batch = next(hn_iter_box[0])
 
-                hn_r  = _embed(hn_batch["report_input_ids"].to(device),
-                               hn_batch["report_attention_mask"].to(device))
-                hn_c  = _embed(hn_batch["correct_input_ids"].to(device),
-                               hn_batch["correct_attention_mask"].to(device))
-                hn_w  = _embed(hn_batch["wrong_input_ids"].to(device),
-                               hn_batch["wrong_attention_mask"].to(device))
+                hn_r_ids = hn_batch["report_input_ids"].to(device)
+                hn_r_mask = hn_batch["report_attention_mask"].to(device)
+                hn_c_ids = hn_batch["correct_input_ids"].to(device)
+                hn_c_mask = hn_batch["correct_attention_mask"].to(device)
+                hn_w_ids = hn_batch["wrong_input_ids"].to(device)
+                hn_w_mask = hn_batch["wrong_attention_mask"].to(device)
 
+                B_pos = report_input_ids.shape[0]
+                B_hn = hn_r_ids.shape[0]
+
+                # Mega-forward over reports (long ~256 tokens):
+                all_r_ids, all_r_mask = _cat_padded(
+                    [report_input_ids, hn_r_ids],
+                    [report_attention_mask, hn_r_mask],
+                )
+                all_r_emb = _embed(all_r_ids, all_r_mask)
+                report_emb = all_r_emb[:B_pos]
+                hn_r       = all_r_emb[B_pos:B_pos + B_hn]
+
+                # Mega-forward over labels (short ~12 tokens):
+                all_l_ids, all_l_mask = _cat_padded(
+                    [label_input_ids, hn_c_ids, hn_w_ids],
+                    [label_attention_mask, hn_c_mask, hn_w_mask],
+                )
+                all_l_emb = _embed(all_l_ids, all_l_mask)
+                label_emb = all_l_emb[:B_pos]
+                hn_c      = all_l_emb[B_pos:B_pos + B_hn]
+                hn_w      = all_l_emb[B_pos + B_hn:B_pos + 2 * B_hn]
+
+                loss = _infonce_loss(report_emb, label_emb, temperature)
                 hn_loss = _hard_neg_loss(hn_r, hn_c, hn_w, temperature, hard_neg_margin)
                 loss = loss + hard_neg_weight * hn_loss
                 epoch_hn_loss += hn_loss.item()
@@ -357,10 +406,13 @@ def train(
             )
 
         avg = epoch_loss / max(1, n_batches)
+        postfix: dict = {"avg_loss": f"{avg:.4f}"}
         hn_suffix = ""
         if hn_iter_box:
             avg_hn = epoch_hn_loss / max(1, n_batches)
             hn_suffix = f", avg hard-neg loss: {avg_hn:.4f}"
+            postfix["avg_hn_loss"] = f"{avg_hn:.4f}"
+        epoch_pbar.set_postfix(postfix)
         print(f"Epoch {epoch}/{epochs} complete — avg loss: {avg:.4f}{hn_suffix}")
 
     # --- Save checkpoint ----------------------------------------------------
@@ -373,9 +425,8 @@ def train(
     print("\nDone.")
     print("Next steps (cold start required — embedding space has changed):")
     print("  1. rm -f ml/output/training/embedding_cache.npz")
-    print("  2. rm -f ml/output/training/contrastive/evaluation_co_bank.csv")
-    print("  3. rm -f ml/output/checkpoints/contrastive/presence_classifier_current.pt")
-    print(f"  4. Add --model {out_dir} --local-only to all pipeline/training calls.")
+    print("  2. Retrain in order: --mode train-case-presence, --mode train-groups,")
+    print(f"     --mode train-label-presence (each with --model {out_dir} --local-only).")
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +467,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hard-neg-margin", type=float, default=0.3,
                         help="Margin for the hard-negative loss: loss fires when "
                              "sim(report, wrong) > sim(report, correct) - margin (default: 0.3)")
+    parser.add_argument("--hard-neg-batch-size", type=int, default=None,
+                        help="Override batch size for the hard-neg loader. Smaller values "
+                             "reduce XPU activation memory across 5 forward passes per step. "
+                             "(default: same as --batch-size)")
     args = parser.parse_args(argv)
 
     train(
@@ -432,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         hard_neg_csv=args.hard_neg_csv,
         hard_neg_weight=args.hard_neg_weight,
         hard_neg_margin=args.hard_neg_margin,
+        hard_neg_batch_size=args.hard_neg_batch_size,
     )
     return 0
 

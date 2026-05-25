@@ -3,12 +3,8 @@
 import argparse
 
 import config
-from model.constants import DEFAULT_TEXT_COLS
 from .pipeline import run_scan
 from .types import ScanConfig
-
-_DEFAULT_TEXT_COLS = ",".join(DEFAULT_TEXT_COLS)
-_DEFAULT_COL_WEIGHTS = "FINAL COMMENT:2.0,HISTOPATHOLOGICAL SUMMARY:1.5,ANCILLARY TESTS:0.5"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,23 +13,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--csv", default=config.REPORTS_CSV, help="Path to input CSV")
     parser.add_argument("--id-col", default="case_id", help="ID column name")
-    parser.add_argument(
-        "--text-cols",
-        default=_DEFAULT_TEXT_COLS,
-        help=(
-            "Comma-separated column names to embed independently and weighted-average. "
-            f"Default: '{_DEFAULT_TEXT_COLS}'"
-        ),
-    )
-    parser.add_argument(
-        "--col-weights",
-        default=_DEFAULT_COL_WEIGHTS,
-        help=(
-            "Per-column embedding weights as 'COL:weight,...' pairs. "
-            "Columns absent from this list default to 1.0. "
-            f"Default: '{_DEFAULT_COL_WEIGHTS}'"
-        ),
-    )
     parser.add_argument("--model", default="SAVSNET/PetBERT", help="HF model name or local path")
     parser.add_argument(
         "--local-only",
@@ -69,14 +48,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to labels taxonomy CSV.",
     )
     parser.add_argument(
-        "--presence-classifier",
-        default=None,
-        help=(
-            "Path to a trained PresenceClassifier checkpoint (.pt). "
-            "When set, presence probabilities replace cosine similarity for scoring labels."
-        ),
-    )
-    parser.add_argument(
         "--embedding-cache",
         default=None,
         help=(
@@ -90,10 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to a trained GroupClassifier checkpoint (.pt). "
-            "When set, uses two-stage categorization: GroupClassifier predicts cancer group(s), "
-            "then cosine similarity selects the best term within each group. "
-            "Replaces --presence-classifier and eliminates the completely-off floor. "
-            "Train with: python ml/training/train_group_classifier.py"
+            "Enables 3-stage categorization: "
+            "(1) CasePresenceClassifier gates non-cancer cases (if --case-presence-classifier is set), "
+            "(2) GroupClassifier predicts which cancer group(s) a case belongs to, "
+            "(3) ICD-O behavior keyword matching selects the best term within each group."
         ),
     )
     parser.add_argument(
@@ -107,121 +78,120 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--finetuned-model-path",
+        "--case-presence-classifier",
         default=None,
         help=(
-            "Path to a fine-tuned PetBERT sequence classification model checkpoint. "
-            "When set, the pipeline skips independent column embedding and instead "
-            "passes the concatenated report text directly to the fine-tuned model "
-            "to predict cancer groups. Within the predicted group, cosine similarity "
-            "is still used to select the best specific ICD term."
+            "Path to a trained CasePresenceClassifier checkpoint (.pt). "
+            "When set alongside --group-classifier, acts as a first-stage gate: "
+            "cases whose cancer probability is below --case-presence-threshold are "
+            "predicted Uncategorized without reaching the GroupClassifier."
         ),
     )
     parser.add_argument(
-        "--categorization-mode",
-        default="default",
-        choices=["default", "group-keyword"],
-        help=(
-            "Categorization strategy within the binary-classifier path. "
-            "'group-keyword' uses the top-scoring label's group as Stage 1, "
-            "then ICD-O behavior keyword matching selects the specific term "
-            "within that group (Stage 2). Requires --presence-classifier. "
-            "Aims to convert 'slightly off' predictions into 'good' ones."
-        ),
-    )
-    parser.add_argument(
-        "--cascade-threshold",
+        "--case-presence-threshold",
         type=float,
-        default=0.0,
+        default=0.5,
         help=(
-            "Confidence below which a prediction is replaced by a kNN match "
-            "against label definitions. 0.0 disables the cascade."
+            "Probability threshold for CasePresenceClassifier gate (default: 0.5). "
+            "Lower = more cases pass (higher recall, higher FP). "
+            "Only used when --case-presence-classifier is set."
         ),
     )
     parser.add_argument(
-        "--cascade-k",
+        "--no-group-classifier-fallback-to-argmax",
+        dest="group_classifier_fallback_to_argmax",
+        action="store_false",
+        default=True,
+        help=(
+            "Disable argmax fallback: cases where no group clears the threshold are "
+            "predicted 'Unidentified Cancer' instead of using the top-1 group. "
+            "Default: fallback is enabled."
+        ),
+    )
+    parser.add_argument(
+        "--label-presence-classifier-dir",
+        default=None,
+        help=(
+            "Directory of per-group LabelPresenceClassifier checkpoints (one .pt per group). "
+            "When set, enables Stage 3a: per-group within-group label scoring. "
+            "Pass an empty string to disable and fall back to KW correction directly."
+        ),
+    )
+    parser.add_argument(
+        "--label-presence-threshold",
+        type=float,
+        default=0.5,
+        help=(
+            "Probability threshold for LabelPresenceClassifier within-group label selection "
+            "(default: 0.5). Only used when --label-presence-classifier-dir is set. "
+            "Acts as the fallback when --label-presence-thresholds-json is set but a group "
+            "is missing from the mapping."
+        ),
+    )
+    parser.add_argument(
+        "--label-presence-thresholds-json",
+        default=None,
+        help=(
+            "Optional path to a JSON file mapping group_name -> threshold (float). "
+            "When set, overrides --label-presence-threshold on a per-group basis; "
+            "groups not in the mapping fall back to --label-presence-threshold."
+        ),
+    )
+    parser.add_argument(
+        "--tail-max-predictions",
         type=int,
-        default=5,
-        help="Number of nearest label definitions to vote over in the kNN cascade.",
-    )
-    parser.add_argument(
-        "--cascade-adaptive-path",
-        default="",
-        help="Optional path to a per-group threshold JSON for adaptive cascading.",
-    )
-    parser.add_argument(
-        "--strip-tissue-lists",
-        action="store_true",
+        default=2,
         help=(
-            "Strip necropsy tissue-list segments (e.g. '(T1) lung, liver; (T2) ...') "
-            "from HISTOPATHOLOGICAL SUMMARY before embedding. Reduces 'organ-word' "
-            "hijacking on multi-organ necropsy reports."
+            "Cap the number of group predictions emitted per case (default: 2). "
+            "Set to 1 to keep only the top group; 2 keeps the top group plus one "
+            "tail prediction that also clears --tail-max-group-prob-gap. Lowers CO "
+            "at the cost of recall on multi-label cases. Calibrated 2026-05-11 "
+            "(see sweep_tail_gate.py): K=2 with gap=0.08 gives +0.9 pp G+S on test."
         ),
     )
     parser.add_argument(
-        "--apply-low-confidence-rescue",
-        action="store_true",
+        "--tail-max-group-prob-gap",
+        type=float,
+        default=0.08,
         help=(
-            "Before post-processing gates, scan low-confidence top-k labels and "
-            "allow the first report-supported tumor term through. "
-            "This targets false negatives without globally lowering the confidence threshold."
+            "Drop tail group predictions whose probability is below "
+            "(top_group_prob - this_value). Default 0.08 trims wrong-group tail "
+            "predictions whose Stage-2 score is far below the top group. Set to "
+            "1.0 to disable. Calibrated 2026-05-11 on the held-out test set — see "
+            "ml/scripts/sweep_tail_gate.py for the trade-off curve."
         ),
     )
     parser.add_argument(
-        "--low-confidence-rescue-k",
-        type=int,
-        default=10,
+        "--rerank-stage3",
+        action="store_true",
+        default=False,
         help=(
-            "Number of ranked labels to scan for --apply-low-confidence-rescue "
-            "(default: 10)."
+            "Re-rank Stage-3 winners across the top-K surviving groups by "
+            "(lp_score - lp_threshold) * group_prob (margin-times-group-prob). "
+            "Default off: labels stay in group-prob order. Only meaningful when "
+            "--tail-max-predictions > 1."
         ),
     )
     parser.add_argument(
-        "--apply-subtype-gate",
+        "--embed-only",
         action="store_true",
+        default=False,
         help=(
-            "After categorization, demote predicted terms whose qualifier word "
-            "(e.g. 'Microcystic', 'Surface', 'Infiltrative') is absent from the "
-            "report text to the group's NOS variant."
-        ),
-    )
-    parser.add_argument(
-        "--apply-non-neoplastic-gate",
-        action="store_true",
-        help=(
-            "After categorization, replace the prediction with 'Non-neoplastic' "
-            "when the report's primary diagnosis matches inflammation, "
-            "hyperplasia, cyst, or degeneration with no competing tumor diagnosis."
+            "Stop after Step 3 (cache populated). Useful for building the cache "
+            "before training downstream classifiers without running classification."
         ),
     )
     return parser
 
 
-def _parse_col_weights(raw: str) -> dict[str, float]:
-    """Parse 'COL:weight,...' into a dict. Silently skips malformed pairs."""
-    result: dict[str, float] = {}
-    for token in raw.split(","):
-        token = token.strip()
-        if not token:
-            continue
-        if ":" not in token:
-            continue
-        col, _, val = token.rpartition(":")
-        try:
-            result[col.strip()] = float(val.strip())
-        except ValueError:
-            pass
-    return result
-
-
 def build_config(args: argparse.Namespace) -> ScanConfig:
-    text_cols = tuple(c.strip() for c in args.text_cols.split(",") if c.strip())
-    col_weights = _parse_col_weights(args.col_weights)
+    label_presence_dir = getattr(args, "label_presence_classifier_dir", None)
+    if label_presence_dir == "":
+        label_presence_dir = None
+    embed_only = bool(getattr(args, "embed_only", False))
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
-        text_cols=text_cols,
-        col_weights=col_weights,
         model_name=args.model,
         local_only=args.local_only,
         out_dir=args.out_dir,
@@ -233,20 +203,19 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         embedding_min_sim=args.embedding_min_sim,
         device=args.device,
         labels_csv_path=args.labels_csv,
-        presence_classifier_path=args.presence_classifier,
         embedding_cache_path=args.embedding_cache,
         group_classifier_path=args.group_classifier,
         group_classifier_threshold=args.group_classifier_threshold,
-        finetuned_model_path=args.finetuned_model_path,
-        categorization_mode=args.categorization_mode,
-        cascade_threshold=args.cascade_threshold,
-        cascade_k=args.cascade_k,
-        cascade_adaptive_path=args.cascade_adaptive_path,
-        strip_tissue_lists=args.strip_tissue_lists,
-        apply_low_confidence_rescue=args.apply_low_confidence_rescue,
-        low_confidence_rescue_k=args.low_confidence_rescue_k,
-        apply_subtype_gate=args.apply_subtype_gate,
-        apply_non_neoplastic_gate=args.apply_non_neoplastic_gate,
+        group_classifier_fallback_to_argmax=args.group_classifier_fallback_to_argmax,
+        case_presence_classifier_path=args.case_presence_classifier,
+        case_presence_threshold=args.case_presence_threshold,
+        label_presence_classifier_dir=label_presence_dir,
+        label_presence_threshold=args.label_presence_threshold,
+        label_presence_thresholds_json=args.label_presence_thresholds_json,
+        tail_max_predictions=args.tail_max_predictions,
+        tail_max_group_prob_gap=args.tail_max_group_prob_gap,
+        rerank_stage3=args.rerank_stage3,
+        embed_only=embed_only,
     )
 
 

@@ -195,7 +195,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const getAccessToken = async (): Promise<string | null> => {
     if (!supabaseConfigured) return null;
     const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? null;
+    if (!data.session) return null;
+    // Proactively refresh if the access token expires within 60 seconds so
+    // the backend never receives an expired token (which triggers the auth
+    // failure rate limiter and causes 429s on subsequent valid requests).
+    const expiresAt = data.session.expires_at;
+    if (expiresAt !== undefined && Date.now() / 1000 >= expiresAt - 60) {
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      return refreshed.session?.access_token ?? null;
+    }
+    return data.session.access_token;
   };
 
   const updatePassword = async (newPassword: string) => {

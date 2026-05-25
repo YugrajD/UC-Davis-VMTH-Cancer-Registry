@@ -126,13 +126,26 @@ async def set_user_roles(
     is_uploader = is_admin or body.is_uploader
     is_reviewer = is_admin or body.is_reviewer
 
-    if normalized == admin.email.lower() and not is_admin:
+    row = await _lookup(db, normalized)
+
+    # Determine whether the target is currently an admin (DB row or env fallback).
+    if row is not None:
+        target_is_admin = row.is_admin
+    else:
+        from app.auth import _resolve_roles_from_env
+        target_is_admin, _, _ = _resolve_roles_from_env(normalized)
+
+    if normalized == admin.email.lower():
         raise HTTPException(
             status_code=400,
-            detail="Cannot remove your own admin role",
+            detail="Cannot edit your own roles",
         )
 
-    row = await _lookup(db, normalized)
+    if target_is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot edit the roles of another admin",
+        )
     now = datetime.now(timezone.utc)
     if row is None:
         row = UserRole(

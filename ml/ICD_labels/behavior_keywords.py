@@ -109,19 +109,65 @@ _PATTERNS: dict[str, list[tuple[re.Pattern[str], float]]] = {
     for digit, kws in BEHAVIOR_KEYWORDS.items()
 }
 
+# Characters to look back when checking for negation context.
+_NEGATION_WINDOW = 50
+
+# Negation markers that suppress a keyword's behavior signal.
+# Deliberately conservative — only clear, unambiguous negation phrases.
+_NEGATION_TERMS: list[re.Pattern[str]] = [
+    re.compile(r"\bnot\b"),
+    re.compile(r"\bwithout\b"),
+    re.compile(r"\bno evidence of\b"),
+    re.compile(r"\bnegative for\b"),
+    re.compile(r"\babsence of\b"),
+    re.compile(r"\bruled?\s+out\b"),
+    re.compile(r"non-\s*$"),  # prefix immediately before keyword (e.g. "non-invasive")
+]
+
+
+def _is_negated(text_lower: str, match_start: int) -> bool:
+    """Return True if the keyword at match_start appears in a negated context."""
+    window = text_lower[max(0, match_start - _NEGATION_WINDOW) : match_start]
+    return any(pat.search(window) for pat in _NEGATION_TERMS)
+
 
 def score_behavior(text: str) -> dict[str, float]:
     """Return per-behavior-digit keyword scores for *text*.
 
     Only digits with a non-zero score are included in the result.
+    Keyword matches preceded by a negation marker within 50 characters are suppressed.
     """
     lower = text.lower()
     scores: dict[str, float] = {}
     for digit, patterns in _PATTERNS.items():
-        total = sum(w for pat, w in patterns if pat.search(lower))
+        total = sum(
+            w
+            for pat, w in patterns
+            if any(not _is_negated(lower, m.start()) for m in pat.finditer(lower))
+        )
         if total > 0.0:
             scores[digit] = total
     return scores
+
+
+def ranked_behaviors(text: str) -> list[str]:
+    """Return behavior digits ranked by score, highest first.
+
+    Applies the /6-over-/3 tie-break: /6 supersedes /3 when scores["6"] >= 1.0.
+    Returns an empty list when no keyword signal is found.
+    """
+    scores = score_behavior(text)
+    if not scores:
+        return []
+    ranked = sorted(scores, key=lambda d: scores[d], reverse=True)
+    # Mirror best_behavior() tie-break: /6 supersedes /3 when scores["6"] >= 1.0.
+    if "3" in ranked and "6" in ranked and scores.get("6", 0.0) >= 1.0:
+        idx3 = ranked.index("3")
+        idx6 = ranked.index("6")
+        if idx3 < idx6:
+            ranked.remove("6")
+            ranked.insert(idx3, "6")
+    return ranked
 
 
 def best_behavior(text: str) -> str | None:
@@ -130,10 +176,5 @@ def best_behavior(text: str) -> str | None:
     Tie-break rule: /6 (metastatic) supersedes /3 (malignant) when both
     score >= 1.0, because "metastatic" is a more specific descriptor.
     """
-    scores = score_behavior(text)
-    if not scores:
-        return None
-    winner = max(scores, key=lambda d: scores[d])
-    if winner == "3" and scores.get("6", 0.0) >= 1.0:
-        winner = "6"
-    return winner
+    ranked = ranked_behaviors(text)
+    return ranked[0] if ranked else None

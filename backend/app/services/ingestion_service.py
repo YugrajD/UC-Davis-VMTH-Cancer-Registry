@@ -84,15 +84,20 @@ def split_numbered(text_val: str) -> list[str]:
 def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
     """Parse ML worker prediction rows into per-patient diagnosis lists.
 
-    Each prediction row may contain numbered multi-diagnoses like
-    '1) term_a 2) term_b'. These are split into individual records.
+    Accepts two formats:
+    - Per-row format: one row per diagnosis rank with an explicit numeric
+      ``diagnosis_index`` column (e.g. CSV output from the pipeline).
+    - Numbered-string format: one row per patient with values like
+      ``"1) Lymphoma 2) MCT"`` split across fields (ml-worker JSON output).
+
+    Accepts ``case_id`` as an alias for ``anon_id``.
 
     Returns: {anon_id: [{"row_index": ..., "diagnosis_index": ..., ...}, ...]}
     """
     result: dict[str, list[dict]] = defaultdict(list)
 
     for row_idx, row in enumerate(predictions):
-        raw_id = row.get("anon_id", "").strip()
+        raw_id = (row.get("anon_id") or row.get("case_id") or "").strip()
         anon_id = normalize_anon_id(raw_id)
         if not anon_id:
             continue
@@ -102,6 +107,33 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
             continue
 
         original_text = row.get("original_text", "").strip()
+
+        # Detect per-row format: explicit integer diagnosis_index AND no
+        # numbered strings in predicted_term/predicted_group.
+        raw_di = str(row.get("diagnosis_index", "")).strip()
+        has_numbered = bool(
+            _NUMBERED_RE.search(row.get("predicted_term", "") or "")
+            or _NUMBERED_RE.search(row.get("predicted_group", "") or "")
+        )
+        if raw_di.isdigit() and not has_numbered:
+            conf_str = str(row.get("confidence", "0")).strip()
+            try:
+                conf = float(conf_str)
+            except ValueError:
+                conf = 0.0
+            result[anon_id].append({
+                "row_index": row_idx,
+                "diagnosis_index": int(raw_di),
+                "predicted_group": (row.get("predicted_group") or "").strip(),
+                "predicted_term": (row.get("predicted_term") or "").strip(),
+                "icd_o_code": (row.get("predicted_code") or "").strip(),
+                "confidence": conf,
+                "original_text": original_text,
+                "method": method,
+            })
+            continue
+
+        # Numbered-string format: split "1) foo 2) bar" fields per rank.
         terms = split_numbered(row.get("predicted_term", ""))
         groups = split_numbered(row.get("predicted_group", ""))
         codes = split_numbered(row.get("predicted_code", ""))
@@ -165,13 +197,15 @@ def _clean_zip(raw: str) -> str:
 def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
     """Parse Dataset A CSV for demographic columns.
 
-    Dataset A columns: anon_id, DtOfRq, Sex, Species, Breed,
-    'Zipcode Zipcode', 'RfrrVtrn Zipcode Zipcode', ...
-    Extracts: sex, breed, diagnosis_date, species, zip per anon_id.
-    Takes first non-empty value per anon_id (same pattern as demographics).
+    Accepts two column-name conventions for the same fields:
+      - Patient ID:  ``anon_id``  or  ``case_id``
+      - Primary zip: ``Zipcode Zipcode``  or  ``Zipcode``
+      - Referral zip: ``RfrrVtrn Zipcode Zipcode``  or  ``RfrrVtrnZipcode``
 
-    Zip preference: 'Zipcode Zipcode'; falls back to
-    'RfrrVtrn Zipcode Zipcode' when the primary is missing/NA.
+    Extracts: sex, breed, diagnosis_date, species, zip per patient.
+    Takes first non-empty value per patient (idempotent on duplicate rows).
+
+    Zip preference: primary zip first; falls back to referral zip when missing.
 
     Returns: {anon_id: {"sex": str|None, "breed": str|None,
                          "diagnosis_date": date|None, "species": str|None,
@@ -182,7 +216,8 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
 
     result: dict[str, dict] = {}
     for row in reader:
-        anon_id = normalize_anon_id(row.get("anon_id", ""))
+        raw_id = (row.get("anon_id") or row.get("case_id") or "").strip()
+        anon_id = normalize_anon_id(raw_id)
         if not anon_id:
             continue
 
@@ -202,9 +237,11 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
         if raw_species.lower() == "nan":
             raw_species = ""
 
-        raw_zip = _clean_zip(row.get("Zipcode Zipcode", "")) or _clean_zip(
-            row.get("RfrrVtrn Zipcode Zipcode", "")
+        primary_zip = _clean_zip(row.get("Zipcode Zipcode") or row.get("Zipcode") or "")
+        referral_zip = _clean_zip(
+            row.get("RfrrVtrn Zipcode Zipcode") or row.get("RfrrVtrnZipcode") or ""
         )
+        raw_zip = primary_zip or referral_zip
 
         if anon_id not in result:
             result[anon_id] = {

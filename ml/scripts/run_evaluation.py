@@ -2,13 +2,13 @@
 
 No env PYTHONPATH needed — this script adds ml/ to sys.path automatically.
 
-Auto-detects which prediction file to evaluate (contrastive-backbone predictions
-preferred; falls back to binary-backbone predictions).
+Reads `ml/output/production/petbert_predictions.csv` by default (override with
+--prediction-csv) and scores against `ml/output/annotation/annotation.csv`.
 
 Usage:
   python ml/scripts/run_evaluation.py
   python ml/scripts/run_evaluation.py --label "after cycle 3"
-  python ml/scripts/run_evaluation.py --prediction-csv ml/output/production/binary/petbert_predictions.csv
+  python ml/scripts/run_evaluation.py --prediction-csv path/to/predictions.csv
 
 Per-stage evaluation (4-stage pipeline):
   python ml/scripts/run_evaluation.py --stage case-presence --test-cases ml/output/splits/test_cases.txt
@@ -45,8 +45,6 @@ _DEFAULT_THRESHOLDS = {
 
 
 def main() -> int:
-    subdir = config.BEST_PREDICTIONS_SUBDIR
-
     parser = argparse.ArgumentParser(
         description="Score predictions against verified labels and record results to history. "
                     "Use --stage to evaluate one classifier in the 4-stage pipeline.",
@@ -60,7 +58,7 @@ def main() -> int:
     # Pipeline (existing) flags
     parser.add_argument(
         "--prediction-csv",
-        default=f"{config.OUTPUT_PRODUCTION_DIR}/{subdir}/petbert_predictions.csv",
+        default=f"{config.OUTPUT_PRODUCTION_DIR}/petbert_predictions.csv",
         help="Predictions file to evaluate (pipeline stage only).",
     )
     parser.add_argument(
@@ -68,7 +66,7 @@ def main() -> int:
         help="Verified label annotations to score against.",
     )
     parser.add_argument(
-        "--out-dir", default=f"{config.OUTPUT_EVALUATION_DIR}/{subdir}",
+        "--out-dir", default=config.OUTPUT_EVALUATION_DIR,
         help="Directory to write evaluation results.",
     )
     parser.add_argument(

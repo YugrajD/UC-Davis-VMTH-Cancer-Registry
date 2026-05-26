@@ -26,11 +26,6 @@ Improvement flags (added Phase 27):
                       gave +0.18 macro F1 at lower data volumes.
   --lr-schedule cosine  CosineAnnealingWarmRestarts(T_0=100) -- addresses the fixed-LR
                       plateau seen at epoch 219 in Phase 26.
-  --focal-loss        Replace BCEWithLogitsLoss with Focal Loss (gamma=2 default).
-                      Down-weights easy non-cancer examples; focuses gradient on hard
-                      group assignments. Better for imbalanced multi-label.
-  --focal-gamma       Focal loss focusing parameter (default: 2.0). Higher = more focus
-                      on hard examples. Typical range: 1.0 -- 5.0.
 """
 
 import argparse
@@ -137,76 +132,6 @@ def _stratified_split(
     return train_indices, val_indices
 
 
-class _FocalBCEWithLogitsLoss(nn.Module):
-    """Focal loss for multi-label binary classification.
-
-    FL(p_t) = -(1 - p_t)^gamma * log(p_t)
-
-    Down-weights easy examples (high p_t) so training focuses on the
-    hard group assignments that the model currently gets wrong.
-    pos_weight mirrors BCEWithLogitsLoss semantics for class imbalance.
-    """
-
-    def __init__(self, pos_weight: torch.Tensor, gamma: float = 2.0) -> None:
-        super().__init__()
-        self.register_buffer("pos_weight", pos_weight)
-        self.gamma = gamma
-
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        bce = nn.functional.binary_cross_entropy_with_logits(
-            logits, targets, pos_weight=self.pos_weight, reduction="none"
-        )
-        p_t = torch.exp(-bce)
-        return ((1 - p_t) ** self.gamma * bce).mean()
-
-
-class _ASLLoss(nn.Module):
-    """Asymmetric Loss for multi-label classification (Ridnik et al., 2021).
-
-    Applies separate focusing for positives (gamma_pos) and negatives (gamma_neg),
-    with a probability floor `margin` that shifts easy negatives down before the log
-    so they contribute near-zero gradient. This avoids the collapse seen with focal
-    loss (gamma=2) while still suppressing precision-killing easy-negative gradients.
-
-    Recommended starting point: gamma_pos=1.0, gamma_neg=4.0, margin=0.05.
-    pos_weight mirrors BCEWithLogitsLoss semantics for class imbalance.
-    """
-
-    def __init__(
-        self,
-        pos_weight: torch.Tensor,
-        gamma_pos: float = 1.0,
-        gamma_neg: float = 4.0,
-        margin: float = 0.05,
-    ) -> None:
-        super().__init__()
-        self.register_buffer("pos_weight", pos_weight)
-        self.gamma_pos = gamma_pos
-        self.gamma_neg = gamma_neg
-        self.margin = margin
-
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        p = torch.sigmoid(logits)
-
-        # Shift negatives down by margin and clamp to [0, 1] before log
-        p_neg = (p - self.margin).clamp(min=0.0)
-
-        # Per-element log-probabilities for positives and shifted negatives
-        xs_pos = torch.log(p.clamp(min=1e-8))
-        xs_neg = torch.log((1.0 - p_neg).clamp(min=1e-8))
-
-        # Weighted BCE using pos_weight for the positive term
-        pw = self.pos_weight.unsqueeze(0)  # (1, G) broadcast over batch
-        loss = -(pw * targets * xs_pos + (1.0 - targets) * xs_neg)
-
-        # Asymmetric focusing
-        p_t = targets * p + (1.0 - targets) * (1.0 - p_neg)
-        gamma = targets * self.gamma_pos + (1.0 - targets) * self.gamma_neg
-        loss = loss * (1.0 - p_t) ** gamma
-
-        return loss.mean()
-
-
 def train(
     *,
     training_data_path: str,
@@ -223,12 +148,6 @@ def train(
     max_group_cases: int,
     dropout: float,
     lr_schedule: str,
-    focal_loss: bool,
-    focal_gamma: float,
-    asl: bool = False,
-    asl_gamma_pos: float = 1.0,
-    asl_gamma_neg: float = 4.0,
-    asl_margin: float = 0.05,
 ) -> None:
     # --- Load training data --------------------------------------------------
     print(f"Loading training data: {training_data_path}")
@@ -311,26 +230,10 @@ def train(
     model = GroupClassifier(num_groups=G, emb_dim=emb_dim, hidden_dim=hidden_dim, dropout=dropout).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # Criterion: focal loss focuses gradient on hard examples; BCE is the standard baseline.
-    # Both use raw logits — sigmoid is applied internally.
+    # Loss uses raw logits — sigmoid is applied internally.
     pw = class_weights.to(device)
-    if asl:
-        # ASL handles class imbalance via gamma_neg — do not also apply pos_weight or the
-        # two corrections compound (pos_weight up to 50x * easy-negative suppression →
-        # recall=1 / precision≈0 collapse). Pass ones so ASL's focusing is the sole lever.
-        criterion: nn.Module = _ASLLoss(
-            pos_weight=torch.ones_like(pw),
-            gamma_pos=asl_gamma_pos,
-            gamma_neg=asl_gamma_neg,
-            margin=asl_margin,
-        )
-        print(f"Loss: ASL (gamma_pos={asl_gamma_pos}, gamma_neg={asl_gamma_neg}, margin={asl_margin}, pos_weight=1)")
-    elif focal_loss:
-        criterion = _FocalBCEWithLogitsLoss(pos_weight=pw, gamma=focal_gamma)
-        print(f"Loss: Focal BCE (gamma={focal_gamma})")
-    else:
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
-        print("Loss: BCE with pos_weight")
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
+    print("Loss: BCE with pos_weight")
 
     # LR scheduler: cosine warm restarts help escape fixed-LR plateaus.
     if lr_schedule == "cosine":
@@ -482,48 +385,6 @@ def main() -> int:
         help="LR schedule (default: none). 'cosine' uses CosineAnnealingWarmRestarts(T_0=100) "
              "to escape fixed-LR plateaus. Recommended: try with --epochs 600.",
     )
-    parser.add_argument(
-        "--focal-loss",
-        action="store_true",
-        default=False,
-        help="Use Focal Loss instead of BCEWithLogitsLoss. Down-weights easy non-cancer "
-             "examples and focuses gradient on hard group assignments. See --focal-gamma.",
-    )
-    parser.add_argument(
-        "--focal-gamma",
-        type=float,
-        default=2.0,
-        help="Focal loss focusing parameter (default: 2.0). Higher = more focus on hard "
-             "examples. Typical range: 1.0-5.0. Only used when --focal-loss is set.",
-    )
-    parser.add_argument(
-        "--asl",
-        action="store_true",
-        default=False,
-        help="Use Asymmetric Loss (ASL) instead of BCEWithLogitsLoss. Applies separate "
-             "focusing for positives (--asl-gamma-pos) and negatives (--asl-gamma-neg), "
-             "with a probability floor (--asl-margin) to suppress easy-negative gradients.",
-    )
-    parser.add_argument(
-        "--asl-gamma-pos",
-        type=float,
-        default=1.0,
-        help="ASL focusing exponent for positives (default: 1.0).",
-    )
-    parser.add_argument(
-        "--asl-gamma-neg",
-        type=float,
-        default=4.0,
-        help="ASL focusing exponent for negatives (default: 4.0). Higher = stronger "
-             "suppression of easy negatives.",
-    )
-    parser.add_argument(
-        "--asl-margin",
-        type=float,
-        default=0.05,
-        help="ASL probability floor: negative probabilities are shifted down by this "
-             "amount before the log, zeroing gradient for very confident negatives (default: 0.05).",
-    )
     args = parser.parse_args()
     train(
         training_data_path=args.training_data,
@@ -540,12 +401,6 @@ def main() -> int:
         max_group_cases=args.max_group_cases,
         dropout=args.dropout,
         lr_schedule=args.lr_schedule,
-        focal_loss=args.focal_loss,
-        focal_gamma=args.focal_gamma,
-        asl=args.asl,
-        asl_gamma_pos=args.asl_gamma_pos,
-        asl_gamma_neg=args.asl_gamma_neg,
-        asl_margin=args.asl_margin,
     )
     return 0
 

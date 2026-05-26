@@ -29,7 +29,6 @@ import config
 
 DEFAULT_CSV = (
     Path(config.OUTPUT_EVALUATION_DIR)
-    / config.BEST_PREDICTIONS_SUBDIR
     / "label_presence_evaluation.csv"
 )
 

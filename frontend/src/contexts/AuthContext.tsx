@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef, ty
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { parseAuthCallback } from '../lib/authUrl';
-import { fetchMe } from '../api/client';
+import { fetchMe, ApiError } from '../api/client';
 
 interface AuthState {
   user: User | null;
@@ -75,10 +75,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsUploader(me.is_uploader);
       setIsReviewer(me.is_reviewer);
       backoffRef.current = 0;
-    } catch {
-      setIsAdmin(false);
-      setIsUploader(false);
-      setIsReviewer(false);
+    } catch (err) {
+      // Only clear roles on explicit auth failures (401/403).
+      // Transient errors (5xx, network down) preserve the last-known roles so
+      // the admin UI doesn't vanish during a backend restart or blip.
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setIsAdmin(false);
+        setIsUploader(false);
+        setIsReviewer(false);
+      }
       // Exponential backoff: 2s, 4s, 8s, 16s, 30s cap
       backoffRef.current = Math.min(backoffRef.current + 1, 5);
       const delay = Math.min(1000 * 2 ** backoffRef.current, 30_000);

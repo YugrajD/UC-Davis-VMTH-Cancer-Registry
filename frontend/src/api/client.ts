@@ -1,5 +1,12 @@
 // API client for the VMTH Cancer Registry backend
 
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 function apiUrl(path: string): string {
@@ -92,7 +99,7 @@ function filtersToParams(filters: FilterParams): URLSearchParams {
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(apiUrl(url));
   if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+    throw new ApiError(response.status, `API error: ${response.status}`);
   }
   return response.json();
 }
@@ -103,7 +110,7 @@ async function fetchJsonAuth<T>(url: string, token: string): Promise<T> {
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
-    throw new Error(err.detail || `API error: ${response.status}`);
+    throw new ApiError(response.status, err.detail || `API error: ${response.status}`);
   }
   return response.json();
 }

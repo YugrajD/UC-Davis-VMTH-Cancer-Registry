@@ -12,13 +12,15 @@ from app.schemas.schemas import DashboardSummary, SpeciesBreakdown, TopCancer, F
 from app.models.models import (
     Species, Breed, CancerType, County, Patient, CaseDiagnosis
 )
-from app.services.review_filter import apply_review_filter
+from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 
-# Only count ingested (PetBERT) data; exclude mock/seed data
-_PETBERT_FILTER = Patient.data_source == "petbert"
+# Only count ingested (PetBERT) data from California zip codes.
+# Patients with a non-CA zip have county_id = NULL — they are excluded from all stats.
+# Patients with no zip at all have zip_code = NULL — included (we can't confirm non-CA).
+_PETBERT_FILTER = (Patient.data_source == "petbert") & CALIFORNIA_PATIENT_FILTER
 
 
 @router.get("/summary", response_model=DashboardSummary)

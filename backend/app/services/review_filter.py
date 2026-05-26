@@ -15,10 +15,19 @@ view).
 
 from typing import Iterable
 
+from sqlalchemy import or_
 from sqlalchemy.sql import Select
 
-from app.models.models import CaseDiagnosis
+from app.models.models import CaseDiagnosis, Patient
 
+
+# Exclude patients whose zip code was resolved as non-California.
+# A patient with zip_code IS NULL has no geographic data (acceptable — include them).
+# A patient with zip_code IS NOT NULL but county_id IS NULL had a non-CA zip → exclude.
+CALIFORNIA_PATIENT_FILTER = or_(
+    Patient.zip_code.is_(None),
+    Patient.county_id.is_not(None),
+)
 
 # Tuple form (immutable) for the WHERE-IN clause.
 VISIBLE_REVIEW_STATUSES: tuple[str, ...] = ("confirmed", "corrected")

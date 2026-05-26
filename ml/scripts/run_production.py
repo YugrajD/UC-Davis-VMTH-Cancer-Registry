@@ -30,7 +30,7 @@ def main() -> int:
         case_presence_classifier=config.CASE_PRESENCE_CLASSIFIER_PT,
         label_presence_classifier_dir=config.CHECKPOINT_LABEL_PRESENCE_DIR,
         label_presence_thresholds_json=config.LABEL_PRESENCE_THRESHOLDS_JSON,
-        out_dir=f"{config.OUTPUT_PRODUCTION_DIR}/contrastive",
+        out_dir=config.OUTPUT_PRODUCTION_DIR,
         local_only=True,
     )
     run_scan(build_config(parser.parse_args()))

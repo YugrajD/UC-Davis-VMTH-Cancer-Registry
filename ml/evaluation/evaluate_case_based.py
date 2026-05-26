@@ -226,12 +226,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--prediction-csv",
-        default=f"{config.OUTPUT_PRODUCTION_DIR}/{config.BEST_PREDICTIONS_SUBDIR}/petbert_predictions.csv",
+        default=f"{config.OUTPUT_PRODUCTION_DIR}/petbert_predictions.csv",
     )
     parser.add_argument("--expectation-csv", default=config.ANNOTATION_CSV)
     parser.add_argument(
         "--out-dir",
-        default=f"{config.OUTPUT_EVALUATION_DIR}/{config.BEST_PREDICTIONS_SUBDIR}",
+        default=config.OUTPUT_EVALUATION_DIR,
     )
     parser.add_argument("--test-cases", default="")
     parser.add_argument("--uncommon-groups", default=config.UNCOMMON_GROUPS_TXT)

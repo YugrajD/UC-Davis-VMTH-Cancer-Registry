@@ -218,8 +218,7 @@ def main() -> int:
     parser.add_argument("--classifier", default=config.CASE_PRESENCE_CLASSIFIER_PT)
     parser.add_argument("--embedding-cache", default=config.EMBEDDING_CACHE_NPZ)
     parser.add_argument("--annotation-csv", default=config.ANNOTATION_CSV)
-    parser.add_argument("--out-dir",
-                        default=f"{config.OUTPUT_EVALUATION_DIR}/{config.BEST_PREDICTIONS_SUBDIR}")
+    parser.add_argument("--out-dir", default=config.OUTPUT_EVALUATION_DIR)
     parser.add_argument("--test-cases", default="")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--label", default="", help="Short description for history row.")

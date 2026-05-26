@@ -18,10 +18,10 @@ import config
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PY = str(REPO_ROOT / "ml" / ".venv" / "Scripts" / "python.exe")
-TEST_CASES = str(REPO_ROOT / "ml" / "output" / "splits" / "test_cases.txt")
-ANNOTATION = str(REPO_ROOT / "ml" / "output" / "annotation" / "llm" / "llm_annotation.csv")
-SWEEP_ROOT_PROD = REPO_ROOT / "ml" / "output" / "production" / "tailgate_sweep"
-SWEEP_ROOT_EVAL = REPO_ROOT / "ml" / "output" / "evaluation" / "tailgate_sweep"
+TEST_CASES = config.TEST_CASES_TXT
+ANNOTATION = config.ANNOTATION_CSV
+SWEEP_ROOT_PROD = Path(config.OUTPUT_PRODUCTION_DIR) / "tailgate_sweep"
+SWEEP_ROOT_EVAL = Path(config.OUTPUT_EVALUATION_DIR) / "tailgate_sweep"
 RUN_PROD = str(REPO_ROOT / "ml" / "scripts" / "run_production.py")
 RUN_EVAL = str(REPO_ROOT / "ml" / "scripts" / "run_evaluation.py")
 

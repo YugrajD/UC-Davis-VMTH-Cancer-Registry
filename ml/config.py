@@ -19,16 +19,14 @@ LABELS_CSV = "ml/ICD_labels/labels.csv"
 # ---------------------------------------------------------------------------
 ANNOTATION_DIR = "ml/output/annotation"
 ANNOTATION_CSV = f"{ANNOTATION_DIR}/annotation.csv"
-LLM_ANNOTATION_DIR = "ml/output/annotation/llm"
-LLM_ANNOTATION_CSV = f"{LLM_ANNOTATION_DIR}/llm_annotation.csv"
-LLM_ANNOTATION_CLEANED_CSV = f"{LLM_ANNOTATION_DIR}/llm_annotation_cleaned.csv"
+LLM_ANNOTATION_CSV = f"{ANNOTATION_DIR}/llm_annotation.csv"
+LLM_ANNOTATION_CLEANED_CSV = f"{ANNOTATION_DIR}/llm_annotation_cleaned.csv"
 
 # ---------------------------------------------------------------------------
 # Training intermediates
 # ---------------------------------------------------------------------------
 EMBEDDING_CACHE_NPZ = "ml/output/training/embedding_cache.npz"
 CONTRASTIVE_PAIRS_CSV = "ml/output/training/contrastive/contrastive_pairs.csv"
-HARD_NEG_PAIRS_CSV = "ml/output/training/contrastive/hard_neg_pairs.csv"
 
 # ---------------------------------------------------------------------------
 # Model checkpoints
@@ -47,7 +45,6 @@ OUTPUT_EVALUATION_DIR = "ml/output/evaluation"
 OUTPUT_PRODUCTION_DIR = "ml/output/production"
 DATA_ANALYSIS_DIR = "ml/output/data_analysis"
 PETBERT_SCAN_OUTPUT_DIR = "ml/output/report"  # default for standalone petbert_pipeline CLI
-BEST_PREDICTIONS_SUBDIR = "contrastive"
 
 # Train/test split files (generated once by ml/training/data/create_split.py)
 SPLITS_DIR      = "ml/output/splits"

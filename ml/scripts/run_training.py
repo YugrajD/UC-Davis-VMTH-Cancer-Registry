@@ -77,12 +77,6 @@ def _train_groups(args: argparse.Namespace) -> None:
         max_group_cases=0,
         dropout=args.dropout,
         lr_schedule=args.lr_schedule,
-        focal_loss=args.focal_loss,
-        focal_gamma=args.focal_gamma,
-        asl=args.asl,
-        asl_gamma_pos=args.asl_gamma_pos,
-        asl_gamma_neg=args.asl_gamma_neg,
-        asl_margin=args.asl_margin,
     )
 
 
@@ -113,10 +107,6 @@ def _adapt_backbone(args: argparse.Namespace) -> None:
         max_length=args.max_length,
         device_arg=args.device,
         local_only=args.local_only,
-        hard_neg_csv=args.hard_neg_csv,
-        hard_neg_weight=args.hard_neg_weight,
-        hard_neg_margin=args.hard_neg_margin,
-        hard_neg_batch_size=args.hard_neg_batch_size,
     )
 
     print("\n=== Cold-start required ===")
@@ -156,8 +146,6 @@ def _train_case_presence(args: argparse.Namespace) -> None:
 
 
 def _train_label_presence(args: argparse.Namespace) -> None:
-    from production.petbert_pipeline.embedding_cache import load_cache
-
     print("\n=== Step 2: Train per-group LabelPresenceClassifier ===")
 
     uncommon_group_names: list[str] = []
@@ -177,30 +165,6 @@ def _train_label_presence(args: argparse.Namespace) -> None:
                 if l.strip()
             ]
             print(f"Uncommon groups ({len(uncommon_group_names)}): {uncommon_group_names}")
-
-    # Load label embeddings once for hard-negative mining (QW1).
-    label_emb_lookup: dict | None = None
-    if args.label_presence_hard_neg_fraction > 0.0:
-        cache = load_cache(
-            args.embedding_cache,
-            model_name=args.model,
-            report_csv_path=config.REPORTS_CSV,
-            labels_csv_path=config.LABELS_CSV,
-        )
-        if cache is None:
-            print(
-                "  Warning: embedding cache unavailable; "
-                "falling back to random within-group negatives."
-            )
-        else:
-            label_emb_lookup = {
-                t: cache["label_embeddings"][i]
-                for i, t in enumerate(cache["label_texts"])
-            }
-            print(
-                f"  Loaded {len(label_emb_lookup)} label embeddings for hard-neg "
-                f"mining (fraction={args.label_presence_hard_neg_fraction})."
-            )
 
     out_dir = Path(args.label_presence_out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -230,8 +194,6 @@ def _train_label_presence(args: argparse.Namespace) -> None:
             group_name=group_name,
             train_cases_txt=args.train_cases,
             within_group_negs_per_pos=args.label_presence_negs_per_pos,
-            hard_neg_fraction=args.label_presence_hard_neg_fraction,
-            label_embeddings=label_emb_lookup,
         )
         if n_rows == 0:
             skipped += 1
@@ -245,7 +207,6 @@ def _train_label_presence(args: argparse.Namespace) -> None:
             recall_weight=args.label_presence_recall_weight,
             dropout=args.label_presence_dropout,
             weight_decay=args.label_presence_weight_decay,
-            patience=args.label_presence_patience,
             device=args.device,
             model_name=args.model,
             labels_csv=config.LABELS_CSV,
@@ -272,8 +233,6 @@ def _train_label_presence(args: argparse.Namespace) -> None:
             uncommon_group_names=uncommon_group_names,
             train_cases_txt=args.train_cases,
             within_group_negs_per_pos=args.label_presence_negs_per_pos,
-            hard_neg_fraction=args.label_presence_hard_neg_fraction,
-            label_embeddings=label_emb_lookup,
         )
         if n_rows > 0:
             score = train_label_presence(
@@ -284,7 +243,6 @@ def _train_label_presence(args: argparse.Namespace) -> None:
                 recall_weight=args.label_presence_recall_weight,
                 dropout=args.label_presence_dropout,
                 weight_decay=args.label_presence_weight_decay,
-                patience=args.label_presence_patience,
                 device=args.device,
                 model_name=args.model,
                 labels_csv=config.LABELS_CSV,
@@ -372,18 +330,6 @@ def main() -> int:
     parser.add_argument("--lr-schedule", default="none", choices=["none", "cosine"],
                         help="[train-groups] LR schedule (default: none). "
                              "'cosine' uses CosineAnnealingWarmRestarts(T_0=100).")
-    parser.add_argument("--focal-loss", action="store_true", default=False,
-                        help="[train-groups] Use Focal Loss instead of BCEWithLogitsLoss.")
-    parser.add_argument("--focal-gamma", type=float, default=2.0,
-                        help="[train-groups] Focal loss focusing parameter (default: 2.0).")
-    parser.add_argument("--asl", action="store_true", default=False,
-                        help="[train-groups] Use Asymmetric Loss (ASL) instead of BCEWithLogitsLoss.")
-    parser.add_argument("--asl-gamma-pos", type=float, default=1.0,
-                        help="[train-groups] ASL focusing exponent for positives (default: 1.0).")
-    parser.add_argument("--asl-gamma-neg", type=float, default=4.0,
-                        help="[train-groups] ASL focusing exponent for negatives (default: 4.0).")
-    parser.add_argument("--asl-margin", type=float, default=0.05,
-                        help="[train-groups] ASL probability floor for negatives (default: 0.05).")
 
     # ------------------------------------------------------------------
     # train-case-presence args
@@ -438,16 +384,6 @@ def main() -> int:
         help="[train-label-presence] Within-group negatives per positive pair (default: 5).",
     )
     parser.add_argument(
-        "--label-presence-hard-neg-fraction",
-        type=float,
-        default=0.0,
-        help="[train-label-presence] Fraction of within-group negatives mined by "
-             "cosine similarity to the positive label embedding (hard-neg mining). "
-             "0.0 = pure random (Phase 28 default), 1.0 = pure hard. "
-             "Note: 0.7 was tried 2026-05-10 and was net-negative on G+S — "
-             "see training-log-label-presence.md Phase 30.",
-    )
-    parser.add_argument(
         "--label-presence-recall-weight",
         type=float,
         default=0.5,
@@ -465,13 +401,6 @@ def main() -> int:
         type=float,
         default=1e-4,
         help="[train-label-presence] AdamW weight decay (default: 1e-4 = Phase 28).",
-    )
-    parser.add_argument(
-        "--label-presence-patience",
-        type=int,
-        default=0,
-        help="[train-label-presence] Early-stop patience in epochs without validation "
-             "improvement (default: 0 = disabled, runs all epochs as in Phase 28).",
     )
     parser.add_argument(
         "--label-presence-groups",
@@ -538,18 +467,6 @@ def main() -> int:
                         help="[adapt-backbone] Max BERT token length (default: 256)")
     parser.add_argument("--skip-pair-build", action="store_true",
                         help="[adapt-backbone] Skip building training pairs (reuse existing pairs CSV)")
-    parser.add_argument("--hard-neg-csv", default=None,
-                        help="[adapt-backbone] Path to hard-negative triplets CSV. "
-                             "If omitted, only InfoNCE loss is used. "
-                             "Build with: build_contrastive_dataset.py --mode build-hard-neg")
-    parser.add_argument("--hard-neg-weight", type=float, default=0.5,
-                        help="[adapt-backbone] Weight for the hard-negative margin loss (default: 0.5)")
-    parser.add_argument("--hard-neg-margin", type=float, default=0.3,
-                        help="[adapt-backbone] Margin for hard-negative loss (default: 0.3)")
-    parser.add_argument("--hard-neg-batch-size", type=int, default=None,
-                        help="[adapt-backbone] Override batch size for the hard-neg loader. "
-                             "Smaller values reduce XPU activation memory across the 5 forward "
-                             "passes per step. (default: same as --batch-size)")
 
     args = parser.parse_args()
 

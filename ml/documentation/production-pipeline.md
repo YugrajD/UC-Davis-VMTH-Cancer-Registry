@@ -7,13 +7,10 @@ What `ml/scripts/run_production.py` does today. Authoritative reference for runt
 Reads a CSV of veterinary pathology reports, embeds each report into a 2304-dim vector through PetBERT, and runs a 4-stage classifier pipeline that produces ranked Vet-ICD-O cancer label predictions per case.
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --case-presence-threshold 0.85 \
-  --group-classifier-threshold 0.85 \
-  --device cuda --local-only
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py --device cuda --local-only
 ```
 
-`run_production.py` is a thin entry point — it pre-fills production-default paths (model, embedding cache, the three classifier checkpoints, the LP thresholds JSON, and the output dir) plus `--local-only`, then calls `production.petbert_pipeline.run_scan` (the CLI is built by `build_parser()` / `build_config()` in `production/petbert_pipeline/cli.py`). See the [CLI flags](#cli-flags) section below for the full list.
+`run_production.py` is a thin entry point — it pre-fills production-default paths (model, embedding cache, the three classifier checkpoints, the LP thresholds JSON, the output dir) plus `--local-only`, the gate threshold (`--case-presence-threshold 0.80`), and the group threshold (`--group-classifier-threshold 0.85`), then calls `production.petbert_pipeline.run_scan` (the CLI is built by `build_parser()` / `build_config()` in `production/petbert_pipeline/cli.py`). See the [CLI flags](#cli-flags) section below for the full list.
 
 ## Inputs
 
@@ -55,7 +52,7 @@ Each stage lives in its own module under `ml/production/petbert_pipeline/stages/
 
 ### Stage 1 — CasePresenceClassifier (gate)
 
-File: `stages/case_presence_classifier.py`. Input: 2304-dim concat-3 vector. Output: per-case cancer probability. Cases below `--case-presence-threshold` (default 0.5; recommended 0.85) skip Stages 2–4 and are emitted as `Uncategorized`. Trained with `recall_weight=0.7` so it errs toward letting uncertain cases through.
+File: `stages/case_presence_classifier.py`. Input: 2304-dim concat-3 vector. Output: per-case cancer probability. Cases below `--case-presence-threshold` (cli default 0.5; production default 0.80, set in `run_production.py`) skip Stages 2–4 and are emitted as `Uncategorized`. Trained with `recall_weight=0.7` so it errs toward letting uncertain cases through. The 0.80 production default replaces the prior 0.85 — a sweep on the test split (2026-05-25) confirmed 0.80 is a strict Pareto improvement (+0.5pp Lipoma G%, +0.3pp macro G+S, +0.3pp FP). Lowering further trades FN for FP roughly 1:1.
 
 ### Stage 2 — GroupClassifier
 
@@ -82,9 +79,15 @@ Labels above threshold are selected; argmax fallback applies when nothing passes
 File: `stages/keyword_correction.py`. Applied to whichever pool Stage 3a produced (or the full in-group label pool when Stage 3a is absent).
 
 1. **Behavior-code filter** — `ICD_labels/behavior_keywords.py` scores the report text for ICD-O behavior digits (`/0` benign, `/1` borderline, `/2` in situ, `/3` malignant, `/6` metastatic). The highest-ranked digit narrows the pool to labels with matching codes. When no signal is found, the pool passes through.
-2. **Subtype keyword filter** — `ICD_labels/subtype_keywords.py` applies group-specific discriminators for 6 groups: Mast cell neoplasms, Blood vessel tumors, Melanocytoma and Melanomas, Meningiomas, Osseous and chondromatous neoplasms, Gliomas. Each group has an ordered list of `(regex, label_substr)` rules; first matching rule narrows the pool.
+2. **Subtype keyword filter** — `ICD_labels/subtype_keywords.py` applies group-specific discriminators for 7 groups: Mast cell neoplasms, Blood vessel tumors, Melanocytoma and Melanomas, Meningiomas, Osseous and chondromatous neoplasms, Gliomas, and Lipomatous neoplasms. Each group has an ordered list of `(regex, label_substr)` rules; first matching rule narrows the pool.
 
 When an LP head is present, cosine-similarity is not used inside the pool — the LP score is the final rank. When Stage 3a is absent, cosine similarity (768-dim masked-mean vs 768-dim label embeddings) breaks ties within the post-filter pool.
+
+### Post-Stage-3 rescue rules
+
+File: `production/petbert_pipeline/stages/__init__.py`. After Stage 3 assembles the per-case prediction list, group-specific rescue rules can append additional labels when the per-stage thresholds were too strict.
+
+- **Lipoma keyword RESCUE** (Intervention 1, added 2026-05-25). Appends `Lipoma, NOS` to the prediction list when (a) the report text matches `\b(?:lipoma|adipocyte|fatty mass)\b`, (b) does NOT contain `\bliposarcoma\b`, (c) the GroupClassifier gave Lipomatous a probability ≥0.5 even if it didn't clear the 0.85 group threshold, and (d) Lipoma, NOS isn't already in the prediction list. Targets multi-condition cases where a co-occurring malignancy captures top-1 and lipoma is a one-line incidental finding. Tagged with `method="lipoma_rescue"` in `predictions.csv`. Measured impact on test split: Lipoma G% 58.2 → 60.7 (+2.5pp), Lipoma FP count +14, macro G+S 59.8 → 60.1 (+0.3pp), macro FN −1.0pp.
 
 ## Output files
 
@@ -100,11 +103,11 @@ Written under `--out-dir` (default `ml/output/production/`).
 | `petbert_summary.json` | Run metadata + aggregate prediction counts. |
 | `petbert_neighbors.csv` | Top-k nearest cases (only when `--task neighbors` or `--task both`). |
 
-The `method` column in predictions takes values `embedding` (LP head or cosine), `label_presence`, `low_confidence` (gate-rejected → `Uncategorized`), `unidentified_cancer` (gate passed but no group), or `empty` (empty text).
+The `method` column in predictions takes values `embedding` (LP head or cosine), `label_presence`, `lipoma_rescue` (post-Stage-3 RESCUE append), `low_confidence` (gate-rejected → `Uncategorized`), `unidentified_cancer` (gate passed but no group), or `empty` (empty text).
 
 ## CLI flags
 
-Source of truth: `production/petbert_pipeline/cli.py::build_parser` and the `ScanConfig` defaults in `types.py`. `run_production.py` overrides several of these defaults via `parser.set_defaults(...)`: `--model`, `--embedding-cache`, `--group-classifier`, `--case-presence-classifier`, `--label-presence-classifier-dir`, `--label-presence-thresholds-json`, `--out-dir`, and `--local-only`. The table below shows the **effective defaults when invoked via `run_production.py`**.
+Source of truth: `production/petbert_pipeline/cli.py::build_parser` and the `ScanConfig` defaults in `types.py`. `run_production.py` overrides several of these defaults via `parser.set_defaults(...)`: `--model`, `--embedding-cache`, `--group-classifier`, `--group-classifier-threshold` (0.85), `--case-presence-classifier`, `--case-presence-threshold` (0.80), `--label-presence-classifier-dir`, `--label-presence-thresholds-json`, `--out-dir`, and `--local-only`. The table below shows the **effective defaults when invoked via `run_production.py`**.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -123,9 +126,9 @@ Source of truth: `production/petbert_pipeline/cli.py::build_parser` and the `Sca
 | `--labels-csv` | `ml/ICD_labels/labels.csv` | Taxonomy CSV |
 | `--embedding-cache` | `ml/output/training/embedding_cache.npz` (via `run_production.py`) | Cache NPZ path |
 | `--case-presence-classifier` | `ml/output/checkpoints/case_presence/case_presence_classifier.pt` | Stage 1 checkpoint. Pass `""` to skip the gate. |
-| `--case-presence-threshold` | 0.5 | Gate threshold (recommended 0.85) |
+| `--case-presence-threshold` | 0.80 (via `run_production.py`; cli default 0.5) | Gate threshold |
 | `--group-classifier` | `ml/output/checkpoints/group/group_classifier_best.pt` | Stage 2 checkpoint |
-| `--group-classifier-threshold` | 0.3 | Group threshold (recommended 0.85) |
+| `--group-classifier-threshold` | 0.85 (via `run_production.py`; cli default 0.3) | Group threshold |
 | `--no-group-classifier-fallback-to-argmax` | argmax on | Disable Stage 2 argmax fallback |
 | `--label-presence-classifier-dir` | `ml/output/checkpoints/label_presence/` | Stage 3a checkpoint dir. Pass `""` to disable. |
 | `--label-presence-threshold` | 0.5 | Per-LP fallback threshold |

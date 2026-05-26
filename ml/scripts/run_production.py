@@ -27,7 +27,9 @@ def main() -> int:
         model=config.CHECKPOINT_CONTRASTIVE_DIR,
         embedding_cache=config.EMBEDDING_CACHE_NPZ,
         group_classifier=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_best.pt",
+        group_classifier_threshold=0.85,
         case_presence_classifier=config.CASE_PRESENCE_CLASSIFIER_PT,
+        case_presence_threshold=0.80,  # 0.85 → 0.80 (Pareto: +0.5pp Lipoma G%, +0.3pp macro G+S)
         label_presence_classifier_dir=config.CHECKPOINT_LABEL_PRESENCE_DIR,
         label_presence_thresholds_json=config.LABEL_PRESENCE_THRESHOLDS_JSON,
         out_dir=config.OUTPUT_PRODUCTION_DIR,

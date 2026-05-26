@@ -9,6 +9,7 @@ Groups covered (ordered by slightly_off rate on Phase 26 test set):
   - Blood vessel tumors    (hemangiosarcoma vs hemangioma vs hemangioendothelioma)
   - Melanocytoma and Melanomas  (melanocytoma vs melanoma subtypes)
   - Meningiomas            (histologic subtype: meningothelial, fibrous, etc.)
+  - Lipomatous neoplasms   (liposarcoma vs myelolipoma vs fibrolipoma vs infiltrative)
   - Osseous and chondromatous neoplasms  (osteosarcoma vs chondrosarcoma)
   - Gliomas                (glioblastoma vs astrocytoma vs oligodendroglioma …)
 """
@@ -60,6 +61,12 @@ _RULES: dict[str, list[tuple[re.Pattern[str], str]]] = {
         (re.compile(r"\bpapillary meningioma\b", re.I), "papillary"),
         (re.compile(r"\brhabdoid meningioma\b", re.I), "rhabdoid"),
         (re.compile(r"\batypical meningioma\b|\bwho grade ii\b|\bwho grade 2\b|\bgrade ii meningioma\b", re.I), "atypical"),
+    ],
+    "Lipomatous neoplasms": [
+        (re.compile(r"\bliposarcoma\b", re.I), "iposarcoma"),
+        (re.compile(r"\bmyelolipoma\b", re.I), "yelolipoma"),
+        (re.compile(r"\bfibrolipoma\b", re.I), "ibrolipoma"),
+        (re.compile(r"\binfiltrat\w*\s+lipoma\b|\bintramuscular\s+lipoma\b", re.I), "filtrat"),
     ],
     "Osseous and chondromatous neoplasms": [
         (re.compile(r"\bosteosarcoma\b", re.I), "osteosarcoma"),

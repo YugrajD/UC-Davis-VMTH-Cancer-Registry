@@ -12,10 +12,23 @@ or directly to Stage 3b, and assembles the final ``CategorizationResult``.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+
+# Intervention 1 (Agent B diagnostic, 2026-05-25): Lipoma keyword RESCUE.
+# After Stage 3, force-append "Lipoma, NOS" when the report has fatty-tissue
+# vocabulary, has no liposarcoma mention, and the GroupClassifier already
+# gives Lipomatous a non-trivial probability — even if it didn't clear the
+# 0.85 group threshold. Targets cases where lipoma is a one-line incidental
+# finding alongside a dominant malignancy that captures top-1.
+_LIPOMA_RESCUE_RE = re.compile(r"\b(?:lipoma|adipocyte|fatty mass)\b", re.I)
+_LIPOMA_RESCUE_EXCLUDE_RE = re.compile(r"\bliposarcoma\b", re.I)
+_LIPOMA_RESCUE_GROUP = "Lipomatous neoplasms"
+_LIPOMA_RESCUE_TERM = "Lipoma, NOS"
+_LIPOMA_RESCUE_MIN_GROUP_PROB = 0.5
 
 from ..embedding import cosine_similarity_matrix
 from ..types import CategorizationResult
@@ -81,6 +94,17 @@ def categorize_per_case(
     ]
 
     group_name_to_idx = {g: i for i, g in enumerate(group_names)}
+
+    # Resolve Lipoma rescue indices once (None if the group/term aren't in the
+    # taxonomy or the Lipomatous group classifier head wasn't trained).
+    lipo_group_idx = group_name_to_idx.get(_LIPOMA_RESCUE_GROUP)
+    lipoma_nos_idx: int | None = None
+    if lipo_group_idx is not None:
+        for j in group_to_label_indices.get(_LIPOMA_RESCUE_GROUP, []):
+            if labels[j] == _LIPOMA_RESCUE_TERM:
+                lipoma_nos_idx = j
+                break
+
     label_scores = np.zeros((N, M), dtype=np.float32)
     for j, tl in enumerate(taxonomy_labels):
         g_idx = group_name_to_idx.get(tl.group)
@@ -253,6 +277,22 @@ def categorize_per_case(
             top_k_scores.append([0.0])
             top_k_methods.append([method_str])
             continue
+
+        # Intervention 1: Lipoma keyword RESCUE — appends Lipoma, NOS to the
+        # prediction list when fatty-tissue vocabulary is in the report and
+        # Lipomatous has a non-trivial group prob but didn't make the top
+        # prediction (e.g., multi-condition reports dominated by a malignancy).
+        if (
+            lipoma_nos_idx is not None
+            and lipoma_nos_idx not in seen_winners
+            and float(case_probs[lipo_group_idx]) >= _LIPOMA_RESCUE_MIN_GROUP_PROB
+            and _LIPOMA_RESCUE_RE.search(text)
+            and not _LIPOMA_RESCUE_EXCLUDE_RE.search(text)
+        ):
+            k_idxs.append(lipoma_nos_idx)
+            k_scores.append(float(case_probs[lipo_group_idx]))
+            k_meths.append("lipoma_rescue")
+            seen_winners.add(lipoma_nos_idx)
 
         final_labels.append(labels[k_idxs[0]])
         final_indices.append(k_idxs[0])

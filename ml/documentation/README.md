@@ -67,12 +67,9 @@ See [training-guide.md](training-guide.md) for the full retraining cycle includi
 
 **Run inference** — scores every row in `ml/data/report.csv`:
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_production.py \
-  --case-presence-threshold 0.85 \
-  --group-classifier-threshold 0.85 \
-  --device cuda --local-only
+ml/.venv/Scripts/python.exe ml/scripts/run_production.py --device cuda --local-only
 ```
-All four checkpoint paths default to the production locations in `config.py`; you only override flags you want to change. See [production-pipeline.md](production-pipeline.md) for the full flag list.
+All four checkpoint paths and the gate/group thresholds (0.80 / 0.85) default to the production values via `run_production.py`'s `parser.set_defaults(...)`; you only override flags you want to change. See [production-pipeline.md](production-pipeline.md) for the full flag list.
 
 ---
 
@@ -89,11 +86,12 @@ report.csv (latin-1)
   ▼  Embed each section through PetBERT (concat-3 backbone) → (N, 3×768)
      Concatenate → (N, 2304)   [cache: ml/output/training/embedding_cache.npz]
   │
-  ▼  Stage 1: CasePresenceClassifier   2304 → cancer probability   (threshold 0.85)
+  ▼  Stage 1: CasePresenceClassifier   2304 → cancer probability   (threshold 0.80)
   ▼  Stage 2: GroupClassifier          2304 → 25 group probs       (threshold 0.85 + tail-gate K=2, gap=0.08)
   ▼  Stage 3a: per-group LabelPresenceClassifier   2304+label → in-group label score
               (per-LP threshold from lp_thresholds.json; argmax fallback)
   ▼  Stage 3b/4: keyword correction    behavior digit + subtype filter
+  ▼  Post-Stage-3 rescue: Lipoma keyword RESCUE (appends Lipoma, NOS when applicable)
   │
   ▼  predictions.csv + provenance + similarity + visualization + embeddings + summary
 ```

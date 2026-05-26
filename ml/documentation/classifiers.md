@@ -27,7 +27,7 @@ Linear(2304 → 512) → ReLU → Dropout(0.3) → Linear(512 → 1) → sigmoid
 
 **Loss.** `BCEWithLogitsLoss` with `pos_weight=1.0`. WeightedRandomSampler balances positives and negatives per batch. Cosine LR over `--epochs` (default 20). Best checkpoint selected by `(1 − recall_weight) × P + recall_weight × R` with `recall_weight=0.7`: prefer missing fewer cancer cases over fewer false positives.
 
-**Threshold.** `--case-presence-threshold` in `run_production.py`. Default 0.5; production uses 0.85.
+**Threshold.** `--case-presence-threshold` in `run_production.py`. CLI default 0.5; production default 0.80 (set in `run_production.py`'s `parser.set_defaults(...)`). Lowering from 0.85 to 0.80 (2026-05-25) was a strict Pareto improvement on the test split (+0.5pp Lipoma G%, +0.3pp macro G+S, +0.3pp macro FP).
 
 **Current performance.** Val F1 = 0.942 (P=0.937, R=0.947) at `recall_weight=0.7`.
 
@@ -58,7 +58,7 @@ Linear(2304 → 512) → ReLU → Dropout(0.1) → Linear(512 → 25) → sigmoi
 
 Best checkpoint selected by validation macro F1 across all groups with positives in val. Stratified split keeps per-group case distribution constant.
 
-**Threshold.** `--group-classifier-threshold`. Default 0.3; production uses 0.85. Argmax fallback keeps a concrete prediction for gate-passed cases when no group clears the threshold (disable with `--no-group-classifier-fallback-to-argmax`).
+**Threshold.** `--group-classifier-threshold`. CLI default 0.3; production default 0.85 (set in `run_production.py`'s `parser.set_defaults(...)`). Argmax fallback keeps a concrete prediction for gate-passed cases when no group clears the threshold (disable with `--no-group-classifier-fallback-to-argmax`).
 
 **Tail gate.** After thresholding, `--tail-max-predictions` (default 2) caps the number of group predictions per case, and `--tail-max-group-prob-gap` (default 0.08) drops tail groups whose probability is more than 0.08 below the top group. Calibrate after retraining with `ml/scripts/sweep_tail_gate.py`.
 
@@ -115,7 +115,10 @@ The Uncommon group draws labels from the union of all merged groups in `uncommon
 
 **Behavior code filter.** ICD-O codes embed a behavior digit after `/`: `/0`=benign, `/1`=borderline, `/2`=in situ, `/3`=malignant, `/6`=metastatic. The report text is scored against weighted vocabulary (e.g. `malignant` → `/3`, `metastatic` → `/6`); the highest-ranked behavior digit narrows the candidate pool to labels carrying that code. When no signal is detected, the pool passes through unchanged.
 
-**Subtype keyword filter.** For 6 groups (Mast cell neoplasms, Blood vessel tumors, Melanocytoma and Melanomas, Meningiomas, Osseous and chondromatous neoplasms, Gliomas), each has an ordered list of `(regex, label_substring)` rules. Each rule's regex is tried against the report text; the first rule that matches AND produces a non-empty pool subset is applied. Pure Python, no model dependencies.
+**Subtype keyword filter.** For 7 groups (Mast cell neoplasms, Blood vessel tumors, Melanocytoma and Melanomas, Meningiomas, Osseous and chondromatous neoplasms, Gliomas, Lipomatous neoplasms), each has an ordered list of `(regex, label_substring)` rules. Each rule's regex is tried against the report text; the first rule that matches AND produces a non-empty pool subset is applied. Pure Python, no model dependencies.
+
+**Post-Stage-3 rescue rules** (live in `production/petbert_pipeline/stages/__init__.py`, not in `keyword_correction.py`). Applied after Stage 3a/3b assembled the per-case prediction list. Currently one rule:
+- **Lipoma keyword RESCUE** — appends `Lipoma, NOS` (method `lipoma_rescue`) when the report matches `\b(?:lipoma|adipocyte|fatty mass)\b`, has no `\bliposarcoma\b`, Lipomatous group prob ≥0.5, and Lipoma, NOS isn't already predicted. Targets multi-condition cases where a dominant malignancy captures top-1.
 
 This stage runs unconditionally — no flag to disable it.
 

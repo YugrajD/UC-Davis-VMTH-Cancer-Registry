@@ -1,11 +1,8 @@
 // API client for the VMTH Cancer Registry backend
 
 export class ApiError extends Error {
-  public readonly status: number;
-
-  constructor(status: number, message: string) {
+  constructor(public readonly status: number, message: string) {
     super(message);
-    this.status = status;
     this.name = 'ApiError';
   }
 }

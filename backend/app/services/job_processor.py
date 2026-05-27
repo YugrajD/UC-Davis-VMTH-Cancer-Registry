@@ -70,6 +70,17 @@ def _safe_error_message(e: Exception) -> str:
     return type(e).__name__
 
 
+def _compact_petbert_summary(summary: dict) -> dict:
+    """Keep only diagnostic PetBERT fields worth storing on ingestion_jobs."""
+    if not summary:
+        return {}
+    return {
+        "input_rows": summary.get("input_rows"),
+        "prediction_method_counts": summary.get("prediction_method_counts", {}),
+        "predicted_group_counts": summary.get("predicted_group_counts", {}),
+        "thresholds": summary.get("thresholds", {}),
+    }
+
 
 async def _mark_failed(job_id: int, error_msg: str) -> None:
     """Mark a job as failed with the given error message."""
@@ -187,6 +198,7 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
 
         ml_result = response.json()
         predictions = ml_result.get("predictions", [])
+        petbert_summary = _compact_petbert_summary(ml_result.get("petbert_summary") or {})
 
         if not predictions:
             raise RuntimeError("ML worker returned no predictions")
@@ -214,6 +226,8 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
 
             summary = ingestion_result.result_summary or {}
             summary["timings_seconds"] = timings
+            if petbert_summary:
+                summary["petbert"] = petbert_summary
 
             result = await db.execute(
                 select(IngestionJob).where(IngestionJob.id == job_id)
@@ -247,12 +261,13 @@ async def _process_via_gcp_batch(job_id: int) -> None:
     1. Upload dataset_a.csv to GCS
     2. Submit a Batch job
     3. Poll until SUCCEEDED/FAILED, updating processing_stage from GCP Batch state
-    4. Download predictions.json from GCS
+    4. Download predictions.json and PetBERT diagnostics from GCS
     5. Ingest into database
-    6. Cleanup GCS files
+    6. Optionally cleanup GCS files
     """
     from app.services.gcp_batch_service import (
         cleanup_gcs_job_files,
+        download_petbert_summary_from_gcs,
         download_predictions_from_gcs,
         get_batch_job_status,
         submit_batch_job,
@@ -351,6 +366,10 @@ async def _process_via_gcp_batch(job_id: int) -> None:
         predictions = await loop.run_in_executor(
             None, download_predictions_from_gcs, job_id
         )
+        petbert_summary_raw = await loop.run_in_executor(
+            None, download_petbert_summary_from_gcs, job_id
+        )
+        petbert_summary = _compact_petbert_summary(petbert_summary_raw)
         timings["gcs_download_s"] = round(time.perf_counter() - _t, 2)
 
         if not predictions:
@@ -375,6 +394,8 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
             summary = ingestion_result.result_summary or {}
             summary["timings_seconds"] = timings
+            if petbert_summary:
+                summary["petbert"] = petbert_summary
 
             result = await db.execute(
                 select(IngestionJob).where(IngestionJob.id == job_id)
@@ -392,11 +413,15 @@ async def _process_via_gcp_batch(job_id: int) -> None:
         clear_all_caches()
         _delete_upload_dir(storage_path)
 
-        # Cleanup GCS files (best-effort)
-        try:
-            await loop.run_in_executor(None, cleanup_gcs_job_files, job_id)
-        except Exception:
-            logger.warning("Job %d: GCS cleanup failed (non-fatal)", job_id, exc_info=True)
+        # Cleanup GCS files (best-effort). Disabled by default so scan_output
+        # diagnostics remain available after a suspicious successful run.
+        if settings.GCP_BATCH_CLEANUP_JOB_FILES:
+            try:
+                await loop.run_in_executor(None, cleanup_gcs_job_files, job_id)
+            except Exception:
+                logger.warning("Job %d: GCS cleanup failed (non-fatal)", job_id, exc_info=True)
+        else:
+            logger.info("Job %d: preserving GCS Batch files for diagnostics", job_id)
 
     except Exception as e:
         logger.exception("Job %d failed (GCP Batch path)", job_id)

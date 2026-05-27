@@ -12,7 +12,7 @@ from app.rate_limit import limiter
 from app.models.models import CancerType, Patient, Species, County, CaseDiagnosis
 from app.models.views import mv_yearly_trends
 from app.schemas.schemas import TrendsResponse, TrendSeries, TrendPoint
-from app.services.review_filter import apply_review_filter
+from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER
 
 router = APIRouter(prefix="/api/v1/trends", tags=["trends"])
 
@@ -45,8 +45,9 @@ async def get_yearly_trends(
         )
         .select_from(Patient)
         .join(Species, Patient.species_id == Species.id)
-        .join(County, Patient.county_id == County.id)
+        .outerjoin(County, Patient.county_id == County.id)
         .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
     )
     if cancer_type:
         stmt = (
@@ -63,6 +64,7 @@ async def get_yearly_trends(
         mapped_sex = SEX_MAP.get(sex, sex)
         stmt = stmt.where(Patient.sex == mapped_sex)
 
+    stmt = stmt.where(Patient.diagnosis_date.is_not(None))
     stmt = stmt.group_by(func.extract("year", Patient.diagnosis_date)).order_by(
         func.extract("year", Patient.diagnosis_date)
     )
@@ -104,6 +106,7 @@ async def get_trends_by_cancer_type(
     if sex and sex not in ("All", "all"):
         stmt = stmt.where(mv.sex == SEX_MAP.get(sex, sex))
 
+    stmt = stmt.where(mv.year.is_not(None))
     stmt = stmt.group_by(mv.cancer_type_name, mv.year)
     stmt = stmt.order_by(mv.cancer_type_name, mv.year)
 

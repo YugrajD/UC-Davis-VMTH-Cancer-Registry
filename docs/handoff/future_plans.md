@@ -154,7 +154,7 @@ The current system requires two separate files (Dataset A and Dataset B). Many c
 
 ### Current State
 
-There is one admin role and one researcher role. Admins can approve all upload jobs. All authenticated users see all data.
+The system has three roles: **Uploader** (can submit files and audit their own diagnoses), **Reviewer** (can approve/reject jobs and review individual predictions), and **Admin** (full access including user management). Roles are stored in the `user_roles` table and enforced in `backend/app/auth.py`. Admins cannot edit their own roles or another admin's roles (self-lockout prevention). Uploaders can browse confirmed/corrected/rejected diagnoses for jobs they submitted.
 
 ### Required Changes
 

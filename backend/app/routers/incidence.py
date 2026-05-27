@@ -12,7 +12,7 @@ from app.rate_limit import limiter
 from app.models.models import CancerType, Patient, Species, Breed, County, CaseDiagnosis
 from app.models.views import mv_county_cancer
 from app.schemas.schemas import IncidenceRecord, IncidenceResponse, BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount
-from app.services.review_filter import apply_review_filter
+from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
 
@@ -54,6 +54,7 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
     Used by breed endpoints that still require live table joins.
     """
     stmt = stmt.where(Patient.data_source == "petbert")
+    stmt = stmt.where(CALIFORNIA_PATIENT_FILTER)
     stmt = apply_review_filter(stmt)
     if species:
         stmt = stmt.where(Species.name.in_(species))
@@ -94,6 +95,7 @@ async def get_incidence(
     ).select_from(mv_county_cancer)
 
     stmt = _apply_mv_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
+    stmt = stmt.where(mv.year.is_not(None))
     stmt = stmt.group_by(mv.cancer_type_name, mv.county_name, mv.species_name, mv.year)
     stmt = stmt.order_by(func.sum(mv.case_count).desc())
 
@@ -204,7 +206,7 @@ async def get_incidence_by_breed(
         .join(Species, Patient.species_id == Species.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-        .join(County, Patient.county_id == County.id)
+        .outerjoin(County, Patient.county_id == County.id)
     )
     stmt = _apply_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
     stmt = stmt.group_by(Breed.name, Species.name).order_by(func.count(CaseDiagnosis.id).desc())
@@ -242,6 +244,7 @@ async def get_breed_detail(
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(Breed, Patient.breed_id == Breed.id)
         .where(Breed.name == breed)
+        .where(CALIFORNIA_PATIENT_FILTER)
     )
     total_cases = (await db.execute(total_stmt)).scalar() or 0
 
@@ -252,6 +255,7 @@ async def get_breed_detail(
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(Breed, Patient.breed_id == Breed.id)
         .where(Breed.name == breed)
+        .where(CALIFORNIA_PATIENT_FILTER)
         .group_by(Patient.sex)
         .order_by(func.count(CaseDiagnosis.id).desc())
     )
@@ -266,6 +270,7 @@ async def get_breed_detail(
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .where(Breed.name == breed)
+        .where(CALIFORNIA_PATIENT_FILTER)
         .group_by(CancerType.name)
         .order_by(func.count(CaseDiagnosis.id).desc())
     )

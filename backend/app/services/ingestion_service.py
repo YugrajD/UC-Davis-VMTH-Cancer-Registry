@@ -9,8 +9,11 @@ and logging the ingestion run.
 import asyncio
 import csv
 import io
+import logging
 import re
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,6 +35,10 @@ from app.models.models import (
 )
 from app.schemas.schemas import IngestionResponse, IngestionRowResult
 from app.services.zip_county_service import lookup_county
+
+# asyncpg hard limit: 32 767 bind parameters per statement.
+# Use 1 000 per chunk to stay well under the cap.
+_IN_CHUNK = 1_000
 
 # ---------------------------------------------------------------------------
 # Parsing helpers (ported from ingest_petbert.py)
@@ -177,13 +184,16 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
 # ---------------------------------------------------------------------------
 
 def _parse_date(raw: str):
-    """Parse '8-Jan-25' style dates into a Python date."""
+    """Parse dates into a Python date. Supports YYYY-MM-DD and 8-Jan-25 formats."""
     if not raw or not raw.strip():
         return None
-    try:
-        return datetime.strptime(raw.strip(), "%d-%b-%y").date()
-    except ValueError:
-        return None
+    s = raw.strip()
+    for fmt in ("%Y-%m-%d", "%d-%b-%y", "%m/%d/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _clean_zip(raw: str) -> str:
@@ -343,85 +353,126 @@ async def ingest_upload(
         (row.species_id, row.name): row.id for row in breed_result.fetchall()
     }
 
-    # --- Upsert patients ---
-    patients_inserted = 0
+    # --- Pre-create all missing species in bulk ---
+    unique_species_names: set[str] = {
+        (demographics.get(a) or {}).get("species") or ""
+        for a in ids_to_process
+    } - {""}
+    new_species = unique_species_names - set(species_map)
+    if new_species:
+        for sp_name in new_species:
+            db.add(Species(name=sp_name))
+        await db.flush()
+        sp_result = await db.execute(select(Species.id, Species.name))
+        species_map = {name: id_ for id_, name in sp_result.fetchall()}
+        dog_species_id = species_map.get("Dog", dog_species_id)
+
+    # --- Pre-create all missing breeds in bulk ---
+    unique_breed_keys: set[tuple[int, str]] = set()
     for anon_id in ids_to_process:
-        demo = demographics.get(anon_id, {})
+        demo = demographics.get(anon_id) or {}
+        sp_name = demo.get("species") or ""
+        breed_name = demo.get("breed") or ""
+        if breed_name:
+            sp_id = species_map.get(sp_name, dog_species_id) if sp_name else dog_species_id
+            unique_breed_keys.add((sp_id, breed_name))
+    new_breeds = unique_breed_keys - set(breed_map)
+    if new_breeds:
+        for sp_id, breed_name in new_breeds:
+            db.add(Breed(species_id=sp_id, name=breed_name))
+        await db.flush()
+        breed_result2 = await db.execute(select(Breed.id, Breed.species_id, Breed.name))
+        breed_map = {(row.species_id, row.name): row.id for row in breed_result2.fetchall()}
+
+    # --- Bulk upsert patients in chunks ---
+    # Build one row per patient; deduplicate zip warnings by zip code.
+    warned_zips: set[str] = set()
+    patient_values: list[dict] = []
+    for anon_id in ids_to_process:
+        demo = demographics.get(anon_id) or {}
         sex = demo.get("sex")
         raw_zip = demo.get("zip") or ""
         breed_name = demo.get("breed") or ""
         diagnosis_date = demo.get("diagnosis_date")
-        species_name = demo.get("species") or ""
+        sp_name = demo.get("species") or ""
 
-        # Resolve species_id (default to Dog)
-        species_id = dog_species_id
-        if species_name:
-            if species_name not in species_map:
-                new_sp = Species(name=species_name)
-                db.add(new_sp)
-                await db.flush()
-                species_map[species_name] = new_sp.id
-            species_id = species_map[species_name]
-
-        # Resolve breed_id (lookup or create)
-        breed_id = None
-        if breed_name and species_id:
-            key = (species_id, breed_name)
-            if key not in breed_map:
-                new_breed = Breed(species_id=species_id, name=breed_name)
-                db.add(new_breed)
-                await db.flush()
-                breed_map[key] = new_breed.id
-            breed_id = breed_map[key]
-
+        sp_id = species_map.get(sp_name, dog_species_id) if sp_name else dog_species_id
+        breed_id = breed_map.get((sp_id, breed_name)) if breed_name else None
         county_name = lookup_county(raw_zip) if raw_zip else None
         county_id = county_map.get(county_name) if county_name else None
-        if raw_zip and not county_name:
-            warnings.append(f"{anon_id}: zip '{raw_zip}' not in California")
+        if raw_zip and not county_name and raw_zip not in warned_zips:
+            warned_zips.add(raw_zip)
+            warnings.append(f"zip '{raw_zip}' not in California (first patient: {anon_id})")
 
-        stmt = pg_insert(Patient.__table__).values(
-            species_id=species_id,
-            breed_id=breed_id,
-            sex=sex,
-            county_id=county_id,
-            anon_id=anon_id,
-            zip_code=raw_zip or None,
-            data_source="petbert",
-            diagnosis_date=diagnosis_date,
-            outcome=None,
-        ).on_conflict_do_update(
+        patient_values.append({
+            "anon_id": anon_id,
+            "species_id": sp_id,
+            "breed_id": breed_id,
+            "sex": sex,
+            "county_id": county_id,
+            "zip_code": raw_zip or None,
+            "data_source": "petbert",
+            "diagnosis_date": diagnosis_date,
+            "outcome": None,
+        })
+
+    for i in range(0, len(patient_values), _IN_CHUNK):
+        chunk = patient_values[i : i + _IN_CHUNK]
+        ins_stmt = pg_insert(Patient.__table__).values(chunk)
+        await db.execute(ins_stmt.on_conflict_do_update(
             index_elements=["anon_id"],
-            set_={
-                "species_id": species_id,
-                "breed_id": breed_id,
-                "sex": sex,
-                "county_id": county_id,
-                "zip_code": raw_zip or None,
-                "data_source": "petbert",
-                "diagnosis_date": diagnosis_date,
-            },
-        )
-        await db.execute(stmt)
-        patients_inserted += 1
+            set_={col: ins_stmt.excluded[col] for col in [
+                "species_id", "breed_id", "sex", "county_id",
+                "zip_code", "data_source", "diagnosis_date",
+            ]},
+        ))
+    patients_inserted = len(patient_values)
 
     await db.flush()
 
-    # Resolve actual patient IDs
-    patient_result = await db.execute(
-        select(Patient.id, Patient.anon_id).where(Patient.anon_id.in_(ids_to_process))
-    )
-    anon_to_patient_id = {row.anon_id: row.id for row in patient_result.fetchall()}
+    # Resolve actual patient IDs (chunked to stay under asyncpg 32 767 param limit)
+    all_patient_rows = []
+    for i in range(0, len(ids_to_process), _IN_CHUNK):
+        chunk = ids_to_process[i : i + _IN_CHUNK]
+        result = await db.execute(
+            select(Patient.id, Patient.anon_id).where(Patient.anon_id.in_(chunk))
+        )
+        all_patient_rows.extend(result.fetchall())
+    anon_to_patient_id = {row.anon_id: row.id for row in all_patient_rows}
 
     patient_ids = [anon_to_patient_id[a] for a in ids_to_process if a in anon_to_patient_id]
 
-    # --- Delete existing diagnoses and reports for these patients (idempotent) ---
+    # --- Delete existing diagnoses for these patients from THIS JOB ONLY ---
+    # Scoping to ingestion_job_id preserves data from other jobs when the same
+    # patient appears in multiple uploads, making each job independently idempotent.
     if patient_ids:
-        await db.execute(
-            delete(CaseDiagnosis).where(CaseDiagnosis.patient_id.in_(patient_ids))
+        for i in range(0, len(patient_ids), _IN_CHUNK):
+            chunk = patient_ids[i : i + _IN_CHUNK]
+            if ingestion_job_id is not None:
+                await db.execute(
+                    delete(CaseDiagnosis).where(
+                        CaseDiagnosis.patient_id.in_(chunk),
+                        CaseDiagnosis.ingestion_job_id == ingestion_job_id,
+                    )
+                )
+            else:
+                await db.execute(
+                    delete(CaseDiagnosis).where(CaseDiagnosis.patient_id.in_(chunk))
+                )
+        # Clean up PathologyReport rows that no CaseDiagnosis references anymore.
+        referenced_report_ids = (
+            select(CaseDiagnosis.pathology_report_id)
+            .where(CaseDiagnosis.pathology_report_id.is_not(None))
+            .scalar_subquery()
         )
-        await db.execute(
-            delete(PathologyReport).where(PathologyReport.patient_id.in_(patient_ids))
-        )
+        for i in range(0, len(patient_ids), _IN_CHUNK):
+            chunk = patient_ids[i : i + _IN_CHUNK]
+            await db.execute(
+                delete(PathologyReport).where(
+                    PathologyReport.patient_id.in_(chunk),
+                    PathologyReport.id.not_in(referenced_report_ids),
+                )
+            )
 
     # --- Upload report texts to GCS, then create one PathologyReport per patient ---
     # Collect anon_id → text pairs for patients that have text.
@@ -451,9 +502,12 @@ async def ingest_upload(
                     None, upload_report_text_to_gcs, ingestion_job_id, anon_id, txt
                 )
                 for anon_id, txt in chunk
-            ])
+            ], return_exceptions=True)
             for (anon_id, _), gcs_path in zip(chunk, results):
-                gcs_path_by_anon_id[anon_id] = gcs_path
+                if isinstance(gcs_path, Exception):
+                    logger.warning("GCS upload failed for %s: %s", anon_id, gcs_path)
+                else:
+                    gcs_path_by_anon_id[anon_id] = gcs_path
 
     report_by_anon_id: dict[str, PathologyReport] = {}
     for anon_id in ids_to_process:
@@ -532,7 +586,7 @@ async def ingest_upload(
                 icd_o_code=diag["icd_o_code"] or None,
                 predicted_term=diag["predicted_term"] or None,
                 pathology_report_id=report.id if report else None,
-                confidence=round(conf, 2) if conf else None,
+                confidence=round(conf, 2) if conf is not None else None,
                 prediction_method=method or None,
                 source_row_index=diag["row_index"],
                 diagnosis_index=rank,
@@ -561,7 +615,7 @@ async def ingest_upload(
                 anon_id=anon_id,
                 status="inserted",
                 cancer_type=group,
-                confidence=round(conf, 2) if conf else None,
+                confidence=round(conf, 2) if conf is not None else None,
             ))
 
     await db.flush()

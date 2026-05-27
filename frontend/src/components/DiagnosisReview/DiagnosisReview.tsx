@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchAllDiagnoses,
   fetchDiagnosisDetail,
+  fetchPendingCount,
   fetchPendingDiagnoses,
   reviewDiagnosis,
   type DiagnosisDetail,
@@ -286,6 +287,7 @@ export function DiagnosisReview() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState(0);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const token = await getAccessToken();
@@ -314,6 +316,12 @@ export function DiagnosisReview() {
   useEffect(() => {
     load(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [load]);
+
+  useEffect(() => {
+    getAccessToken().then((token) => {
+      if (token) fetchPendingCount(token).then((r) => setPendingCount(r.count)).catch(() => {});
+    });
+  }, [getAccessToken, pending]); // re-fetch after each action changes the list
 
   const loadDetail = useCallback(
     async (id: number) => {
@@ -368,8 +376,6 @@ export function DiagnosisReview() {
     setSelectedId(null);
     setDetail(null);
   }, []);
-
-  const headerCount = useMemo(() => pending.length, [pending]);
 
   // Group diagnoses by ingestion_job_id, preserving server sort order within
   // each group.  The key is the job id (or -1 for legacy/unlinked rows).
@@ -431,7 +437,10 @@ export function DiagnosisReview() {
         <div className="col-span-7 bg-white rounded-lg border border-gray-200">
           <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
             <span className="text-sm font-medium">
-              Pending {headerCount > 0 && <span className="text-gray-500">({headerCount})</span>}
+              {statusFilter === 'all' ? 'All' : statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)}
+              {statusFilter === 'pending' && pendingCount !== null && pendingCount > 0 && (
+                <span className="text-gray-500"> ({pendingCount})</span>
+              )}
             </span>
             <div className="flex items-center gap-2">
               <button

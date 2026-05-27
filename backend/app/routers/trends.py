@@ -64,6 +64,7 @@ async def get_yearly_trends(
         mapped_sex = SEX_MAP.get(sex, sex)
         stmt = stmt.where(Patient.sex == mapped_sex)
 
+    stmt = stmt.where(Patient.diagnosis_date.is_not(None))
     stmt = stmt.group_by(func.extract("year", Patient.diagnosis_date)).order_by(
         func.extract("year", Patient.diagnosis_date)
     )
@@ -105,6 +106,7 @@ async def get_trends_by_cancer_type(
     if sex and sex not in ("All", "all"):
         stmt = stmt.where(mv.sex == SEX_MAP.get(sex, sex))
 
+    stmt = stmt.where(mv.year.is_not(None))
     stmt = stmt.group_by(mv.cancer_type_name, mv.year)
     stmt = stmt.order_by(mv.cancer_type_name, mv.year)
 

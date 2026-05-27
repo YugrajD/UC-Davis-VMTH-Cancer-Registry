@@ -95,6 +95,7 @@ async def get_incidence(
     ).select_from(mv_county_cancer)
 
     stmt = _apply_mv_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
+    stmt = stmt.where(mv.year.is_not(None))
     stmt = stmt.group_by(mv.cancer_type_name, mv.county_name, mv.species_name, mv.year)
     stmt = stmt.order_by(func.sum(mv.case_count).desc())
 

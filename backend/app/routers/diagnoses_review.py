@@ -18,7 +18,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser, get_current_user, require_reviewer
 from app.config import settings
+from app.rate_limit import limiter
 from app.database import get_db
 from app.models.models import (
     CancerType,
@@ -202,7 +203,9 @@ def _to_detail(diag: CaseDiagnosis, report_text: str | None = None) -> Diagnosis
 
 
 @router.get("")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def list_diagnoses(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
     status: Optional[str] = Query(default=None, max_length=20),
@@ -270,7 +273,9 @@ async def list_diagnoses(
 
 
 @router.get("/pending/count")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def pending_count(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _reviewer: CurrentUser = Depends(require_reviewer),
 ) -> dict:
@@ -284,7 +289,9 @@ async def pending_count(
 
 
 @router.get("/pending")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def list_pending(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _reviewer: CurrentUser = Depends(require_reviewer),
     limit: int = Query(50, ge=1, le=500),
@@ -348,7 +355,9 @@ async def list_pending(
 
 
 @router.get("/{diagnosis_id}")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def get_diagnosis(
+    request: Request,
     diagnosis_id: int,
     db: AsyncSession = Depends(get_db),
     _reviewer: CurrentUser = Depends(require_reviewer),
@@ -359,7 +368,9 @@ async def get_diagnosis(
 
 
 @router.post("/{diagnosis_id}/review")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def review_diagnosis(
+    request: Request,
     diagnosis_id: int,
     body: ReviewAction,
     db: AsyncSession = Depends(get_db),

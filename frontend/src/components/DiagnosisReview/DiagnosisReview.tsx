@@ -321,7 +321,7 @@ export function DiagnosisReview() {
     getAccessToken().then((token) => {
       if (token) fetchPendingCount(token).then((r) => setPendingCount(r.count)).catch(() => {});
     });
-  }, [getAccessToken, pending]); // re-fetch after each action changes the list
+  }, [getAccessToken]);
 
   const loadDetail = useCallback(
     async (id: number) => {
@@ -359,6 +359,7 @@ export function DiagnosisReview() {
         await reviewDiagnosis(token, selectedId, { action, ...fields });
         // Remove from queue and clear selection so the user sees they made progress.
         setPending((rows) => rows.filter((r) => r.id !== selectedId));
+        setPendingCount((prev) => (prev !== null && prev > 0 ? prev - 1 : prev));
         setSelectedId(null);
         setDetail(null);
       } catch (e) {

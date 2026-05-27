@@ -7,6 +7,7 @@ predictions.json to the output directory. No web server — runs once and exits.
 import csv
 import json
 import os
+import re
 import sys
 import tempfile
 from collections import defaultdict
@@ -17,6 +18,29 @@ sys.path.insert(0, "/ml")
 
 from production.petbert_pipeline.pipeline import run_scan
 from production.petbert_pipeline.types import ScanConfig
+
+# Matches |H|SECTION NAME:...|| headers — captures section name (stops at : or |).
+_H_HEADER_RE = re.compile(r"\|H\|([^|:]+)[^|]*\|\|", re.IGNORECASE)
+# Matches |U|..|| sub-section markers (stripped from section body content).
+_U_HEADER_RE = re.compile(r"\|U\|[^|]*\|\|")
+
+
+def _extract_sections(merged_text: str) -> dict[str, str]:
+    """Parse a space-merged pathology report into named sections.
+
+    The upload router concatenates continuation rows into a single text string,
+    preserving |H|NAME:|| section headers inline. This function splits on those
+    markers and returns a dict keyed by uppercased section name.
+    """
+    matches = list(_H_HEADER_RE.finditer(merged_text))
+    sections: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        name = m.group(1).strip().upper()
+        content_start = m.end()
+        content_end = matches[i + 1].start() if i + 1 < len(matches) else len(merged_text)
+        content = _U_HEADER_RE.sub(" ", merged_text[content_start:content_end]).strip()
+        sections[name] = content
+    return sections
 
 
 def _join_numbered(rows: list[dict], field: str) -> str:
@@ -39,8 +63,6 @@ def main() -> None:
     _ug = os.environ.get("UNCOMMON_GROUPS_PATH") or ""
     uncommon_groups = _ug if (_ug and os.path.exists(_ug)) else ""
 
-    if not case_presence_classifier:
-        print("[batch_predict] No case_presence_classifier — Stage 1 gate disabled.")
     if not lp_thresholds_json:
         print("[batch_predict] No lp_thresholds.json — using global LP threshold.")
     if not uncommon_groups:
@@ -48,15 +70,38 @@ def main() -> None:
 
     print(f"[batch_predict] job={job_id} input={input_csv} output={output_dir}")
 
-    # Dataset A has a single 'Text' column. The 4-stage pipeline expects three
-    # named section columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY
-    # TESTS). Duplicate Text into all three so the concat-3 embedding shape
-    # (2304-dim) matches classifier training.
+    # Dataset A has a single 'Text' column whose value is the full pathology
+    # report with embedded |H|SECTION NAME:|| markers (produced by the upload
+    # router's continuation-row merge step). Parse those markers to populate the
+    # three section columns the pipeline's CONCAT_3 embedding expects:
+    #   HISTOPATHOLOGICAL SUMMARY / FINAL COMMENT (or COMMENT) / ANCILLARY TESTS
+    # Using distinct per-section content avoids the [e, e, e] degenerate
+    # embedding that caused the CasePresenceClassifier to reject every patient.
     df = pd.read_csv(input_csv, encoding="latin-1")
-    text_col = df["Text"] if "Text" in df.columns else pd.Series([""] * len(df))
-    for col in ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "COMMENT", "ANCILLARY TESTS"):
-        if col not in df.columns:
-            df[col] = text_col
+
+    if "Text" in df.columns:
+        hist_col, final_col, comment_col, anc_col = [], [], [], []
+        for text_val in df["Text"].fillna(""):
+            secs = _extract_sections(str(text_val))
+            full = str(text_val)
+            hist_col.append(secs.get("HISTOPATHOLOGICAL SUMMARY", full))
+            final = secs.get("FINAL COMMENT", "")
+            final_col.append(final)
+            comment_col.append(secs.get("COMMENT") or final)
+            anc_col.append(secs.get("ANCILLARY TESTS", ""))
+
+        if "HISTOPATHOLOGICAL SUMMARY" not in df.columns:
+            df["HISTOPATHOLOGICAL SUMMARY"] = hist_col
+        if "FINAL COMMENT" not in df.columns:
+            df["FINAL COMMENT"] = final_col
+        if "COMMENT" not in df.columns:
+            df["COMMENT"] = comment_col
+        if "ANCILLARY TESTS" not in df.columns:
+            df["ANCILLARY TESTS"] = anc_col
+    else:
+        for col in ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "COMMENT", "ANCILLARY TESTS"):
+            if col not in df.columns:
+                df[col] = ""
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as tmp:
         df.to_csv(tmp, index=False)

@@ -133,3 +133,9 @@ spec:
             #   value: "YOUR_BUCKET"
             # - name: GCP_BATCH_IMAGE_URI
             #   value: "us-central1-docker.pkg.dev/YOUR_PROJECT_ID/ml-images/petbert-batch:latest"
+            # - name: CASE_PRESENCE_THRESHOLD
+            #   value: "0.5"
+            # - name: GROUP_CLASSIFIER_THRESHOLD
+            #   value: "0.3"
+            # - name: GCP_BATCH_CLEANUP_JOB_FILES
+            #   value: "false"

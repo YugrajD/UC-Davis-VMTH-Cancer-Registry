@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     GCP_BATCH_POLL_INTERVAL: int = 60
     GCP_BATCH_TIMEOUT_HOURS: int = 12
     GCP_BATCH_SERVICE_ACCOUNT: str = ""
+    GCP_BATCH_CLEANUP_JOB_FILES: bool = False
+
+    # PetBERT runtime thresholds. Case presence is Stage 1: rows below this
+    # become method=low_confidence / Uncategorized before review thresholds run.
+    CASE_PRESENCE_THRESHOLD: float = 0.5
+    GROUP_CLASSIFIER_THRESHOLD: float = 0.3
 
     # SMTP — email notifications for role requests (all default to empty = disabled)
     SMTP_HOST: str = ""

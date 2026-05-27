@@ -371,6 +371,11 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "labels": categorization.labels,
         "labels_csv_path": config.labels_csv_path,
         "embedding_min_sim": float(config.embedding_min_sim),
+        "thresholds": {
+            "case_presence": float(config.case_presence_threshold),
+            "group_classifier": float(config.group_classifier_threshold),
+            "label_presence": float(config.label_presence_threshold),
+        },
         "predicted_term_counts": pd.Series(matched_terms).value_counts().to_dict(),
         "predicted_group_counts": pd.Series(matched_groups).value_counts().to_dict(),
         "predicted_code_counts": pd.Series(matched_codes).value_counts().to_dict(),

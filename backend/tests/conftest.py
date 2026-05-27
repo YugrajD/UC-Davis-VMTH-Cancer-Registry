@@ -1,9 +1,14 @@
 """Shared fixtures and mock helpers for unit tests."""
 
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+os.environ.setdefault("DATABASE_URL_SYNC", "postgresql://test:test@localhost/test")
+os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
 
 from app.cache import clear_all_caches
 

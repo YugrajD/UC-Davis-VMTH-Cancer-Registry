@@ -14,10 +14,16 @@ from collections import defaultdict
 
 import pandas as pd
 
-sys.path.insert(0, "/ml")
+for ml_path in (
+    "/ml",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ml")),
+):
+    if os.path.isdir(ml_path) and ml_path not in sys.path:
+        sys.path.insert(0, ml_path)
 
-from production.petbert_pipeline.pipeline import run_scan
-from production.petbert_pipeline.types import ScanConfig
+
+DEFAULT_CASE_PRESENCE_THRESHOLD = 0.5
+DEFAULT_GROUP_CLASSIFIER_THRESHOLD = 0.3
 
 # Matches |H|SECTION NAME:...|| headers — captures section name (stops at : or |).
 _H_HEADER_RE = re.compile(r"\|H\|([^|:]+)[^|]*\|\|", re.IGNORECASE)
@@ -47,7 +53,68 @@ def _join_numbered(rows: list[dict], field: str) -> str:
     return " ".join(f"{i + 1}) {r.get(field, '')}" for i, r in enumerate(rows))
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a float, got {raw!r}") from exc
+
+
+def _build_scan_config_kwargs(
+    *,
+    expanded_csv: str,
+    scan_out_dir: str,
+    model_path: str,
+    labels_csv: str,
+    case_presence_classifier: str | None,
+    group_classifier: str | None,
+    lp_thresholds_json: str | None,
+    uncommon_groups: str | None,
+) -> dict:
+    config_kwargs: dict = dict(
+        csv_path=expanded_csv,
+        id_col="anon_id",
+        model_name=model_path,
+        local_only=True,
+        out_dir=scan_out_dir,
+        max_rows=None,
+        batch_size=16,
+        max_length=256,
+        neighbors_k=3,
+        task="categorize",
+        embedding_min_sim=0.6,
+        device="auto",
+        labels_csv_path=labels_csv,
+        case_presence_classifier_path=case_presence_classifier,
+        case_presence_threshold=_float_env(
+            "CASE_PRESENCE_THRESHOLD", DEFAULT_CASE_PRESENCE_THRESHOLD
+        ),
+        group_classifier_path=group_classifier,
+        group_classifier_threshold=_float_env(
+            "GROUP_CLASSIFIER_THRESHOLD", DEFAULT_GROUP_CLASSIFIER_THRESHOLD
+        ),
+        label_presence_thresholds_json=lp_thresholds_json,
+    )
+    if uncommon_groups:
+        config_kwargs["uncommon_groups_path"] = uncommon_groups
+    return config_kwargs
+
+
+def _load_json_file(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
 def main() -> None:
+    from production.petbert_pipeline.pipeline import run_scan
+    from production.petbert_pipeline.types import ScanConfig
+
     job_id = os.environ["JOB_ID"]
     input_csv = os.environ["INPUT_CSV_PATH"]
     output_dir = os.environ["OUTPUT_DIR"]
@@ -69,6 +136,11 @@ def main() -> None:
         print("[batch_predict] No uncommon_groups.txt — treating all groups as common.")
 
     print(f"[batch_predict] job={job_id} input={input_csv} output={output_dir}")
+    print(
+        "[batch_predict] thresholds "
+        f"case_presence={_float_env('CASE_PRESENCE_THRESHOLD', DEFAULT_CASE_PRESENCE_THRESHOLD):.2f} "
+        f"group_classifier={_float_env('GROUP_CLASSIFIER_THRESHOLD', DEFAULT_GROUP_CLASSIFIER_THRESHOLD):.2f}"
+    )
 
     # Dataset A has a single 'Text' column whose value is the full pathology
     # report with embedded |H|SECTION NAME:|| markers (produced by the upload
@@ -110,32 +182,27 @@ def main() -> None:
     scan_out_dir = os.path.join(output_dir, "scan_output")
     os.makedirs(scan_out_dir, exist_ok=True)
 
-    config_kwargs: dict = dict(
-        csv_path=expanded_csv,
-        id_col="anon_id",
-        model_name=model_path,
-        local_only=True,
-        out_dir=scan_out_dir,
-        max_rows=None,
-        batch_size=16,
-        max_length=256,
-        neighbors_k=3,
-        task="categorize",
-        embedding_min_sim=0.6,
-        device="auto",
-        labels_csv_path=labels_csv,
-        case_presence_classifier_path=case_presence_classifier,
-        group_classifier_path=group_classifier,
-        label_presence_thresholds_json=lp_thresholds_json,
+    config_kwargs = _build_scan_config_kwargs(
+        expanded_csv=expanded_csv,
+        scan_out_dir=scan_out_dir,
+        model_path=model_path,
+        labels_csv=labels_csv,
+        case_presence_classifier=case_presence_classifier,
+        group_classifier=group_classifier,
+        lp_thresholds_json=lp_thresholds_json,
+        uncommon_groups=uncommon_groups,
     )
-    if uncommon_groups:
-        config_kwargs["uncommon_groups_path"] = uncommon_groups
 
     config = ScanConfig(**config_kwargs)
 
     print("[batch_predict] Starting PetBERT scan...")
     outputs = run_scan(config)
     print(f"[batch_predict] Scan complete: {outputs.predictions_csv}")
+    petbert_summary = _load_json_file(outputs.summary_json)
+    print(
+        "[batch_predict] PetBERT method counts: "
+        f"{petbert_summary.get('prediction_method_counts', {})}"
+    )
 
     # The new pipeline writes one row per (patient, diagnosis_index). Group by
     # anon_id and aggregate multiple predictions into the numbered format that

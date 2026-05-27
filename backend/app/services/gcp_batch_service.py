@@ -45,6 +45,25 @@ def download_predictions_from_gcs(job_id: int) -> list[dict[str, Any]]:
     return predictions
 
 
+def download_petbert_summary_from_gcs(job_id: int) -> dict[str, Any]:
+    """Download PetBERT's scan summary from GCS when the Batch job produced it."""
+    blob_path = f"{_GCS_PREFIX}/{job_id}/scan_output/petbert_summary.json"
+    blob = _get_bucket().blob(blob_path)
+    try:
+        raw = blob.download_as_bytes()
+    except Exception as exc:
+        logger.info("No PetBERT summary found for job %d at %s: %s", job_id, blob_path, exc)
+        return {}
+    try:
+        summary = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("Invalid PetBERT summary JSON for job %d at %s: %s", job_id, blob_path, exc)
+        return {}
+    method_counts = summary.get("prediction_method_counts", {})
+    logger.info("Downloaded PetBERT summary for job %d: methods=%s", job_id, method_counts)
+    return summary
+
+
 def cleanup_gcs_job_files(job_id: int) -> None:
     """Delete all blobs under uploads/{job_id}/."""
     bucket = _get_bucket()
@@ -187,6 +206,8 @@ def submit_batch_job(job_id: int, model_folder: str = "production") -> str:
                 "GROUP_CLASSIFIER_PATH": group_ckpt,
                 "LP_THRESHOLDS_JSON_PATH": lp_thresholds,
                 "UNCOMMON_GROUPS_PATH": uncommon_groups_file,
+                "CASE_PRESENCE_THRESHOLD": str(settings.CASE_PRESENCE_THRESHOLD),
+                "GROUP_CLASSIFIER_THRESHOLD": str(settings.GROUP_CLASSIFIER_THRESHOLD),
             },
         ),
     )
@@ -201,6 +222,11 @@ def submit_batch_job(job_id: int, model_folder: str = "production") -> str:
                 f"echo 'Uploading predictions...' && "
                 f"gcloud storage cp {local_data}/predictions.json "
                 f"'gs://{bucket}/{_GCS_PREFIX}/{job_id}/predictions.json' && "
+                f"if [ -d {local_data}/scan_output ]; then "
+                f"echo 'Uploading scan output diagnostics...' && "
+                f"gcloud storage cp -r {local_data}/scan_output/* "
+                f"'gs://{bucket}/{_GCS_PREFIX}/{job_id}/scan_output/'; "
+                f"else echo 'No scan_output directory produced.'; fi && "
                 f"echo 'Upload complete.'"
             ),
         ],

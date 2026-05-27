@@ -67,7 +67,6 @@ def train_label_presence(
     pos_weight: float = 1.0,
     recall_weight: float = 0.5,
     weight_decay: float = 1e-4,
-    patience: int = 0,
     device: str = "auto",
     seed: int = 42,
     model_name: str = "SAVSNET/PetBERT",
@@ -183,7 +182,6 @@ def train_label_presence(
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     best_score = -1.0
-    epochs_since_best = 0
     best_epoch = 0
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -214,13 +212,7 @@ def train_label_presence(
         if improved:
             best_score = score
             best_epoch = epoch
-            epochs_since_best = 0
             model.save(out_path)
-        else:
-            epochs_since_best += 1
-            if patience > 0 and epochs_since_best >= patience:
-                print(f"  Early stop at epoch {epoch} (patience={patience}; best={best_epoch})")
-                break
 
     print(f"  Best score: {best_score:.3f} (epoch {best_epoch}) -> {out_path}")
     return best_score

@@ -6,7 +6,7 @@ No PYTHONPATH needed -- this script adds ml/ to sys.path automatically.
 
 Usage:
   python ml/scripts/run_data_analysis.py
-  python ml/scripts/run_data_analysis.py --annotation-csv ml/output/annotation/llm/llm_annotation.csv
+  python ml/scripts/run_data_analysis.py --annotation-csv ml/output/annotation/annotation.csv
   python ml/scripts/run_data_analysis.py --no-plots
 """
 
@@ -26,8 +26,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--annotation-csv",
-        default=config.LLM_ANNOTATION_CSV,
-        help="Annotation CSV to analyse (default: LLM annotation).",
+        default=config.ANNOTATION_CSV,
+        help="Annotation CSV to analyse (default: canonical training-supervision file).",
     )
     parser.add_argument(
         "--labels-csv",

@@ -153,7 +153,7 @@ def main() -> int:
     parser.add_argument("--llm-timeout", type=int, default=120)
     parser.add_argument(
         "--out-root",
-        default=os.path.join(config.LLM_ANNOTATION_DIR, "compare"),
+        default=os.path.join(config.ANNOTATION_DIR, "compare"),
     )
     args = parser.parse_args()
 
@@ -162,7 +162,7 @@ def main() -> int:
     test_csv = out_root / "tier3_sample.csv"
 
     test_df = build_sample(
-        annotation_csv=Path(config.LLM_ANNOTATION_DIR) / "llm_annotation.csv",
+        annotation_csv=Path(config.LLM_ANNOTATION_CSV),
         diagnoses_csv=Path(config.DIAGNOSES_CSV),
         n=args.sample_size,
         seed=args.seed,

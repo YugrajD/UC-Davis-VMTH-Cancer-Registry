@@ -158,146 +158,25 @@ def build_contrastive_pairs(
     return len(pairs)
 
 
-def build_hard_neg_pairs(
-    *,
-    reports_csv: str = config.REPORTS_CSV,
-    annotation_csv: str = config.ANNOTATION_CSV,
-    co_bank_csv: str,
-    out_csv: str = config.HARD_NEG_PAIRS_CSV,
-    min_report_chars: int = 10,
-    train_cases_txt: str = "",
-) -> int:
-    """Build per-section (report_text, correct_label, wrong_label) triplets.
-
-    For each (case, correct_label, wrong_label) from the CO bank, emits one
-    triplet per non-empty section — matches the per-section text distribution
-    that concat_3 inference consumes.
-    """
-    train_ids = _load_train_ids(train_cases_txt)
-
-    print(f"Loading annotations from {annotation_csv}...")
-    case_to_correct = _load_case_labels(annotation_csv, train_ids)
-
-    print(f"Loading CO bank from {co_bank_csv}...")
-    case_to_wrong: dict[str, set[tuple[str, str]]] = {}
-    with open(co_bank_csv, encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row.get("verdict", "") != "completely_off":
-                continue
-            case_id = row["case_id"].strip()
-            wrong_term = row.get("predicted_term", "").strip()
-            wrong_group = row.get("predicted_group", "").strip()
-            if not case_id or not wrong_term or not wrong_group:
-                continue
-            if case_id not in case_to_correct:
-                continue
-            case_to_wrong.setdefault(case_id, set()).add((wrong_term, wrong_group))
-
-    print(f"  {len(case_to_wrong)} cases with both a verified correct label and a wrong-group prediction.")
-
-    print(f"Loading report text from {reports_csv}...")
-    triplets: list[dict[str, str]] = []
-    cases_with_zero_sections = 0
-    seen: set[tuple[str, str, str, str]] = set()  # (case, correct, wrong, section)
-
-    for case_id, row in _iter_report_rows(reports_csv):
-        if case_id not in case_to_wrong:
-            continue
-
-        kept = [
-            (_section_name(_PER_SECTION_GROUPS[i]), t)
-            for i, t in enumerate(_section_texts(row))
-            if len(t) >= min_report_chars
-        ]
-        if not kept:
-            cases_with_zero_sections += 1
-            continue
-
-        for correct_term, correct_group in case_to_correct[case_id]:
-            correct_label_text = f"{correct_term} {correct_group}"
-            for wrong_term, wrong_group in case_to_wrong[case_id]:
-                wrong_label_text = f"{wrong_term} {wrong_group}"
-                if wrong_label_text == correct_label_text:
-                    continue
-                for sec_name, sec_text in kept:
-                    key = (case_id, correct_label_text, wrong_label_text, sec_name)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    triplets.append({
-                        "case_id": case_id,
-                        "section": sec_name,
-                        "report_text": sec_text,
-                        "correct_label_text": correct_label_text,
-                        "wrong_label_text": wrong_label_text,
-                    })
-
-    if cases_with_zero_sections:
-        print(
-            f"  Skipped {cases_with_zero_sections} cases with all 3 sections "
-            f"shorter than {min_report_chars} chars."
-        )
-    print(f"  Generated {len(triplets)} per-section hard-negative triplets.")
-
-    out_path = Path(out_csv)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["case_id", "section", "report_text",
-                  "correct_label_text", "wrong_label_text"]
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(triplets)
-
-    print(f"Saved to {out_path}")
-    return len(triplets)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Build per-section training data for contrastive PetBERT fine-tuning.",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["build-pairs", "build-hard-neg"],
-        default="build-pairs",
-        help=(
-            "build-pairs: per-section (report, label) positive pairs for InfoNCE (default). "
-            "build-hard-neg: per-section (report, correct, wrong) triplets from CO bank."
-        ),
+        description="Build per-section (report, label) pairs for contrastive PetBERT fine-tuning.",
     )
     parser.add_argument("--reports-csv", default=config.REPORTS_CSV)
     parser.add_argument("--annotation-csv", default=config.ANNOTATION_CSV)
-    parser.add_argument("--co-bank-csv", default=None,
-                        help="[build-hard-neg] Evaluation CSV (or rolling CO bank) "
-                             "with verdict=completely_off rows.")
-    parser.add_argument("--out-csv", default=None,
-                        help=f"Output CSV (default: {config.CONTRASTIVE_PAIRS_CSV} "
-                             f"for build-pairs, {config.HARD_NEG_PAIRS_CSV} for build-hard-neg)")
+    parser.add_argument("--out-csv", default=config.CONTRASTIVE_PAIRS_CSV,
+                        help=f"Output CSV (default: {config.CONTRASTIVE_PAIRS_CSV})")
     parser.add_argument("--train-cases", default="",
                         help="Path to train_cases.txt to restrict cases.")
     args = parser.parse_args(argv)
 
-    if args.mode == "build-pairs":
-        n = build_contrastive_pairs(
-            reports_csv=args.reports_csv,
-            annotation_csv=args.annotation_csv,
-            out_csv=args.out_csv or config.CONTRASTIVE_PAIRS_CSV,
-            train_cases_txt=args.train_cases,
-        )
-        print(f"Done — {n} per-section pairs written.")
-    else:
-        if not args.co_bank_csv:
-            print("Error: --co-bank-csv is required for --mode build-hard-neg")
-            return 1
-        n = build_hard_neg_pairs(
-            reports_csv=args.reports_csv,
-            annotation_csv=args.annotation_csv,
-            co_bank_csv=args.co_bank_csv,
-            out_csv=args.out_csv or config.HARD_NEG_PAIRS_CSV,
-            train_cases_txt=args.train_cases,
-        )
-        print(f"Done — {n} per-section triplets written.")
+    n = build_contrastive_pairs(
+        reports_csv=args.reports_csv,
+        annotation_csv=args.annotation_csv,
+        out_csv=args.out_csv,
+        train_cases_txt=args.train_cases,
+    )
+    print(f"Done — {n} per-section pairs written.")
 
     return 0
 

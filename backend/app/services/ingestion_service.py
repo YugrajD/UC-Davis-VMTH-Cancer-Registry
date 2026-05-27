@@ -184,13 +184,16 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
 # ---------------------------------------------------------------------------
 
 def _parse_date(raw: str):
-    """Parse '8-Jan-25' style dates into a Python date."""
+    """Parse dates into a Python date. Supports YYYY-MM-DD and 8-Jan-25 formats."""
     if not raw or not raw.strip():
         return None
-    try:
-        return datetime.strptime(raw.strip(), "%d-%b-%y").date()
-    except ValueError:
-        return None
+    s = raw.strip()
+    for fmt in ("%Y-%m-%d", "%d-%b-%y", "%m/%d/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _clean_zip(raw: str) -> str:

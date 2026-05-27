@@ -54,7 +54,7 @@ def main() -> None:
     # (2304-dim) matches classifier training.
     df = pd.read_csv(input_csv, encoding="latin-1")
     text_col = df["Text"] if "Text" in df.columns else pd.Series([""] * len(df))
-    for col in ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "ANCILLARY TESTS"):
+    for col in ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "COMMENT", "ANCILLARY TESTS"):
         if col not in df.columns:
             df[col] = text_col
 

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  ApiError,
   fetchAllDiagnoses,
   fetchDiagnosisDetail,
+  fetchDiagnosisUploaders,
   fetchPendingCount,
   fetchPendingDiagnoses,
   reviewDiagnosis,
@@ -10,6 +12,11 @@ import {
   type PendingDiagnosis,
   type ReviewActionKind,
 } from '../../api/client';
+
+function friendlyError(e: unknown, fallback: string): string {
+  if (e instanceof ApiError && e.status === 429) return 'Too many requests — please try again in a moment.';
+  return e instanceof Error ? e.message : fallback;
+}
 
 type StatusFilter = 'pending' | 'confirmed' | 'corrected' | 'rejected' | 'all';
 const STATUS_FILTERS: StatusFilter[] = ['pending', 'confirmed', 'corrected', 'rejected', 'all'];
@@ -279,6 +286,14 @@ export function DiagnosisReview() {
   const { getAccessToken, isUploader, isAdmin } = useAuth();
   const canAudit = isUploader || isAdmin;
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
+  // yearInput is the live input value; yearFilter is debounced (triggers load).
+  const [yearInput, setYearInput] = useState('');
+  const [yearFilter, setYearFilter] = useState<number | undefined>(undefined);
+  // patientIdInput is the live input value; patientIdFilter is debounced (triggers load).
+  const [patientIdInput, setPatientIdInput] = useState('');
+  const [patientIdFilter, setPatientIdFilter] = useState('');
+  const [clinicFilter, setClinicFilter] = useState('');
+  const [uploaders, setUploaders] = useState<string[]>([]);
   const [pending, setPending] = useState<PendingDiagnosis[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -296,22 +311,28 @@ export function DiagnosisReview() {
     setError(null);
     try {
       let rows: PendingDiagnosis[];
+      const sharedParams = {
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+        year: yearFilter,
+        patient_id: patientIdFilter || undefined,
+        uploaded_by: clinicFilter || undefined,
+      };
       if (canAudit && statusFilter !== 'pending') {
         rows = await fetchAllDiagnoses(token, {
           status: statusFilter === 'all' ? undefined : statusFilter,
-          limit: PAGE_SIZE,
-          offset: page * PAGE_SIZE,
+          ...sharedParams,
         });
       } else {
-        rows = await fetchPendingDiagnoses(token, { limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+        rows = await fetchPendingDiagnoses(token, sharedParams);
       }
       setPending(rows);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
+      setError(friendlyError(e, 'Failed to load'));
     } finally {
       setLoadingList(false);
     }
-  }, [getAccessToken, page, canAudit, statusFilter]);
+  }, [getAccessToken, page, canAudit, statusFilter, yearFilter, patientIdFilter, clinicFilter]);
 
   useEffect(() => {
     load(); // eslint-disable-line react-hooks/set-state-in-effect
@@ -323,6 +344,39 @@ export function DiagnosisReview() {
     });
   }, [getAccessToken]);
 
+  useEffect(() => {
+    if (!isAdmin) return;
+    getAccessToken().then((token) => {
+      if (token) fetchDiagnosisUploaders(token).then(setUploaders).catch(() => {});
+    });
+  }, [getAccessToken, isAdmin]);
+
+  // Debounce year: parse and validate after 400ms; partial values (e.g. "2", "202")
+  // resolve to undefined so no year filter is applied while the user is still typing.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const n = yearInput ? Number(yearInput) : undefined;
+      const valid = n === undefined || (Number.isInteger(n) && n >= 1900 && n <= 2100);
+      setYearFilter(valid ? n : undefined);
+      setPage(0);
+      setSelectedId(null);
+      setDetail(null);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [yearInput]);
+
+  // Debounce patient ID: only update the filter (and trigger a load) 400ms after
+  // the user stops typing so we don't fire a request on every keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setPatientIdFilter(patientIdInput);
+      setPage(0);
+      setSelectedId(null);
+      setDetail(null);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [patientIdInput]);
+
   const loadDetail = useCallback(
     async (id: number) => {
       const token = await getAccessToken();
@@ -332,7 +386,7 @@ export function DiagnosisReview() {
         const d = await fetchDiagnosisDetail(token, id);
         setDetail(d);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load detail');
+        setError(friendlyError(e, 'Failed to load detail'));
       } finally {
         setLoadingDetail(false);
       }
@@ -363,7 +417,7 @@ export function DiagnosisReview() {
         setSelectedId(null);
         setDetail(null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Action failed');
+        setError(friendlyError(e, 'Action failed'));
       } finally {
         setBusy(false);
       }
@@ -373,6 +427,13 @@ export function DiagnosisReview() {
 
   const handleFilterChange = useCallback((f: StatusFilter) => {
     setStatusFilter(f);
+    setPage(0);
+    setSelectedId(null);
+    setDetail(null);
+  }, []);
+
+  const handleClinicChange = useCallback((v: string) => {
+    setClinicFilter(v);
     setPage(0);
     setSelectedId(null);
     setDetail(null);
@@ -426,6 +487,52 @@ export function DiagnosisReview() {
             </div>
           )}
         </div>
+        {canAudit && (
+          <div className="mt-3 flex flex-wrap gap-3 items-end border-t border-gray-100 pt-3">
+            <label className="flex flex-col gap-1 text-xs text-gray-600">
+              Year
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="e.g. 2024"
+                value={yearInput}
+                onChange={(e) => setYearInput(e.target.value)}
+                className="w-24 px-2 py-1.5 border border-gray-300 rounded text-sm"
+              />
+              {(() => {
+                const n = yearInput.trim() ? Number(yearInput) : NaN;
+                return !isNaN(n) && (n < 1900 || n > 2100)
+                  ? <span className="text-amber-600 text-xs">Outside available data range.</span>
+                  : null;
+              })()}
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-gray-600">
+              Patient ID
+              <input
+                type="text"
+                placeholder="Search…"
+                value={patientIdInput}
+                onChange={(e) => setPatientIdInput(e.target.value)}
+                className="w-40 px-2 py-1.5 border border-gray-300 rounded text-sm"
+              />
+            </label>
+            {isAdmin && uploaders.length > 0 && (
+              <label className="flex flex-col gap-1 text-xs text-gray-600">
+                Clinic
+                <select
+                  value={clinicFilter}
+                  onChange={(e) => handleClinicChange(e.target.value)}
+                  className="w-52 px-2 py-1.5 border border-gray-300 rounded text-sm"
+                >
+                  <option value="">All clinics</option>
+                  {uploaders.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+        )}
       </div>
 
       {error && (
@@ -464,9 +571,13 @@ export function DiagnosisReview() {
             <div className="p-6 text-sm text-gray-500">Loading...</div>
           ) : pending.length === 0 ? (
             <div className="p-6 text-sm text-gray-500">
-              {page === 0
-                ? 'No diagnoses awaiting review.'
-                : 'No more rows on this page.'}
+              {page > 0
+                ? 'No more rows on this page.'
+                : patientIdFilter
+                  ? `No patient found matching "${patientIdFilter}".`
+                  : yearFilter
+                    ? `No diagnoses found for ${yearFilter}.`
+                    : 'No diagnoses awaiting review.'}
             </div>
           ) : (
             <div>

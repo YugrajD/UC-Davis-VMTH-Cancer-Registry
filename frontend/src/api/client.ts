@@ -110,7 +110,15 @@ async function fetchJsonAuth<T>(url: string, token: string): Promise<T> {
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
-    throw new ApiError(response.status, err.detail || `API error: ${response.status}`);
+    // FastAPI returns `detail` as a string for HTTPException but as an array of
+    // validation-error objects for 422 Unprocessable Entity.  Normalise to string.
+    const raw = err.detail;
+    const msg = typeof raw === 'string'
+      ? raw
+      : Array.isArray(raw)
+        ? raw.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join('; ')
+        : `API error: ${response.status}`;
+    throw new ApiError(response.status, msg);
   }
   return response.json();
 }
@@ -478,6 +486,9 @@ export async function fetchPendingDiagnoses(
     method?: string;
     max_confidence?: number;
     ingestion_job_id?: number;
+    year?: number;
+    patient_id?: string;
+    uploaded_by?: string;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -495,6 +506,9 @@ export async function fetchAllDiagnoses(
     limit?: number;
     offset?: number;
     ingestion_job_id?: number;
+    year?: number;
+    patient_id?: string;
+    uploaded_by?: string;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -507,6 +521,10 @@ export async function fetchAllDiagnoses(
 
 export async function fetchPendingCount(token: string): Promise<{ count: number }> {
   return fetchJsonAuth('/api/v1/diagnoses/pending/count', token);
+}
+
+export async function fetchDiagnosisUploaders(token: string): Promise<string[]> {
+  return fetchJsonAuth('/api/v1/diagnoses/uploaders', token);
 }
 
 export async function fetchDiagnosisDetail(

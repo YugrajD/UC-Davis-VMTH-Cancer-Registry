@@ -28,6 +28,7 @@ from app.auth import CurrentUser, get_current_user, require_reviewer
 from app.config import settings
 from app.rate_limit import limiter
 from app.database import get_db
+from app.rate_limit import limiter
 from app.models.models import (
     CancerType,
     CaseDiagnosis,
@@ -212,8 +213,11 @@ async def list_diagnoses(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     ingestion_job_id: Optional[int] = None,
+    year: Optional[int] = Query(default=None, ge=1900, le=2100),
+    patient_id: Optional[str] = Query(default=None, max_length=100),
+    uploaded_by: Optional[str] = Query(default=None, max_length=255),
 ) -> list[PendingDiagnosis]:
-    """All diagnoses with optional status filter; non-admins scoped to their own jobs."""
+    """All diagnoses with optional status/year/patient/clinic filter; non-admins scoped to their own jobs."""
     if not user.is_uploader:
         raise HTTPException(status_code=403, detail="Uploader or admin role required")
 
@@ -241,6 +245,12 @@ async def list_diagnoses(
 
     if ingestion_job_id is not None:
         query = query.where(CaseDiagnosis.ingestion_job_id == ingestion_job_id)
+    if year is not None:
+        query = query.where(func.extract("year", Patient.diagnosis_date) == year)
+    if patient_id:
+        query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
+    if uploaded_by and user.is_admin:
+        query = query.where(IngestionJob.uploaded_by_email == uploaded_by)
 
     query = (
         query.order_by(
@@ -293,13 +303,16 @@ async def pending_count(
 async def list_pending(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    _reviewer: CurrentUser = Depends(require_reviewer),
+    reviewer: CurrentUser = Depends(require_reviewer),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     cancer_type_id: Optional[int] = None,
     method: Optional[str] = Query(default=None, max_length=50),
     max_confidence: Optional[float] = None,
     ingestion_job_id: Optional[int] = None,
+    year: Optional[int] = Query(default=None, ge=1900, le=2100),
+    patient_id: Optional[str] = Query(default=None, max_length=100),
+    uploaded_by: Optional[str] = Query(default=None, max_length=255),
 ) -> list[PendingDiagnosis]:
     """Paginated review queue, optionally filtered."""
     query = (
@@ -323,6 +336,12 @@ async def list_pending(
         query = query.where(CaseDiagnosis.confidence <= max_confidence)
     if ingestion_job_id is not None:
         query = query.where(CaseDiagnosis.ingestion_job_id == ingestion_job_id)
+    if year is not None:
+        query = query.where(func.extract("year", Patient.diagnosis_date) == year)
+    if patient_id:
+        query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
+    if uploaded_by and reviewer.is_admin:
+        query = query.where(IngestionJob.uploaded_by_email == uploaded_by)
 
     query = (
         query.order_by(
@@ -352,6 +371,25 @@ async def list_pending(
         )
         for d, ct_name, anon_id, job_filename, job_created_at in rows
     ]
+
+
+@router.get("/uploaders")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def list_uploaders(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[str]:
+    """Admin-only: distinct uploader emails for the clinic filter dropdown."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    result = await db.execute(
+        select(IngestionJob.uploaded_by_email)
+        .where(IngestionJob.uploaded_by_email.isnot(None))
+        .distinct()
+        .order_by(IngestionJob.uploaded_by_email)
+    )
+    return [row[0] for row in result.all()]
 
 
 @router.get("/{diagnosis_id}")

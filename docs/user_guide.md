@@ -29,6 +29,11 @@ Canine cancer data collected at the VMTH represents a valuable epidemiological r
 7. [Data Upload Tab](#7-data-upload-tab)
 8. [Review Queue Tab](#8-review-queue-tab)
 9. [Diagnosis Review Tab](#9-diagnosis-review-tab)
+   - [9.1 Status Filter](#91-status-filter)
+   - [9.2 Search and Filter](#92-search-and-filter)
+   - [9.3 Diagnosis Detail Panel](#93-diagnosis-detail-panel)
+   - [9.4 Review Actions](#94-review-actions)
+   - [9.5 Pagination](#95-pagination)
 10. [User Management Tab](#10-user-management-tab)
 11. [Roles and Permissions](#11-roles-and-permissions)
 12. [Requesting Access](#12-requesting-access)
@@ -270,7 +275,19 @@ A row of filter pills at the top of the page controls which diagnoses appear in 
 
 Uploaders and admins use the non-Pending filters to audit the results of their own submitted jobs. Non-admin uploaders see only diagnoses from jobs they submitted; admins see all.
 
-### 9.2 Diagnosis Detail Panel
+### 9.2 Search and Filter
+
+Below the status filter pills, a row of inputs lets you narrow the queue before paging through it.
+
+| Filter | Available to | Behavior |
+|--------|-------------|----------|
+| **Year** | Uploader, Reviewer, Admin | Type a 4-digit year to show only diagnoses for patients whose diagnosis date falls in that year. Results update automatically 400 ms after you stop typing. If the year entered is outside the available data range (1900–2100) a warning appears below the field and no year filter is applied. Clearing the field removes the filter. |
+| **Patient ID** | Uploader, Reviewer, Admin | Type part of a patient identifier (anonymized ID) to search by substring. The queue updates automatically a short pause after each keystroke. If no patient matches, the queue shows a "No patient found matching…" message. |
+| **Clinic** | Admin only | A dropdown listing every uploader email that has submitted at least one job. Select a clinic to see only diagnoses from that submitter's jobs. Defaults to "All clinics." |
+
+All three filters combine with the active status pill. Changing any filter resets the queue to page 1.
+
+### 9.3 Diagnosis Detail Panel
 
 Selecting a diagnosis from the queue opens a detail panel on the right with:
 
@@ -283,7 +300,7 @@ Selecting a diagnosis from the queue opens a detail panel on the right with:
 - **Original PetBERT prediction** — shown when a reviewer has since corrected the prediction, so you can see what the model originally said
 - **Review history** — every prior action with timestamps and reviewer email
 
-### 9.3 Review Actions
+### 9.4 Review Actions
 
 Review actions are available for diagnoses in **Pending**, **Confirmed**, and **Corrected** status. Rejected diagnoses are read-only.
 
@@ -293,7 +310,7 @@ Review actions are available for diagnoses in **Pending**, **Confirmed**, and **
 
 All actions are recorded in the review history with your identity and timestamp.
 
-### 9.4 Pagination
+### 9.5 Pagination
 
 Use the **Prev** and **Next** buttons at the top of the queue to move between pages (50 diagnoses per page). The badge in the navigation bar shows the current pending count.
 
@@ -397,8 +414,8 @@ If you experience issues accessing or using the application, follow these steps 
 8. **Can I export data without going through the export request process?**
    No. All data exports require admin approval to ensure appropriate data governance. Submit an export request through the Data Upload tab and provide a reason; an admin will review it promptly.
 
-9. **I see an "API error: 429" when navigating pages in Diagnosis Review. What does this mean?**
-   HTTP 429 means "Too Many Requests." The backend enforces a rate limit on failed authentication attempts (5 failures per 15-minute window per IP address). This can trigger if your session token expires and the browser sends several requests before the token is refreshed. The fix is automatic — the application now proactively refreshes tokens before they expire. If you see this error, wait a few minutes and try again. If it persists, sign out and sign back in to obtain a fresh session.
+9. **I see a "Too many requests" message in Diagnosis Review. What does this mean?**
+   The backend limits each authenticated user to 120 requests per minute on the Diagnosis Review endpoints. This can be reached if you page through results very quickly or if you were previously typing search terms rapidly before the debounce behavior was applied. When it occurs, the application shows "Too many requests — please try again in a moment." Wait a few seconds and the limit resets automatically. No sign-out is required.
 
 ---
 

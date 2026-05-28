@@ -360,7 +360,7 @@ function CancerMap({
   const colorScale = useMemo(
     () =>
       scaleLinear<string>()
-        .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
+        .domain([0, countRange.max / 2, countRange.max])
         .range(['#E6F3F5', '#6BB5BF', '#1A6B77']),
     [countRange],
   );

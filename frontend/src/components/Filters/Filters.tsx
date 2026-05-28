@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FilterState, Sex, RateType } from '../../types';
 import { SEX_OPTIONS, RATE_OPTIONS } from '../../types';
-import { MOCK_BREEDS } from '../../data/mockData';
 import { fetchFilterOptions } from '../../api/client';
 
 interface FiltersProps {
@@ -9,10 +8,9 @@ interface FiltersProps {
   onFilterChange: (filters: FilterState) => void;
 }
 
-const breeds = ['All Breeds', ...MOCK_BREEDS];
-
 export function Filters({ filters, onFilterChange }: FiltersProps) {
   const [cancerTypes, setCancerTypes] = useState<string[]>(['All Types']);
+  const [breeds, setBreeds] = useState<string[]>(['All Breeds']);
   const [yearOptions, setYearOptions] = useState<number[]>([]);
 
   useEffect(() => {
@@ -20,6 +18,8 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
       .then(opts => {
         const names = opts.cancer_types.map(ct => ct.name).sort();
         setCancerTypes(['All Types', ...names]);
+        const breedNames = opts.breeds.map(b => b.name).sort();
+        setBreeds(['All Breeds', ...breedNames]);
         const [min, max] = opts.year_range;
         const years: number[] = [];
         for (let y = min; y <= max; y++) years.push(y);

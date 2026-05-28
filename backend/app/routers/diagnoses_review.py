@@ -85,6 +85,9 @@ class DiagnosisDetail(PendingDiagnosis):
     # the upload.  Reviewers use this to sanity-check the model's prediction.
     # Null for diagnoses ingested before the May 2026 ingestion-service fix.
     original_text: Optional[str]
+    # Diagnosis text from the clinic's dataset (optional column). Null when
+    # the clinic's upload did not include a diagnoses column.
+    source_diagnosis: Optional[str]
     reviewed_by_email: Optional[str]
     reviewed_at: Optional[datetime]
     reviewer_notes: Optional[str]
@@ -178,6 +181,7 @@ def _to_detail(diag: CaseDiagnosis, report_text: str | None = None) -> Diagnosis
         original_icd_o_code=diag.original_icd_o_code,
         original_predicted_term=diag.original_predicted_term,
         original_text=report_text,
+        source_diagnosis=diag.pathology_report.source_diagnosis if diag.pathology_report else None,
         reviewed_by_email=diag.reviewed_by_email,
         reviewed_at=diag.reviewed_at,
         reviewer_notes=diag.reviewer_notes,
@@ -215,7 +219,7 @@ async def list_diagnoses(
     ingestion_job_id: Optional[int] = None,
     year: Optional[int] = Query(default=None, ge=1900, le=2100),
     patient_id: Optional[str] = Query(default=None, max_length=100),
-    uploaded_by: Optional[str] = Query(default=None, max_length=255),
+    clinic: Optional[str] = Query(default=None, max_length=255),
 ) -> list[PendingDiagnosis]:
     """All diagnoses with optional status/year/patient/clinic filter; non-admins scoped to their own jobs."""
     if not user.is_uploader:
@@ -249,8 +253,8 @@ async def list_diagnoses(
         query = query.where(func.extract("year", Patient.diagnosis_date) == year)
     if patient_id:
         query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
-    if uploaded_by and user.is_admin:
-        query = query.where(IngestionJob.uploaded_by_email == uploaded_by)
+    if clinic and user.is_admin:
+        query = query.where(IngestionJob.clinic_name == clinic)
 
     query = (
         query.order_by(
@@ -312,7 +316,7 @@ async def list_pending(
     ingestion_job_id: Optional[int] = None,
     year: Optional[int] = Query(default=None, ge=1900, le=2100),
     patient_id: Optional[str] = Query(default=None, max_length=100),
-    uploaded_by: Optional[str] = Query(default=None, max_length=255),
+    clinic: Optional[str] = Query(default=None, max_length=255),
 ) -> list[PendingDiagnosis]:
     """Paginated review queue, optionally filtered."""
     query = (
@@ -340,8 +344,8 @@ async def list_pending(
         query = query.where(func.extract("year", Patient.diagnosis_date) == year)
     if patient_id:
         query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
-    if uploaded_by and reviewer.is_admin:
-        query = query.where(IngestionJob.uploaded_by_email == uploaded_by)
+    if clinic and reviewer.is_admin:
+        query = query.where(IngestionJob.clinic_name == clinic)
 
     query = (
         query.order_by(
@@ -380,14 +384,14 @@ async def list_uploaders(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[str]:
-    """Admin-only: distinct uploader emails for the clinic filter dropdown."""
+    """Admin-only: distinct clinic names for the clinic filter dropdown."""
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin role required")
     result = await db.execute(
-        select(IngestionJob.uploaded_by_email)
-        .where(IngestionJob.uploaded_by_email.isnot(None))
+        select(IngestionJob.clinic_name)
+        .where(IngestionJob.clinic_name.isnot(None))
         .distinct()
-        .order_by(IngestionJob.uploaded_by_email)
+        .order_by(IngestionJob.clinic_name)
     )
     return [row[0] for row in result.all()]
 

@@ -83,6 +83,9 @@ pgdata/
 !database/migrations/*.sql
 !database/scripts/*.sql
 
+# Upload staging area — files are patient data and must never be committed
+backend/uploads/
+
 # Ingestion data (real patient data — never commit)
 database/data/**
 !database/data/.gitkeep

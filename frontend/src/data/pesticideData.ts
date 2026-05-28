@@ -1,8 +1,9 @@
-// Mock California pesticide use data by county.
-// Real data source: CDPR Pesticide Use Reporting (PUR) database via
-// https://trackingcalifornia.org/data-and-tools/pesticide-mapping-tool
-// Values represent average annual lbs of active ingredient applied per sq mile (2015–2019).
-// Replace with real CDPR PUR aggregate when integrating live data.
+// California pesticide use data by county.
+// Source: CDPR Pesticide Use Reporting (PUR) database.
+// Annual report text files: https://files.cdpr.ca.gov/pub/outgoing/pur/data/
+// Values: lbs of active ingredient per square mile (5-year avg 2015–2019).
+// Class breakdown uses 2019 proportions applied to the 5-year average.
+// Last updated: May 2026
 
 export type PesticideClass = 'fumigants' | 'herbicides' | 'insecticides' | 'fungicides';
 
@@ -21,122 +22,255 @@ export interface ActiveIngredient {
 
 export interface CountyPesticideData {
   county: string;
-  lbs_per_sq_mile: number;    // avg annual lbs of active ingredient / sq mile
-  lbs_applied_total: number;  // avg annual lbs total applied in county
+  lbs_per_sq_mile: number;
+  lbs_applied_total: number;
   top_pesticide_class: string;
-  by_class: Record<PesticideClass, number>; // lbs/sq mi per class
-  top_ingredients: ActiveIngredient[];      // top 5, sorted by lbs_applied desc
-  by_year: Record<number, number>;          // { 2015: N, 2016: N, ..., 2019: N } in lbs/sq mi
+  by_class: Record<PesticideClass, number>;
+  top_ingredients: ActiveIngredient[];
+  by_year: Record<number, number>;
 }
 
-// Helper: distribute aggregate lbs/sq mi across 4 classes based on which is the
-// top class for that county. The top class gets ~45%, next two ~20% each, last ~15%.
-function distributeByClass(total: number, top: string): Record<PesticideClass, number> {
-  const classes: PesticideClass[] = ['fumigants', 'herbicides', 'insecticides', 'fungicides'];
-  const topKey = top.toLowerCase() as PesticideClass;
-  const result = {} as Record<PesticideClass, number>;
-  for (const cls of classes) {
-    if (cls === topKey) {
-      result[cls] = Math.round(total * 0.45);
-    } else {
-      // Remaining 55% split among other 3 — slight variation per class
-      const share = cls === classes[(classes.indexOf(topKey) + 1) % 4] ? 0.22
-        : cls === classes[(classes.indexOf(topKey) + 2) % 4] ? 0.18
-        : 0.15;
-      result[cls] = Math.round(total * share);
-    }
-  }
-  return result;
-}
-
-// Ingredient pools by top pesticide class
-const INGREDIENT_POOLS: Record<PesticideClass, { name: string; category: PesticideClass }[]> = {
-  fumigants: [
-    { name: '1,3-Dichloropropene', category: 'fumigants' },
-    { name: 'Metam-sodium', category: 'fumigants' },
-    { name: 'Chloropicrin', category: 'fumigants' },
-    { name: 'Glyphosate', category: 'herbicides' },
-    { name: 'Chlorpyrifos', category: 'insecticides' },
-  ],
-  herbicides: [
-    { name: 'Glyphosate', category: 'herbicides' },
-    { name: '2,4-D', category: 'herbicides' },
-    { name: 'Paraquat dichloride', category: 'herbicides' },
-    { name: 'Pendimethalin', category: 'herbicides' },
-    { name: 'Sulfur', category: 'fungicides' },
-  ],
-  insecticides: [
-    { name: 'Chlorpyrifos', category: 'insecticides' },
-    { name: 'Permethrin', category: 'insecticides' },
-    { name: 'Malathion', category: 'insecticides' },
-    { name: 'Glyphosate', category: 'herbicides' },
-    { name: 'Sulfur', category: 'fungicides' },
-  ],
-  fungicides: [
-    { name: 'Sulfur', category: 'fungicides' },
-    { name: 'Copper hydroxide', category: 'fungicides' },
-    { name: 'Mancozeb', category: 'fungicides' },
-    { name: 'Chlorpyrifos', category: 'insecticides' },
-    { name: 'Glyphosate', category: 'herbicides' },
-  ],
-};
-
-function generateIngredients(totalLbs: number, topClass: string): ActiveIngredient[] {
-  const topKey = topClass.toLowerCase() as PesticideClass;
-  const pool = INGREDIENT_POOLS[topKey];
-  // Distribute total lbs across 5 ingredients: ~35%, ~22%, ~18%, ~14%, ~11%
-  const shares = [0.35, 0.22, 0.18, 0.14, 0.11];
-  return pool.map((ing, i) => ({
-    name: ing.name,
-    lbs_applied: Math.round(totalLbs * shares[i]),
-    category: ing.category,
-  }));
-}
-
-// Central Valley counties get a slight upward trend; others are roughly flat
-const CENTRAL_VALLEY = new Set([
-  'San Joaquin', 'Stanislaus', 'Colusa', 'Yolo', 'Sacramento',
-  'Glenn', 'Sutter', 'Yuba', 'Butte',
-]);
-
-function generateByYear(avgLbsSqMi: number, county: string): Record<number, number> {
-  const isCV = CENTRAL_VALLEY.has(county);
-  // For CV counties: slight upward trend (~-6% to +8% relative to avg)
-  // For others: roughly flat with small variation
-  const offsets = isCV
-    ? { 2015: -0.06, 2016: -0.03, 2017: 0.0, 2018: 0.04, 2019: 0.08 }
-    : { 2015: -0.02, 2016: 0.01, 2017: 0.0, 2018: -0.01, 2019: 0.02 };
-  const result: Record<number, number> = {};
-  for (const [yr, pct] of Object.entries(offsets)) {
-    result[Number(yr)] = Math.round(avgLbsSqMi * (1 + pct));
-  }
-  return result;
-}
-
-// Agricultural intensity drives pesticide use — Central Valley counties are highest,
-// Bay Area and foothill counties are much lower.
 export const MOCK_PESTICIDE_DATA: CountyPesticideData[] = [
-  // Central Valley — heaviest agricultural use
-  { county: 'San Joaquin',  lbs_per_sq_mile: 312, lbs_applied_total: 14_060_000, top_pesticide_class: 'Fumigants',    by_class: distributeByClass(312, 'Fumigants'),    top_ingredients: generateIngredients(14_060_000, 'Fumigants'),    by_year: generateByYear(312, 'San Joaquin') },
-  { county: 'Stanislaus',   lbs_per_sq_mile: 284, lbs_applied_total: 10_782_000, top_pesticide_class: 'Insecticides', by_class: distributeByClass(284, 'Insecticides'), top_ingredients: generateIngredients(10_782_000, 'Insecticides'), by_year: generateByYear(284, 'Stanislaus') },
-  { county: 'Colusa',       lbs_per_sq_mile: 248, lbs_applied_total:  2_728_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(248, 'Herbicides'),   top_ingredients: generateIngredients(2_728_000, 'Herbicides'),    by_year: generateByYear(248, 'Colusa') },
-  { county: 'Yolo',         lbs_per_sq_mile: 196, lbs_applied_total:  3_920_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(196, 'Herbicides'),   top_ingredients: generateIngredients(3_920_000, 'Herbicides'),    by_year: generateByYear(196, 'Yolo') },
-  { county: 'Sacramento',   lbs_per_sq_mile: 142, lbs_applied_total:  7_526_000, top_pesticide_class: 'Fungicides',   by_class: distributeByClass(142, 'Fungicides'),   top_ingredients: generateIngredients(7_526_000, 'Fungicides'),    by_year: generateByYear(142, 'Sacramento') },
-  { county: 'Placer',       lbs_per_sq_mile:  84, lbs_applied_total:  2_520_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(84, 'Herbicides'),    top_ingredients: generateIngredients(2_520_000, 'Herbicides'),    by_year: generateByYear(84, 'Placer') },
-  { county: 'El Dorado',    lbs_per_sq_mile:  38, lbs_applied_total:  1_596_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(38, 'Herbicides'),    top_ingredients: generateIngredients(1_596_000, 'Herbicides'),    by_year: generateByYear(38, 'El Dorado') },
-
-  // Bay Area — lower agricultural use, some urban/suburban pesticide applications
-  { county: 'Solano',       lbs_per_sq_mile: 118, lbs_applied_total:  2_478_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(118, 'Herbicides'),   top_ingredients: generateIngredients(2_478_000, 'Herbicides'),    by_year: generateByYear(118, 'Solano') },
-  { county: 'Contra Costa', lbs_per_sq_mile:  52, lbs_applied_total:  1_092_000, top_pesticide_class: 'Insecticides', by_class: distributeByClass(52, 'Insecticides'),   top_ingredients: generateIngredients(1_092_000, 'Insecticides'),  by_year: generateByYear(52, 'Contra Costa') },
-  { county: 'Alameda',      lbs_per_sq_mile:  28, lbs_applied_total:    504_000, top_pesticide_class: 'Insecticides', by_class: distributeByClass(28, 'Insecticides'),   top_ingredients: generateIngredients(504_000, 'Insecticides'),    by_year: generateByYear(28, 'Alameda') },
-
-  // Northern CA
-  { county: 'Glenn',        lbs_per_sq_mile: 214, lbs_applied_total:  2_996_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(214, 'Herbicides'),   top_ingredients: generateIngredients(2_996_000, 'Herbicides'),    by_year: generateByYear(214, 'Glenn') },
-  { county: 'Sutter',       lbs_per_sq_mile: 192, lbs_applied_total:  1_920_000, top_pesticide_class: 'Fumigants',    by_class: distributeByClass(192, 'Fumigants'),    top_ingredients: generateIngredients(1_920_000, 'Fumigants'),     by_year: generateByYear(192, 'Sutter') },
-  { county: 'Yuba',         lbs_per_sq_mile: 138, lbs_applied_total:    966_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(138, 'Herbicides'),   top_ingredients: generateIngredients(966_000, 'Herbicides'),      by_year: generateByYear(138, 'Yuba') },
-  { county: 'Butte',        lbs_per_sq_mile: 106, lbs_applied_total:  4_452_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(106, 'Herbicides'),   top_ingredients: generateIngredients(4_452_000, 'Herbicides'),    by_year: generateByYear(106, 'Butte') },
-  { county: 'Nevada',       lbs_per_sq_mile:  44, lbs_applied_total:  1_320_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(44, 'Herbicides'),    top_ingredients: generateIngredients(1_320_000, 'Herbicides'),    by_year: generateByYear(44, 'Nevada') },
-  { county: 'Amador',       lbs_per_sq_mile:  32, lbs_applied_total:    384_000, top_pesticide_class: 'Herbicides',   by_class: distributeByClass(32, 'Herbicides'),    top_ingredients: generateIngredients(384_000, 'Herbicides'),      by_year: generateByYear(32, 'Amador') },
+  {
+    county: 'San Joaquin',
+    lbs_per_sq_mile: 9319,
+    lbs_applied_total: 13289254,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 1028, herbicides: 803, insecticides: 1134, fungicides: 6354 },
+    top_ingredients: [
+      { name: "Sulfur", lbs_applied: 7646513, category: 'fungicides' },
+      { name: "Mineral Oil", lbs_applied: 860575, category: 'insecticides' },
+      { name: "1,3-Dichloropropene", lbs_applied: 750433, category: 'fumigants' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 377664, category: 'herbicides' },
+      { name: "Glyphosate (K salt)", lbs_applied: 288388, category: 'herbicides' },
+    ],
+    by_year: { 2015: 8973, 2016: 8888, 2017: 9456, 2018: 9554, 2019: 9726 },
+  },
+  {
+    county: 'Stanislaus',
+    lbs_per_sq_mile: 5622,
+    lbs_applied_total: 8405088,
+    top_pesticide_class: 'Insecticides',
+    by_class: { fumigants: 1660, herbicides: 967, insecticides: 1811, fungicides: 1184 },
+    top_ingredients: [
+      { name: "Mineral Oil", lbs_applied: 1776918, category: 'insecticides' },
+      { name: "1,3-Dichloropropene", lbs_applied: 1346852, category: 'fumigants' },
+      { name: "Sulfur", lbs_applied: 759770, category: 'fungicides' },
+      { name: "Potassium N-methyldithiocarbamate", lbs_applied: 529033, category: 'fumigants' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 496753, category: 'herbicides' },
+    ],
+    by_year: { 2015: 5370, 2016: 5319, 2017: 5482, 2018: 5892, 2019: 6048 },
+  },
+  {
+    county: 'Sutter',
+    lbs_per_sq_mile: 5399,
+    lbs_applied_total: 3282491,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 681, herbicides: 1598, insecticides: 1367, fungicides: 1753 },
+    top_ingredients: [
+      { name: "Mineral Oil", lbs_applied: 479930, category: 'insecticides' },
+      { name: "Propanil", lbs_applied: 406682, category: 'herbicides' },
+      { name: "1,3-Dichloropropene", lbs_applied: 274166, category: 'fumigants' },
+      { name: "Sulfur", lbs_applied: 242521, category: 'fungicides' },
+      { name: "Copper hydroxide", lbs_applied: 239970, category: 'fungicides' },
+    ],
+    by_year: { 2015: 5596, 2016: 5543, 2017: 5193, 2018: 5206, 2019: 5457 },
+  },
+  {
+    county: 'Sacramento',
+    lbs_per_sq_mile: 4567,
+    lbs_applied_total: 4539137,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 27, herbicides: 313, insecticides: 833, fungicides: 3394 },
+    top_ingredients: [
+      { name: "Sulfur", lbs_applied: 3028962, category: 'fungicides' },
+      { name: "Mineral Oil", lbs_applied: 653225, category: 'insecticides' },
+      { name: "Glyphosate (K salt)", lbs_applied: 86608, category: 'herbicides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 82570, category: 'herbicides' },
+      { name: "Lime-sulfur", lbs_applied: 46006, category: 'fungicides' },
+    ],
+    by_year: { 2015: 4407, 2016: 4365, 2017: 4392, 2018: 5111, 2019: 4558 },
+  },
+  {
+    county: 'Yolo',
+    lbs_per_sq_mile: 4256,
+    lbs_applied_total: 4357847,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 182, herbicides: 670, insecticides: 487, fungicides: 2917 },
+    top_ingredients: [
+      { name: "Sulfur", lbs_applied: 2415528, category: 'fungicides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 169490, category: 'herbicides' },
+      { name: "Mineral Oil", lbs_applied: 163620, category: 'insecticides' },
+      { name: "Glyphosate (K salt)", lbs_applied: 134350, category: 'herbicides' },
+      { name: "Kaolin", lbs_applied: 102322, category: 'insecticides' },
+    ],
+    by_year: { 2015: 4497, 2016: 4454, 2017: 3934, 2018: 4291, 2019: 4102 },
+  },
+  {
+    county: 'Colusa',
+    lbs_per_sq_mile: 2526,
+    lbs_applied_total: 2907966,
+    top_pesticide_class: 'Herbicides',
+    by_class: { fumigants: 57, herbicides: 1298, insecticides: 503, fungicides: 668 },
+    top_ingredients: [
+      { name: "Propanil", lbs_applied: 468990, category: 'herbicides' },
+      { name: "Thiobencarb", lbs_applied: 245734, category: 'herbicides' },
+      { name: "Glyphosate (K salt)", lbs_applied: 183731, category: 'herbicides' },
+      { name: "Sulfur", lbs_applied: 162780, category: 'fungicides' },
+      { name: "Kaolin", lbs_applied: 124466, category: 'insecticides' },
+    ],
+    by_year: { 2015: 2753, 2016: 2727, 2017: 2449, 2018: 2523, 2019: 2181 },
+  },
+  {
+    county: 'Yuba',
+    lbs_per_sq_mile: 1961,
+    lbs_applied_total: 1254884,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 438, herbicides: 472, insecticides: 437, fungicides: 614 },
+    top_ingredients: [
+      { name: "1,3-Dichloropropene", lbs_applied: 197231, category: 'fumigants' },
+      { name: "Mineral Oil", lbs_applied: 151814, category: 'insecticides' },
+      { name: "Propanil", lbs_applied: 133339, category: 'herbicides' },
+      { name: "Copper hydroxide", lbs_applied: 110699, category: 'fungicides' },
+      { name: "Sulfur", lbs_applied: 57907, category: 'fungicides' },
+    ],
+    by_year: { 2015: 2024, 2016: 2005, 2017: 2047, 2018: 1775, 2019: 1954 },
+  },
+  {
+    county: 'Butte',
+    lbs_per_sq_mile: 1932,
+    lbs_applied_total: 3160569,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 202, herbicides: 595, insecticides: 400, fungicides: 735 },
+    top_ingredients: [
+      { name: "Copper hydroxide", lbs_applied: 339034, category: 'fungicides' },
+      { name: "Propanil", lbs_applied: 337268, category: 'herbicides' },
+      { name: "1,3-Dichloropropene", lbs_applied: 223069, category: 'fumigants' },
+      { name: "Mineral Oil", lbs_applied: 214842, category: 'insecticides' },
+      { name: "Copper sulfate", lbs_applied: 197153, category: 'fungicides' },
+    ],
+    by_year: { 2015: 2019, 2016: 1999, 2017: 2043, 2018: 1813, 2019: 1785 },
+  },
+  {
+    county: 'Glenn',
+    lbs_per_sq_mile: 1839,
+    lbs_applied_total: 2420332,
+    top_pesticide_class: 'Herbicides',
+    by_class: { fumigants: 70, herbicides: 793, insecticides: 346, fungicides: 630 },
+    top_ingredients: [
+      { name: "Propanil", lbs_applied: 315287, category: 'herbicides' },
+      { name: "Copper hydroxide", lbs_applied: 155756, category: 'fungicides' },
+      { name: "Copper sulfate", lbs_applied: 124454, category: 'fungicides' },
+      { name: "Glyphosate (K salt)", lbs_applied: 124313, category: 'herbicides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 122587, category: 'herbicides' },
+    ],
+    by_year: { 2015: 1760, 2016: 1743, 2017: 1910, 2018: 1955, 2019: 1828 },
+  },
+  {
+    county: 'Solano',
+    lbs_per_sq_mile: 1550,
+    lbs_applied_total: 1406260,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 46, herbicides: 408, insecticides: 293, fungicides: 802 },
+    top_ingredients: [
+      { name: "Sulfur", lbs_applied: 534890, category: 'fungicides' },
+      { name: "Mineral Oil", lbs_applied: 152998, category: 'insecticides' },
+      { name: "Glyphosate (K salt)", lbs_applied: 107492, category: 'herbicides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 96196, category: 'herbicides' },
+      { name: "Pendimethalin", lbs_applied: 41648, category: 'herbicides' },
+    ],
+    by_year: { 2015: 1499, 2016: 1484, 2017: 1475, 2018: 1667, 2019: 1628 },
+  },
+  {
+    county: 'Contra Costa',
+    lbs_per_sq_mile: 743,
+    lbs_applied_total: 532335,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 37, herbicides: 181, insecticides: 182, fungicides: 343 },
+    top_ingredients: [
+      { name: "Sulfur", lbs_applied: 165956, category: 'fungicides' },
+      { name: "Mineral Oil", lbs_applied: 36836, category: 'insecticides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 35025, category: 'herbicides' },
+      { name: "Glyphosate (K salt)", lbs_applied: 31789, category: 'herbicides' },
+      { name: "Disodium Octaborate Tetrahydra", lbs_applied: 24587, category: 'insecticides' },
+    ],
+    by_year: { 2015: 795, 2016: 787, 2017: 627, 2018: 721, 2019: 788 },
+  },
+  {
+    county: 'Alameda',
+    lbs_per_sq_mile: 453,
+    lbs_applied_total: 334224,
+    top_pesticide_class: 'Fumigants',
+    by_class: { fumigants: 152, herbicides: 104, insecticides: 105, fungicides: 92 },
+    top_ingredients: [
+      { name: "Sulfuryl Fluoride", lbs_applied: 63137, category: 'fumigants' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 22592, category: 'herbicides' },
+      { name: "Sulfur", lbs_applied: 21272, category: 'fungicides' },
+      { name: "Mineral Oil", lbs_applied: 19955, category: 'insecticides' },
+      { name: "Disodium Octaborate Tetrahydra", lbs_applied: 13405, category: 'insecticides' },
+    ],
+    by_year: { 2015: 493, 2016: 489, 2017: 510, 2018: 387, 2019: 385 },
+  },
+  {
+    county: 'Placer',
+    lbs_per_sq_mile: 273,
+    lbs_applied_total: 410517,
+    top_pesticide_class: 'Herbicides',
+    by_class: { fumigants: 37, herbicides: 105, insecticides: 48, fungicides: 82 },
+    top_ingredients: [
+      { name: "Copper sulfate", lbs_applied: 59172, category: 'fungicides' },
+      { name: "Propanil", lbs_applied: 40245, category: 'herbicides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 38905, category: 'herbicides' },
+      { name: "1,3-Dichloropropene", lbs_applied: 23302, category: 'fumigants' },
+      { name: "Diquat Dibromide", lbs_applied: 19952, category: 'herbicides' },
+    ],
+    by_year: { 2015: 305, 2016: 302, 2017: 200, 2018: 289, 2019: 270 },
+  },
+  {
+    county: 'Amador',
+    lbs_per_sq_mile: 166,
+    lbs_applied_total: 98506,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 1, herbicides: 23, insecticides: 33, fungicides: 110 },
+    top_ingredients: [
+      { name: "Sulfur", lbs_applied: 79949, category: 'fungicides' },
+      { name: "Mineral Oil", lbs_applied: 12016, category: 'insecticides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 9673, category: 'herbicides' },
+      { name: "Methylated Soybean Oil", lbs_applied: 8231, category: 'insecticides' },
+      { name: "Kaolin", lbs_applied: 2671, category: 'insecticides' },
+    ],
+    by_year: { 2015: 133, 2016: 131, 2017: 164, 2018: 172, 2019: 228 },
+  },
+  {
+    county: 'El Dorado',
+    lbs_per_sq_mile: 107,
+    lbs_applied_total: 191731,
+    top_pesticide_class: 'Insecticides',
+    by_class: { fumigants: 4, herbicides: 34, insecticides: 43, fungicides: 26 },
+    top_ingredients: [
+      { name: "Mineral Oil", lbs_applied: 40726, category: 'insecticides' },
+      { name: "Sulfur", lbs_applied: 30315, category: 'fungicides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 21688, category: 'herbicides' },
+      { name: "Glyphosate (DMA salt)", lbs_applied: 19397, category: 'herbicides' },
+      { name: "Methylated Soybean Oil", lbs_applied: 6446, category: 'insecticides' },
+    ],
+    by_year: { 2015: 130, 2016: 129, 2017: 79, 2018: 90, 2019: 109 },
+  },
+  {
+    county: 'Nevada',
+    lbs_per_sq_mile: 77,
+    lbs_applied_total: 75263,
+    top_pesticide_class: 'Fungicides',
+    by_class: { fumigants: 1, herbicides: 23, insecticides: 9, fungicides: 44 },
+    top_ingredients: [
+      { name: "Sulfur", lbs_applied: 15940, category: 'fungicides' },
+      { name: "Glyphosate (DMA salt)", lbs_applied: 5361, category: 'herbicides' },
+      { name: "Copper Ethanolamine Complexes,", lbs_applied: 4872, category: 'fungicides' },
+      { name: "Glyphosate (IPA salt)", lbs_applied: 4824, category: 'herbicides' },
+      { name: "Mineral Oil", lbs_applied: 2321, category: 'insecticides' },
+    ],
+    by_year: { 2015: 101, 2016: 100, 2017: 73, 2018: 58, 2019: 54 },
+  },
 ];
 
 export const PESTICIDE_BY_COUNTY: Record<string, CountyPesticideData> = Object.fromEntries(

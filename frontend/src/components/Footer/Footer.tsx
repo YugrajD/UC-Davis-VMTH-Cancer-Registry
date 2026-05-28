@@ -96,7 +96,8 @@ export function Footer({ onShare }: FooterProps) {
       {/* Bottom bar */}
       <div className="bg-[#052049] text-white py-3 px-6">
         <div className="max-w-[1400px] mx-auto flex flex-col md:flex-row justify-between items-center gap-2 text-xs">
-          <div className="flex items-center gap-4">
+          <div className="hidden items-center gap-4">
+            {/* unhide once we actually make these */}
             <a href="#" className="hover:underline">Privacy Policy</a>
             <span className="opacity-50">|</span>
             <a href="#" className="hover:underline">Terms of Use</a>

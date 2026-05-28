@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ICD_LABELS, type IcdLabel } from '../../data/icdLabels';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   ApiError,
@@ -126,6 +127,67 @@ function DetailPanel({ detail, loading, onAction, busy }: DetailPanelProps) {
   return <DetailPanelBody key={detail.id} detail={detail} onAction={onAction} busy={busy} />;
 }
 
+function TermCombobox({
+  value,
+  onInput,
+  onSelect,
+}: {
+  value: string;
+  onInput: (term: string) => void;
+  onSelect: (label: IcdLabel) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q) return ICD_LABELS.slice(0, 10);
+    return ICD_LABELS.filter(l => l.term.toLowerCase().includes(q)).slice(0, 10);
+  }, [value]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={value}
+        onChange={e => { onInput(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+        placeholder="Type to search ICD-O terms…"
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto">
+          {filtered.map((l, i) => (
+            <li
+              key={i}
+              onMouseDown={e => {
+                e.preventDefault();
+                onSelect(l);
+                setOpen(false);
+              }}
+              className="flex items-baseline justify-between gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-teal-50"
+            >
+              <span className="truncate">{l.term}</span>
+              <span className="shrink-0 text-xs text-gray-400 font-mono">{l.code}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface DetailPanelBodyProps {
   detail: DiagnosisDetail;
   onAction: DetailPanelProps['onAction'];
@@ -133,7 +195,7 @@ interface DetailPanelBodyProps {
 }
 
 function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
-  const [correctName, setCorrectName] = useState(detail.cancer_type_name);
+  const [correctName, setCorrectName] = useState(detail.predicted_term ?? detail.cancer_type_name);
   const [correctIcd, setCorrectIcd] = useState(detail.icd_o_code ?? '');
   const [notes, setNotes] = useState('');
 
@@ -170,10 +232,30 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
 
       <SourceText text={detail.original_text} />
 
-      {detail.predicted_term && (
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Predicted term</p>
-          <p className="text-sm">{detail.predicted_term}</p>
+      {(detail.source_diagnosis || detail.predicted_term || detail.icd_o_code) && (
+        <div className="space-y-2">
+          {detail.source_diagnosis && detail.source_diagnosis.trim() && (
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
+              <p className="text-sm whitespace-pre-wrap text-[var(--color-text-primary)]">{detail.source_diagnosis}</p>
+            </div>
+          )}
+          {(detail.predicted_term || detail.icd_o_code) && (
+            <div className="grid grid-cols-2 gap-4">
+              {detail.predicted_term && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Predicted term</p>
+                  <p className="text-sm">{detail.predicted_term}</p>
+                </div>
+              )}
+              {detail.icd_o_code && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Predicted code</p>
+                  <p className="text-sm font-mono">{detail.icd_o_code}</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -193,12 +275,14 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           </h4>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-gray-600">
-              Cancer type (for correction)
-              <input
-                type="text"
+              Correct term
+              <TermCombobox
                 value={correctName}
-                onChange={(e) => setCorrectName(e.target.value)}
-                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+                onInput={term => setCorrectName(term)}
+                onSelect={label => {
+                  setCorrectName(label.term);
+                  setCorrectIcd(label.code);
+                }}
               />
             </label>
             <label className="text-xs text-gray-600">
@@ -207,7 +291,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
                 type="text"
                 value={correctIcd}
                 onChange={(e) => setCorrectIcd(e.target.value)}
-                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
               />
             </label>
           </div>
@@ -316,7 +400,7 @@ export function DiagnosisReview() {
         offset: page * PAGE_SIZE,
         year: yearFilter,
         patient_id: patientIdFilter || undefined,
-        uploaded_by: clinicFilter || undefined,
+        clinic: clinicFilter || undefined,
       };
       if (canAudit && statusFilter !== 'pending') {
         rows = await fetchAllDiagnoses(token, {

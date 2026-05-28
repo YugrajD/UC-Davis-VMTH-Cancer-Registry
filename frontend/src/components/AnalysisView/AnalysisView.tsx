@@ -360,7 +360,7 @@ function CancerMap({
   const colorScale = useMemo(
     () =>
       scaleLinear<string>()
-        .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
+        .domain([0, countRange.max / 2, countRange.max])
         .range(['#E6F3F5', '#6BB5BF', '#1A6B77']),
     [countRange],
   );
@@ -435,44 +435,67 @@ function CancerMap({
       title="Cancer Incidence"
       subtitle={subtitle}
       headerRight={
-        <MapFilterButton>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Type</span>
-            <select value={filters.cancerType} onChange={e => setFilters(f => ({ ...f, cancerType: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-              {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Breed</span>
-            <select value={filters.breed} onChange={e => setFilters(f => ({ ...f, breed: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-              {BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
-            <select value={filters.sex} onChange={e => setFilters(f => ({ ...f, sex: e.target.value as FilterState['sex'] }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-              {SEX_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </label>
-          {yearOptions.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {filters.cancerType !== 'All Types' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
+              {filters.cancerType}
+            </span>
+          )}
+          {filters.breed !== 'All Breeds' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
+              {filters.breed}
+            </span>
+          )}
+          {filters.sex !== 'all' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
+              {SEX_OPTIONS.find(s => s.value === filters.sex)?.label}
+            </span>
+          )}
+          {(filters.yearStart || filters.yearEnd) && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
+              {filters.yearStart && filters.yearEnd ? `${filters.yearStart}–${filters.yearEnd}` :
+               filters.yearStart ? `≥${filters.yearStart}` : `≤${filters.yearEnd}`}
+            </span>
+          )}
+          <MapFilterButton>
             <label className="block">
-              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year Start</span>
-              <select value={filters.yearStart ?? ''} onChange={e => handleYearChange('yearStart', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-                <option value="">All Years</option>
-                {yearOptions.filter(y => !filters.yearEnd || y <= filters.yearEnd).map(y => <option key={y} value={y}>{y}</option>)}
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Type</span>
+              <select value={filters.cancerType} onChange={e => setFilters(f => ({ ...f, cancerType: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
               </select>
             </label>
-          )}
-          {yearOptions.length > 0 && (
             <label className="block">
-              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year End</span>
-              <select value={filters.yearEnd ?? ''} onChange={e => handleYearChange('yearEnd', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-                <option value="">All Years</option>
-                {yearOptions.filter(y => !filters.yearStart || y >= filters.yearStart).map(y => <option key={y} value={y}>{y}</option>)}
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Breed</span>
+              <select value={filters.breed} onChange={e => setFilters(f => ({ ...f, breed: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                {BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
             </label>
-          )}
-        </MapFilterButton>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
+              <select value={filters.sex} onChange={e => setFilters(f => ({ ...f, sex: e.target.value as FilterState['sex'] }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                {SEX_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </label>
+            {yearOptions.length > 0 && (
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year Start</span>
+                <select value={filters.yearStart ?? ''} onChange={e => handleYearChange('yearStart', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                  <option value="">All Years</option>
+                  {yearOptions.filter(y => !filters.yearEnd || y <= filters.yearEnd).map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </label>
+            )}
+            {yearOptions.length > 0 && (
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year End</span>
+                <select value={filters.yearEnd ?? ''} onChange={e => handleYearChange('yearEnd', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                  <option value="">All Years</option>
+                  {yearOptions.filter(y => !filters.yearStart || y >= filters.yearStart).map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </label>
+            )}
+          </MapFilterButton>
+        </div>
       }
       legend={
         <GradientLegend
@@ -597,20 +620,25 @@ function EnviroScreenMap({
       title="CalEnviroScreen 4.0"
       subtitle="Environmental health percentile"
       headerRight={
-        <MapFilterButton>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Indicator</span>
-            <select
-              value={indicator}
-              onChange={(e) => onIndicatorChange(e.target.value as CESIndicator)}
-              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-            >
-              {CES_INDICATORS.map((ind) => (
-                <option key={ind.value} value={ind.value}>{ind.label}</option>
-              ))}
-            </select>
-          </label>
-        </MapFilterButton>
+        <div className="flex items-center gap-1.5">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[140px] truncate">
+            {indicatorLabel}
+          </span>
+          <MapFilterButton>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Indicator</span>
+              <select
+                value={indicator}
+                onChange={(e) => onIndicatorChange(e.target.value as CESIndicator)}
+                className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+              >
+                {CES_INDICATORS.map((ind) => (
+                  <option key={ind.value} value={ind.value}>{ind.label}</option>
+                ))}
+              </select>
+            </label>
+          </MapFilterButton>
+        </div>
       }
       legend={
         <GradientLegend
@@ -734,32 +762,44 @@ function HumanCancerMap({ showSuperfund, geoLevel }: { showSuperfund: boolean; g
         </>
       }
       headerRight={
-        <MapFilterButton>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Site</span>
-            <select
-              value={selectedSite}
-              onChange={e => setSelectedSite(e.target.value as HumanCancerSite)}
-              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-            >
-              {HUMAN_CANCER_SITES.map(s => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
-            <select
-              value={effectiveSex}
-              onChange={e => setSelectedSex(e.target.value as HumanCancerSex)}
-              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-            >
-              {availableSexOptions.map(s => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-          </label>
-        </MapFilterButton>
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {selectedSite !== 'All Cancer Sites' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
+              {selectedSite}
+            </span>
+          )}
+          {effectiveSex !== 'Both Sexes' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
+              {effectiveSex}
+            </span>
+          )}
+          <MapFilterButton>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Site</span>
+              <select
+                value={selectedSite}
+                onChange={e => setSelectedSite(e.target.value as HumanCancerSite)}
+                className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+              >
+                {HUMAN_CANCER_SITES.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
+              <select
+                value={effectiveSex}
+                onChange={e => setSelectedSex(e.target.value as HumanCancerSex)}
+                className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+              >
+                {availableSexOptions.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </label>
+          </MapFilterButton>
+        </div>
       }
       legend={
         <GradientLegend
@@ -895,21 +935,28 @@ function PesticideMap({
         </>
       }
       headerRight={
-        <MapFilterButton>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Pesticide Class</span>
-            <select
-              value={selectedClass}
-              onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
-              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-            >
-              <option value="all">All Classes</option>
-              {PESTICIDE_CLASSES.map(cls => (
-                <option key={cls.value} value={cls.value}>{cls.label}</option>
-              ))}
-            </select>
-          </label>
-        </MapFilterButton>
+        <div className="flex items-center gap-1.5">
+          {selectedClass !== 'all' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
+              {classLabel}
+            </span>
+          )}
+          <MapFilterButton>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Pesticide Class</span>
+              <select
+                value={selectedClass}
+                onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
+                className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+              >
+                <option value="all">All Classes</option>
+                {PESTICIDE_CLASSES.map(cls => (
+                  <option key={cls.value} value={cls.value}>{cls.label}</option>
+                ))}
+              </select>
+            </label>
+          </MapFilterButton>
+        </div>
       }
       legend={
         <GradientLegend
@@ -1597,7 +1644,7 @@ export function AnalysisView() {
     breed: 'All Breeds',
   });
 
-  const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('pesticides');
+  const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
   const [mapCount, setMapCount] = useState<MapCount>(4);
   const [twoMapSelection, setTwoMapSelection] = useState<[MapId, MapId]>(['vmth', 'enviro']);
   const [threeMapSelection, setThreeMapSelection] = useState<[MapId, MapId, MapId]>(['vmth', 'enviro', 'human']);

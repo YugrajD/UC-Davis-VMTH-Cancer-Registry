@@ -313,6 +313,7 @@ async def lifespan(app: FastAPI):
                     JOIN species      s  ON p.species_id      = s.id
                     WHERE p.data_source = 'petbert'
                       AND cd.review_status IN ('confirmed', 'corrected')
+                      AND ct.name != 'Non-Cancer'
                     GROUP BY p.county_id, co.name, ct.id, ct.name,
                              s.id, s.name, COALESCE(p.sex, 'Unknown'),
                              EXTRACT(YEAR FROM p.diagnosis_date)
@@ -345,6 +346,7 @@ async def lifespan(app: FastAPI):
                     JOIN counties     co ON p.county_id       = co.id
                     WHERE p.data_source = 'petbert'
                       AND cd.review_status IN ('confirmed', 'corrected')
+                      AND ct.name != 'Non-Cancer'
                     GROUP BY EXTRACT(YEAR FROM p.diagnosis_date),
                              ct.id, ct.name, s.id, s.name,
                              p.county_id, co.name, COALESCE(p.sex, 'Unknown')
@@ -357,6 +359,118 @@ async def lifespan(app: FastAPI):
                 logger.info("Migration 023 applied: materialized views rebuilt with sex column")
     except Exception as e:
         logger.warning("Could not apply migration 023: %s", e)
+
+    # Add clinic_name column to ingestion_jobs (migration 024).
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE ingestion_jobs "
+                "ADD COLUMN IF NOT EXISTS clinic_name VARCHAR(255)"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not apply migration 024 (clinic_name): %s", e)
+
+    # Add source_diagnosis column to pathology_reports (migration 025).
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE pathology_reports "
+                "ADD COLUMN IF NOT EXISTS source_diagnosis TEXT"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not apply migration 025 (source_diagnosis): %s", e)
+
+    # Widen prediction_method from VARCHAR(20) to VARCHAR(50) (migration 026).
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE case_diagnoses "
+                "ALTER COLUMN prediction_method TYPE VARCHAR(50)"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not apply migration 026 (prediction_method width): %s", e)
+
+    # Rebuild materialized views to exclude Non-Cancer rows (migration 027).
+    try:
+        async with async_session() as db:
+            row = await db.execute(text(
+                "SELECT 1 FROM pg_matviews "
+                "WHERE matviewname = 'mv_county_cancer_incidence' "
+                "AND definition LIKE '%Non-Cancer%'"
+            ))
+            if row.scalar() is None:
+                logger.info("Applying migration 027: rebuilding materialized views to exclude Non-Cancer")
+                await db.execute(text(
+                    "DROP MATERIALIZED VIEW IF EXISTS mv_county_cancer_incidence CASCADE"
+                ))
+                await db.execute(text("""
+                    CREATE MATERIALIZED VIEW mv_county_cancer_incidence AS
+                    SELECT
+                        p.county_id,
+                        co.name        AS county_name,
+                        ct.id          AS cancer_type_id,
+                        ct.name        AS cancer_type_name,
+                        s.id           AS species_id,
+                        s.name         AS species_name,
+                        COALESCE(p.sex, 'Unknown') AS sex,
+                        EXTRACT(YEAR FROM p.diagnosis_date)::INTEGER AS year,
+                        COUNT(*)       AS case_count
+                    FROM case_diagnoses cd
+                    JOIN patients     p  ON cd.patient_id     = p.id
+                    JOIN counties     co ON p.county_id       = co.id
+                    JOIN cancer_types ct ON cd.cancer_type_id  = ct.id
+                    JOIN species      s  ON p.species_id      = s.id
+                    WHERE p.data_source = 'petbert'
+                      AND cd.review_status IN ('confirmed', 'corrected')
+                      AND ct.name != 'Non-Cancer'
+                    GROUP BY p.county_id, co.name, ct.id, ct.name,
+                             s.id, s.name, COALESCE(p.sex, 'Unknown'),
+                             EXTRACT(YEAR FROM p.diagnosis_date)
+                """))
+                await db.execute(text(
+                    "CREATE UNIQUE INDEX idx_mv_county_cancer "
+                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year)"
+                ))
+                await db.execute(text(
+                    "DROP MATERIALIZED VIEW IF EXISTS mv_yearly_trends CASCADE"
+                ))
+                await db.execute(text("""
+                    CREATE MATERIALIZED VIEW mv_yearly_trends AS
+                    SELECT
+                        EXTRACT(YEAR FROM p.diagnosis_date)::INTEGER AS year,
+                        ct.id          AS cancer_type_id,
+                        ct.name        AS cancer_type_name,
+                        s.id           AS species_id,
+                        s.name         AS species_name,
+                        p.county_id,
+                        co.name        AS county_name,
+                        COALESCE(p.sex, 'Unknown') AS sex,
+                        COUNT(*)       AS case_count,
+                        COUNT(*) FILTER (WHERE p.outcome = 'deceased') AS deceased_count,
+                        COUNT(*) FILTER (WHERE p.outcome = 'alive')    AS alive_count
+                    FROM case_diagnoses cd
+                    JOIN patients     p  ON cd.patient_id     = p.id
+                    JOIN cancer_types ct ON cd.cancer_type_id  = ct.id
+                    JOIN species      s  ON p.species_id      = s.id
+                    JOIN counties     co ON p.county_id       = co.id
+                    WHERE p.data_source = 'petbert'
+                      AND cd.review_status IN ('confirmed', 'corrected')
+                      AND ct.name != 'Non-Cancer'
+                    GROUP BY EXTRACT(YEAR FROM p.diagnosis_date),
+                             ct.id, ct.name, s.id, s.name,
+                             p.county_id, co.name, COALESCE(p.sex, 'Unknown')
+                """))
+                await db.execute(text(
+                    "CREATE UNIQUE INDEX idx_mv_yearly_trends "
+                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex)"
+                ))
+                await db.commit()
+                logger.info("Migration 027 applied: materialized views rebuilt without Non-Cancer")
+    except Exception as e:
+        logger.warning("Could not apply migration 027: %s", e)
 
     yield
 

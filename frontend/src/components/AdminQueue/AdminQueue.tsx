@@ -200,12 +200,14 @@ function JobCard({
   approveJobId,
   selectedModelFolder,
   availableModels,
+  approveClinicName,
   rejectJobId,
   rejectReason,
   onApproveOpen,
   onApproveConfirm,
   onApproveCancel,
   onModelFolderChange,
+  onClinicNameChange,
   onRejectOpen,
   onRejectConfirm,
   onRejectCancel,
@@ -219,12 +221,14 @@ function JobCard({
   approveJobId: number | null;
   selectedModelFolder: string;
   availableModels: string[];
+  approveClinicName: string;
   rejectJobId: number | null;
   rejectReason: string;
   onApproveOpen: (id: number) => void;
   onApproveConfirm: (id: number) => void;
   onApproveCancel: () => void;
   onModelFolderChange: (v: string) => void;
+  onClinicNameChange: (v: string) => void;
   onRejectOpen: (id: number) => void;
   onRejectConfirm: (id: number) => void;
   onRejectCancel: () => void;
@@ -255,16 +259,25 @@ function JobCard({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => onPreview(job.id, job.dataset_a_filename)}
-            disabled={previewLoading === `${job.id}`}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
-          >
-            {previewLoading === `${job.id}` && (
-              <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-            )}
-            Preview
-          </button>
+          {['completed', 'failed'].includes(job.status) ? (
+            <span
+              title="File was removed after processing"
+              className="px-3 py-1.5 text-xs font-medium text-gray-400 border border-gray-200 rounded-md cursor-not-allowed inline-flex items-center gap-1.5"
+            >
+              Preview
+            </span>
+          ) : (
+            <button
+              onClick={() => onPreview(job.id, job.dataset_a_filename)}
+              disabled={previewLoading === `${job.id}`}
+              className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
+            >
+              {previewLoading === `${job.id}` && (
+                <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+              )}
+              Preview
+            </button>
+          )}
 
           {job.status === 'pending_review' && (
             <>
@@ -306,9 +319,22 @@ function JobCard({
         <ResultSummary summary={job.result_summary} />
       )}
 
-      {/* Approve confirmation panel with model selector */}
+      {/* Approve confirmation panel with clinic name + model selector */}
       {approveJobId === job.id && (
         <div className="mt-3 border-t border-gray-100 pt-3 space-y-2">
+          <div>
+            <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+              Clinic name <span className="text-red-500">*</span>
+            </p>
+            <input
+              type="text"
+              value={approveClinicName}
+              onChange={(e) => onClinicNameChange(e.target.value)}
+              placeholder="e.g. UC Davis VMTH"
+              disabled={actionLoading === job.id}
+              className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-300 disabled:opacity-50"
+            />
+          </div>
           <p className="text-xs font-medium text-[var(--color-text-secondary)]">Select model</p>
           <div className="flex items-center gap-2">
             <select
@@ -323,7 +349,7 @@ function JobCard({
             </select>
             <button
               onClick={() => onApproveConfirm(job.id)}
-              disabled={actionLoading === job.id}
+              disabled={actionLoading === job.id || !approveClinicName.trim()}
               className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
             >
               {actionLoading === job.id ? '...' : 'Confirm Approve'}
@@ -376,6 +402,7 @@ export function AdminQueue() {
   const [approveJobId, setApproveJobId] = useState<number | null>(null);
   const [selectedModelFolder, setSelectedModelFolder] = useState('production');
   const [availableModels, setAvailableModels] = useState<string[]>(['production']);
+  const [approveClinicName, setApproveClinicName] = useState('');
   const [rejectJobId, setRejectJobId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [preview, setPreview] = useState<{ content: string; filename: string } | null>(null);
@@ -433,7 +460,14 @@ export function AdminQueue() {
   const handleApproveOpen = (jobId: number) => {
     setRejectJobId(null);
     setRejectReason('');
-    setApproveJobId(approveJobId === jobId ? null : jobId);
+    if (approveJobId === jobId) {
+      setApproveJobId(null);
+      setApproveClinicName('');
+    } else {
+      setApproveJobId(jobId);
+      const job = jobs.find(j => j.id === jobId);
+      setApproveClinicName(job?.clinic_name ?? '');
+    }
   };
 
   const handleApproveConfirm = async (jobId: number) => {
@@ -441,8 +475,9 @@ export function AdminQueue() {
     try {
       const token = await getAccessToken();
       if (!token) return;
-      await reviewJob(token, jobId, 'approve', undefined, selectedModelFolder);
+      await reviewJob(token, jobId, 'approve', undefined, selectedModelFolder, approveClinicName.trim() || undefined);
       setApproveJobId(null);
+      setApproveClinicName('');
       await loadJobs();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Approve failed');
@@ -451,7 +486,7 @@ export function AdminQueue() {
     }
   };
 
-  const handleApproveCancel = () => setApproveJobId(null);
+  const handleApproveCancel = () => { setApproveJobId(null); setApproveClinicName(''); };
 
   const handleReject = async (jobId: number) => {
     setActionLoading(jobId);
@@ -515,12 +550,14 @@ export function AdminQueue() {
     approveJobId,
     selectedModelFolder,
     availableModels,
+    approveClinicName,
     rejectJobId,
     rejectReason,
     onApproveOpen: handleApproveOpen,
     onApproveConfirm: handleApproveConfirm,
     onApproveCancel: handleApproveCancel,
     onModelFolderChange: setSelectedModelFolder,
+    onClinicNameChange: setApproveClinicName,
     onRejectOpen: (id: number) => { setApproveJobId(null); setRejectJobId(rejectJobId === id ? null : id); },
     onRejectConfirm: handleReject,
     onRejectCancel: () => { setRejectJobId(null); setRejectReason(''); },

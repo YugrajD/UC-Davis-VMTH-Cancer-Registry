@@ -12,7 +12,7 @@ from app.schemas.schemas import DashboardSummary, SpeciesBreakdown, TopCancer, F
 from app.models.models import (
     Species, Breed, CancerType, County, Patient, CaseDiagnosis
 )
-from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
+from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME, TOP_DIAGNOSIS_ONLY
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
@@ -81,6 +81,7 @@ async def get_summary(request: Request, db: AsyncSession = Depends(get_db)):
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .where(_PETBERT_FILTER)
+        .where(TOP_DIAGNOSIS_ONLY)
         .group_by(CancerType.name)
         .order_by(func.count(CaseDiagnosis.id).desc())
         .limit(8)

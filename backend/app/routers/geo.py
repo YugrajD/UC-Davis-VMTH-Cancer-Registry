@@ -92,6 +92,7 @@ async def get_counties_geojson(
         "     WHERE p2.county_id = p.county_id "
         "       AND cd.review_status IN " + visible_statuses_sql + " "
         "       AND ct2.name != 'Non-Cancer' "
+        "       AND cd.diagnosis_index = 1 "
         "     GROUP BY ct2.name ORDER BY COUNT(*) DESC LIMIT 1"
         "    ) AS top_cancer "
         "    FROM patients p "

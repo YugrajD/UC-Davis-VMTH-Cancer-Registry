@@ -12,7 +12,7 @@ from app.rate_limit import limiter
 from app.models.models import CancerType, Patient, Species, County, CaseDiagnosis
 from app.models.views import mv_yearly_trends
 from app.schemas.schemas import TrendsResponse, TrendSeries, TrendPoint
-from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
+from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME, TOP_DIAGNOSIS_ONLY
 
 router = APIRouter(prefix="/api/v1/trends", tags=["trends"])
 
@@ -55,6 +55,7 @@ async def get_yearly_trends(
             .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
             .where(CancerType.name.in_(cancer_type))
             .where(CancerType.name != NON_CANCER_TYPE_NAME)
+            .where(TOP_DIAGNOSIS_ONLY)
         )
         stmt = apply_review_filter(stmt)
     if species:

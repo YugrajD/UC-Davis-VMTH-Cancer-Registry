@@ -1,0 +1,11 @@
+[book]
+title = "UC Davis VMTH Cancer Registry"
+authors = ["ECS 193A Team 14"]
+description = "Documentation for the UC Davis VMTH Canine Cancer Registry"
+language = "en"
+multilingual = false
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/ECS-193A-Team-14/UC-Davis-VMTH-Cancer-Registry"
+no-section-label = false

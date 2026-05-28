@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -226,6 +226,7 @@ async def ingestion_status():
 async def upload_datasets(
     request: Request,
     dataset_a: UploadFile = File(...),
+    clinic_name: str = Form(..., min_length=1, max_length=255),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -268,6 +269,7 @@ async def upload_datasets(
         uploaded_by_email=user.email,
         uploaded_by_sub=user.sub,
         dataset_a_filename=_sanitize_filename(dataset_a.filename),
+        clinic_name=clinic_name.strip(),
         storage_path="",  # will update after we know the ID
         status="pending_review",
         created_at=datetime.now(timezone.utc),
@@ -460,6 +462,7 @@ async def review_job(
             rejection_reason=review.rejection_reason if is_reject else None,
             processing_stage=None if is_reject else "queued",
             model_folder=None if is_reject else (review.model_folder or "production"),
+            clinic_name=None if is_reject else (review.clinic_name.strip() if review.clinic_name else None),
             reviewed_by_email=reviewer.email,
             reviewed_at=now,
             updated_at=now,
@@ -511,6 +514,7 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "id": job.id,
         "uploaded_by_email": job.uploaded_by_email,
         "dataset_a_filename": job.dataset_a_filename,
+        "clinic_name": job.clinic_name,
         "status": job.status,
         "processing_stage": job.processing_stage,
         "model_folder": job.model_folder,

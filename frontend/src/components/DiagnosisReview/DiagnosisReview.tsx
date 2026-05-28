@@ -195,7 +195,7 @@ interface DetailPanelBodyProps {
 }
 
 function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
-  const [correctName, setCorrectName] = useState(detail.cancer_type_name);
+  const [correctName, setCorrectName] = useState(detail.predicted_term ?? detail.cancer_type_name);
   const [correctIcd, setCorrectIcd] = useState(detail.icd_o_code ?? '');
   const [notes, setNotes] = useState('');
 
@@ -232,18 +232,28 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
 
       <SourceText text={detail.original_text} />
 
-      {(detail.predicted_term || detail.icd_o_code) && (
-        <div className="grid grid-cols-2 gap-4">
-          {detail.predicted_term && (
+      {(detail.source_diagnosis || detail.predicted_term || detail.icd_o_code) && (
+        <div className="space-y-2">
+          {detail.source_diagnosis && detail.source_diagnosis.trim() && (
             <div>
-              <p className="text-xs text-gray-500 mb-1">Predicted term</p>
-              <p className="text-sm">{detail.predicted_term}</p>
+              <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
+              <p className="text-sm whitespace-pre-wrap text-[var(--color-text-primary)]">{detail.source_diagnosis}</p>
             </div>
           )}
-          {detail.icd_o_code && (
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Predicted code</p>
-              <p className="text-sm font-mono">{detail.icd_o_code}</p>
+          {(detail.predicted_term || detail.icd_o_code) && (
+            <div className="grid grid-cols-2 gap-4">
+              {detail.predicted_term && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Predicted term</p>
+                  <p className="text-sm">{detail.predicted_term}</p>
+                </div>
+              )}
+              {detail.icd_o_code && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Predicted code</p>
+                  <p className="text-sm font-mono">{detail.icd_o_code}</p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -390,7 +400,7 @@ export function DiagnosisReview() {
         offset: page * PAGE_SIZE,
         year: yearFilter,
         patient_id: patientIdFilter || undefined,
-        uploaded_by: clinicFilter || undefined,
+        clinic: clinicFilter || undefined,
       };
       if (canAudit && statusFilter !== 'pending') {
         rows = await fetchAllDiagnoses(token, {

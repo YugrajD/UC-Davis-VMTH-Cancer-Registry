@@ -358,6 +358,39 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not apply migration 023: %s", e)
 
+    # Add clinic_name column to ingestion_jobs (migration 024).
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE ingestion_jobs "
+                "ADD COLUMN IF NOT EXISTS clinic_name VARCHAR(255)"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not apply migration 024 (clinic_name): %s", e)
+
+    # Add source_diagnosis column to pathology_reports (migration 025).
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE pathology_reports "
+                "ADD COLUMN IF NOT EXISTS source_diagnosis TEXT"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not apply migration 025 (source_diagnosis): %s", e)
+
+    # Widen prediction_method from VARCHAR(20) to VARCHAR(50) (migration 026).
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE case_diagnoses "
+                "ALTER COLUMN prediction_method TYPE VARCHAR(50)"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not apply migration 026 (prediction_method width): %s", e)
+
     yield
 
 

@@ -290,6 +290,7 @@ export interface IngestionJob {
   id: number;
   uploaded_by_email: string;
   dataset_a_filename: string;
+  clinic_name?: string | null;
   status: string;
   processing_stage?: string | null;
   model_folder?: string | null;
@@ -332,9 +333,11 @@ export interface IngestionResponse {
 export async function uploadCSV(
   dataset: File,
   token: string,
+  clinicName: string,
 ): Promise<IngestionJob> {
   const formData = new FormData();
   formData.append('dataset_a', dataset);
+  formData.append('clinic_name', clinicName);
 
   const response = await fetch(apiUrl('/api/v1/ingest/upload'), {
     method: 'POST',
@@ -396,6 +399,7 @@ export async function reviewJob(
   action: 'approve' | 'reject',
   rejectionReason?: string,
   modelFolder?: string,
+  clinicName?: string,
 ): Promise<IngestionJob> {
   const response = await fetch(apiUrl(`/api/v1/ingest/jobs/${jobId}/review`), {
     method: 'POST',
@@ -407,6 +411,7 @@ export async function reviewJob(
       action,
       rejection_reason: rejectionReason || null,
       model_folder: modelFolder || null,
+      clinic_name: clinicName || null,
     }),
   });
 
@@ -463,6 +468,8 @@ export interface DiagnosisDetail extends PendingDiagnosis {
   original_predicted_term: string | null;
   /** Raw source text PetBERT classified — null for legacy rows. */
   original_text: string | null;
+  /** Diagnosis text from the clinic's dataset — null when not provided. */
+  source_diagnosis: string | null;
   reviewed_by_email: string | null;
   reviewed_at: string | null;
   reviewer_notes: string | null;
@@ -490,7 +497,7 @@ export async function fetchPendingDiagnoses(
     ingestion_job_id?: number;
     year?: number;
     patient_id?: string;
-    uploaded_by?: string;
+    clinic?: string;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -510,7 +517,7 @@ export async function fetchAllDiagnoses(
     ingestion_job_id?: number;
     year?: number;
     patient_id?: string;
-    uploaded_by?: string;
+    clinic?: string;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();

@@ -22,12 +22,12 @@ describe('CANCER_TYPES', () => {
     expect(specific.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('includes Lymphoma', () => {
-    expect(CANCER_TYPES).toContain('Lymphoma');
+  it('includes a lymphoma group', () => {
+    expect(CANCER_TYPES).toContain('Malignant lymphomas, NOS or diffuse');
   });
 
-  it('includes Osteosarcoma', () => {
-    expect(CANCER_TYPES).toContain('Osteosarcoma');
+  it('includes an osseous/bone tumor group', () => {
+    expect(CANCER_TYPES).toContain('Osseous and chondromatous neoplasms');
   });
 
   it('all entries are non-empty strings', () => {

@@ -94,7 +94,7 @@ class CaseDiagnosis(Base):
     predicted_term = Column(Text, nullable=True)
     pathology_report_id = Column(Integer, ForeignKey("pathology_reports.id"), nullable=True)
     confidence = Column(Numeric(4, 2), nullable=True)
-    prediction_method = Column(String(20), nullable=True)
+    prediction_method = Column(String(50), nullable=True)
     source_row_index = Column(Integer, nullable=True)
     diagnosis_index = Column(Integer, nullable=True)
 
@@ -163,6 +163,7 @@ class PathologyReport(Base):
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
     gcs_path = Column(String(1000), nullable=True)
     report_date = Column(Date, nullable=True)
+    source_diagnosis = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     patient = relationship("Patient", back_populates="reports")
@@ -235,6 +236,7 @@ class IngestionJob(Base):
     processing_stage = Column(String(50), nullable=True)
     result_summary = Column(JSONB, nullable=True)
     model_folder = Column(String(255), nullable=True)
+    clinic_name = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
 

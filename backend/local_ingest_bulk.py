@@ -2,29 +2,34 @@
 """Bulk ingestion — same structure as local_ingest.py but replaces all ORM
 round-trips with chunked multi-row INSERTs.
 
-Optionally accepts a report CSV (e.g. report.csv) as a third argument.
-When provided and GCS is configured, each patient's pathology report text
-is uploaded to GCS and linked via pathology_reports.gcs_path — matching
-exactly how the UI pipeline stores reports.
+Accepts an optional diagnoses CSV (e.g. diagnoses.csv) as a third argument.
+When provided, its diagnosis text is concatenated per case_id and stored on
+pathology_reports.source_diagnosis so reviewers can see the original clinic
+diagnoses alongside the PetBERT prediction.
+
+This script preserves existing patients and pathology_reports rows (GCS paths
+are kept intact). It only clears case_diagnoses and diagnosis_review_events
+before re-inserting predictions.
 
 Usage:
   docker exec vmth_cancer_backend python -u /app/local_ingest_bulk.py \
       /app/petbert_predictions.csv \
       /app/demographics.csv \
-      /app/report.csv          # optional
+      /app/diagnoses.csv          # optional — populates source_diagnosis
 """
 
 import asyncio
 import csv
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, "/app")
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
@@ -40,10 +45,9 @@ from app.services.zip_county_service import lookup_county
 
 PREDICTIONS_PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/app/petbert_predictions.csv")
 DEMOGRAPHICS_PATH = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("/app/demographics.csv")
-REPORT_PATH      = Path(sys.argv[3]) if len(sys.argv) > 3 else Path("/app/report.csv")
+DIAGNOSES_PATH    = Path(sys.argv[3]) if len(sys.argv) > 3 else None
 
-_CHUNK        = 1_000   # rows per bulk INSERT / IN clause
-_GCS_CHUNK    = 50      # concurrent GCS uploads per batch
+_CHUNK = 1_000   # rows per bulk INSERT / IN clause
 
 
 def load_csv_dicts(path: Path) -> list[dict]:
@@ -51,63 +55,28 @@ def load_csv_dicts(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def build_report_text(row: dict) -> str:
-    """Concatenate all non-empty report sections into a single text blob."""
-    sections = [
-        "CLINICAL ABSTRACT",
-        "GROSS DESCRIPTION",
-        "HISTOPATHOLOGICAL SUMMARY",
-        "COMMENT",
-        "FINAL COMMENT",
-        "ANCILLARY TESTS",
-        "ADDENDUM",
-        "ADDITIONAL INFORMATION",
-    ]
-    parts = []
-    for col in sections:
-        val = (row.get(col) or "").strip()
-        if val and val.upper() not in ("NA", "N/A"):
-            parts.append(f"[{col}]\n{val}")
-    return "\n\n".join(parts)
+def build_source_diagnosis_map(diagnoses_rows: list[dict]) -> dict[str, str]:
+    """Group and concatenate diagnosis text per case_id.
 
-
-async def upload_reports_to_gcs(
-    report_text_by_anon_id: dict[str, str],
-    gcs_job_id: int,
-) -> dict[str, str]:
-    """Upload all reports to GCS in parallel chunks.
-
-    Returns {anon_id: gcs_path} for every successful upload.
-    Uses the same path format as the UI pipeline: reports/{job_id}/{anon_id}.txt
+    Returns {case_id: "diag1\ndiag2\n..."}.
     """
-    from app.services.gcp_batch_service import upload_report_text_to_gcs
+    by_case: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for row in diagnoses_rows:
+        case_id = (row.get("case_id") or "").strip()
+        diagnosis = (row.get("diagnosis") or "").strip()
+        if not case_id or not diagnosis:
+            continue
+        try:
+            num = int(row.get("diagnosis_number") or 0)
+        except (ValueError, TypeError):
+            num = 0
+        by_case[case_id].append((num, diagnosis))
 
-    loop = asyncio.get_running_loop()
-    gcs_path_by_anon_id: dict[str, str] = {}
-    items = list(report_text_by_anon_id.items())
-    total = len(items)
-
-    for i in range(0, total, _GCS_CHUNK):
-        chunk = items[i : i + _GCS_CHUNK]
-        results = await asyncio.gather(
-            *[
-                loop.run_in_executor(
-                    None, upload_report_text_to_gcs, gcs_job_id, anon_id, txt
-                )
-                for anon_id, txt in chunk
-            ],
-            return_exceptions=True,
-        )
-        for (anon_id, _), result in zip(chunk, results):
-            if isinstance(result, Exception):
-                print(f"  WARNING: GCS upload failed for {anon_id}: {result}")
-            else:
-                gcs_path_by_anon_id[anon_id] = result
-        done = min(i + _GCS_CHUNK, total)
-        print(f"  GCS upload: {done}/{total}", end="\r", flush=True)
-
-    print()  # newline after progress
-    return gcs_path_by_anon_id
+    result: dict[str, str] = {}
+    for case_id, entries in by_case.items():
+        entries.sort(key=lambda x: x[0])
+        result[case_id] = "\n".join(text for _, text in entries)
+    return result
 
 
 async def main():
@@ -119,25 +88,22 @@ async def main():
     if not DEMOGRAPHICS_PATH.exists():
         sys.exit(f"ERROR: {DEMOGRAPHICS_PATH} not found")
 
-    use_reports = REPORT_PATH.exists()
-    if use_reports:
-        print(f"Reports     : {REPORT_PATH}")
+    use_diagnoses = DIAGNOSES_PATH is not None and DIAGNOSES_PATH.exists()
+    if use_diagnoses:
+        print(f"Diagnoses   : {DIAGNOSES_PATH}")
     else:
-        print(f"Reports     : (not found, skipping)")
+        print(f"Diagnoses   : (not provided, source_diagnosis will not be updated)")
 
     raw_predictions = load_csv_dicts(PREDICTIONS_PATH)
     demographics_bytes = DEMOGRAPHICS_PATH.read_bytes()
     print(f"Loaded {len(raw_predictions)} prediction rows")
 
-    # Parse report CSV → {case_id: text} (only if file exists)
-    report_text_by_case_id: dict[str, str] = {}
-    if use_reports:
-        for row in load_csv_dicts(REPORT_PATH):
-            case_id = row.get("case_id", "").strip()
-            text_blob = build_report_text(row)
-            if case_id and text_blob:
-                report_text_by_case_id[case_id] = text_blob
-        print(f"Loaded {len(report_text_by_case_id)} report texts")
+    # Parse diagnoses CSV → {case_id: concatenated_text}
+    source_diagnosis_map: dict[str, str] = {}
+    if use_diagnoses:
+        diagnoses_rows = load_csv_dicts(DIAGNOSES_PATH)
+        source_diagnosis_map = build_source_diagnosis_map(diagnoses_rows)
+        print(f"Loaded source diagnoses for {len(source_diagnosis_map)} cases")
 
     petbert = parse_predictions(raw_predictions)
     demographics = parse_dataset_a_demographics(demographics_bytes)
@@ -150,17 +116,13 @@ async def main():
     async with Session() as db:
         await db.execute(text("SET statement_timeout = 0"))
 
-        # --- Clear existing patient data ---
-        print("Clearing existing data...")
+        # --- Clear only diagnosis data (preserve patients + pathology_reports) ---
+        print("Clearing diagnosis data...")
         await db.execute(text("DELETE FROM diagnosis_review_events"))
         await db.execute(text("DELETE FROM case_diagnoses"))
-        await db.execute(text("DELETE FROM pathology_reports"))
-        await db.execute(text("DELETE FROM patients"))
-        await db.execute(text("DELETE FROM ingestion_jobs"))
-        await db.execute(text("DELETE FROM ingestion_logs"))
         await db.commit()
         await db.execute(text("SET statement_timeout = 0"))
-        print("Database cleared.")
+        print("Diagnosis data cleared.")
 
         # --- Load reference lookups ---
         sp_rows = (await db.execute(select(Species.id, Species.name))).fetchall()
@@ -299,75 +261,48 @@ async def main():
             )).fetchall()
             anon_to_patient_id.update({r.anon_id: r.id for r in rows})
 
-        # --- Upload reports to GCS and insert pathology_reports rows ---
-        # GCS job ID: use a timestamp so each local run gets a unique path prefix,
-        # matching the reports/{job_id}/{anon_id}.txt convention from the UI pipeline.
+        # --- Look up existing pathology_reports (skip GCS re-upload) ---
+        pr_table = PathologyReport.__table__
         anon_to_report_id: dict[str, int] = {}
-        reports_inserted = 0
+        patient_to_anon: dict[int, str] = {v: k for k, v in anon_to_patient_id.items()}
 
-        if use_reports and report_text_by_case_id:
-            # Only upload for patients we actually have in the DB
-            report_text_by_anon_id = {
-                anon_id: report_text_by_case_id[anon_id]
-                for anon_id in ids_to_process
-                if anon_id in report_text_by_case_id and anon_id in anon_to_patient_id
-            }
+        all_patient_ids = list(anon_to_patient_id.values())
+        for i in range(0, len(all_patient_ids), _CHUNK):
+            chunk_pids = all_patient_ids[i : i + _CHUNK]
+            rows = (await db.execute(
+                select(pr_table.c.id, pr_table.c.patient_id)
+                .where(pr_table.c.patient_id.in_(chunk_pids))
+            )).fetchall()
+            for report_id, patient_id in rows:
+                anon_id = patient_to_anon.get(patient_id)
+                if anon_id:
+                    anon_to_report_id[anon_id] = report_id
 
-            gcs_path_by_anon_id: dict[str, str] = {}
-            if settings.GCS_BUCKET:
-                gcs_job_id = int(time.time())
-                print(f"Uploading {len(report_text_by_anon_id)} reports to GCS (job_id={gcs_job_id})...")
-                gcs_path_by_anon_id = await upload_reports_to_gcs(report_text_by_anon_id, gcs_job_id)
-                print(f"  {len(gcs_path_by_anon_id)} reports uploaded successfully.")
-            else:
-                print("GCS not configured — storing pathology_reports without gcs_path.")
+        print(f"  {len(anon_to_report_id)} existing pathology_reports found.")
 
-            # Build pathology_report rows (one per patient that has report text)
-            demo_by_anon = {a: (demographics.get(a) or {}) for a in report_text_by_anon_id}
-            pr_values = [
-                {
-                    "patient_id": anon_to_patient_id[anon_id],
-                    "gcs_path": gcs_path_by_anon_id.get(anon_id),
-                    "report_date": demo_by_anon[anon_id].get("diagnosis_date"),
-                }
-                for anon_id in report_text_by_anon_id
-            ]
+        # --- Update source_diagnosis on existing pathology_reports ---
+        source_diag_updated = 0
+        if source_diagnosis_map:
+            print("Updating source_diagnosis on pathology_reports...")
+            update_pairs: list[tuple[int, str]] = []
+            for anon_id, report_id in anon_to_report_id.items():
+                src = source_diagnosis_map.get(anon_id)
+                if src:
+                    update_pairs.append((report_id, src))
 
-            print(f"Inserting {len(pr_values)} pathology_report rows...")
-            pr_table = PathologyReport.__table__
-            for i in range(0, len(pr_values), _CHUNK):
-                chunk = pr_values[i : i + _CHUNK]
-                result = await db.execute(
-                    pg_insert(pr_table)
-                    .values(chunk)
-                    .returning(pr_table.c.id, pr_table.c.patient_id)
-                )
-                for report_id, patient_id in result.fetchall():
-                    # Reverse-lookup anon_id from patient_id to build the map
-                    pass  # populated below via a separate query
-            await db.commit()
-            await db.execute(text("SET statement_timeout = 0"))
-            reports_inserted = len(pr_values)
-
-            # Resolve patient_id → pathology_report.id for the FK on case_diagnoses
-            patient_to_report_id: dict[int, int] = {}
-            for i in range(0, len(ids_to_process), _CHUNK):
-                chunk_anon = ids_to_process[i : i + _CHUNK]
-                chunk_pids = [anon_to_patient_id[a] for a in chunk_anon if a in anon_to_patient_id]
-                if not chunk_pids:
-                    continue
-                rows = (await db.execute(
-                    select(pr_table.c.id, pr_table.c.patient_id)
-                    .where(pr_table.c.patient_id.in_(chunk_pids))
-                )).fetchall()
-                patient_to_report_id.update({pid: rid for rid, pid in rows})
-
-            anon_to_report_id = {
-                anon_id: patient_to_report_id[anon_to_patient_id[anon_id]]
-                for anon_id in report_text_by_anon_id
-                if anon_to_patient_id.get(anon_id) in patient_to_report_id
-            }
-            print(f"  {len(anon_to_report_id)} pathology_reports linked.")
+            for i in range(0, len(update_pairs), _CHUNK):
+                chunk = update_pairs[i : i + _CHUNK]
+                for report_id, src in chunk:
+                    await db.execute(
+                        update(PathologyReport)
+                        .where(PathologyReport.id == report_id)
+                        .values(source_diagnosis=src)
+                    )
+            if update_pairs:
+                await db.commit()
+                await db.execute(text("SET statement_timeout = 0"))
+            source_diag_updated = len(update_pairs)
+            print(f"  {source_diag_updated} pathology_reports updated with source_diagnosis.")
 
         # --- Build diagnosis rows ---
         print("Building diagnoses...")
@@ -395,7 +330,8 @@ async def main():
                 method = diag["method"]
                 rank = diag["diagnosis_index"]
                 row_margin = margin if rank == 1 else None
-                needs_review = (
+                is_non_cancer = (diag["predicted_group"] or "") == "Non-Cancer"
+                needs_review = not is_non_cancer and (
                     method == "low_confidence"
                     or conf < conf_threshold
                     or (row_margin is not None and row_margin < margin_threshold)
@@ -483,11 +419,12 @@ async def main():
     await engine.dispose()
 
     print(f"\nDone.")
-    print(f"  Patients          : {len(patient_values)}")
-    print(f"  Pathology reports : {reports_inserted}")
-    print(f"  Diagnoses         : {len(diag_rows)}")
-    print(f"  Flagged           : {len(review_rows)}")
-    print(f"  Warnings          : {len(warnings)}")
+    print(f"  Patients             : {len(patient_values)}")
+    print(f"  Pathology reports    : {len(anon_to_report_id)} (existing)")
+    print(f"  Source diag updated  : {source_diag_updated}")
+    print(f"  Diagnoses            : {len(diag_rows)}")
+    print(f"  Flagged              : {len(review_rows)}")
+    print(f"  Warnings             : {len(warnings)}")
     for w in warnings[:20]:
         print(f"    - {w}")
     if len(warnings) > 20:

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
-import { MOCK_BREEDS, getMockBreedDetail } from '../../data/mockData';
+import { fetchFilterOptions, fetchBreedDetail } from '../../api/client';
+import type { BreedDetail } from '../../api/client';
 
 const GEO_URL =
   'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
@@ -12,11 +13,16 @@ const MAP_PROJECTION_CONFIG = {
 };
 
 export function BreedDisparitiesView() {
-  const [breeds] = useState<string[]>(() => [...MOCK_BREEDS].sort());
-  const [selectedBreed, setSelectedBreed] = useState<string>(() => [...MOCK_BREEDS].sort()[0] ?? '');
+  const [breeds, setBreeds] = useState<string[]>([]);
+  const [selectedBreed, setSelectedBreed] = useState<string>('');
+  const [loadedBreed, setLoadedBreed] = useState<string>('');
+  const [detail, setDetail] = useState<BreedDetail | null>(null);
+  const [loadingBreeds, setLoadingBreeds] = useState(true);
+
+  const loadingDetail = selectedBreed !== '' && selectedBreed !== loadedBreed;
 
   // Autocomplete state
-  const [query, setQuery] = useState<string>(() => [...MOCK_BREEDS].sort()[0] ?? '');
+  const [query, setQuery] = useState<string>('');
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,11 +36,32 @@ export function BreedDisparitiesView() {
     y: number;
   } | null>(null);
 
-  // Derive detail synchronously from selectedBreed
-  const detail = useMemo(
-    () => (selectedBreed ? getMockBreedDetail(selectedBreed) : null),
-    [selectedBreed],
-  );
+  useEffect(() => {
+    fetchFilterOptions()
+      .then(opts => {
+        const names = opts.breeds.map(b => b.name).sort();
+        setBreeds(names);
+        if (names.length > 0) {
+          setSelectedBreed(names[0]);
+          setQuery(names[0]);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingBreeds(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedBreed) return;
+    fetchBreedDetail(selectedBreed)
+      .then((data) => {
+        setDetail(data);
+        setLoadedBreed(selectedBreed);
+      })
+      .catch(() => {
+        setDetail(null);
+        setLoadedBreed(selectedBreed);
+      });
+  }, [selectedBreed]);
 
   // Filtered suggestions
   const suggestions = useMemo(() => {
@@ -43,10 +70,8 @@ export function BreedDisparitiesView() {
     return breeds.filter((b) => b.toLowerCase().includes(lower)).slice(0, 20);
   }, [query, breeds]);
 
-  // Clamp highlightedIndex to valid range (avoids resetting state in an effect)
   const effectiveHighlightedIndex = Math.min(highlightedIndex, Math.max(0, suggestions.length - 1));
 
-  // Scroll highlighted item into view
   useEffect(() => {
     if (isOpen && listRef.current) {
       const item = listRef.current.children[effectiveHighlightedIndex] as HTMLElement | undefined;
@@ -54,7 +79,6 @@ export function BreedDisparitiesView() {
     }
   }, [effectiveHighlightedIndex, isOpen]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (inputRef.current && !inputRef.current.parentElement?.contains(e.target as Node)) {
@@ -100,7 +124,6 @@ export function BreedDisparitiesView() {
     }
   };
 
-  // Map helpers
   const countyMap = useMemo(() => {
     const m = new Map<string, number>();
     detail?.county_cases.forEach((c) => m.set(c.county_name.toLowerCase(), c.count));
@@ -119,8 +142,15 @@ export function BreedDisparitiesView() {
       .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
   }, [countRange]);
 
-  // Bar chart max
   const maxCancerCount = detail?.cancer_types[0]?.count || 1;
+
+  if (loadingBreeds) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-[var(--color-text-secondary)]">Loading breeds…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -177,7 +207,13 @@ export function BreedDisparitiesView() {
         </div>
       </div>
 
-      {detail && (
+      {loadingDetail && (
+        <div className="flex items-center justify-center h-32">
+          <p className="text-sm text-[var(--color-text-secondary)]">Loading breed data…</p>
+        </div>
+      )}
+
+      {!loadingDetail && detail && (
         <>
           {/* Summary Stats */}
           <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -362,6 +398,14 @@ export function BreedDisparitiesView() {
             </div>
           </div>
         </>
+      )}
+
+      {!loadingDetail && !detail && selectedBreed && (
+        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            No data available for {selectedBreed}.
+          </p>
+        </div>
       )}
     </div>
   );

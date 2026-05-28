@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ICD_LABELS, ICD_CODE_MAP, type IcdLabel } from '../../data/icdLabels';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   ApiError,
@@ -126,6 +127,67 @@ function DetailPanel({ detail, loading, onAction, busy }: DetailPanelProps) {
   return <DetailPanelBody key={detail.id} detail={detail} onAction={onAction} busy={busy} />;
 }
 
+function TermCombobox({
+  value,
+  onInput,
+  onSelect,
+}: {
+  value: string;
+  onInput: (term: string) => void;
+  onSelect: (label: IcdLabel) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q) return ICD_LABELS.slice(0, 10);
+    return ICD_LABELS.filter(l => l.term.toLowerCase().includes(q)).slice(0, 10);
+  }, [value]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={value}
+        onChange={e => { onInput(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+        placeholder="Type to search ICD-O terms…"
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto">
+          {filtered.map((l, i) => (
+            <li
+              key={i}
+              onMouseDown={e => {
+                e.preventDefault();
+                onSelect(l);
+                setOpen(false);
+              }}
+              className="flex items-baseline justify-between gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-teal-50"
+            >
+              <span className="truncate">{l.term}</span>
+              <span className="shrink-0 text-xs text-gray-400 font-mono">{l.code}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface DetailPanelBodyProps {
   detail: DiagnosisDetail;
   onAction: DetailPanelProps['onAction'];
@@ -193,12 +255,14 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           </h4>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-gray-600">
-              Cancer type (for correction)
-              <input
-                type="text"
+              Correct term
+              <TermCombobox
                 value={correctName}
-                onChange={(e) => setCorrectName(e.target.value)}
-                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+                onInput={term => setCorrectName(term)}
+                onSelect={label => {
+                  setCorrectName(label.term);
+                  setCorrectIcd(label.code);
+                }}
               />
             </label>
             <label className="text-xs text-gray-600">
@@ -207,7 +271,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
                 type="text"
                 value={correctIcd}
                 onChange={(e) => setCorrectIcd(e.target.value)}
-                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
               />
             </label>
           </div>

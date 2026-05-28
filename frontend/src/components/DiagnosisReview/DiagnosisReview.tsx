@@ -232,15 +232,20 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
 
       <SourceText text={detail.original_text} />
 
-      {detail.predicted_term && (
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Predicted term</p>
-          <p className="text-sm">
-            {detail.predicted_term}
-            {detail.icd_o_code && (
-              <span className="ml-2 font-mono text-xs text-gray-400">ICD-O {detail.icd_o_code}</span>
-            )}
-          </p>
+      {(detail.predicted_term || detail.icd_o_code) && (
+        <div className="grid grid-cols-2 gap-4">
+          {detail.predicted_term && (
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Predicted term</p>
+              <p className="text-sm">{detail.predicted_term}</p>
+            </div>
+          )}
+          {detail.icd_o_code && (
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Predicted code</p>
+              <p className="text-sm font-mono">{detail.icd_o_code}</p>
+            </div>
+          )}
         </div>
       )}
 

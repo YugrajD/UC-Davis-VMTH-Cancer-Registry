@@ -1644,7 +1644,7 @@ export function AnalysisView() {
     breed: 'All Breeds',
   });
 
-  const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('pesticides');
+  const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
   const [mapCount, setMapCount] = useState<MapCount>(4);
   const [twoMapSelection, setTwoMapSelection] = useState<[MapId, MapId]>(['vmth', 'enviro']);
   const [threeMapSelection, setThreeMapSelection] = useState<[MapId, MapId, MapId]>(['vmth', 'enviro', 'human']);

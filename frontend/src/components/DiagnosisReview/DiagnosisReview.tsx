@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ICD_LABELS, ICD_CODE_MAP, type IcdLabel } from '../../data/icdLabels';
+import { ICD_LABELS, type IcdLabel } from '../../data/icdLabels';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   ApiError,

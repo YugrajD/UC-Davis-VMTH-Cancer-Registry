@@ -568,8 +568,18 @@ export function DataUpload() {
   const handleCombinedDownload = async () => {
     setCombinedDownloading(true);
     try {
+      // Pass the same filters the user set for the patient export.
+      // zipCode and breed are not supported by the county-level incidence
+      // endpoint so they are intentionally omitted here.
+      const incidenceFilters = {
+        ...(exportCancerType && { cancerTypes: [exportCancerType] }),
+        ...(exportCounty && { counties: [exportCounty] }),
+        ...(exportSex && { sex: exportSex }),
+        ...(exportYearStart && { yearStart: Number(exportYearStart) }),
+        ...(exportYearEnd && { yearEnd: Number(exportYearEnd) }),
+      };
       const [incidenceRes, cesData] = await Promise.all([
-        fetchIncidence(),
+        fetchIncidence(incidenceFilters),
         fetchCalEnviroScreen(),
       ]);
 

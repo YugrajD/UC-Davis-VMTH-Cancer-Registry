@@ -12,7 +12,7 @@ from app.rate_limit import limiter
 from app.models.models import CancerType, Patient, Species, Breed, County, CaseDiagnosis
 from app.models.views import mv_county_cancer
 from app.schemas.schemas import IncidenceRecord, IncidenceResponse, BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount
-from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER
+from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
 
@@ -56,6 +56,7 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
     stmt = stmt.where(Patient.data_source == "petbert")
     stmt = stmt.where(CALIFORNIA_PATIENT_FILTER)
     stmt = apply_review_filter(stmt)
+    stmt = stmt.where(CancerType.name != NON_CANCER_TYPE_NAME)
     if species:
         stmt = stmt.where(Species.name.in_(species))
     if cancer_type:

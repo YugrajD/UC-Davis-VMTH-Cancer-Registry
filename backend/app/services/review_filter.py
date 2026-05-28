@@ -20,6 +20,10 @@ from sqlalchemy.sql import Select
 
 from app.models.models import CaseDiagnosis, Patient
 
+# Cancer type name used when the case-presence classifier rejects a case.
+# These rows must be excluded from all public aggregations.
+NON_CANCER_TYPE_NAME = "Non-Cancer"
+
 
 # Exclude patients whose zip code was resolved as non-California.
 # A patient with zip_code IS NULL has no geographic data (acceptable — include them).

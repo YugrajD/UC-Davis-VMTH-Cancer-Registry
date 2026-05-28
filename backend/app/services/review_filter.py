@@ -24,9 +24,6 @@ from app.models.models import CaseDiagnosis, Patient
 # These rows must be excluded from all public aggregations.
 NON_CANCER_TYPE_NAME = "Non-Cancer"
 
-# Only the top-1 prediction per patient counts toward public statistics.
-TOP_DIAGNOSIS_ONLY = CaseDiagnosis.diagnosis_index == 1
-
 
 # Exclude patients whose zip code was resolved as non-California.
 # A patient with zip_code IS NULL has no geographic data (acceptable — include them).

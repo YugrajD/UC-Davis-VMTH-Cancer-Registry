@@ -14,7 +14,7 @@ from app.models.models import (
     Patient,
     Species,
 )
-from app.services.review_filter import review_status_sql_in, NON_CANCER_TYPE_NAME, TOP_DIAGNOSIS_ONLY
+from app.services.review_filter import review_status_sql_in, NON_CANCER_TYPE_NAME
 
 CSV_COLUMNS = [
     "species",
@@ -85,7 +85,6 @@ async def generate_patient_export_csv(
         .where(Patient.data_source == "petbert")
         .where(CaseDiagnosis.review_status.in_(["confirmed", "corrected"]))
         .where(CancerType.name != NON_CANCER_TYPE_NAME)
-        .where(TOP_DIAGNOSIS_ONLY)
         .order_by(Patient.diagnosis_date, Patient.id)
     )
 

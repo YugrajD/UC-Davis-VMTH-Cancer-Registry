@@ -235,7 +235,12 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
       {detail.predicted_term && (
         <div>
           <p className="text-xs text-gray-500 mb-1">Predicted term</p>
-          <p className="text-sm">{detail.predicted_term}</p>
+          <p className="text-sm">
+            {detail.predicted_term}
+            {detail.icd_o_code && (
+              <span className="ml-2 font-mono text-xs text-gray-400">ICD-O {detail.icd_o_code}</span>
+            )}
+          </p>
         </div>
       )}
 

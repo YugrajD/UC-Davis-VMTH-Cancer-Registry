@@ -383,7 +383,12 @@ async def preview_job_dataset(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="File not found")
+        if job.status in ("completed", "failed"):
+            raise HTTPException(status_code=404, detail="File was removed after processing")
+        raise HTTPException(
+            status_code=404,
+            detail="Upload file not found — it may have been lost during a system restart. Reject this job and ask the uploader to re-submit.",
+        )
 
     def iter_file():
         with open(filepath, "rb") as f:

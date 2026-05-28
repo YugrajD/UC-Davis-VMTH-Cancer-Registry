@@ -255,16 +255,25 @@ function JobCard({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => onPreview(job.id, job.dataset_a_filename)}
-            disabled={previewLoading === `${job.id}`}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
-          >
-            {previewLoading === `${job.id}` && (
-              <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-            )}
-            Preview
-          </button>
+          {['completed', 'failed'].includes(job.status) ? (
+            <span
+              title="File was removed after processing"
+              className="px-3 py-1.5 text-xs font-medium text-gray-400 border border-gray-200 rounded-md cursor-not-allowed inline-flex items-center gap-1.5"
+            >
+              Preview
+            </span>
+          ) : (
+            <button
+              onClick={() => onPreview(job.id, job.dataset_a_filename)}
+              disabled={previewLoading === `${job.id}`}
+              className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
+            >
+              {previewLoading === `${job.id}` && (
+                <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+              )}
+              Preview
+            </button>
+          )}
 
           {job.status === 'pending_review' && (
             <>

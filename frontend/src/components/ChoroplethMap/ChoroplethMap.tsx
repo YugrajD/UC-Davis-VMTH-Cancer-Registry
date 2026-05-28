@@ -1,14 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import DeckGL from '@deck.gl/react';
-import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
+import { GeoJsonLayer } from '@deck.gl/layers';
 import type { MapViewState, PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
 import type { CountyData } from '../../types';
-import {
-  MOCK_SUPERFUND_SITES,
-  SUPERFUND_BY_COUNTY,
-  type SuperfundSite,
-} from '../../data/superfundData';
 import {
   GEO_URLS,
   INITIAL_VIEW_STATE,
@@ -90,10 +85,8 @@ function GeoLevelSelector({ value, onChange }: { value: GeoLevel; onChange: (v: 
 
 function MapLegend({
   countRange,
-  showSuperfund,
 }: {
   countRange: { min: number; max: number };
-  showSuperfund: boolean;
 }) {
   return (
     <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
@@ -107,20 +100,6 @@ function MapLegend({
         <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
         <span className="text-[10px] text-[var(--color-text-secondary)]">No data</span>
       </div>
-      {showSuperfund && (
-        <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
-          {[
-            { color: '#EF4444', label: 'Active' },
-            { color: '#F97316', label: 'Proposed' },
-            { color: '#22C55E', label: 'Remediated' },
-          ].map(({ color, label }) => (
-            <div key={label} className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full border border-white shadow-sm" style={{ backgroundColor: color }} />
-              <span className="text-[10px] text-[var(--color-text-secondary)]">{label} Superfund</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -136,7 +115,6 @@ interface ExpandedMapProps {
 }
 
 function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
-  const [showSuperfund, setShowSuperfund] = useState(false);
   const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const [expandedViewState, setExpandedViewState] =
@@ -182,31 +160,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
     [countyDataMap, colorScale, localHovered, geoLevel],
   );
 
-  const superfundLayer = useMemo(() => {
-    if (!showSuperfund) return null;
-    return new ScatterplotLayer<SuperfundSite>({
-      id: 'expanded-choropleth-superfund',
-      data: MOCK_SUPERFUND_SITES,
-      getPosition: d => d.coordinates,
-      getFillColor: d =>
-        d.status === 'active'
-          ? [239, 68, 68, 230]
-          : d.status === 'proposed'
-            ? [249, 115, 22, 230]
-            : [34, 197, 94, 230],
-      getLineColor: [255, 255, 255, 255],
-      lineWidthMinPixels: 1,
-      radiusMinPixels: 5,
-      radiusMaxPixels: 14,
-      getRadius: 3000,
-      pickable: true,
-    });
-  }, [showSuperfund]);
-
-  const layers = useMemo(
-    () => [geoLayer, ...(superfundLayer ? [superfundLayer] : [])],
-    [geoLayer, superfundLayer],
-  );
+  const layers = useMemo(() => [geoLayer], [geoLayer]);
 
   const getTooltip = (info: PickingInfo) => {
     if (!info.object) return null;
@@ -215,13 +169,9 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
       const countyInfo = countyDataMap.get(county.toLowerCase());
-      const sf = SUPERFUND_BY_COUNTY[county];
-      const sfStr = sf
-        ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>`
-        : '';
       const header = tooltipHeader(props, geoLevel, county);
       const body = countyInfo
-        ? `${countyInfo.count.toLocaleString()} cases${sfStr}`
+        ? `${countyInfo.count.toLocaleString()} cases`
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -229,18 +179,6 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
           backgroundColor: 'white', color: '#1f2937', padding: '8px 12px',
           borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px',
           boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-        },
-      };
-    }
-
-    if (info.layer?.id === 'expanded-choropleth-superfund') {
-      const site = info.object as SuperfundSite;
-      return {
-        html: `<strong style="font-size:13px">${site.name}</strong><br/><span style="color:#6b7280">${site.county} Co. · ${site.status}</span><br/><span style="color:#9ca3af;font-size:11px">${site.contaminants.join(', ')}</span>`,
-        style: {
-          backgroundColor: 'white', color: '#1f2937', padding: '8px 12px',
-          borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.12)', maxWidth: '220px',
         },
       };
     }
@@ -268,13 +206,6 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={() => setShowSuperfund(v => !v)}
-                className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-full border font-medium transition-colors ${showSuperfund ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${showSuperfund ? 'bg-red-500' : 'bg-gray-400'}`} />
-                Superfund
-              </button>
               <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
             </div>
             <button
@@ -300,7 +231,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
             getTooltip={getTooltip}
             style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
           />
-          <MapLegend countRange={countRange} showSuperfund={showSuperfund} />
+          <MapLegend countRange={countRange} />
           <MapResetButton
             onClick={() => setExpandedViewState(INITIAL_VIEW_STATE)}
             disabled={isAtDefaultView(expandedViewState)}
@@ -451,7 +382,7 @@ export function ChoroplethMap({
           getTooltip={getTooltip}
           style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
         />
-        <MapLegend countRange={countRange} showSuperfund={false} />
+        <MapLegend countRange={countRange} />
         <MapResetButton
           onClick={() => setViewState(INITIAL_VIEW_STATE)}
           disabled={isAtDefaultView(viewState)}

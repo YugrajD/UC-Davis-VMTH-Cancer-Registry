@@ -4,7 +4,7 @@
 **Team:** ECS 193A Team 14  
 **Authors:** Yugraj Dhillon, David Estrella, Chun Ho Li, Justin Pak  
 **Handoff Date:** April 15, 2026  
-**Last Updated:** May 18, 2026  
+**Last Updated:** May 28, 2026  
 **Repository:** https://github.com/ECS-193A-Team-14/UC-Davis-VMTH-Cancer-Registry  
 
 ---
@@ -79,7 +79,7 @@ UC-Davis-VMTH-Cancer-Registry/
 ├── ml-worker/                 # Dockerized ML worker for local dev
 │   └── Dockerfile.batch       # Production GCP Batch container
 ├── database/
-│   └── migrations/            # 025 SQL migrations (run in order)
+│   └── migrations/            # 029 SQL migrations (run in order)
 └── docs/                      # Architecture docs, workstream plans
 ```
 
@@ -90,10 +90,11 @@ UC-Davis-VMTH-Cancer-Registry/
 | `DataUpload` | `components/DataUpload/` | Implemented |
 | `AdminQueue` | `components/AdminQueue/` | Implemented |
 | `ChoroplethMap` | `components/ChoroplethMap/` | Implemented |
-| `Filters` | `components/Filters/` | Partial (no year/species in UI) |
-| `TrendChart` | `components/TrendChart/` | **Not implemented** |
+| `Filters` | `components/Filters/` | Implemented (sex, cancer type, breed, age group) |
+| `AgeDisparitiesView` | `components/AgeDisparitiesView/` | Implemented (Cancer by Age tab) |
+| `BreedDisparitiesView` | `components/BreedDisparitiesView/` | Implemented |
+| `AnalysisView` | `components/AnalysisView/` | Implemented (multi-map, scatter, trend charts using real API data) |
 | Case detail view | — | **Not implemented** |
-| CSV export button | — | **Not implemented** |
 | Plain-language search bar | — | **Not implemented** |
 
 ### Key Backend Routers
@@ -136,16 +137,21 @@ UC-Davis-VMTH-Cancer-Registry/
 
 ### Map Dashboard
 - California county choropleth map (react-simple-maps + d3-scale)
-- Filters: sex, cancer type, breed (wired end-to-end)
+- Filters: sex, cancer type, breed, **age group** (wired end-to-end)
 - Sortable county table with hover-to-highlight
 - Hierarchical summary table (California → UC Davis Catchment → Regions → Counties)
 - Case counts only (no incidence rate — dog population by county unavailable)
+- Only **top-1 prediction per patient** included in all public stats and maps (prevents double-counting when a dog has multiple ranked predictions)
+- **Non-Cancer** predictions excluded from all public statistics, maps, cancer type breakdown, and breed views
 
 ### Diagnosis Audit View (May 2026)
 - Uploaders and admins can browse all diagnoses by status (Pending / Confirmed / Corrected / Rejected / All) via a status filter pill bar on the Diagnosis Review tab
 - Non-admin uploaders see only diagnoses from jobs they submitted (`ingestion_job.uploaded_by_sub == user.sub` subquery)
 - Admins see all diagnoses across all jobs
 - Pathology report text (`case_diagnoses.original_text` — the `Text` column from Dataset A) is surfaced in the detail panel for each diagnosis, labeled "Pathology report text"
+- **Cancer group filter** (Cancer / Non-Cancer / Unidentified) in the review filter row
+- **Type filter** positioned after Clinic in the review filter row for a more logical flow
+- **Page number input** and total page count displayed in pagination bar
 
 ### Authentication & Security
 - Supabase Auth with email/password sign-in
@@ -156,11 +162,12 @@ UC-Davis-VMTH-Cancer-Registry/
 - Proactive JWT refresh in `AuthContext.getAccessToken()`: token is refreshed 60 seconds before expiry so the backend never receives an expired JWT, preventing the in-memory auth-failure rate limiter from accumulating failures and triggering 429s during normal pagination
 
 ### Database
-- 25 migrations applied in order (001–025); all migrations run at startup via the database service
+- 29 migrations applied in order (001–029); all migrations run at startup via the database service
 - PostGIS county boundaries for all 58 CA counties
 - `data_source = 'petbert'` distinguishes real ingested data from seed/mock data
 - One case per patient (dog) model — prevents double-counting
 - Materialized views (`mv_county_cancer_incidence`, `mv_yearly_trends`) refreshed after each ingest and via `POST /api/v1/admin/refresh-views`
+- Migrations 028–029 add `patients.birth_date` and `age_group` column to materialized views; re-ingest required to populate age data
 
 ### Security Hardening (May 2026)
 - Three full security review rounds completed; see `docs/current-architecture.md` for the layer-by-layer summary
@@ -177,8 +184,8 @@ UC-Davis-VMTH-Cancer-Registry/
 - `.claudeignore` blocks Claude from reading `.env` or `secrets/`; pre-commit hook blocks committing secrets
 
 ### Test Suite (May 2026)
-- Backend: **101 pytest tests** across 7 files (admin users, admin refresh-views, dashboard, incidence, security, review threshold analysis, ingestion service)
-- Frontend: **279 vitest tests** across 13 files (filtered data, cancer types, CalEnviroScreen, password reset PKCE URL parsing, export requests, user management, pipeline stages, etc.)
+- Backend: **117 pytest tests** across 12 files (admin users, admin refresh-views, dashboard, incidence, security, review threshold analysis, ingestion service, GCP Batch service, diagnoses router, ML worker thresholds)
+- Frontend: **295 vitest tests** across 15 files (filtered data, cancer types, CalEnviroScreen, password reset PKCE URL parsing, export requests, user management, pipeline stages, trends, human cancer rates, Vet-ICD-O categories, etc.)
 - CI: `.github/workflows/ci.yml` runs both suites + TypeScript check + ESLint on every push to `main`/`database` and every PR
 - DB is fully mocked in backend tests; no PostgreSQL container is needed for CI
 
@@ -200,7 +207,8 @@ These features have backend support but no frontend UI, or are entirely missing:
 | **Multi-clinic source tagging** | `data_source` column exists | No filter/display | Currently hardcoded to `'petbert'` |
 | **Distributed rate limiting** | In-memory per-process | N/A | SlowAPI + auth-failure tracking are per-instance. See future_plans.md §6 for the Redis migration plan |
 | **Distributed response cache** | `cachetools` per-process | N/A | TTLCache lives in each Cloud Run instance. Cache hit rate drops as instance count grows. Redis migration is documented |
-| **Recently shipped** (April–May 2026) | — | — | CSV export with admin approval, case-level review queue, year/species filters, plain-language search, trend chart (recharts), Google OAuth, password reset PKCE, role-request workflow |
+| **Age data population** | Migrations 028–029 exist | Age filter shows "all" only | `patients.birth_date` column exists but is not populated from the current prediction CSV format — re-ingest with updated input data required to activate age group filtering |
+| **Recently shipped** (April–May 2026) | — | — | CSV export with admin approval, case-level review queue, plain-language search, trend chart (recharts), Google OAuth, password reset PKCE, role-request workflow, Cancer by Age tab, age group filter, Non-Cancer exclusion from public stats, top-1 prediction per patient filtering |
 
 ---
 

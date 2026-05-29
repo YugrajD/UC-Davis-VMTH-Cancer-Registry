@@ -73,21 +73,23 @@ The backend enforces multiple layers of security:
 species (id, name)
 breeds (id, species_id, name)
 cancer_types (id, name, description, confirmed, icd_o_morphology_code)
-counties (id, name, fips_code, geom, population, area_sq_miles)
-patients (id, species_id, breed_id, sex, age_years, weight_kg, county_id, registered_date, anon_id)
-cancer_cases (id, patient_id, cancer_type_id, diagnosis_date, stage, outcome, county_id)
-case_diagnoses (id, patient_id, cancer_type_id, predicted_term, confidence, method, review_status, ...)
-pathology_reports (id, case_id, report_text, classification, confidence_score, report_date)
-ingestion_logs (id, filename, ...)
-ingestion_jobs (id, status, uploaded_by_email, storage_path, batch_job_name, ...)
+counties (id, name, fips_code, geom, population, area_sq_miles, is_catchment)
+patients (id, species_id, breed_id, sex, birth_date, county_id, zip_code, anon_id,
+          diagnosis_date, outcome, data_source)
+  -- Note: no cancer_cases table; diagnosis_date and outcome are on patients directly
+case_diagnoses (id, patient_id, cancer_type_id, predicted_term, predicted_group,
+                icd_o_code, confidence, prediction_method, review_status,
+                pathology_report_id, ingestion_job_id, ...)
+pathology_reports (id, patient_id, gcs_path, report_date, created_at)
+ingestion_jobs (id, status, uploaded_by_sub, storage_path, batch_job_name, ...)
 user_roles (email, is_admin, is_uploader, is_reviewer)
 role_requests (id, email, requested_role, status, reason, ...)
 export_requests (id, email, status, reason, ...)
 diagnosis_review_events (id, case_diagnosis_id, action, ...)
-calenviroscreen_data (county_id, ces_score, pollution_burden, ...)
+calenviroscreen (county_id, ces_score, pollution_burden, ...)
 
 Materialized Views:
-  mv_county_cancer_incidence
+  mv_county_cancer_incidence  -- top-1 prediction per patient, Non-Cancer excluded
   mv_yearly_trends
 ```
 

@@ -418,6 +418,50 @@ async def list_uploaders(
     return [row[0] for row in result.all()]
 
 
+@router.get("/count")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def count_diagnoses(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+    status: Optional[str] = Query(default=None, max_length=20),
+    year: Optional[int] = Query(default=None, ge=1900, le=2100),
+    patient_id: Optional[str] = Query(default=None, max_length=100),
+    clinic: Optional[str] = Query(default=None, max_length=255),
+    cancer_group: Optional[str] = Query(default=None, max_length=20),
+) -> dict:
+    """Row count matching the same filters as list_diagnoses; used for pagination."""
+    if not user.is_uploader:
+        raise HTTPException(status_code=403, detail="Uploader or admin role required")
+
+    query = (
+        select(func.count(CaseDiagnosis.id))
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .outerjoin(IngestionJob, IngestionJob.id == CaseDiagnosis.ingestion_job_id)
+    )
+
+    if status and status in _VALID_STATUSES:
+        query = query.where(CaseDiagnosis.review_status == status)
+
+    if not user.is_admin:
+        uploader_job_ids = select(IngestionJob.id).where(
+            IngestionJob.uploaded_by_sub == user.sub
+        )
+        query = query.where(CaseDiagnosis.ingestion_job_id.in_(uploader_job_ids))
+
+    if year is not None:
+        query = query.where(func.extract("year", Patient.diagnosis_date) == year)
+    if patient_id:
+        query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
+    if clinic and user.is_admin:
+        query = query.where(IngestionJob.clinic_name == clinic)
+    query = _apply_cancer_group_filter(query, cancer_group)
+
+    result = await db.execute(query)
+    return {"count": result.scalar() or 0}
+
+
 @router.get("/{diagnosis_id}")
 @limiter.limit(settings.RATE_LIMIT_DEFAULT)
 async def get_diagnosis(

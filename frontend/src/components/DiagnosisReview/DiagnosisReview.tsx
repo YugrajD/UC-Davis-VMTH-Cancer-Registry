@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   ApiError,
   fetchAllDiagnoses,
+  fetchDiagnosesCount,
   fetchDiagnosisDetail,
   fetchDiagnosisUploaders,
   fetchPendingCount,
@@ -395,7 +396,9 @@ export function DiagnosisReview() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState(0);
+  const [pageInput, setPageInput] = useState('1');
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [allCount, setAllCount] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const token = await getAccessToken();
@@ -429,6 +432,10 @@ export function DiagnosisReview() {
   }, [getAccessToken, page, canAudit, statusFilter, cancerGroupFilter, yearFilter, patientIdFilter, clinicFilter]);
 
   useEffect(() => {
+    setPageInput(String(page + 1));
+  }, [page]);
+
+  useEffect(() => {
     load(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [load]);
 
@@ -437,6 +444,23 @@ export function DiagnosisReview() {
       if (token) fetchPendingCount(token).then((r) => setPendingCount(r.count)).catch(() => {});
     });
   }, [getAccessToken]);
+
+  useEffect(() => {
+    if (!canAudit || statusFilter === 'pending') {
+      setAllCount(null);
+      return;
+    }
+    getAccessToken().then((token) => {
+      if (!token) return;
+      fetchDiagnosesCount(token, {
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        year: yearFilter,
+        patient_id: patientIdFilter || undefined,
+        clinic: clinicFilter || undefined,
+        cancer_group: cancerGroupFilter === 'all' ? undefined : cancerGroupFilter,
+      }).then((r) => setAllCount(r.count)).catch(() => {});
+    });
+  }, [getAccessToken, canAudit, statusFilter, yearFilter, patientIdFilter, clinicFilter, cancerGroupFilter]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -669,16 +693,56 @@ export function DiagnosisReview() {
                 <span className="text-gray-500"> ({pendingCount})</span>
               )}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <button
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                onClick={() => {
+                  setPage((p) => Math.max(0, p - 1));
+                  setSelectedId(null);
+                  setDetail(null);
+                }}
                 disabled={page === 0 || loadingList}
                 className="px-2 py-1 text-xs text-gray-600 disabled:opacity-40"
               >
                 Prev
               </button>
+              <span className="text-xs text-gray-500">Page</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value)}
+                onBlur={() => {
+                  const n = parseInt(pageInput, 10);
+                  if (!isNaN(n) && n >= 1) {
+                    const target = n - 1;
+                    if (target !== page) {
+                      setPage(target);
+                      setSelectedId(null);
+                      setDetail(null);
+                    }
+                  }
+                  setPageInput(String(page + 1));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                className="w-12 px-1.5 py-0.5 text-xs text-center border border-gray-300 rounded"
+              />
+              <span className="text-xs text-gray-500">
+                {statusFilter === 'pending' && pendingCount !== null
+                  ? `of ${Math.ceil(pendingCount / PAGE_SIZE) || 1}`
+                  : allCount !== null
+                    ? `of ${Math.ceil(allCount / PAGE_SIZE) || 1}`
+                    : !loadingList && pending.length < PAGE_SIZE
+                      ? `of ${page + 1}`
+                      : `of ?`}
+              </span>
               <button
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => {
+                  setPage((p) => p + 1);
+                  setSelectedId(null);
+                  setDetail(null);
+                }}
                 disabled={pending.length < PAGE_SIZE || loadingList}
                 className="px-2 py-1 text-xs text-gray-600 disabled:opacity-40"
               >

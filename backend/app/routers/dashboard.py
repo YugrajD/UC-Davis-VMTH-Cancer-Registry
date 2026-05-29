@@ -126,14 +126,16 @@ async def get_filter_options(request: Request, db: AsyncSession = Depends(get_db
     )).scalars().all()
     counties = (await db.execute(select(County).order_by(County.name))).scalars().all()
     breeds = (await db.execute(
-        select(Breed)
-        .join(Patient, Patient.breed_id == Breed.id)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
-        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-        .where(CancerType.name != NON_CANCER_TYPE_NAME)
-        .where(CALIFORNIA_PATIENT_FILTER)
-        .group_by(Breed.id)
-        .order_by(Breed.name)
+        apply_review_filter(
+            select(Breed)
+            .join(Patient, Patient.breed_id == Breed.id)
+            .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+            .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+            .where(CancerType.name != NON_CANCER_TYPE_NAME)
+            .where(CALIFORNIA_PATIENT_FILTER)
+            .group_by(Breed.id)
+            .order_by(Breed.name)
+        )
     )).scalars().all()
 
     result = await db.execute(

@@ -611,6 +611,21 @@ export function DiagnosisReview() {
                 className="w-40 px-2 py-1.5 border border-gray-300 rounded text-sm"
               />
             </label>
+            {isAdmin && uploaders.length > 0 && (
+              <label className="flex flex-col gap-1 text-xs text-gray-600">
+                Clinic
+                <select
+                  value={clinicFilter}
+                  onChange={(e) => handleClinicChange(e.target.value)}
+                  className="w-52 px-2 py-1.5 border border-gray-300 rounded text-sm"
+                >
+                  <option value="">All clinics</option>
+                  {uploaders.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="flex flex-col gap-1">
               <span className="text-xs text-gray-600">Type</span>
               <div className="flex gap-1">
@@ -635,21 +650,6 @@ export function DiagnosisReview() {
                 ))}
               </div>
             </div>
-            {isAdmin && uploaders.length > 0 && (
-              <label className="flex flex-col gap-1 text-xs text-gray-600">
-                Clinic
-                <select
-                  value={clinicFilter}
-                  onChange={(e) => handleClinicChange(e.target.value)}
-                  className="w-52 px-2 py-1.5 border border-gray-300 rounded text-sm"
-                >
-                  <option value="">All clinics</option>
-                  {uploaders.map((u) => (
-                    <option key={u} value={u}>{u}</option>
-                  ))}
-                </select>
-              </label>
-            )}
           </div>
         )}
       </div>

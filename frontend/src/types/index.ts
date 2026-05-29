@@ -52,7 +52,7 @@ export interface Tab {
 // Constants
 export const TABS: Tab[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'breed-disparities', label: 'Cancer by breed' },
+  { id: 'breed-disparities', label: 'Cancer by Breed' },
   { id: 'cancer-types', label: 'Cancer Types' },
   { id: 'analysis', label: 'Analysis' },
   { id: 'data-upload', label: 'Data Upload' },

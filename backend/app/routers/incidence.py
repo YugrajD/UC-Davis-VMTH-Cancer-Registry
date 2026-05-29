@@ -1,8 +1,8 @@
 """Incidence and mortality endpoints with filter support."""
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case as sa_case, literal
 from typing import Optional, List
 
 from app.cache import cached_response
@@ -11,7 +11,11 @@ from app.database import get_db
 from app.rate_limit import limiter
 from app.models.models import CancerType, Patient, Species, Breed, County, CaseDiagnosis
 from app.models.views import mv_county_cancer
-from app.schemas.schemas import IncidenceRecord, IncidenceResponse, BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount
+from app.schemas.schemas import (
+    IncidenceRecord, IncidenceResponse,
+    BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount,
+    AgeDetailOut, AgeCancerTypeCount, AgeCountyCount, AgeSexCount,
+)
 from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
@@ -24,10 +28,28 @@ SEX_MAP = {
     "female_spayed": "Spayed Female",
 }
 
+# Valid age group values (frontend and DB both use these)
+AGE_GROUPS = {"young", "juvenile", "adult", "old", "senior"}
+
+def _age_group_case(diagnosis_date_col, birth_date_col):
+    """SQLAlchemy CASE expression mapping birth/diagnosis dates to an age group string."""
+    age_expr = func.extract("year", diagnosis_date_col) - func.extract("year", birth_date_col)
+    return sa_case(
+        (birth_date_col.is_(None), literal("Unknown")),
+        (diagnosis_date_col.is_(None), literal("Unknown")),
+        (age_expr.between(0, 2), literal("young")),
+        (age_expr.between(3, 5), literal("juvenile")),
+        (age_expr.between(6, 8), literal("adult")),
+        (age_expr.between(9, 11), literal("old")),
+        (age_expr >= 12, literal("senior")),
+        else_=literal("Unknown"),
+    )
+
 
 def _apply_mv_filters(stmt, species: Optional[List[str]], cancer_type: Optional[List[str]],
                       county: Optional[List[str]], year_start: Optional[int],
-                      year_end: Optional[int], sex: Optional[str]):
+                      year_end: Optional[int], sex: Optional[str],
+                      age_group: Optional[str] = None):
     """Apply filters to a query on mv_county_cancer_incidence."""
     mv = mv_county_cancer.c
     if species:
@@ -43,15 +65,18 @@ def _apply_mv_filters(stmt, species: Optional[List[str]], cancer_type: Optional[
     if sex and sex not in ("All", "all"):
         mapped_sex = SEX_MAP.get(sex, sex)
         stmt = stmt.where(mv.sex == mapped_sex)
+    if age_group and age_group in AGE_GROUPS:
+        stmt = stmt.where(mv.age_group == age_group)
     return stmt
 
 
 def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[List[str]],
                    county: Optional[List[str]], year_start: Optional[int],
-                   year_end: Optional[int], sex: Optional[str]):
+                   year_end: Optional[int], sex: Optional[str],
+                   age_group: Optional[str] = None):
     """Apply common filters to a query statement (ingested data only).
 
-    Used by breed endpoints that still require live table joins.
+    Used by breed/age endpoints that still require live table joins.
     """
     stmt = stmt.where(Patient.data_source == "petbert")
     stmt = stmt.where(CALIFORNIA_PATIENT_FILTER)
@@ -70,6 +95,8 @@ def _apply_filters(stmt, species: Optional[List[str]], cancer_type: Optional[Lis
     if sex and sex not in ("All", "all"):
         mapped_sex = SEX_MAP.get(sex, sex)
         stmt = stmt.where(Patient.sex == mapped_sex)
+    if age_group and age_group in AGE_GROUPS:
+        stmt = stmt.where(_age_group_case(Patient.diagnosis_date, Patient.birth_date) == age_group)
     return stmt
 
 
@@ -84,6 +111,7 @@ async def get_incidence(
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
     year_end: Optional[int] = Query(None, ge=1900, le=2100),
     sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
     db: AsyncSession = Depends(get_db),
 ):
     mv = mv_county_cancer.c
@@ -95,7 +123,7 @@ async def get_incidence(
         func.sum(mv.case_count).label("count"),
     ).select_from(mv_county_cancer)
 
-    stmt = _apply_mv_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
+    stmt = _apply_mv_filters(stmt, species, cancer_type, county, year_start, year_end, sex, age_group)
     stmt = stmt.where(mv.year.is_not(None))
     stmt = stmt.group_by(mv.cancer_type_name, mv.county_name, mv.species_name, mv.year)
     stmt = stmt.order_by(func.sum(mv.case_count).desc())
@@ -116,7 +144,7 @@ async def get_incidence(
         filters_applied={
             "species": species, "cancer_type": cancer_type,
             "county": county, "year_start": year_start,
-            "year_end": year_end, "sex": sex
+            "year_end": year_end, "sex": sex, "age_group": age_group
         }
     )
 
@@ -131,6 +159,7 @@ async def get_incidence_by_cancer_type(
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
     year_end: Optional[int] = Query(None, ge=1900, le=2100),
     sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
     db: AsyncSession = Depends(get_db),
 ):
     mv = mv_county_cancer.c
@@ -139,7 +168,7 @@ async def get_incidence_by_cancer_type(
         func.sum(mv.case_count).label("count"),
     ).select_from(mv_county_cancer)
 
-    stmt = _apply_mv_filters(stmt, species, None, county, year_start, year_end, sex)
+    stmt = _apply_mv_filters(stmt, species, None, county, year_start, year_end, sex, age_group)
     stmt = stmt.where(mv.cancer_type_name != NON_CANCER_TYPE_NAME)
     stmt = stmt.group_by(mv.cancer_type_name).order_by(func.sum(mv.case_count).desc())
 
@@ -149,7 +178,8 @@ async def get_incidence_by_cancer_type(
     return IncidenceResponse(
         data=data, total=sum(r.count for r in data),
         filters_applied={"species": species, "county": county,
-                         "year_start": year_start, "year_end": year_end, "sex": sex}
+                         "year_start": year_start, "year_end": year_end,
+                         "sex": sex, "age_group": age_group}
     )
 
 
@@ -163,6 +193,7 @@ async def get_incidence_by_species(
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
     year_end: Optional[int] = Query(None, ge=1900, le=2100),
     sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
     db: AsyncSession = Depends(get_db),
 ):
     mv = mv_county_cancer.c
@@ -171,7 +202,7 @@ async def get_incidence_by_species(
         func.sum(mv.case_count).label("count"),
     ).select_from(mv_county_cancer)
 
-    stmt = _apply_mv_filters(stmt, None, cancer_type, county, year_start, year_end, sex)
+    stmt = _apply_mv_filters(stmt, None, cancer_type, county, year_start, year_end, sex, age_group)
     stmt = stmt.group_by(mv.species_name).order_by(func.sum(mv.case_count).desc())
 
     result = await db.execute(stmt)
@@ -180,7 +211,8 @@ async def get_incidence_by_species(
     return IncidenceResponse(
         data=data, total=sum(r.count for r in data),
         filters_applied={"cancer_type": cancer_type, "county": county,
-                         "year_start": year_start, "year_end": year_end, "sex": sex}
+                         "year_start": year_start, "year_end": year_end,
+                         "sex": sex, "age_group": age_group}
     )
 
 
@@ -195,6 +227,7 @@ async def get_incidence_by_breed(
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
     year_end: Optional[int] = Query(None, ge=1900, le=2100),
     sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -210,7 +243,7 @@ async def get_incidence_by_breed(
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .outerjoin(County, Patient.county_id == County.id)
     )
-    stmt = _apply_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
+    stmt = _apply_filters(stmt, species, cancer_type, county, year_start, year_end, sex, age_group)
     stmt = stmt.group_by(Breed.name, Species.name).order_by(func.count(CaseDiagnosis.id).desc())
 
     result = await db.execute(stmt)
@@ -223,7 +256,7 @@ async def get_incidence_by_breed(
         data=data, total=sum(r.count for r in data),
         filters_applied={"species": species, "cancer_type": cancer_type,
                          "county": county, "year_start": year_start,
-                         "year_end": year_end, "sex": sex}
+                         "year_end": year_end, "sex": sex, "age_group": age_group}
     )
 
 
@@ -306,6 +339,99 @@ async def get_breed_detail(
 
     return BreedDetailOut(
         breed=breed,
+        total_cases=total_cases,
+        sex_breakdown=sex_breakdown,
+        cancer_types=cancer_types,
+        county_cases=county_cases,
+    )
+
+
+@router.get("/age-detail", response_model=AgeDetailOut)
+@limiter.limit("60/minute")
+@cached_response("age_detail", ttl=settings.CACHE_TTL_INCIDENCE)
+async def get_age_detail(
+    request: Request,
+    age_group: str = Query(..., max_length=20, description="Age group to look up"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return cancer-type breakdown, sex breakdown, and county distribution for a single age group."""
+    if age_group not in AGE_GROUPS:
+        raise HTTPException(status_code=400, detail=f"Invalid age_group. Must be one of: {', '.join(sorted(AGE_GROUPS))}")
+
+    age_filter = _age_group_case(Patient.diagnosis_date, Patient.birth_date) == age_group
+
+    base_stmt = (
+        apply_review_filter(
+            select(CaseDiagnosis.id)
+            .select_from(CaseDiagnosis)
+            .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+            .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+            .where(Patient.data_source == "petbert")
+            .where(CALIFORNIA_PATIENT_FILTER)
+            .where(CancerType.name != NON_CANCER_TYPE_NAME)
+            .where(age_filter)
+        )
+    )
+
+    # --- total cases ---
+    total_stmt = select(func.count()).select_from(base_stmt.subquery())
+    total_cases = (await db.execute(total_stmt)).scalar() or 0
+
+    # --- sex breakdown ---
+    sex_stmt = apply_review_filter(
+        select(Patient.sex.label("sex"), func.count(CaseDiagnosis.id).label("count"))
+        .select_from(CaseDiagnosis)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .where(CancerType.name != NON_CANCER_TYPE_NAME)
+        .where(age_filter)
+        .group_by(Patient.sex)
+        .order_by(func.count(CaseDiagnosis.id).desc())
+    )
+    sex_rows = (await db.execute(sex_stmt)).all()
+    sex_breakdown = [AgeSexCount(sex=r.sex or "Unknown", count=r.count) for r in sex_rows]
+
+    # --- cancer types ---
+    ct_stmt = apply_review_filter(
+        select(CancerType.name.label("cancer_type"), func.count(CaseDiagnosis.id).label("count"))
+        .select_from(CaseDiagnosis)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .where(CancerType.name != NON_CANCER_TYPE_NAME)
+        .where(age_filter)
+        .group_by(CancerType.name)
+        .order_by(func.count(CaseDiagnosis.id).desc())
+    )
+    ct_rows = (await db.execute(ct_stmt)).all()
+    cancer_types = [AgeCancerTypeCount(cancer_type=r.cancer_type, count=r.count) for r in ct_rows]
+
+    # --- county distribution ---
+    county_stmt = apply_review_filter(
+        select(
+            County.name.label("county_name"),
+            County.fips_code.label("fips_code"),
+            func.count(CaseDiagnosis.id).label("count"),
+        )
+        .select_from(CaseDiagnosis)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .join(County, Patient.county_id == County.id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .where(CancerType.name != NON_CANCER_TYPE_NAME)
+        .where(age_filter)
+        .group_by(County.name, County.fips_code)
+        .order_by(func.count(CaseDiagnosis.id).desc())
+    )
+    county_rows = (await db.execute(county_stmt)).all()
+    county_cases = [AgeCountyCount(county_name=r.county_name, fips_code=r.fips_code, count=r.count) for r in county_rows]
+
+    return AgeDetailOut(
+        age_group=age_group,
         total_cases=total_cases,
         sex_breakdown=sex_breakdown,
         cancer_types=cancer_types,

@@ -190,6 +190,29 @@ class BreedDetailOut(BaseModel):
     county_cases: List[BreedCountyCount]
 
 
+# --- Age Detail ---
+
+class AgeCancerTypeCount(BaseModel):
+    cancer_type: str
+    count: int
+
+class AgeCountyCount(BaseModel):
+    county_name: str
+    fips_code: str
+    count: int
+
+class AgeSexCount(BaseModel):
+    sex: str
+    count: int
+
+class AgeDetailOut(BaseModel):
+    age_group: str
+    total_cases: int
+    sex_breakdown: List[AgeSexCount]
+    cancer_types: List[AgeCancerTypeCount]
+    county_cases: List[AgeCountyCount]
+
+
 # --- Filter Options ---
 
 class FilterOptions(BaseModel):

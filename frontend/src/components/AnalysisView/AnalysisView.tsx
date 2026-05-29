@@ -329,6 +329,7 @@ function CancerMap({
   const [filters, setFilters] = useState<FilterState>({
     rateType: 'incidence',
     sex: 'all',
+    ageGroup: 'all',
     cancerType: 'All Types',
     breed: 'All Breeds',
   });

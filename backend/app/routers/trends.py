@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case as sa_case, literal
 from typing import Optional, List
 
 from app.cache import cached_response
@@ -24,6 +24,22 @@ SEX_MAP = {
     "female_spayed": "Spayed Female",
 }
 
+VALID_AGE_GROUPS = {"young", "juvenile", "adult", "old", "senior"}
+
+
+def _age_group_case(diagnosis_date_col, birth_date_col):
+    age_expr = func.extract("year", diagnosis_date_col) - func.extract("year", birth_date_col)
+    return sa_case(
+        (birth_date_col.is_(None), literal("Unknown")),
+        (diagnosis_date_col.is_(None), literal("Unknown")),
+        (age_expr.between(0, 2), literal("young")),
+        (age_expr.between(3, 5), literal("juvenile")),
+        (age_expr.between(6, 8), literal("adult")),
+        (age_expr.between(9, 11), literal("old")),
+        (age_expr >= 12, literal("senior")),
+        else_=literal("Unknown"),
+    )
+
 
 @router.get("/yearly", response_model=TrendsResponse)
 @limiter.limit("60/minute")
@@ -34,6 +50,7 @@ async def get_yearly_trends(
     cancer_type: Optional[List[str]] = Query(None, max_length=50),
     county: Optional[List[str]] = Query(None, max_length=100),
     sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
@@ -64,6 +81,8 @@ async def get_yearly_trends(
     if sex and sex not in ("All", "all"):
         mapped_sex = SEX_MAP.get(sex, sex)
         stmt = stmt.where(Patient.sex == mapped_sex)
+    if age_group and age_group in VALID_AGE_GROUPS:
+        stmt = stmt.where(_age_group_case(Patient.diagnosis_date, Patient.birth_date) == age_group)
 
     stmt = stmt.where(Patient.diagnosis_date.is_not(None))
     stmt = stmt.group_by(func.extract("year", Patient.diagnosis_date)).order_by(
@@ -89,6 +108,7 @@ async def get_trends_by_cancer_type(
     species: Optional[List[str]] = Query(None, max_length=50),
     county: Optional[List[str]] = Query(None, max_length=100),
     sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
     db: AsyncSession = Depends(get_db),
 ):
     mv = mv_yearly_trends.c
@@ -106,6 +126,8 @@ async def get_trends_by_cancer_type(
         stmt = stmt.where(mv.county_name.in_(county))
     if sex and sex not in ("All", "all"):
         stmt = stmt.where(mv.sex == SEX_MAP.get(sex, sex))
+    if age_group and age_group in VALID_AGE_GROUPS:
+        stmt = stmt.where(mv.age_group == age_group)
 
     stmt = stmt.where(mv.year.is_not(None))
     stmt = stmt.group_by(mv.cancer_type_name, mv.year)

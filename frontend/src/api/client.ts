@@ -71,6 +71,7 @@ interface FilterParams {
   cancerTypes?: string[];
   counties?: string[];
   sex?: string;
+  ageGroup?: string;
   yearStart?: number;
   yearEnd?: number;
 }
@@ -88,6 +89,9 @@ function filtersToParams(filters: FilterParams): URLSearchParams {
   }
   if (filters.sex && filters.sex !== 'all') {
     params.append('sex', filters.sex);
+  }
+  if (filters.ageGroup && filters.ageGroup !== 'all') {
+    params.append('age_group', filters.ageGroup);
   }
   if (filters.yearStart) {
     params.append('year_start', String(filters.yearStart));
@@ -206,6 +210,21 @@ export interface BreedDetail {
 export async function fetchBreedDetail(breed: string): Promise<BreedDetail> {
   const params = new URLSearchParams({ breed });
   return fetchJson(`/api/v1/incidence/breed-detail?${params}`);
+}
+
+// --- Age Detail ---
+
+export interface AgeDetail {
+  age_group: string;
+  total_cases: number;
+  sex_breakdown: { sex: string; count: number }[];
+  cancer_types: { cancer_type: string; count: number }[];
+  county_cases: { county_name: string; fips_code: string; count: number }[];
+}
+
+export async function fetchAgeDetail(age_group: string): Promise<AgeDetail> {
+  const params = new URLSearchParams({ age_group });
+  return fetchJson(`/api/v1/incidence/age-detail?${params}`);
 }
 
 // --- CalEnviroScreen ---

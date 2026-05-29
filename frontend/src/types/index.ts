@@ -1,9 +1,11 @@
 // Type definitions
 export type Sex = 'all' | 'male_intact' | 'male_neutered' | 'female_intact' | 'female_spayed';
 
+export type AgeGroup = 'all' | 'young' | 'juvenile' | 'adult' | 'old' | 'senior';
+
 export type RateType = 'incidence' | 'mortality';
 
-export type TabType = 'overview' | 'breed-disparities' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management';
+export type TabType = 'overview' | 'breed-disparities' | 'cancer-by-age' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management';
 
 export interface CancerRecord {
   county: string;
@@ -38,6 +40,7 @@ export interface RegionSummary {
 export interface FilterState {
   rateType: RateType;
   sex: Sex;
+  ageGroup: AgeGroup;
   cancerType: string;
   breed: string;
   yearStart?: number;
@@ -53,6 +56,7 @@ export interface Tab {
 export const TABS: Tab[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'breed-disparities', label: 'Cancer by Breed' },
+  { id: 'cancer-by-age', label: 'Cancer by Age' },
   { id: 'cancer-types', label: 'Cancer Types' },
   { id: 'analysis', label: 'Analysis' },
   { id: 'data-upload', label: 'Data Upload' },
@@ -186,6 +190,15 @@ export const SEX_OPTIONS: { value: Sex; label: string }[] = [
   { value: 'male_neutered', label: 'Male Neutered' },
   { value: 'female_intact', label: 'Female Intact' },
   { value: 'female_spayed', label: 'Female Spayed' },
+];
+
+export const AGE_GROUP_OPTIONS: { value: AgeGroup; label: string; range: string }[] = [
+  { value: 'all', label: 'All Ages', range: '' },
+  { value: 'young', label: 'Young', range: '0–2 yrs' },
+  { value: 'juvenile', label: 'Juvenile', range: '3–5 yrs' },
+  { value: 'adult', label: 'Adult', range: '6–8 yrs' },
+  { value: 'old', label: 'Old', range: '9–11 yrs' },
+  { value: 'senior', label: 'Senior', range: '≥12 yrs' },
 ];
 
 export const RATE_OPTIONS: { value: RateType; label: string }[] = [

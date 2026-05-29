@@ -218,7 +218,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           <StatusPill status={detail.review_status} />
         </div>
         <p className="text-xs text-gray-500">
-          Patient {detail.patient_anon_id ?? '—'} · diagnosis #{detail.diagnosis_index ?? '?'} · ICD-O {detail.icd_o_code ?? '—'}
+          Patient {detail.patient_anon_id ?? '—'} · diagnosis #{detail.diagnosis_index ?? '?'} · Vet-ICD-O {detail.icd_o_code ?? '—'}
         </p>
       </div>
 
@@ -253,13 +253,13 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
             <div className="grid grid-cols-2 gap-4">
               {detail.predicted_term && (
                 <div>
-                  <p className="text-xs text-gray-500 mb-1">Predicted term</p>
+                  <p className="text-xs text-gray-500 mb-1">Predicted cancer type</p>
                   <p className="text-sm">{detail.predicted_term}</p>
                 </div>
               )}
               {detail.icd_o_code && (
                 <div>
-                  <p className="text-xs text-gray-500 mb-1">Predicted code</p>
+                  <p className="text-xs text-gray-500 mb-1">Predicted Vet-ICD-O code</p>
                   <p className="text-sm font-mono">{detail.icd_o_code}</p>
                 </div>
               )}
@@ -272,7 +272,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
         <div className="bg-gray-50 border border-gray-200 rounded p-3">
           <p className="text-xs text-gray-500 mb-1">Original PetBERT prediction (before correction)</p>
           <p className="text-sm">
-            {detail.original_predicted_term} · ICD-O {detail.original_icd_o_code ?? '—'}
+            {detail.original_predicted_term} · Vet-ICD-O {detail.original_icd_o_code ?? '—'}
           </p>
         </div>
       )}
@@ -284,7 +284,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           </h4>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-gray-600">
-              Correct term
+              Cancer type
               <TermCombobox
                 value={correctName}
                 onInput={term => setCorrectName(term)}
@@ -295,7 +295,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
               />
             </label>
             <label className="text-xs text-gray-600">
-              ICD-O code
+              Vet-ICD-O code
               <input
                 type="text"
                 value={correctIcd}

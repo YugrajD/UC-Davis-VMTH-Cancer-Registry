@@ -194,6 +194,14 @@ const REQUIRED_COLUMNS = [
   'Text',
 ];
 
+// Human-readable labels shown in the UI for required column names
+const COLUMN_DISPLAY_NAMES: Record<string, string> = {
+  'Zipcode Zipcode': 'Owner Zip code',
+  'RfrrVtrn Zipcode Zipcode': 'Veterinary Clinic Zipcode',
+  'DtOfRq': 'Date of Request',
+  'Text': 'Pathology text',
+};
+
 // Aliases that map alternate column names to their canonical required name
 const COLUMN_ALIASES: Record<string, string> = {
   'text (pathology report)': 'Text',
@@ -703,7 +711,7 @@ export function DataUpload() {
             <div className="flex flex-wrap gap-1.5 mb-3">
               {REQUIRED_COLUMNS.map(col => (
                 <code key={col} className="bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded text-xs">
-                  {col}
+                  {COLUMN_DISPLAY_NAMES[col] ?? col}
                 </code>
               ))}
             </div>

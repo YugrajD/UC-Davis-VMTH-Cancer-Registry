@@ -20,7 +20,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -38,6 +38,24 @@ from app.models.models import (
 )
 
 _VALID_STATUSES = frozenset({"pending", "confirmed", "corrected", "rejected"})
+_UNIDENTIFIED_METHODS = ("low_confidence", "unidentified_cancer")
+
+
+def _apply_cancer_group_filter(query, cancer_group: Optional[str]):
+    """Filter by prediction category: 'cancer', 'non_cancer', or 'unidentified'."""
+    if cancer_group == "non_cancer":
+        return query.where(CancerType.name == "Non-Cancer")
+    if cancer_group == "unidentified":
+        return query.where(CaseDiagnosis.prediction_method.in_(_UNIDENTIFIED_METHODS))
+    if cancer_group == "cancer":
+        return query.where(
+            CancerType.name != "Non-Cancer",
+            or_(
+                CaseDiagnosis.prediction_method.is_(None),
+                CaseDiagnosis.prediction_method.notin_(_UNIDENTIFIED_METHODS),
+            ),
+        )
+    return query
 
 
 router = APIRouter(prefix="/api/v1/diagnoses", tags=["diagnoses-review"])
@@ -220,8 +238,9 @@ async def list_diagnoses(
     year: Optional[int] = Query(default=None, ge=1900, le=2100),
     patient_id: Optional[str] = Query(default=None, max_length=100),
     clinic: Optional[str] = Query(default=None, max_length=255),
+    cancer_group: Optional[str] = Query(default=None, max_length=20),
 ) -> list[PendingDiagnosis]:
-    """All diagnoses with optional status/year/patient/clinic filter; non-admins scoped to their own jobs."""
+    """All diagnoses with optional status/year/patient/clinic/cancer_group filter; non-admins scoped to their own jobs."""
     if not user.is_uploader:
         raise HTTPException(status_code=403, detail="Uploader or admin role required")
 
@@ -255,6 +274,7 @@ async def list_diagnoses(
         query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
     if clinic and user.is_admin:
         query = query.where(IngestionJob.clinic_name == clinic)
+    query = _apply_cancer_group_filter(query, cancer_group)
 
     query = (
         query.order_by(
@@ -317,6 +337,7 @@ async def list_pending(
     year: Optional[int] = Query(default=None, ge=1900, le=2100),
     patient_id: Optional[str] = Query(default=None, max_length=100),
     clinic: Optional[str] = Query(default=None, max_length=255),
+    cancer_group: Optional[str] = Query(default=None, max_length=20),
 ) -> list[PendingDiagnosis]:
     """Paginated review queue, optionally filtered."""
     query = (
@@ -346,6 +367,7 @@ async def list_pending(
         query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
     if clinic and reviewer.is_admin:
         query = query.where(IngestionJob.clinic_name == clinic)
+    query = _apply_cancer_group_filter(query, cancer_group)
 
     query = (
         query.order_by(

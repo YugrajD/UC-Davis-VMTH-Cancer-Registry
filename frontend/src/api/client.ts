@@ -498,6 +498,7 @@ export async function fetchPendingDiagnoses(
     year?: number;
     patient_id?: string;
     clinic?: string;
+    cancer_group?: string;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -518,6 +519,7 @@ export async function fetchAllDiagnoses(
     year?: number;
     patient_id?: string;
     clinic?: string;
+    cancer_group?: string;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();

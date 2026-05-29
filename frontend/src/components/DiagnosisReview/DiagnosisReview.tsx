@@ -22,6 +22,14 @@ function friendlyError(e: unknown, fallback: string): string {
 type StatusFilter = 'pending' | 'confirmed' | 'corrected' | 'rejected' | 'all';
 const STATUS_FILTERS: StatusFilter[] = ['pending', 'confirmed', 'corrected', 'rejected', 'all'];
 
+type CancerGroupFilter = 'all' | 'cancer' | 'non_cancer' | 'unidentified';
+const CANCER_GROUP_FILTERS: { value: CancerGroupFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'cancer', label: 'Cancer' },
+  { value: 'non_cancer', label: 'Non-Cancer' },
+  { value: 'unidentified', label: 'Unidentified' },
+];
+
 const PAGE_SIZE = 50;
 
 function ConfidenceBar({ value }: { value: number | null }) {
@@ -370,6 +378,7 @@ export function DiagnosisReview() {
   const { getAccessToken, isUploader, isAdmin } = useAuth();
   const canAudit = isUploader || isAdmin;
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
+  const [cancerGroupFilter, setCancerGroupFilter] = useState<CancerGroupFilter>('all');
   // yearInput is the live input value; yearFilter is debounced (triggers load).
   const [yearInput, setYearInput] = useState('');
   const [yearFilter, setYearFilter] = useState<number | undefined>(undefined);
@@ -401,6 +410,7 @@ export function DiagnosisReview() {
         year: yearFilter,
         patient_id: patientIdFilter || undefined,
         clinic: clinicFilter || undefined,
+        cancer_group: cancerGroupFilter === 'all' ? undefined : cancerGroupFilter,
       };
       if (canAudit && statusFilter !== 'pending') {
         rows = await fetchAllDiagnoses(token, {
@@ -416,7 +426,7 @@ export function DiagnosisReview() {
     } finally {
       setLoadingList(false);
     }
-  }, [getAccessToken, page, canAudit, statusFilter, yearFilter, patientIdFilter, clinicFilter]);
+  }, [getAccessToken, page, canAudit, statusFilter, cancerGroupFilter, yearFilter, patientIdFilter, clinicFilter]);
 
   useEffect(() => {
     load(); // eslint-disable-line react-hooks/set-state-in-effect
@@ -511,6 +521,7 @@ export function DiagnosisReview() {
 
   const handleFilterChange = useCallback((f: StatusFilter) => {
     setStatusFilter(f);
+    setCancerGroupFilter('all');
     setPage(0);
     setSelectedId(null);
     setDetail(null);
@@ -600,6 +611,30 @@ export function DiagnosisReview() {
                 className="w-40 px-2 py-1.5 border border-gray-300 rounded text-sm"
               />
             </label>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-gray-600">Type</span>
+              <div className="flex gap-1">
+                {CANCER_GROUP_FILTERS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => {
+                      setCancerGroupFilter(value);
+                      setPage(0);
+                      setSelectedId(null);
+                      setDetail(null);
+                    }}
+                    className={`px-2 py-1 text-xs rounded border transition-colors ${
+                      cancerGroupFilter === value
+                        ? 'bg-teal-600 text-white border-teal-600'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             {isAdmin && uploaders.length > 0 && (
               <label className="flex flex-col gap-1 text-xs text-gray-600">
                 Clinic

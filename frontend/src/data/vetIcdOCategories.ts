@@ -52,6 +52,7 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'multiple myeloma', category: 'hematopoietic' },
   { keyword: 'myeloma', category: 'hematopoietic' },
   { keyword: 'histiocytic sarcoma', category: 'hematopoietic' },
+  { keyword: 'histiocyt', category: 'hematopoietic' },
 
   // Urinary (check 'transitional cell' before generic 'cell')
   { keyword: 'transitional cell', category: 'urinary' },
@@ -70,6 +71,8 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   // Bone & hard tissues
   { keyword: 'osteosarcoma', category: 'bone' },
   { keyword: 'chondrosarcoma', category: 'bone' },
+  { keyword: 'osseous', category: 'bone' },
+  { keyword: 'chondromatous', category: 'bone' },
 
   // Skin & melanocytic (check before generic 'sarcoma' / 'carcinoma')
   { keyword: 'mast cell', category: 'skin' },
@@ -78,6 +81,8 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'basal cell', category: 'skin' },
   { keyword: 'sebaceous', category: 'skin' },
   { keyword: 'cutaneous', category: 'skin' },
+  { keyword: 'adnexal', category: 'skin' },
+  { keyword: 'skin appendage', category: 'skin' },
 
   // Soft tissue
   { keyword: 'hemangiosarcoma', category: 'soft_tissue' },
@@ -87,6 +92,11 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'rhabdomyosarcoma', category: 'soft_tissue' },
   { keyword: 'synovial', category: 'soft_tissue' },
   { keyword: 'soft tissue sarcoma', category: 'soft_tissue' },
+  { keyword: 'soft tissue tumor', category: 'soft_tissue' },
+  { keyword: 'blood vessel', category: 'soft_tissue' },
+  { keyword: 'lipomatous', category: 'soft_tissue' },
+  { keyword: 'fibromatous', category: 'soft_tissue' },
+  { keyword: 'myomatous', category: 'soft_tissue' },
 
   // Mammary
   { keyword: 'mammary', category: 'mammary' },
@@ -101,6 +111,7 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'prostatic', category: 'genital' },
   { keyword: 'prostate', category: 'genital' },
   { keyword: 'transmissible venereal', category: 'genital' },
+  { keyword: 'gonadal', category: 'genital' },
 
   // Nervous system
   { keyword: 'meningioma', category: 'nervous' },
@@ -110,6 +121,7 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'schwannoma', category: 'nervous' },
   { keyword: 'ependymoma', category: 'nervous' },
   { keyword: 'choroid plexus', category: 'nervous' },
+  { keyword: 'nerve sheath', category: 'nervous' },
 
   // Respiratory
   { keyword: 'pulmonary', category: 'respiratory' },
@@ -126,6 +138,7 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'intestinal', category: 'alimentary' },
   { keyword: 'colonic', category: 'alimentary' },
   { keyword: 'salivary', category: 'alimentary' },
+  { keyword: 'odontogenic', category: 'alimentary' },
 
   // Endocrine
   { keyword: 'thyroid', category: 'endocrine' },
@@ -134,6 +147,7 @@ const RULES: Array<{ keyword: string; category: VetIcdOCategoryId }> = [
   { keyword: 'insulinoma', category: 'endocrine' },
   { keyword: 'pheochromocytoma', category: 'endocrine' },
   { keyword: 'parathyroid', category: 'endocrine' },
+  { keyword: 'paraganglioma', category: 'endocrine' },
 ];
 
 export function classifyCancerType(cancerType: string): VetIcdOCategoryId {

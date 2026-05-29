@@ -1641,6 +1641,7 @@ export function AnalysisView() {
   const { countyData: unfilteredCountyData } = useFilteredData({
     rateType: 'incidence',
     sex: 'all',
+    ageGroup: 'all',
     cancerType: 'All Types',
     breed: 'All Breeds',
   });

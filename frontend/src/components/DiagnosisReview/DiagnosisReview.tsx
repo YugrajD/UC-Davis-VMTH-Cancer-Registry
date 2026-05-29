@@ -432,7 +432,7 @@ export function DiagnosisReview() {
   }, [getAccessToken, page, canAudit, statusFilter, cancerGroupFilter, yearFilter, patientIdFilter, clinicFilter]);
 
   useEffect(() => {
-    setPageInput(String(page + 1));
+    setPageInput(String(page + 1)); // eslint-disable-line react-hooks/set-state-in-effect
   }, [page]);
 
   useEffect(() => {
@@ -446,10 +446,7 @@ export function DiagnosisReview() {
   }, [getAccessToken]);
 
   useEffect(() => {
-    if (!canAudit || statusFilter === 'pending') {
-      setAllCount(null);
-      return;
-    }
+    if (!canAudit || statusFilter === 'pending') return;
     getAccessToken().then((token) => {
       if (!token) return;
       fetchDiagnosesCount(token, {

@@ -498,6 +498,7 @@ export async function fetchPendingDiagnoses(
     year?: number;
     patient_id?: string;
     clinic?: string;
+    cancer_group?: string;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -518,6 +519,7 @@ export async function fetchAllDiagnoses(
     year?: number;
     patient_id?: string;
     clinic?: string;
+    cancer_group?: string;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -530,6 +532,24 @@ export async function fetchAllDiagnoses(
 
 export async function fetchPendingCount(token: string): Promise<{ count: number }> {
   return fetchJsonAuth('/api/v1/diagnoses/pending/count', token);
+}
+
+export async function fetchDiagnosesCount(
+  token: string,
+  params: {
+    status?: string;
+    year?: number;
+    patient_id?: string;
+    clinic?: string;
+    cancer_group?: string;
+  } = {},
+): Promise<{ count: number }> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) qs.append(k, String(v));
+  }
+  const url = `/api/v1/diagnoses/count${qs.toString() ? `?${qs}` : ''}`;
+  return fetchJsonAuth(url, token);
 }
 
 export async function fetchDiagnosisUploaders(token: string): Promise<string[]> {

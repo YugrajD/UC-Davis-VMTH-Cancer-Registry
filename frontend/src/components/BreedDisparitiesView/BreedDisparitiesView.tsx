@@ -39,7 +39,7 @@ export function BreedDisparitiesView() {
   useEffect(() => {
     fetchFilterOptions()
       .then(opts => {
-        const names = opts.breeds.map(b => b.name).sort();
+        const names = [...new Set(opts.breeds.map(b => b.name))].sort();
         setBreeds(names);
       })
       .catch(() => {})

@@ -140,6 +140,7 @@ async def get_incidence_by_cancer_type(
     ).select_from(mv_county_cancer)
 
     stmt = _apply_mv_filters(stmt, species, None, county, year_start, year_end, sex)
+    stmt = stmt.where(mv.cancer_type_name != NON_CANCER_TYPE_NAME)
     stmt = stmt.group_by(mv.cancer_type_name).order_by(func.sum(mv.case_count).desc())
 
     result = await db.execute(stmt)

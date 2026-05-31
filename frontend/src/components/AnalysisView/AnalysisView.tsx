@@ -1252,7 +1252,7 @@ function CancerTrendChart() {
     [series, selectedNames],
   );
 
-  const years = useMemo(() => yearRange(series), [series]);
+  const years = useMemo(() => yearRange(visible), [visible]);
 
   const yMax = useMemo(() => {
     let max = 0;

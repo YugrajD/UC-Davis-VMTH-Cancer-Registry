@@ -308,7 +308,7 @@ async def lifespan(app: FastAPI):
                         COUNT(*)       AS case_count
                     FROM case_diagnoses cd
                     JOIN patients     p  ON cd.patient_id     = p.id
-                    JOIN counties     co ON p.county_id       = co.id
+                    LEFT JOIN counties co ON p.county_id       = co.id
                     JOIN cancer_types ct ON cd.cancer_type_id  = ct.id
                     JOIN species      s  ON p.species_id      = s.id
                     WHERE p.data_source = 'petbert'
@@ -343,7 +343,7 @@ async def lifespan(app: FastAPI):
                     JOIN patients     p  ON cd.patient_id     = p.id
                     JOIN cancer_types ct ON cd.cancer_type_id  = ct.id
                     JOIN species      s  ON p.species_id      = s.id
-                    JOIN counties     co ON p.county_id       = co.id
+                    LEFT JOIN counties co ON p.county_id       = co.id
                     WHERE p.data_source = 'petbert'
                       AND cd.review_status IN ('confirmed', 'corrected')
                       AND ct.name != 'Non-Cancer'
@@ -420,7 +420,7 @@ async def lifespan(app: FastAPI):
                         COUNT(*)       AS case_count
                     FROM case_diagnoses cd
                     JOIN patients     p  ON cd.patient_id     = p.id
-                    JOIN counties     co ON p.county_id       = co.id
+                    LEFT JOIN counties co ON p.county_id       = co.id
                     JOIN cancer_types ct ON cd.cancer_type_id  = ct.id
                     JOIN species      s  ON p.species_id      = s.id
                     WHERE p.data_source = 'petbert'
@@ -455,7 +455,7 @@ async def lifespan(app: FastAPI):
                     JOIN patients     p  ON cd.patient_id     = p.id
                     JOIN cancer_types ct ON cd.cancer_type_id  = ct.id
                     JOIN species      s  ON p.species_id      = s.id
-                    JOIN counties     co ON p.county_id       = co.id
+                    LEFT JOIN counties co ON p.county_id       = co.id
                     WHERE p.data_source = 'petbert'
                       AND cd.review_status IN ('confirmed', 'corrected')
                       AND ct.name != 'Non-Cancer'
@@ -471,6 +471,87 @@ async def lifespan(app: FastAPI):
                 logger.info("Migration 027 applied: materialized views rebuilt without Non-Cancer")
     except Exception as e:
         logger.warning("Could not apply migration 027: %s", e)
+
+    # Switch materialized views from INNER JOIN to LEFT JOIN on counties (migration 028).
+    # Patients without a county_id were silently excluded from all counts; they should
+    # be included in yearly totals even if they can't be placed on the map.
+    try:
+        async with async_session() as db:
+            row = await db.execute(text(
+                "SELECT 1 FROM pg_matviews "
+                "WHERE matviewname = 'mv_county_cancer_incidence' "
+                "AND definition ILIKE '%left join counties%'"
+            ))
+            if row.scalar() is None:
+                logger.info("Applying migration 028: rebuilding materialized views with LEFT JOIN on counties")
+                await db.execute(text(
+                    "DROP MATERIALIZED VIEW IF EXISTS mv_county_cancer_incidence CASCADE"
+                ))
+                await db.execute(text("""
+                    CREATE MATERIALIZED VIEW mv_county_cancer_incidence AS
+                    SELECT
+                        p.county_id,
+                        co.name        AS county_name,
+                        ct.id          AS cancer_type_id,
+                        ct.name        AS cancer_type_name,
+                        s.id           AS species_id,
+                        s.name         AS species_name,
+                        COALESCE(p.sex, 'Unknown') AS sex,
+                        EXTRACT(YEAR FROM p.diagnosis_date)::INTEGER AS year,
+                        COUNT(*)       AS case_count
+                    FROM case_diagnoses cd
+                    JOIN patients     p  ON cd.patient_id     = p.id
+                    LEFT JOIN counties co ON p.county_id       = co.id
+                    JOIN cancer_types ct ON cd.cancer_type_id  = ct.id
+                    JOIN species      s  ON p.species_id      = s.id
+                    WHERE p.data_source = 'petbert'
+                      AND cd.review_status IN ('confirmed', 'corrected')
+                      AND ct.name != 'Non-Cancer'
+                    GROUP BY p.county_id, co.name, ct.id, ct.name,
+                             s.id, s.name, COALESCE(p.sex, 'Unknown'),
+                             EXTRACT(YEAR FROM p.diagnosis_date)
+                """))
+                await db.execute(text(
+                    "CREATE UNIQUE INDEX idx_mv_county_cancer "
+                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year)"
+                ))
+                await db.execute(text(
+                    "DROP MATERIALIZED VIEW IF EXISTS mv_yearly_trends CASCADE"
+                ))
+                await db.execute(text("""
+                    CREATE MATERIALIZED VIEW mv_yearly_trends AS
+                    SELECT
+                        EXTRACT(YEAR FROM p.diagnosis_date)::INTEGER AS year,
+                        ct.id          AS cancer_type_id,
+                        ct.name        AS cancer_type_name,
+                        s.id           AS species_id,
+                        s.name         AS species_name,
+                        p.county_id,
+                        co.name        AS county_name,
+                        COALESCE(p.sex, 'Unknown') AS sex,
+                        COUNT(*)       AS case_count,
+                        COUNT(*) FILTER (WHERE p.outcome = 'deceased') AS deceased_count,
+                        COUNT(*) FILTER (WHERE p.outcome = 'alive')    AS alive_count
+                    FROM case_diagnoses cd
+                    JOIN patients     p  ON cd.patient_id     = p.id
+                    JOIN cancer_types ct ON cd.cancer_type_id  = ct.id
+                    JOIN species      s  ON p.species_id      = s.id
+                    LEFT JOIN counties co ON p.county_id       = co.id
+                    WHERE p.data_source = 'petbert'
+                      AND cd.review_status IN ('confirmed', 'corrected')
+                      AND ct.name != 'Non-Cancer'
+                    GROUP BY EXTRACT(YEAR FROM p.diagnosis_date),
+                             ct.id, ct.name, s.id, s.name,
+                             p.county_id, co.name, COALESCE(p.sex, 'Unknown')
+                """))
+                await db.execute(text(
+                    "CREATE UNIQUE INDEX idx_mv_yearly_trends "
+                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex)"
+                ))
+                await db.commit()
+                logger.info("Migration 028 applied: materialized views rebuilt with LEFT JOIN on counties")
+    except Exception as e:
+        logger.warning("Could not apply migration 028: %s", e)
 
     yield
 

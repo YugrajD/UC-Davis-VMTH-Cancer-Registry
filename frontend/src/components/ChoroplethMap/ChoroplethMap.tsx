@@ -41,8 +41,8 @@ function isAtDefaultView(v: MapViewState): boolean {
 
 const GEO_LEVEL_OPTIONS: { value: GeoLevel; label: string }[] = [
   { value: 'county', label: 'County' },
-  { value: 'tract', label: 'Tract' },
   { value: 'zcta', label: 'ZCTA' },
+  { value: 'tract', label: 'Tract' },
 ];
 
 // ---------------------------------------------------------------------------

@@ -95,6 +95,7 @@ function getVarValue(
   v: ScatterVar,
   countyDataMap: Map<string, CountyData>,
   cesMap: Map<string, CalEnviroScreenData>,
+  humanRateMap?: ReturnType<typeof getHumanCancerRateMap>,
 ): number | null {
   switch (v) {
     case 'cancer_cases':
@@ -116,7 +117,7 @@ function getVarValue(
     case 'superfund_sites':
       return SUPERFUND_BY_COUNTY[county]?.total ?? 0;
     case 'human_cancer_rate': {
-      const hrMap = getHumanCancerRateMap('All Cancer Sites', 'Both Sexes');
+      const hrMap = humanRateMap ?? getHumanCancerRateMap('All Cancer Sites', 'Both Sexes');
       return hrMap.get(county.toLowerCase())?.rate ?? null;
     }
     default:
@@ -311,8 +312,8 @@ function useSuperfundLayer(enabled: boolean) {
 
 const GEO_LEVEL_OPTIONS: { value: GeoLevel; label: string }[] = [
   { value: 'county', label: 'County' },
-  { value: 'tract', label: 'Tract' },
   { value: 'zcta', label: 'ZCTA' },
+  { value: 'tract', label: 'Tract' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -980,11 +981,15 @@ function CorrelationScatterPlot({
   cesData,
   xVar,
   yVar,
+  humanCancerSite = 'All Cancer Sites',
+  humanCancerSex = 'Both Sexes',
 }: {
   countyData: CountyData[];
   cesData: CalEnviroScreenData[];
   xVar: ScatterVar;
   yVar: ScatterVar;
+  humanCancerSite?: HumanCancerSite;
+  humanCancerSex?: HumanCancerSex;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -999,6 +1004,11 @@ function CorrelationScatterPlot({
     [cesData],
   );
 
+  const humanRateMap = useMemo(
+    () => getHumanCancerRateMap(humanCancerSite, humanCancerSex),
+    [humanCancerSite, humanCancerSex],
+  );
+
   // Build a set of all county names across data sources
   const allCounties = useMemo(() => {
     const names = new Set<string>();
@@ -1011,12 +1021,12 @@ function CorrelationScatterPlot({
 
   const points = useMemo(() => {
     return allCounties.flatMap(county => {
-      const x = getVarValue(county, xVar, countyDataMap, cesMap);
-      const y = getVarValue(county, yVar, countyDataMap, cesMap);
+      const x = getVarValue(county, xVar, countyDataMap, cesMap, humanRateMap);
+      const y = getVarValue(county, yVar, countyDataMap, cesMap, humanRateMap);
       if (x === null || y === null) return [];
       return [{ county, x, y }];
     });
-  }, [allCounties, xVar, yVar, countyDataMap, cesMap]);
+  }, [allCounties, xVar, yVar, countyDataMap, cesMap, humanRateMap]);
 
   const margin = { top: 20, right: 20, bottom: 50, left: 60 };
   const width = 520;
@@ -1637,14 +1647,31 @@ const MAP_OPTIONS: { id: MapId; label: string }[] = [
 ];
 
 export function AnalysisView() {
-  // Unfiltered VMTH data for scatter plot (CancerMap owns its own filters now)
-  const { countyData: unfilteredCountyData } = useFilteredData({
+  const [scatterDogCancerType, setScatterDogCancerType] = useState<string>('All Types');
+  const [scatterHumanSite, setScatterHumanSite] = useState<HumanCancerSite>('All Cancer Sites');
+  const [scatterHumanSex, setScatterHumanSex] = useState<HumanCancerSex>('Both Sexes');
+
+  // VMTH data for scatter plot, filtered by dog cancer type
+  const { countyData: scatterCountyData } = useFilteredData({
     rateType: 'incidence',
     sex: 'all',
     ageGroup: 'all',
-    cancerType: 'All Types',
+    cancerType: scatterDogCancerType,
     breed: 'All Breeds',
   });
+
+  // Auto-correct human sex when site changes to sex-specific cancer
+  const scatterAvailableSexOptions = useMemo(() => {
+    if (scatterHumanSite === 'Prostate') return HUMAN_CANCER_SEX_OPTIONS.filter(o => o.value === 'Male');
+    if (['Breast (Female)', 'Cervix', 'Ovary', 'Uterus (Corpus & Uterus, NOS)'].includes(scatterHumanSite))
+      return HUMAN_CANCER_SEX_OPTIONS.filter(o => o.value === 'Female');
+    return HUMAN_CANCER_SEX_OPTIONS;
+  }, [scatterHumanSite]);
+
+  const scatterEffectiveSex = useMemo<HumanCancerSex>(() => {
+    if (scatterAvailableSexOptions.some(o => o.value === scatterHumanSex)) return scatterHumanSex;
+    return scatterAvailableSexOptions[0].value;
+  }, [scatterAvailableSexOptions, scatterHumanSex]);
 
   const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
   const [mapCount, setMapCount] = useState<MapCount>(4);
@@ -1652,7 +1679,7 @@ export function AnalysisView() {
   const [threeMapSelection, setThreeMapSelection] = useState<[MapId, MapId, MapId]>(['vmth', 'enviro', 'human']);
   const [showSuperfund, setShowSuperfund] = useState(false);
   const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
-  const [scatterXVar, setScatterXVar] = useState<ScatterVar>('pesticides');
+  const [scatterXVar, setScatterXVar] = useState<ScatterVar>('pesticide_lbs');
   const [scatterYVar, setScatterYVar] = useState<ScatterVar>('cancer_cases');
   const [autoSync, setAutoSync] = useState(true);
   const [pesticideClass, setPesticideClass] = useState<PesticideClass | 'all'>('all');
@@ -1792,10 +1819,65 @@ export function AnalysisView() {
               <span className={`w-2 h-2 rounded-full ${autoSync ? 'bg-teal-500' : 'bg-gray-400'}`} />
               Sync
             </button>
+            {/* Active filter chips */}
+            {scatterDogCancerType !== 'All Types' && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[140px] truncate" title={scatterDogCancerType}>
+                Dog: {scatterDogCancerType}
+              </span>
+            )}
+            {scatterHumanSite !== 'All Cancer Sites' && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 max-w-[140px] truncate" title={scatterHumanSite}>
+                Human: {scatterHumanSite}
+              </span>
+            )}
+            {scatterEffectiveSex !== 'Both Sexes' && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200">
+                {scatterEffectiveSex}
+              </span>
+            )}
+            <MapFilterButton label="Cancer Type Filters">
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Dog Cancer Type</span>
+                <select
+                  value={scatterDogCancerType}
+                  onChange={e => setScatterDogCancerType(e.target.value)}
+                  className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                >
+                  {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Human Cancer Site</span>
+                <select
+                  value={scatterHumanSite}
+                  onChange={e => setScatterHumanSite(e.target.value as HumanCancerSite)}
+                  className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                >
+                  {HUMAN_CANCER_SITES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Human Sex</span>
+                <select
+                  value={scatterEffectiveSex}
+                  onChange={e => setScatterHumanSex(e.target.value as HumanCancerSex)}
+                  className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                >
+                  {scatterAvailableSexOptions.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </label>
+            </MapFilterButton>
           </div>
         </div>
         <div className="p-4">
-          <CorrelationScatterPlot countyData={unfilteredCountyData} cesData={cesData} xVar={scatterXVar} yVar={scatterYVar} />
+          <CorrelationScatterPlot
+            countyData={scatterCountyData}
+            cesData={cesData}
+            xVar={scatterXVar}
+            yVar={scatterYVar}
+            humanCancerSite={scatterHumanSite}
+            humanCancerSex={scatterEffectiveSex}
+          />
           <p className="text-xs text-[var(--color-text-secondary)] mt-3 text-center">
             Dashed line shows linear trend · Each dot is one county · Hover for details
           </p>

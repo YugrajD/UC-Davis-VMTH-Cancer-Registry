@@ -279,6 +279,10 @@ export async function fetchUserRoles(token: string, email: string): Promise<User
   );
 }
 
+export async function fetchAllUserRoles(token: string): Promise<UserRoles[]> {
+  return fetchJsonAuth('/api/v1/admin/users/roles', token);
+}
+
 export async function updateUserRoles(
   token: string,
   email: string,

@@ -113,8 +113,9 @@ export function UserManagement() {
   }, [getAccessToken]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAllUsers();
-    loadPendingRequests(); // eslint-disable-line react-hooks/set-state-in-effect
+    loadPendingRequests();
     loadPendingExportRequests();
   }, [loadAllUsers, loadPendingRequests, loadPendingExportRequests]);
 

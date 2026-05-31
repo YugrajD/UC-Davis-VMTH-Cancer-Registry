@@ -497,6 +497,11 @@ export interface DiagnosisDetail extends PendingDiagnosis {
   reviewed_at: string | null;
   reviewer_notes: string | null;
   events: DiagnosisReviewEvent[];
+  /** Patient demographic fields for reviewer context */
+  patient_sex: string | null;
+  patient_breed: string | null;
+  test_request_date: string | null;
+  patient_age: number | null;
 }
 
 export type ReviewActionKind = 'confirm' | 'correct' | 'reject';

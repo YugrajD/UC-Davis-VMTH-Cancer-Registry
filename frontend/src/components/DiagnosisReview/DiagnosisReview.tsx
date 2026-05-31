@@ -284,7 +284,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           </h4>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-gray-600">
-              Cancer type
+              Confirmed cancer type
               <TermCombobox
                 value={correctName}
                 onInput={term => setCorrectName(term)}
@@ -295,7 +295,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
               />
             </label>
             <label className="text-xs text-gray-600">
-              Vet-ICD-O code
+              Confirmed Vet-ICD-O code
               <input
                 type="text"
                 value={correctIcd}
@@ -333,7 +333,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
               disabled={busy || !correctName.trim() || correctName === detail.cancer_type_name}
               className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              Correct
+              Edit
             </button>
             <button
               onClick={() => onAction('correct', { cancer_type_name: 'Non-Cancer', notes: notes || undefined })}
@@ -581,7 +581,7 @@ export function DiagnosisReview() {
             </h2>
             <p className="text-sm text-[var(--color-text-secondary)] mt-1">
               Triage low-confidence and ambiguous predictions before they enter
-              public dashboard stats. Confirm to accept, Correct to assign a
+              public dashboard stats. Confirm to accept the predicted terms, Edit to assign a
               different cancer type, or Non-Cancer to mark the prediction as a
               non-malignant diagnosis.
             </p>

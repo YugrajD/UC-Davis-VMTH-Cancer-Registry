@@ -336,11 +336,11 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
               Correct
             </button>
             <button
-              onClick={() => onAction('reject', { notes: notes || undefined })}
-              disabled={busy}
-              className="px-3 py-1.5 text-sm font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+              onClick={() => onAction('correct', { cancer_type_name: 'Non-Cancer', notes: notes || undefined })}
+              disabled={busy || detail.cancer_type_name === 'Non-Cancer'}
+              className="px-3 py-1.5 text-sm font-medium bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50"
             >
-              Reject
+              Non-Cancer
             </button>
           </div>
         </div>
@@ -582,7 +582,8 @@ export function DiagnosisReview() {
             <p className="text-sm text-[var(--color-text-secondary)] mt-1">
               Triage low-confidence and ambiguous predictions before they enter
               public dashboard stats. Confirm to accept, Correct to assign a
-              different cancer type, or Reject to drop the prediction.
+              different cancer type, or Non-Cancer to mark the prediction as a
+              non-malignant diagnosis.
             </p>
           </div>
           {canAudit && (

@@ -71,9 +71,13 @@ def _ensure_csv(raw_bytes: bytes, filename: str) -> bytes:
     )
 
 
-# Column name mapping: uploaded name → name expected by GCP Batch image
+# Column name mapping: uploaded name (lowercase) → canonical name expected by GCP Batch image
 _COLUMN_RENAMES = {
     "text (pathology report)": "Text",
+    "pathology text": "Text",
+    "owner zip code": "Zipcode Zipcode",
+    "veterinary clinic zipcode": "RfrrVtrn Zipcode Zipcode",
+    "date of request": "DtOfRq",
 }
 
 

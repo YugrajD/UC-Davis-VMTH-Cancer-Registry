@@ -25,9 +25,11 @@ import {
   type SuperfundSite,
 } from '../../data/superfundData';
 import {
-  MOCK_PESTICIDE_DATA,
+  PESTICIDE_DATA,
   PESTICIDE_BY_COUNTY,
+  PESTICIDE_BY_CHEMICAL,
   PESTICIDE_CLASSES,
+  TRACKING_CA_PESTICIDES,
   type PesticideClass,
   type CountyPesticideData,
 } from '../../data/pesticideData';
@@ -68,9 +70,9 @@ const SCATTER_VAR_OPTIONS: ScatterVarOption[] = [
   { value: 'cancer_cases', label: 'Cancer Cases', unit: 'cases', group: 'VMTH' },
   // CDPR
   { value: 'pesticide_lbs', label: 'Pesticide Use (CDPR)', unit: 'lbs/sq mi', group: 'CDPR' },
-  { value: 'pesticide_2015', label: 'Pesticide Use 2015', unit: 'lbs/sq mi', group: 'CDPR' },
-  { value: 'pesticide_2019', label: 'Pesticide Use 2019', unit: 'lbs/sq mi', group: 'CDPR' },
-  { value: 'pesticide_change', label: 'Pesticide Change 2015\u201319', unit: '%', group: 'CDPR' },
+  { value: 'pesticide_2015', label: 'Pesticide Use 2016', unit: 'lbs/sq mi', group: 'CDPR' },
+  { value: 'pesticide_2019', label: 'Pesticide Use 2023', unit: 'lbs/sq mi', group: 'CDPR' },
+  { value: 'pesticide_change', label: 'Pesticide Change 2016\u201323', unit: '%', group: 'CDPR' },
   // EPA
   { value: 'superfund_sites', label: 'Superfund Sites', unit: 'sites', group: 'EPA' },
   // CCR
@@ -103,16 +105,16 @@ function getVarValue(
     case 'pesticide_lbs':
       return PESTICIDE_BY_COUNTY[county]?.lbs_per_sq_mile ?? null;
     case 'pesticide_2015':
-      return PESTICIDE_BY_COUNTY[county]?.by_year[2015] ?? null;
+      return PESTICIDE_BY_COUNTY[county]?.by_year[2016]?.total ?? null;
     case 'pesticide_2019':
-      return PESTICIDE_BY_COUNTY[county]?.by_year[2019] ?? null;
+      return PESTICIDE_BY_COUNTY[county]?.by_year[2023]?.total ?? null;
     case 'pesticide_change': {
       const d = PESTICIDE_BY_COUNTY[county];
       if (!d) return null;
-      const v15 = d.by_year[2015];
-      const v19 = d.by_year[2019];
-      if (!v15 || !v19) return null;
-      return Math.round(((v19 - v15) / v15) * 100);
+      const v16 = d.by_year[2016]?.total;
+      const v23 = d.by_year[2023]?.total;
+      if (!v16 || !v23) return null;
+      return Math.round(((v23 - v16) / v16) * 100);
     }
     case 'superfund_sites':
       return SUPERFUND_BY_COUNTY[county]?.total ?? 0;
@@ -817,10 +819,15 @@ function HumanCancerMap({ showSuperfund, geoLevel }: { showSuperfund: boolean; g
 }
 
 // ---------------------------------------------------------------------------
-// Pesticide Use map (with class dropdown)
+// Pesticide Use map (with class and individual pesticide filters)
 // ---------------------------------------------------------------------------
 
-function getPesticideValue(data: CountyPesticideData, cls: PesticideClass | 'all'): number {
+function getPesticideValue(
+  data: CountyPesticideData,
+  cls: PesticideClass | 'all',
+  chemical?: string | null,
+): number {
+  if (chemical) return PESTICIDE_BY_CHEMICAL[chemical]?.[data.county] ?? 0;
   if (cls === 'all') return data.lbs_per_sq_mile;
   return data.by_class[cls];
 }
@@ -831,21 +838,39 @@ function formatLbs(n: number): string {
   return String(n);
 }
 
+const ALL_CHEMICAL_NAMES = Object.keys(PESTICIDE_BY_CHEMICAL).sort();
+
 function PesticideMap({
   showSuperfund,
   geoLevel,
   selectedClass,
   onClassChange,
+  selectedChemical,
+  onChemicalChange,
 }: {
   showSuperfund: boolean;
   geoLevel: GeoLevel;
   selectedClass: PesticideClass | 'all';
   onClassChange: (cls: PesticideClass | 'all') => void;
+  selectedChemical: string | null;
+  onChemicalChange: (chem: string | null) => void;
 }) {
+  const [filterMode, setFilterMode] = useState<'class' | 'chemical'>(
+    selectedChemical ? 'chemical' : 'class',
+  );
+  const [chemSearch, setChemSearch] = useState('');
+
+  const activeChemical = filterMode === 'chemical' ? selectedChemical : null;
+
   const valueRange = useMemo(() => {
-    const vals = MOCK_PESTICIDE_DATA.map(d => getPesticideValue(d, selectedClass));
+    if (activeChemical) {
+      const vals = Object.values(PESTICIDE_BY_CHEMICAL[activeChemical] ?? {});
+      if (vals.length === 0) return { min: 0, max: 1 };
+      return { min: 0, max: Math.max(...vals) };
+    }
+    const vals = PESTICIDE_DATA.map(d => getPesticideValue(d, selectedClass));
     return { min: Math.min(...vals), max: Math.max(...vals) };
-  }, [selectedClass]);
+  }, [selectedClass, activeChemical]);
 
   const colorScale = useMemo(
     () =>
@@ -857,9 +882,17 @@ function PesticideMap({
 
   const [hovered, setHovered] = useState<string | null>(null);
 
-  const classLabel = selectedClass === 'all'
-    ? 'All Classes'
-    : PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass;
+  const filterLabel = activeChemical
+    ?? (selectedClass !== 'all' ? (PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass) : null);
+
+  const tooltipFilterLabel = activeChemical
+    ?? (selectedClass === 'all' ? 'All Classes' : (PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass));
+
+  const searchResults = useMemo(() => {
+    if (!chemSearch.trim()) return [];
+    const q = chemSearch.toLowerCase();
+    return ALL_CHEMICAL_NAMES.filter(c => c.toLowerCase().includes(q)).slice(0, 8);
+  }, [chemSearch]);
 
   const geoLayer = useMemo(
     () =>
@@ -874,15 +907,15 @@ function PesticideMap({
           if (key && key === hovered) return [96, 165, 250, 220] as [number, number, number, number];
           const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           const data = PESTICIDE_BY_COUNTY[county];
-          return data ? hexToRgba(colorScale(getPesticideValue(data, selectedClass))) : NO_DATA_COLOR;
+          return data ? hexToRgba(colorScale(getPesticideValue(data, selectedClass, activeChemical))) : NO_DATA_COLOR;
         },
         getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) =>
           setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, geoLevel) : null),
-        updateTriggers: { getFillColor: [colorScale, hovered, geoLevel, selectedClass], data: [geoLevel] },
+        updateTriggers: { getFillColor: [colorScale, hovered, geoLevel, selectedClass, activeChemical], data: [geoLevel] },
       }),
-    [colorScale, hovered, geoLevel, selectedClass],
+    [colorScale, hovered, geoLevel, selectedClass, activeChemical],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -904,14 +937,15 @@ function PesticideMap({
           style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
         };
       }
-      const val = getPesticideValue(data, selectedClass);
-      // Top 3 active ingredients
-      const ingredientsHtml = data.top_ingredients
-        .slice(0, 3)
-        .map(ing => `<br/><span style="color:#6b7280">${ing.name}: ${formatLbs(ing.lbs_applied)} lbs</span>`)
-        .join('');
+      const val = getPesticideValue(data, selectedClass, activeChemical);
+      const ingredientsHtml = activeChemical
+        ? ''
+        : data.top_ingredients
+            .slice(0, 3)
+            .map(ing => `<br/><span style="color:#6b7280">${ing.name}: ${formatLbs(ing.lbs_applied)} lbs</span>`)
+            .join('');
       return {
-        html: `${header}<br/>${val.toLocaleString()} lbs/sq mi · ${classLabel}${ingredientsHtml}`,
+        html: `${header}<br/>${val.toLocaleString()} lbs/sq mi · ${tooltipFilterLabel}${ingredientsHtml}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -925,6 +959,13 @@ function PesticideMap({
     return null;
   };
 
+  const tabCls = (active: boolean) =>
+    `flex-1 text-[10px] font-medium py-0.5 rounded transition-colors ${
+      active
+        ? 'bg-[var(--color-teal)] text-white'
+        : 'text-[var(--color-text-secondary)] hover:bg-gray-100'
+    }`;
+
   return (
     <DeckMap
       layers={layers}
@@ -932,31 +973,92 @@ function PesticideMap({
       title="Pesticide Use"
       subtitle={
         <>
-          Avg annual lbs active ingredient / sq mi (2015–2019) &middot;{' '}
+          Avg annual lbs active ingredient / sq mi (2016–2023) &middot;{' '}
           <a href="https://trackingcalifornia.org/data-and-tools/pesticide-mapping-tool" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">Source</a>
         </>
       }
       headerRight={
         <div className="flex items-center gap-1.5">
-          {selectedClass !== 'all' && (
+          {filterLabel && (
             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
-              {classLabel}
+              {filterLabel}
             </span>
           )}
           <MapFilterButton>
-            <label className="block">
-              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Pesticide Class</span>
-              <select
-                value={selectedClass}
-                onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
-                className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-              >
-                <option value="all">All Classes</option>
-                {PESTICIDE_CLASSES.map(cls => (
-                  <option key={cls.value} value={cls.value}>{cls.label}</option>
-                ))}
-              </select>
-            </label>
+            {/* Mode toggle */}
+            <div className="flex gap-0.5 mb-2 p-0.5 bg-gray-100 rounded">
+              <button className={tabCls(filterMode === 'class')} onClick={() => { setFilterMode('class'); onChemicalChange(null); setChemSearch(''); }}>
+                By Class
+              </button>
+              <button className={tabCls(filterMode === 'chemical')} onClick={() => setFilterMode('chemical')}>
+                By Pesticide
+              </button>
+            </div>
+
+            {filterMode === 'class' && (
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Pesticide Class</span>
+                <select
+                  value={selectedClass}
+                  onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
+                  className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                >
+                  <option value="all">All Classes</option>
+                  {PESTICIDE_CLASSES.map(cls => (
+                    <option key={cls.value} value={cls.value}>{cls.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {filterMode === 'chemical' && (
+              <div className="space-y-2">
+                <div>
+                  <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Search</span>
+                  <input
+                    type="text"
+                    value={chemSearch}
+                    onChange={(e) => setChemSearch(e.target.value)}
+                    placeholder="Search all pesticides…"
+                    className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                  />
+                  {chemSearch && searchResults.length > 0 && (
+                    <div className="mt-1 border border-gray-200 rounded-md overflow-hidden">
+                      {searchResults.map(c => (
+                        <button
+                          key={c}
+                          onClick={() => { onChemicalChange(c); setChemSearch(''); }}
+                          className="w-full text-left px-2 py-1 text-xs hover:bg-teal-50 hover:text-teal-700 transition-colors border-b border-gray-100 last:border-b-0"
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {chemSearch && searchResults.length === 0 && (
+                    <p className="mt-1 text-[10px] text-gray-400">No matches</p>
+                  )}
+                </div>
+                <div>
+                  <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Featured</span>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {TRACKING_CA_PESTICIDES.map(p => (
+                      <button
+                        key={p}
+                        onClick={() => { onChemicalChange(selectedChemical === p ? null : p); setChemSearch(''); }}
+                        className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                          selectedChemical === p
+                            ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]'
+                            : 'bg-white text-[var(--color-text-secondary)] border-gray-300 hover:border-[var(--color-teal)] hover:text-[var(--color-teal)]'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </MapFilterButton>
         </div>
       }
@@ -1014,7 +1116,7 @@ function CorrelationScatterPlot({
     const names = new Set<string>();
     countyData.forEach(c => names.add(c.county));
     cesData.forEach(d => names.add(d.county_name));
-    MOCK_PESTICIDE_DATA.forEach(d => names.add(d.county));
+    PESTICIDE_DATA.forEach(d => names.add(d.county));
     HUMAN_CANCER_RATES.forEach(d => names.add(d.county));
     return Array.from(names);
   }, [countyData, cesData]);
@@ -1115,7 +1217,7 @@ function CorrelationScatterPlot({
 // Pesticide Trend Line Chart (2015–2019)
 // ---------------------------------------------------------------------------
 
-const TREND_YEARS = [2015, 2016, 2017, 2018, 2019];
+const TREND_YEARS = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023];
 const TREND_COLORS = ['#1A6B77', '#E87722', '#9C27B0', '#EF4444', '#2563EB', '#059669', '#D97706', '#6366F1'];
 
 // ---------------------------------------------------------------------------
@@ -1440,7 +1542,7 @@ function CancerTrendChart() {
 function PesticideTrendChart() {
   // Default: top 5 counties by lbs/sq mi
   const sortedCounties = useMemo(
-    () => [...MOCK_PESTICIDE_DATA].sort((a, b) => b.lbs_per_sq_mile - a.lbs_per_sq_mile).map(d => d.county),
+    () => [...PESTICIDE_DATA].sort((a, b) => b.lbs_per_sq_mile - a.lbs_per_sq_mile).map(d => d.county),
     [],
   );
   const [selectedCounties, setSelectedCounties] = useState<string[]>(() => sortedCounties.slice(0, 5));
@@ -1460,7 +1562,7 @@ function PesticideTrendChart() {
   const innerH = height - margin.top - margin.bottom;
 
   const selectedData = useMemo(
-    () => MOCK_PESTICIDE_DATA.filter(d => selectedCounties.includes(d.county)),
+    () => PESTICIDE_DATA.filter(d => selectedCounties.includes(d.county)),
     [selectedCounties],
   );
 
@@ -1468,7 +1570,7 @@ function PesticideTrendChart() {
     let max = 0;
     for (const d of selectedData) {
       for (const yr of TREND_YEARS) {
-        const v = d.by_year[yr];
+        const v = d.by_year[yr]?.total ?? 0;
         if (v > max) max = v;
       }
     }
@@ -1476,7 +1578,7 @@ function PesticideTrendChart() {
   }, [selectedData]);
 
   const xScale = useMemo(
-    () => scaleLinear().domain([2015, 2019]).range([0, innerW]),
+    () => scaleLinear().domain([2016, 2023]).range([0, innerW]),
     [innerW],
   );
 
@@ -1492,7 +1594,7 @@ function PesticideTrendChart() {
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-            Pesticide Use Trends (2015–2019)
+            Pesticide Use Trends (2016–2023)
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Annual lbs/sq mi</p>
         </div>
@@ -1539,20 +1641,20 @@ function PesticideTrendChart() {
                   const isHov = hovered === d.county;
                   const pathD = TREND_YEARS.map((yr, j) => {
                     const x = xScale(yr);
-                    const y = yScale(d.by_year[yr]);
+                    const y = yScale(d.by_year[yr]?.total ?? 0);
                     return `${j === 0 ? 'M' : 'L'}${x},${y}`;
                   }).join(' ');
                   return (
                     <g key={d.county} onMouseEnter={() => setHovered(d.county)} onMouseLeave={() => setHovered(null)} style={{ cursor: 'pointer' }}>
                       <path d={pathD} fill="none" stroke={color} strokeWidth={isHov ? 3 : 1.5} opacity={hovered && !isHov ? 0.3 : 1} />
                       {TREND_YEARS.map(yr => (
-                        <circle key={yr} cx={xScale(yr)} cy={yScale(d.by_year[yr])} r={isHov ? 5 : 3} fill={color} opacity={hovered && !isHov ? 0.3 : 1} />
+                        <circle key={yr} cx={xScale(yr)} cy={yScale(d.by_year[yr]?.total ?? 0)} r={isHov ? 5 : 3} fill={color} opacity={hovered && !isHov ? 0.3 : 1} />
                       ))}
-                      {/* Hover tooltip at 2019 point */}
+                      {/* Hover tooltip at 2023 point */}
                       {isHov && (
                         <g>
-                          <rect x={xScale(2019) + 8} y={yScale(d.by_year[2019]) - 18} width={100} height={24} rx={4} fill="white" stroke="#E5E7EB" strokeWidth={1} filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))" />
-                          <text x={xScale(2019) + 14} y={yScale(d.by_year[2019]) - 2} fontSize={10} fontWeight="600" fill="#1F2937">{d.county}: {d.by_year[2019]}</text>
+                          <rect x={xScale(2023) + 8} y={yScale(d.by_year[2023]?.total ?? 0) - 18} width={100} height={24} rx={4} fill="white" stroke="#E5E7EB" strokeWidth={1} filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))" />
+                          <text x={xScale(2023) + 14} y={yScale(d.by_year[2023]?.total ?? 0) - 2} fontSize={10} fontWeight="600" fill="#1F2937">{d.county}: {d.by_year[2023]?.total}</text>
                         </g>
                       )}
                     </g>
@@ -1683,6 +1785,7 @@ export function AnalysisView() {
   const [scatterYVar, setScatterYVar] = useState<ScatterVar>('cancer_cases');
   const [autoSync, setAutoSync] = useState(true);
   const [pesticideClass, setPesticideClass] = useState<PesticideClass | 'all'>('all');
+  const [pesticideChemical, setPesticideChemical] = useState<string | null>(null);
 
   const { data: cesData } = useCalEnviroScreenData();
 
@@ -1719,7 +1822,7 @@ export function AnalysisView() {
       case 'vmth':    return <CancerMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
       case 'enviro':  return <EnviroScreenMap key={id} data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} geoLevel={geoLevel} onIndicatorChange={handleIndicatorChange} />;
       case 'human':   return <HumanCancerMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
-      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} selectedClass={pesticideClass} onClassChange={setPesticideClass} />;
+      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} selectedClass={pesticideClass} onClassChange={setPesticideClass} selectedChemical={pesticideChemical} onChemicalChange={setPesticideChemical} />;
     }
   };
 

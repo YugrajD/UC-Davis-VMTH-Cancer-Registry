@@ -205,7 +205,7 @@ The Analysis tab is an advanced multi-variable comparison tool for researchers i
 Two dropdown menus allow selection of an **X variable** and a **Y variable** from over 50 options organized into groups:
 
 - **VMTH Cancer Data** — case counts by county
-- **CDPR Pesticide Data** — total pesticide use, 2015 snapshot, 2019 snapshot, 10-year change
+- **CDPR Pesticide Data** — total pesticide use, 2016 snapshot, 2023 snapshot, 2016–23 change
 - **EPA Superfund** — number of Superfund sites per county
 - **CalEnviroScreen** — 24 environmental justice indicators including pollution burden, health outcomes, and socioeconomic factors (e.g., Ozone, PM2.5, Pesticides, Poverty Rate, Education, Cardiovascular Disease)
 - **CCR Human Cancer** — human cancer incidence rates from the California Cancer Registry, broken out by cancer site
@@ -223,9 +223,11 @@ Below the scatter plot, four side-by-side maps display:
 
 Maps support pan and zoom. Click **Reset View** to return all maps to the California bounding box.
 
+The **Pesticide Use** map displays annual average lbs of active ingredient per square mile for all 58 California counties (2016–2023), sourced from the CDPR Pesticide Use Reporting database. A **Pesticide Class** filter narrows the map to one of eight use-type categories: Fumigants, Herbicides, Insecticides, Fungicides, Bactericides, Plant Growth Regulators, Rodenticides, or Other. Hover over a county to see the lbs/sq mi value and the top active ingredients for that county.
+
 ### 7.4 Yearly Trends Chart
 
-At the bottom of the tab, a line chart shows VMTH case counts by year, drawn from real registry data. If a pesticide variable is selected as X or Y, a second line overlays pesticide trend data for visual temporal comparison.
+At the bottom of the tab, a line chart shows VMTH case counts by year, drawn from real registry data. If a pesticide variable is selected as X or Y, a second line overlays pesticide trend data (2016–2023, total lbs/sq mi) for visual temporal comparison.
 
 ---
 

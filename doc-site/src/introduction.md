@@ -7,6 +7,7 @@ This site contains developer handoff documentation for the **UC Davis VMTH Canin
 | Document | What it covers |
 |---|---|
 | [Project Handoff](handoff.md) | Tech stack, repo structure, what's implemented, running locally, database schema, data pipeline, known issues, remaining work, credentials |
+| [User Guide](user-guide.md) | Guide for using the front-end. |
 | [Future Plans](future-plans.md) | Multi-tenancy, data format standardization, auth, NLP generalization, infrastructure scaling, geographic expansion, clinic onboarding, data privacy, EHR integrations |
 
 ## Quick facts

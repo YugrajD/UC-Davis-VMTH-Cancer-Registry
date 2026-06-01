@@ -320,7 +320,8 @@ async def lifespan(app: FastAPI):
                 """))
                 await db.execute(text(
                     "CREATE UNIQUE INDEX idx_mv_county_cancer "
-                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year)"
+                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year) "
+                    "NULLS NOT DISTINCT"
                 ))
                 await db.execute(text(
                     "DROP MATERIALIZED VIEW IF EXISTS mv_yearly_trends CASCADE"
@@ -353,7 +354,8 @@ async def lifespan(app: FastAPI):
                 """))
                 await db.execute(text(
                     "CREATE UNIQUE INDEX idx_mv_yearly_trends "
-                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex)"
+                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex) "
+                    "NULLS NOT DISTINCT"
                 ))
                 await db.commit()
                 logger.info("Migration 023 applied: materialized views rebuilt with sex column")
@@ -432,7 +434,8 @@ async def lifespan(app: FastAPI):
                 """))
                 await db.execute(text(
                     "CREATE UNIQUE INDEX idx_mv_county_cancer "
-                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year)"
+                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year) "
+                    "NULLS NOT DISTINCT"
                 ))
                 await db.execute(text(
                     "DROP MATERIALIZED VIEW IF EXISTS mv_yearly_trends CASCADE"
@@ -465,7 +468,8 @@ async def lifespan(app: FastAPI):
                 """))
                 await db.execute(text(
                     "CREATE UNIQUE INDEX idx_mv_yearly_trends "
-                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex)"
+                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex) "
+                    "NULLS NOT DISTINCT"
                 ))
                 await db.commit()
                 logger.info("Migration 027 applied: materialized views rebuilt without Non-Cancer")
@@ -513,7 +517,8 @@ async def lifespan(app: FastAPI):
                 """))
                 await db.execute(text(
                     "CREATE UNIQUE INDEX idx_mv_county_cancer "
-                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year)"
+                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year) "
+                    "NULLS NOT DISTINCT"
                 ))
                 await db.execute(text(
                     "DROP MATERIALIZED VIEW IF EXISTS mv_yearly_trends CASCADE"
@@ -546,12 +551,40 @@ async def lifespan(app: FastAPI):
                 """))
                 await db.execute(text(
                     "CREATE UNIQUE INDEX idx_mv_yearly_trends "
-                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex)"
+                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex) "
+                    "NULLS NOT DISTINCT"
                 ))
                 await db.commit()
                 logger.info("Migration 028 applied: materialized views rebuilt with LEFT JOIN on counties")
     except Exception as e:
         logger.warning("Could not apply migration 028: %s", e)
+
+    # Rebuild idx_mv_county_cancer with NULLS NOT DISTINCT so concurrent refresh
+    # correctly handles patients with no county assignment (migration 029).
+    try:
+        async with async_session() as db:
+            row = await db.execute(text(
+                "SELECT indnullsnotdistinct FROM pg_index "
+                "WHERE indexrelid = 'idx_mv_county_cancer'::regclass"
+            ))
+            if not row.scalar():
+                logger.info("Applying migration 029: rebuilding idx_mv_county_cancer with NULLS NOT DISTINCT")
+                await db.execute(text("DROP INDEX IF EXISTS idx_mv_county_cancer"))
+                await db.execute(text(
+                    "CREATE UNIQUE INDEX idx_mv_county_cancer "
+                    "ON mv_county_cancer_incidence (county_id, cancer_type_id, species_id, sex, year) "
+                    "NULLS NOT DISTINCT"
+                ))
+                await db.execute(text("DROP INDEX IF EXISTS idx_mv_yearly_trends"))
+                await db.execute(text(
+                    "CREATE UNIQUE INDEX idx_mv_yearly_trends "
+                    "ON mv_yearly_trends (year, cancer_type_id, species_id, county_id, sex) "
+                    "NULLS NOT DISTINCT"
+                ))
+                await db.commit()
+                logger.info("Migration 029 applied: MV indexes rebuilt with NULLS NOT DISTINCT")
+    except Exception as e:
+        logger.warning("Could not apply migration 029: %s", e)
 
     yield
 

@@ -70,12 +70,28 @@ class IncidenceRecord(BaseModel):
     breed: Optional[str] = None
     year: Optional[int] = None
     count: int
+    pccp: Optional[float] = None
+    total_patients: Optional[int] = None
 
 
 class IncidenceResponse(BaseModel):
     data: List[IncidenceRecord]
     total: int
     filters_applied: dict
+
+
+class PCCPCountyRecord(BaseModel):
+    county: str
+    cancer_patients: int
+    total_patients: int
+    pccp: float
+
+
+class PCCPResponse(BaseModel):
+    data: List[PCCPCountyRecord]
+    overall_cancer_patients: int
+    overall_total_patients: int
+    overall_pccp: float
 
 
 # --- GeoJSON ---
@@ -144,6 +160,8 @@ class TrendPoint(BaseModel):
     count: int
     deceased: Optional[int] = None
     alive: Optional[int] = None
+    pccp: Optional[float] = None
+    total_patients: Optional[int] = None
 
 
 class TrendSeries(BaseModel):

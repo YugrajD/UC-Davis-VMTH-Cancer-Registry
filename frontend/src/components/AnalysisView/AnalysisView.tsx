@@ -7,7 +7,7 @@ import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import { useFilteredData } from '../../hooks/useFilteredData';
 import { useYearlyTrendsData } from '../../hooks/useYearlyTrendsData';
 import { fetchFilterOptions } from '../../api/client';
-import { yearRange, countForYear, OTHER_SERIES_NAME } from '../../lib/trends';
+import { yearRange, countForYear, pccpForYear, OTHER_SERIES_NAME } from '../../lib/trends';
 import { MapResetButton } from '../MapResetButton/MapResetButton';
 import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState } from '../../types';
 import { CES_INDICATORS, CANCER_TYPES, BREEDS, SEX_OPTIONS } from '../../types';
@@ -67,7 +67,7 @@ interface ScatterVarOption {
 
 const SCATTER_VAR_OPTIONS: ScatterVarOption[] = [
   // VMTH
-  { value: 'cancer_cases', label: 'Cancer Cases', unit: 'cases', group: 'VMTH' },
+  { value: 'cancer_cases', label: 'Cancer PCCP', unit: 'per 100', group: 'VMTH' },
   // CDPR
   { value: 'pesticide_lbs', label: 'Pesticide Use (CDPR)', unit: 'lbs/sq mi', group: 'CDPR' },
   { value: 'pesticide_2015', label: 'Pesticide Use 2016', unit: 'lbs/sq mi', group: 'CDPR' },
@@ -534,7 +534,7 @@ function CancerMap({
       const sfStr = sf ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>` : '';
       const header = tooltipHeader(props, geoLevel, county);
       return {
-        html: `${header}<br/>${count.toLocaleString()} cases${sfStr}`,
+        html: `${header}<br/>${count.toFixed(1)} per 100 tested${sfStr}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -549,10 +549,10 @@ function CancerMap({
   };
 
   const subtitle = geoLevel === 'county'
-    ? 'Case count by county'
+    ? 'Cancer PCCP by county'
     : geoLevel === 'tract'
-      ? 'Case count by county · census tract boundaries'
-      : 'Case count by county · ZCTA boundaries';
+      ? 'Cancer PCCP by county · census tract boundaries'
+      : 'Cancer PCCP by county · ZCTA boundaries';
 
   return (
     <DeckMap
@@ -1388,7 +1388,8 @@ function CancerTrendChart() {
     let max = 0;
     for (const s of visible) {
       for (const p of s.data) {
-        if (p.count > max) max = p.count;
+        const v = p.pccp ?? p.count;
+        if (v > max) max = v;
       }
     }
     return max || 1;
@@ -1438,10 +1439,10 @@ function CancerTrendChart() {
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-            Cancer Cases by Year
+            Cancer PCCP by Year
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Top 5 cancer types plus "Other" · annual case counts
+            Top 5 cancer types plus "Other" · PCCP per 100 tested per year
           </p>
         </div>
         <div className="relative">
@@ -1535,15 +1536,16 @@ function CancerTrendChart() {
                   const colorIndex = allNames.indexOf(s.name);
                   const color = TREND_COLORS[colorIndex % TREND_COLORS.length];
                   const isHov = hovered === s.name;
+                  const displayValue = (yr: number) => pccpForYear(s, yr) ?? countForYear(s, yr);
                   const pathD = years
                     .map((yr, j) => {
                       const x = xScale(yr);
-                      const y = yScale(countForYear(s, yr));
+                      const y = yScale(displayValue(yr));
                       return `${j === 0 ? 'M' : 'L'}${x},${y}`;
                     })
                     .join(' ');
                   const lastYear = years[years.length - 1];
-                  const lastCount = countForYear(s, lastYear);
+                  const lastCount = displayValue(lastYear);
                   return (
                     <g
                       key={s.name}
@@ -1563,7 +1565,7 @@ function CancerTrendChart() {
                         <circle
                           key={yr}
                           cx={xScale(yr)}
-                          cy={yScale(countForYear(s, yr))}
+                          cy={yScale(displayValue(yr))}
                           r={isHov ? 5 : 3}
                           fill={color}
                           opacity={hovered && !isHov ? 0.3 : 1}
@@ -1589,7 +1591,7 @@ function CancerTrendChart() {
                             fontWeight="600"
                             fill="#1F2937"
                           >
-                            {s.name}: {lastCount}
+                            {s.name}: {lastCount.toFixed(1)}
                           </text>
                         </g>
                       )}
@@ -1628,7 +1630,7 @@ function CancerTrendChart() {
                   fontSize={10}
                   fill="#374151"
                 >
-                  Cases
+                  PCCP per 100
                 </text>
 
                 {/* Legend on the right */}

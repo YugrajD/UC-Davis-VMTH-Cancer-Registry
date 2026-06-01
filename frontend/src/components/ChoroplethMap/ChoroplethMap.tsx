@@ -97,11 +97,11 @@ function MapLegend({
 }) {
   return (
     <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
-      <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">Cases</p>
+      <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">PCCP per 100</p>
       <div className="w-28 h-3 rounded" style={{ background: 'linear-gradient(to right, #E6F3F5, #6BB5BF, #1A6B77)' }} />
       <div className="flex justify-between mt-1">
-        <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.min}</span>
-        <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.max}</span>
+        <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.min.toFixed(1)}</span>
+        <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.max.toFixed(1)}</span>
       </div>
       <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
         <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
@@ -221,7 +221,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
         : '';
       const header = tooltipHeader(props, geoLevel, county);
       const body = countyInfo
-        ? `${countyInfo.count.toLocaleString()} cases${sfStr}`
+        ? `${countyInfo.count.toFixed(1)} per 100 tested${sfStr}`
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -249,10 +249,10 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
   };
 
   const subtitleText = geoLevel === 'county'
-    ? 'Case counts by county (expanded view)'
+    ? 'Cancer proportion per 100 tested (expanded view)'
     : geoLevel === 'tract'
-      ? 'Case count by county · census tract boundaries'
-      : 'Case count by county · ZCTA boundaries';
+      ? 'Cancer PCCP by county · census tract boundaries'
+      : 'Cancer PCCP by county · ZCTA boundaries';
 
   return (
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
@@ -391,7 +391,7 @@ export function ChoroplethMap({
       const countyInfo = countyDataMap.get(county.toLowerCase());
       const header = tooltipHeader(props, geoLevel, county);
       const body = countyInfo
-        ? `${countyInfo.count.toLocaleString()} cases`
+        ? `${countyInfo.count.toFixed(1)} per 100 tested`
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -407,10 +407,10 @@ export function ChoroplethMap({
   };
 
   const subtitleText = geoLevel === 'county'
-    ? 'Case count by county'
+    ? 'Cancer proportion per 100 tested'
     : geoLevel === 'tract'
-      ? 'Case count by county · census tract boundaries'
-      : 'Case count by county · ZCTA boundaries';
+      ? 'Cancer PCCP by county · census tract boundaries'
+      : 'Cancer PCCP by county · ZCTA boundaries';
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative">

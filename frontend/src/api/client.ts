@@ -34,12 +34,28 @@ export interface IncidenceRecord {
   breed?: string;
   year?: number;
   count: number;
+  pccp?: number;
+  total_patients?: number;
 }
 
 export interface IncidenceResponse {
   data: IncidenceRecord[];
   total: number;
   filters_applied: Record<string, unknown>;
+}
+
+export interface PCCPCountyRecord {
+  county: string;
+  cancer_patients: number;
+  total_patients: number;
+  pccp: number;
+}
+
+export interface PCCPResponse {
+  data: PCCPCountyRecord[];
+  overall_cancer_patients: number;
+  overall_total_patients: number;
+  overall_pccp: number;
 }
 
 export interface GeoJSONFeatureProperties {
@@ -161,6 +177,16 @@ export async function fetchIncidenceByBreed(filters: FilterParams = {}): Promise
   return fetchJson(url);
 }
 
+export async function fetchPCCPByCounty(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> = {}): Promise<PCCPResponse> {
+  const params = new URLSearchParams();
+  if (filters.sex && filters.sex !== 'all') params.append('sex', filters.sex);
+  if (filters.ageGroup && filters.ageGroup !== 'all') params.append('age_group', filters.ageGroup);
+  if (filters.yearStart) params.append('year_start', String(filters.yearStart));
+  if (filters.yearEnd) params.append('year_end', String(filters.yearEnd));
+  const url = params.toString() ? `/api/v1/incidence/pccp?${params}` : '/api/v1/incidence/pccp';
+  return fetchJson(url);
+}
+
 export async function fetchCountiesGeoJSON(filters: FilterParams = {}): Promise<GeoJSONResponse> {
   const params = filtersToParams(filters);
   const url = params.toString() ? `/api/v1/geo/counties?${params}` : '/api/v1/geo/counties';
@@ -174,6 +200,8 @@ export interface TrendPointApi {
   count: number;
   deceased: number | null;
   alive: number | null;
+  pccp?: number | null;
+  total_patients?: number | null;
 }
 
 export interface TrendSeriesApi {

@@ -135,7 +135,11 @@ async def test_incidence_filters_echoed_in_response():
 @pytest.mark.asyncio
 async def test_by_cancer_type_returns_200():
     mock_db = AsyncMock()
-    mock_db.execute.return_value = all_result([])
+    # Two DB calls: (1) scalar denominator, (2) per-type numerator rows
+    mock_db.execute.side_effect = [
+        scalar_result(0),
+        all_result([]),
+    ]
 
     async def override():
         yield mock_db
@@ -152,10 +156,14 @@ async def test_by_cancer_type_returns_200():
 @pytest.mark.asyncio
 async def test_by_cancer_type_schema():
     mock_db = AsyncMock()
-    mock_db.execute.return_value = all_result([
-        row(cancer_type="Lymphoma", count=50),
-        row(cancer_type="Mast Cell Tumor", count=30),
-    ])
+    # Two DB calls: (1) scalar denominator = 100 patients, (2) per-type rows
+    mock_db.execute.side_effect = [
+        scalar_result(100),
+        all_result([
+            row(cancer_type="Lymphoma", count=50),
+            row(cancer_type="Mast Cell Tumor", count=30),
+        ]),
+    ]
 
     async def override():
         yield mock_db
@@ -167,9 +175,10 @@ async def test_by_cancer_type_schema():
 
     app.dependency_overrides.clear()
 
-    assert data["total"] == 80
+    assert data["total"] == 100  # total_patients (denominator)
     assert data["data"][0]["cancer_type"] == "Lymphoma"
     assert data["data"][0]["count"] == 50
+    assert data["data"][0]["pccp"] == 50.0  # 50/100 * 100
 
 
 # ---------------------------------------------------------------------------

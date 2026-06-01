@@ -26,6 +26,7 @@ export interface CountyData {
   fips: string;
   population?: number;
   rate?: number;
+  totalPatients?: number;
 }
 
 export interface RegionSummary {

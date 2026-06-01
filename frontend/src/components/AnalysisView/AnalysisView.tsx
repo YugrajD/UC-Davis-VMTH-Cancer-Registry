@@ -154,7 +154,7 @@ function tooltipHeader(props: Record<string, unknown>, geoLevel: GeoLevel, count
 // Filter popover button — small icon button that toggles a dropdown panel
 // ---------------------------------------------------------------------------
 
-function MapFilterButton({ children, label }: { children: React.ReactNode; label?: string }) {
+function MapFilterButton({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -168,18 +168,25 @@ function MapFilterButton({ children, label }: { children: React.ReactNode; label
   }, [open]);
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative group" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium border transition-colors ${open ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]' : 'border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
-        title={label ?? 'Filters'}
+        aria-label="Filters"
+        className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent ${open ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]' : 'bg-white border-gray-200 shadow-sm text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
       >
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
         </svg>
-        <span className="hidden sm:inline">Filters</span>
       </button>
+      {!open && (
+        <div
+          role="tooltip"
+          className="absolute top-full right-0 mt-1.5 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-md z-20"
+        >
+          Filters
+        </div>
+      )}
       {open && (
         <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[200px] space-y-2">
           {children}

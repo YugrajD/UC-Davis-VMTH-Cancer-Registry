@@ -22,7 +22,7 @@ function AppContent() {
     breed: 'All Breeds',
   });
 
-  const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
+  const { countyData, regionSummary, countRange, loading, error, excludedCases, totalCases } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);
   const { passwordRecovery } = useAuth();
   const [cancerCategory, setCancerCategory] = useState<VetIcdOCategoryId | 'all'>('all');
@@ -231,6 +231,19 @@ function AppContent() {
               onCountyHover={setHoveredCounty}
               onCountyClick={handleCountyClick}
             />
+            {excludedCases > 0 && totalCases > 0 && (
+              <div
+                title={`${excludedCases.toLocaleString()} of ${totalCases.toLocaleString()} cases have no California county and are excluded from the map`}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 cursor-help"
+              >
+                <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                </svg>
+                <span className="text-[11px] font-medium text-amber-700">
+                  {((excludedCases / totalCases) * 100).toFixed(1)}% of cases excluded (no CA county)
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

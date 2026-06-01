@@ -475,7 +475,7 @@ function CancerMap({
     setFilters(f => ({ ...f, [key]: value ? Number(value) : undefined }));
   };
 
-  const { countyData, countRange } = useFilteredData(filters);
+  const { countyData, countRange, excludedCases, totalCases } = useFilteredData(filters);
 
   const countyDataMap = useMemo(() => {
     const m = new Map<string, CountyData>();
@@ -581,6 +581,14 @@ function CancerMap({
             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
               {filters.yearStart && filters.yearEnd ? `${filters.yearStart}–${filters.yearEnd}` :
                filters.yearStart ? `≥${filters.yearStart}` : `≤${filters.yearEnd}`}
+            </span>
+          )}
+          {excludedCases > 0 && totalCases > 0 && (
+            <span
+              title={`${excludedCases.toLocaleString()} of ${totalCases.toLocaleString()} cases have no California county and are excluded from the map`}
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 cursor-help"
+            >
+              {((excludedCases / totalCases) * 100).toFixed(1)}% excluded
             </span>
           )}
           <MapFilterButton>

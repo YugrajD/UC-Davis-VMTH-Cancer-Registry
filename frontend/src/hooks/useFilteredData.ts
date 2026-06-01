@@ -9,6 +9,10 @@ export interface FilteredDataState {
   countRange: { min: number; max: number };
   loading: boolean;
   error: string | null;
+  /** Cases in the API response that have no California county and are excluded from the map. */
+  excludedCases: number;
+  /** Total cases in the API response (mapped + excluded). Zero while loading. */
+  totalCases: number;
 }
 
 const EMPTY_REGION_SUMMARY: RegionSummary = {
@@ -41,14 +45,25 @@ function seededRandom(seed: string) {
   };
 }
 
-export function buildCountyDataFromIncidence(records: IncidenceRecord[]): CountyData[] {
+export function buildCountyDataFromIncidence(records: IncidenceRecord[]): {
+  countyData: CountyData[];
+  totalCases: number;
+  excludedCases: number;
+} {
   const counts = new Map<string, number>();
+  let totalCases = 0;
+  let excludedCases = 0;
+
   for (const record of records) {
-    if (!record.county) continue;
+    totalCases += record.count;
+    if (!record.county) {
+      excludedCases += record.count;
+      continue;
+    }
     counts.set(record.county, (counts.get(record.county) ?? 0) + record.count);
   }
 
-  return Array.from(counts.entries())
+  const countyData = Array.from(counts.entries())
     .map(([county, count]) => ({
       county,
       region: regionForCounty(county),
@@ -56,6 +71,8 @@ export function buildCountyDataFromIncidence(records: IncidenceRecord[]): County
       fips: '',
     }))
     .sort((a, b) => b.count - a.count);
+
+  return { countyData, totalCases, excludedCases };
 }
 
 export function applyCountyDemoFilters(base: CountyData[], filters: FilterState): CountyData[] {
@@ -97,7 +114,7 @@ export function createFilteredDataState(
   countyData: CountyData[],
   filters: FilterState,
   options: { applyServerSideFilters?: boolean } = {},
-): Omit<FilteredDataState, 'loading' | 'error'> {
+): Omit<FilteredDataState, 'loading' | 'error' | 'excludedCases' | 'totalCases'> {
   const filteredCountyData = applyCountyDemoFilters(
     countyData,
     options.applyServerSideFilters === false
@@ -116,6 +133,8 @@ export function createFilteredDataState(
 export function useFilteredData(filters: FilterState): FilteredDataState {
   const { cancerType, sex, ageGroup, yearStart, yearEnd } = filters;
   const [countyData, setCountyData] = useState<CountyData[]>([]);
+  const [totalCases, setTotalCases] = useState(0);
+  const [excludedCases, setExcludedCases] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -135,11 +154,16 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
         });
         if (cancelled) return;
 
-        setCountyData(buildCountyDataFromIncidence(response.data));
+        const { countyData: cd, totalCases: tc, excludedCases: ec } = buildCountyDataFromIncidence(response.data);
+        setCountyData(cd);
+        setTotalCases(tc);
+        setExcludedCases(ec);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Unable to load dashboard data');
         setCountyData([]);
+        setTotalCases(0);
+        setExcludedCases(0);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -163,6 +187,8 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
     ...derivedState,
     loading,
     error,
+    excludedCases,
+    totalCases,
   };
 }
 

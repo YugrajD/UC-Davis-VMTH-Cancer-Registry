@@ -177,12 +177,13 @@ export async function fetchIncidenceByBreed(filters: FilterParams = {}): Promise
   return fetchJson(url);
 }
 
-export async function fetchPCCPByCounty(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> = {}): Promise<PCCPResponse> {
+export async function fetchPCCPByCounty(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> & { cancerType?: string } = {}): Promise<PCCPResponse> {
   const params = new URLSearchParams();
   if (filters.sex && filters.sex !== 'all') params.append('sex', filters.sex);
   if (filters.ageGroup && filters.ageGroup !== 'all') params.append('age_group', filters.ageGroup);
   if (filters.yearStart) params.append('year_start', String(filters.yearStart));
   if (filters.yearEnd) params.append('year_end', String(filters.yearEnd));
+  if (filters.cancerType && filters.cancerType !== 'All Types') params.append('cancer_type', filters.cancerType);
   const url = params.toString() ? `/api/v1/incidence/pccp?${params}` : '/api/v1/incidence/pccp';
   return fetchJson(url);
 }

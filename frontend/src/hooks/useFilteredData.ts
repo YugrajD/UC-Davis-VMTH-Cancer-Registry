@@ -119,7 +119,7 @@ export function createFilteredDataState(
 }
 
 export function useFilteredData(filters: FilterState): FilteredDataState {
-  const { sex, ageGroup, yearStart, yearEnd } = filters;
+  const { sex, ageGroup, yearStart, yearEnd, cancerType } = filters;
   const [countyData, setCountyData] = useState<CountyData[]>([]);
   const [overallPccp, setOverallPccp] = useState(0);
   const [overallCancerPatients, setOverallCancerPatients] = useState(0);
@@ -139,6 +139,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
           ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
           yearStart,
           yearEnd,
+          cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
         });
         if (cancelled) return;
 
@@ -163,7 +164,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
     loadData();
 
     return () => { cancelled = true; };
-  }, [sex, ageGroup, yearStart, yearEnd]);
+  }, [sex, ageGroup, yearStart, yearEnd, cancerType]);
 
   const regionSummary = useMemo(
     () => countyData.length > 0 ? generateRegionSummary(countyData) : EMPTY_REGION_SUMMARY,

@@ -248,13 +248,16 @@ async def get_pccp_by_county(
     age_group: Optional[str] = Query(None, max_length=20),
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
     year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    cancer_type: Optional[str] = Query(None, max_length=200),
     db: AsyncSession = Depends(get_db),
 ):
     """Per-county PCCP: cancer patients / tested patients × 100.
 
     Denominator: petbert patients with any confirmed/corrected diagnosis, county_id IS NOT NULL.
-    Numerator: subset with at least one non-Non-Cancer confirmed/corrected diagnosis.
-    Demographic filters (sex, age_group, year) apply to both; cancer_type excluded from denominator.
+      - Demographic filters (sex, age_group, year) apply to the denominator.
+      - cancer_type does NOT apply to the denominator.
+    Numerator: subset with a matching cancer diagnosis.
+      - All filters including cancer_type apply to the numerator.
     """
     def _add_demo(stmt):
         if sex and sex not in ("All", "all"):
@@ -267,7 +270,8 @@ async def get_pccp_by_county(
             stmt = stmt.where(func.extract("year", Patient.diagnosis_date) <= year_end)
         return stmt
 
-    # Denominator: patients with any confirmed/corrected diagnosis, grouped by county
+    # Denominator: patients with any confirmed/corrected diagnosis, grouped by county.
+    # cancer_type intentionally excluded — denominator is always all tested animals.
     denom_stmt = apply_review_filter(
         _add_demo(
             select(Patient.county_id, func.count(distinct(Patient.id)).label("n"))
@@ -280,19 +284,21 @@ async def get_pccp_by_county(
     )
     denom_rows = {r.county_id: r.n for r in (await db.execute(denom_stmt)).all()}
 
-    # Numerator: patients with at least one cancer diagnosis, grouped by county
-    num_stmt = apply_review_filter(
-        _add_demo(
-            select(Patient.county_id, func.count(distinct(Patient.id)).label("n"))
-            .select_from(Patient)
-            .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
-            .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-            .where(Patient.data_source == "petbert")
-            .where(Patient.county_id.is_not(None))
-            .where(CancerType.name != NON_CANCER_TYPE_NAME)
-            .group_by(Patient.county_id)
-        )
+    # Numerator: patients with a matching cancer diagnosis, grouped by county.
+    # cancer_type narrows the numerator when provided.
+    num_base = (
+        select(Patient.county_id, func.count(distinct(Patient.id)).label("n"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Patient.data_source == "petbert")
+        .where(Patient.county_id.is_not(None))
+        .where(CancerType.name != NON_CANCER_TYPE_NAME)
+        .group_by(Patient.county_id)
     )
+    if cancer_type and cancer_type not in ("All Types", "all"):
+        num_base = num_base.where(CancerType.name == cancer_type)
+    num_stmt = apply_review_filter(_add_demo(num_base))
     num_rows = {r.county_id: r.n for r in (await db.execute(num_stmt)).all()}
 
     county_ids = set(denom_rows.keys()) | set(num_rows.keys())

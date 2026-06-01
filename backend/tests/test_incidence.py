@@ -274,8 +274,11 @@ async def test_breed_detail_requires_breed_param():
 @pytest.mark.asyncio
 async def test_breed_detail_schema():
     mock_db = AsyncMock()
+    # 6 DB calls: global_denom, breed_denom, total_cases, sex, cancer_types, county
     mock_db.execute.side_effect = [
-        scalar_result(10),
+        scalar_result(1580),   # global_total_patients (Eq 5 denominator)
+        scalar_result(100),    # breed_total_patients (Eq 6 denominator)
+        scalar_result(10),     # total_cases (cancer patients of this breed)
         all_result([row(sex="Male", count=6), row(sex="Female", count=4)]),
         all_result([row(cancer_type="Lymphoma", count=10)]),
         all_result([row(county_name="Yolo", fips_code="06113", count=5)]),
@@ -295,8 +298,14 @@ async def test_breed_detail_schema():
 
     assert data["breed"] == "Labrador Retriever"
     assert data["total_cases"] == 10
+    assert data["breed_total_patients"] == 100
+    assert data["global_total_patients"] == 1580
+    assert round(data["pccp_within_breed"], 2) == 10.0   # 10/100 * 100
+    assert data["pccp_of_all"] == 0.63                    # round(10/1580*100, 2)
     assert len(data["sex_breakdown"]) == 2
     assert data["cancer_types"][0]["cancer_type"] == "Lymphoma"
+    assert data["cancer_types"][0]["pccp_within_breed"] == 10.0
+    assert data["cancer_types"][0]["pccp_of_all"] == 0.63
     assert data["county_cases"][0]["fips_code"] == "06113"
 
 

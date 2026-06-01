@@ -61,7 +61,7 @@ export function AgeDisparitiesView() {
       .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
   }, [countRange]);
 
-  const maxCancerCount = detail?.cancer_types[0]?.count || 1;
+  const maxPccp = detail?.cancer_types[0]?.pccp_within_age ?? detail?.cancer_types[0]?.count ?? 1;
 
   const selectedOption = AGE_GROUP_DISPLAY_OPTIONS.find(o => o.value === selectedAgeGroup);
   const displayLabel = selectedOption
@@ -70,6 +70,18 @@ export function AgeDisparitiesView() {
 
   return (
     <div className="space-y-6">
+      {/* PCCP disclaimer */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3">
+        <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+        </svg>
+        <p className="text-xs text-amber-800 leading-relaxed">
+          <span className="font-semibold">PCCP (Pathology-Confirmed Cancer Proportion)</span> — percentage of pathology-tested animals with a confirmed cancer diagnosis.
+          Two denominators are shown: <span className="font-medium">% within age group</span> uses only tested animals in that age group; <span className="font-medium">% of all tested</span> uses all tested animals regardless of age.
+          Figures for small cohorts (fewer than 10 tested animals) may be statistically unstable and should be interpreted with caution.
+        </p>
+      </div>
+
       {/* Age Group Selector */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-4">
         <label
@@ -106,12 +118,35 @@ export function AgeDisparitiesView() {
             <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
               <span className="font-semibold text-[var(--color-text-primary)]">
                 {displayLabel}
-              </span>{' '}
-              has{' '}
-              <span className="font-semibold text-[var(--color-teal-dark)]">
-                {detail.total_cases.toLocaleString()}
-              </span>{' '}
-              total case diagnoses across{' '}
+              </span>
+              {detail.pccp_within_age != null && detail.age_total_patients != null ? (
+                <>
+                  {': '}
+                  <span className="font-semibold text-[var(--color-teal-dark)]">
+                    {detail.pccp_within_age.toFixed(1)}%
+                  </span>
+                  {' within-age PCCP '}
+                  <span className="text-[var(--color-text-secondary)]">
+                    ({detail.total_cases} of {detail.age_total_patients} tested)
+                  </span>
+                  {detail.pccp_of_all != null && (
+                    <span className="text-[var(--color-text-secondary)]">
+                      {' · '}
+                      <span className="font-medium">{detail.pccp_of_all.toFixed(2)}%</span>
+                      {' of all tested (n = '}{detail.global_total_patients?.toLocaleString()}{')'}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  {' has '}
+                  <span className="font-semibold text-[var(--color-teal-dark)]">
+                    {detail.total_cases.toLocaleString()}
+                  </span>
+                  {' cancer patients'}
+                </>
+              )}
+              {' across '}
               <span className="font-semibold">{detail.county_cases.length}</span> counties.
               {detail.sex_breakdown.length > 0 && (
                 <>
@@ -135,7 +170,7 @@ export function AgeDisparitiesView() {
                   Cancer Type Breakdown
                 </h3>
                 <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                  Top cancer types for {displayLabel}
+                  Top cancer types for {displayLabel} · PCCP per 100 tested
                 </p>
               </div>
               <div className="p-6">
@@ -144,12 +179,19 @@ export function AgeDisparitiesView() {
                     No cancer type data available for this age group.
                   </p>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
+                    {/* Column headers */}
+                    <div className="flex items-center gap-3 mb-1">
+                      <span className="w-40 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Cancer Type</span>
+                      <div className="flex-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right pr-1">% within age group</div>
+                      <span className="w-24 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right">% of all tested</span>
+                    </div>
                     {detail.cancer_types.slice(0, 15).map((ct) => {
-                      const width = Math.max(5, (ct.count / maxCancerCount) * 100);
+                      const primaryVal = ct.pccp_within_age ?? ct.count;
+                      const width = Math.max(5, (primaryVal / maxPccp) * 100);
                       return (
-                        <div key={ct.cancer_type} className="flex items-center gap-4">
-                          <span className="w-48 text-sm text-[var(--color-text-primary)] truncate">
+                        <div key={ct.cancer_type} className="flex items-center gap-3">
+                          <span className="w-40 text-sm text-[var(--color-text-primary)] truncate" title={ct.cancer_type}>
                             {ct.cancer_type}
                           </span>
                           <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
@@ -158,10 +200,13 @@ export function AgeDisparitiesView() {
                               style={{ width: `${width}%` }}
                             >
                               <span className="text-xs font-semibold text-white">
-                                {ct.count.toLocaleString()}
+                                {ct.pccp_within_age != null ? `${ct.pccp_within_age.toFixed(1)}%` : ct.count.toLocaleString()}
                               </span>
                             </div>
                           </div>
+                          <span className="w-24 text-xs text-[var(--color-text-secondary)] text-right tabular-nums">
+                            {ct.pccp_of_all != null ? `${ct.pccp_of_all.toFixed(2)}%` : '—'}
+                          </span>
                         </div>
                       );
                     })}
@@ -233,7 +278,7 @@ export function AgeDisparitiesView() {
                 {/* Legend */}
                 <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
                   <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">
-                    Cases
+                    Cancer Patients
                   </p>
                   <div
                     className="w-28 h-3 rounded"
@@ -273,7 +318,7 @@ export function AgeDisparitiesView() {
                       </p>
                       <p className="text-xs text-[var(--color-text-secondary)] mt-1">
                         {tooltip.count > 0
-                          ? `${tooltip.count.toLocaleString()} cases`
+                          ? `${tooltip.count.toLocaleString()} cancer patients`
                           : 'No data'}
                       </p>
                     </div>

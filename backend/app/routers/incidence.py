@@ -412,71 +412,110 @@ async def get_breed_detail(
     breed: str = Query(..., max_length=200, description="Breed name to look up"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return cancer-type breakdown, sex breakdown, and county distribution for a single breed.
+    """Return PCCP-based cancer-type breakdown, sex breakdown, and county distribution for a breed.
 
-    Includes ALL data where breed_id IS NOT NULL (mock + real).
+    Two PCCP denominators:
+    - Eq 5 (pccp_of_all): numerator / all petbert tested dogs
+    - Eq 6 (pccp_within_breed): numerator / tested dogs of this breed
     """
-    # --- total cases ---
+    # --- Eq 5 denominator: all petbert tested dogs ---
+    global_denom_stmt = apply_review_filter(
+        select(func.count(distinct(Patient.id)))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+    )
+    global_total_patients = (await db.execute(global_denom_stmt)).scalar() or 0
+
+    # --- Eq 6 denominator: tested dogs of this breed ---
+    breed_denom_stmt = apply_review_filter(
+        select(func.count(distinct(Patient.id)))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .join(Breed, Patient.breed_id == Breed.id)
+        .where(Patient.data_source == "petbert")
+        .where(Breed.name == breed)
+        .where(CALIFORNIA_PATIENT_FILTER)
+    )
+    breed_total_patients = (await db.execute(breed_denom_stmt)).scalar() or 0
+
+    # --- total cancer patients for this breed ---
     total_stmt = apply_review_filter(
-        select(func.count(CaseDiagnosis.id))
-        .select_from(CaseDiagnosis)
-        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        select(func.count(distinct(Patient.id)))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Patient.data_source == "petbert")
         .where(Breed.name == breed)
         .where(CancerType.name != NON_CANCER_TYPE_NAME)
         .where(CALIFORNIA_PATIENT_FILTER)
     )
     total_cases = (await db.execute(total_stmt)).scalar() or 0
+    overall_pccp_within_breed = round(total_cases / breed_total_patients * 100, 2) if breed_total_patients > 0 else None
+    overall_pccp_of_all = round(total_cases / global_total_patients * 100, 2) if global_total_patients > 0 else None
 
-    # --- sex breakdown ---
+    # --- sex breakdown (distinct cancer patients per sex) ---
     sex_stmt = apply_review_filter(
-        select(Patient.sex.label("sex"), func.count(CaseDiagnosis.id).label("count"))
-        .select_from(CaseDiagnosis)
-        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        select(Patient.sex.label("sex"), func.count(distinct(Patient.id)).label("count"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Patient.data_source == "petbert")
         .where(Breed.name == breed)
         .where(CancerType.name != NON_CANCER_TYPE_NAME)
         .where(CALIFORNIA_PATIENT_FILTER)
         .group_by(Patient.sex)
-        .order_by(func.count(CaseDiagnosis.id).desc())
+        .order_by(func.count(distinct(Patient.id)).desc())
     )
     sex_rows = (await db.execute(sex_stmt)).all()
     sex_breakdown = [BreedSexCount(sex=r.sex or "Unknown", count=r.count) for r in sex_rows]
 
-    # --- cancer types ---
+    # --- cancer types with dual PCCP ---
     ct_stmt = apply_review_filter(
-        select(CancerType.name.label("cancer_type"), func.count(CaseDiagnosis.id).label("count"))
-        .select_from(CaseDiagnosis)
-        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        select(CancerType.name.label("cancer_type"), func.count(distinct(Patient.id)).label("count"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Patient.data_source == "petbert")
         .where(Breed.name == breed)
         .where(CancerType.name != NON_CANCER_TYPE_NAME)
         .where(CALIFORNIA_PATIENT_FILTER)
         .group_by(CancerType.name)
-        .order_by(func.count(CaseDiagnosis.id).desc())
+        .order_by(func.count(distinct(Patient.id)).desc())
     )
     ct_rows = (await db.execute(ct_stmt)).all()
-    cancer_types = [BreedCancerTypeCount(cancer_type=r.cancer_type, count=r.count) for r in ct_rows]
+    cancer_types = [
+        BreedCancerTypeCount(
+            cancer_type=r.cancer_type,
+            count=r.count,
+            pccp_within_breed=round(r.count / breed_total_patients * 100, 2) if breed_total_patients > 0 else None,
+            pccp_of_all=round(r.count / global_total_patients * 100, 2) if global_total_patients > 0 else None,
+        )
+        for r in ct_rows
+    ]
 
-    # --- county distribution ---
+    # --- county distribution (cancer patient counts for geographic distribution) ---
     county_stmt = apply_review_filter(
         select(
             County.name.label("county_name"),
             County.fips_code.label("fips_code"),
-            func.count(CaseDiagnosis.id).label("count"),
+            func.count(distinct(Patient.id)).label("count"),
         )
-        .select_from(CaseDiagnosis)
-        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .join(County, Patient.county_id == County.id)
+        .where(Patient.data_source == "petbert")
         .where(Breed.name == breed)
         .where(CancerType.name != NON_CANCER_TYPE_NAME)
+        .where(CALIFORNIA_PATIENT_FILTER)
         .group_by(County.name, County.fips_code)
-        .order_by(func.count(CaseDiagnosis.id).desc())
+        .order_by(func.count(distinct(Patient.id)).desc())
     )
     county_rows = (await db.execute(county_stmt)).all()
     county_cases = [BreedCountyCount(county_name=r.county_name, fips_code=r.fips_code, count=r.count) for r in county_rows]
@@ -484,6 +523,10 @@ async def get_breed_detail(
     return BreedDetailOut(
         breed=breed,
         total_cases=total_cases,
+        breed_total_patients=breed_total_patients,
+        global_total_patients=global_total_patients,
+        pccp_within_breed=overall_pccp_within_breed,
+        pccp_of_all=overall_pccp_of_all,
         sex_breakdown=sex_breakdown,
         cancer_types=cancer_types,
         county_cases=county_cases,
@@ -498,70 +541,102 @@ async def get_age_detail(
     age_group: str = Query(..., max_length=20, description="Age group to look up"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return cancer-type breakdown, sex breakdown, and county distribution for a single age group."""
+    """Return PCCP-based cancer-type breakdown, sex breakdown, and county distribution for an age group.
+
+    Two PCCP denominators:
+    - Eq 5 equiv (pccp_of_all): numerator / all petbert tested dogs
+    - Eq 6 equiv (pccp_within_age): numerator / tested dogs of this age group
+    """
     if age_group not in AGE_GROUPS:
         raise HTTPException(status_code=400, detail=f"Invalid age_group. Must be one of: {', '.join(sorted(AGE_GROUPS))}")
 
     age_filter = _age_group_case(Patient.diagnosis_date, Patient.birth_date) == age_group
 
-    base_stmt = (
-        apply_review_filter(
-            select(CaseDiagnosis.id)
-            .select_from(CaseDiagnosis)
-            .join(Patient, Patient.id == CaseDiagnosis.patient_id)
-            .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
-            .where(Patient.data_source == "petbert")
-            .where(CALIFORNIA_PATIENT_FILTER)
-            .where(CancerType.name != NON_CANCER_TYPE_NAME)
-            .where(age_filter)
-        )
+    # --- Eq 5 denominator: all petbert tested dogs ---
+    global_denom_stmt = apply_review_filter(
+        select(func.count(distinct(Patient.id)))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
     )
+    global_total_patients = (await db.execute(global_denom_stmt)).scalar() or 0
 
-    # --- total cases ---
-    total_stmt = select(func.count()).select_from(base_stmt.subquery())
+    # --- Eq 6 denominator: tested dogs of this age group ---
+    age_denom_stmt = apply_review_filter(
+        select(func.count(distinct(Patient.id)))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .where(age_filter)
+    )
+    age_total_patients = (await db.execute(age_denom_stmt)).scalar() or 0
+
+    # --- total cancer patients in this age group ---
+    total_stmt = apply_review_filter(
+        select(func.count(distinct(Patient.id)))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .where(CancerType.name != NON_CANCER_TYPE_NAME)
+        .where(age_filter)
+    )
     total_cases = (await db.execute(total_stmt)).scalar() or 0
+    overall_pccp_within_age = round(total_cases / age_total_patients * 100, 2) if age_total_patients > 0 else None
+    overall_pccp_of_all = round(total_cases / global_total_patients * 100, 2) if global_total_patients > 0 else None
 
-    # --- sex breakdown ---
+    # --- sex breakdown (distinct cancer patients per sex) ---
     sex_stmt = apply_review_filter(
-        select(Patient.sex.label("sex"), func.count(CaseDiagnosis.id).label("count"))
-        .select_from(CaseDiagnosis)
-        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        select(Patient.sex.label("sex"), func.count(distinct(Patient.id)).label("count"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
         .where(CancerType.name != NON_CANCER_TYPE_NAME)
         .where(age_filter)
         .group_by(Patient.sex)
-        .order_by(func.count(CaseDiagnosis.id).desc())
+        .order_by(func.count(distinct(Patient.id)).desc())
     )
     sex_rows = (await db.execute(sex_stmt)).all()
     sex_breakdown = [AgeSexCount(sex=r.sex or "Unknown", count=r.count) for r in sex_rows]
 
-    # --- cancer types ---
+    # --- cancer types with dual PCCP ---
     ct_stmt = apply_review_filter(
-        select(CancerType.name.label("cancer_type"), func.count(CaseDiagnosis.id).label("count"))
-        .select_from(CaseDiagnosis)
-        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        select(CancerType.name.label("cancer_type"), func.count(distinct(Patient.id)).label("count"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
         .where(CancerType.name != NON_CANCER_TYPE_NAME)
         .where(age_filter)
         .group_by(CancerType.name)
-        .order_by(func.count(CaseDiagnosis.id).desc())
+        .order_by(func.count(distinct(Patient.id)).desc())
     )
     ct_rows = (await db.execute(ct_stmt)).all()
-    cancer_types = [AgeCancerTypeCount(cancer_type=r.cancer_type, count=r.count) for r in ct_rows]
+    cancer_types = [
+        AgeCancerTypeCount(
+            cancer_type=r.cancer_type,
+            count=r.count,
+            pccp_within_age=round(r.count / age_total_patients * 100, 2) if age_total_patients > 0 else None,
+            pccp_of_all=round(r.count / global_total_patients * 100, 2) if global_total_patients > 0 else None,
+        )
+        for r in ct_rows
+    ]
 
-    # --- county distribution ---
+    # --- county distribution (cancer patient counts for geographic distribution) ---
     county_stmt = apply_review_filter(
         select(
             County.name.label("county_name"),
             County.fips_code.label("fips_code"),
-            func.count(CaseDiagnosis.id).label("count"),
+            func.count(distinct(Patient.id)).label("count"),
         )
-        .select_from(CaseDiagnosis)
-        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
         .join(County, Patient.county_id == County.id)
         .where(Patient.data_source == "petbert")
@@ -569,7 +644,7 @@ async def get_age_detail(
         .where(CancerType.name != NON_CANCER_TYPE_NAME)
         .where(age_filter)
         .group_by(County.name, County.fips_code)
-        .order_by(func.count(CaseDiagnosis.id).desc())
+        .order_by(func.count(distinct(Patient.id)).desc())
     )
     county_rows = (await db.execute(county_stmt)).all()
     county_cases = [AgeCountyCount(county_name=r.county_name, fips_code=r.fips_code, count=r.count) for r in county_rows]
@@ -577,6 +652,10 @@ async def get_age_detail(
     return AgeDetailOut(
         age_group=age_group,
         total_cases=total_cases,
+        age_total_patients=age_total_patients,
+        global_total_patients=global_total_patients,
+        pccp_within_age=overall_pccp_within_age,
+        pccp_of_all=overall_pccp_of_all,
         sex_breakdown=sex_breakdown,
         cancer_types=cancer_types,
         county_cases=county_cases,

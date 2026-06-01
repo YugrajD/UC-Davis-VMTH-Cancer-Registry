@@ -230,8 +230,12 @@ export async function fetchTrendsByCancerType(filters: FilterParams = {}): Promi
 export interface BreedDetail {
   breed: string;
   total_cases: number;
+  breed_total_patients?: number;
+  global_total_patients?: number;
+  pccp_within_breed?: number;
+  pccp_of_all?: number;
   sex_breakdown: { sex: string; count: number }[];
-  cancer_types: { cancer_type: string; count: number }[];
+  cancer_types: { cancer_type: string; count: number; pccp_within_breed?: number; pccp_of_all?: number }[];
   county_cases: { county_name: string; fips_code: string; count: number }[];
 }
 
@@ -245,8 +249,12 @@ export async function fetchBreedDetail(breed: string): Promise<BreedDetail> {
 export interface AgeDetail {
   age_group: string;
   total_cases: number;
+  age_total_patients?: number;
+  global_total_patients?: number;
+  pccp_within_age?: number;
+  pccp_of_all?: number;
   sex_breakdown: { sex: string; count: number }[];
-  cancer_types: { cancer_type: string; count: number }[];
+  cancer_types: { cancer_type: string; count: number; pccp_within_age?: number; pccp_of_all?: number }[];
   county_cases: { county_name: string; fips_code: string; count: number }[];
 }
 

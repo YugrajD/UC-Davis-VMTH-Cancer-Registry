@@ -138,11 +138,19 @@ UC-Davis-VMTH-Cancer-Registry/
 ### Map Dashboard
 - California county choropleth map (react-simple-maps + d3-scale)
 - Filters: sex, cancer type, breed, **age group** (wired end-to-end)
-- Sortable county table with hover-to-highlight
-- Hierarchical summary table (California → UC Davis Catchment → Regions → Counties)
-- Case counts only (no incidence rate — dog population by county unavailable)
-- Only **top-1 prediction per patient** included in all public stats and maps (prevents double-counting when a dog has multiple ranked predictions)
-- **Non-Cancer** predictions excluded from all public statistics, maps, cancer type breakdown, and breed views
+- Sortable county table and hierarchical summary table with hover-to-highlight
+- **PCCP (Pathology-Confirmed Cancer Proportion)** replaces raw case counts across all views: overview map, county tables, Analysis tab, Cancer Types tab, Cancer by Age tab, and Breed Disparities tab
+  - **Eq 1**: county-level PCCP = cancer patients / all tested patients per county × 100 (overview map)
+  - **Eq 3**: per-type PCCP = patients with type X / all tested patients × 100 (Cancer Types tab)
+  - **Eq 5**: breed×type PCCP using global denominator (all tested dogs) — "% of all tested"
+  - **Eq 6**: breed×type PCCP using breed denominator (tested dogs of that breed) — "% within breed"
+  - **Eq 7**: age×type PCCP using global denominator — "% of all tested"
+  - **Eq 8**: age×type PCCP using age-group denominator — "% within age group"
+- Sex and age-group filters apply to both the PCCP numerator and denominator; cancer type filter applies to numerator only
+- `/api/v1/incidence/pccp` is the primary map data endpoint — uses `COUNT(DISTINCT patient_id)` to avoid diagnosis-level double-counting
+- Only **confirmed** or **corrected** `case_diagnoses` rows are counted (enforced by `apply_review_filter`)
+- **Non-Cancer** predictions excluded from numerators but included in denominators (they represent tested-but-cancer-free animals)
+- PCCP disclaimer banners shown on Cancer Types, Cancer by Age, and Breed Disparities tabs with small-cohort caution notice
 
 ### Diagnosis Audit View (May 2026)
 - Uploaders and admins can browse all diagnoses by status (Pending / Confirmed / Corrected / Rejected / All) via a status filter pill bar on the Diagnosis Review tab
@@ -183,8 +191,8 @@ UC-Davis-VMTH-Cancer-Registry/
 - Strict security response headers on every response: `x-frame-options: DENY`, HSTS, nosniff, referrer-policy
 - `.claudeignore` blocks Claude from reading `.env` or `secrets/`; pre-commit hook blocks committing secrets
 
-### Test Suite (May 2026)
-- Backend: **117 pytest tests** across 12 files (admin users, admin refresh-views, dashboard, incidence, security, review threshold analysis, ingestion service, GCP Batch service, diagnoses router, ML worker thresholds)
+### Test Suite (May–June 2026)
+- Backend: **131 pytest tests** across 12 files (admin users, admin refresh-views, dashboard, incidence, security, review threshold analysis, ingestion service, GCP Batch service, diagnoses router, ML worker thresholds)
 - Frontend: **295 vitest tests** across 15 files (filtered data, cancer types, CalEnviroScreen, password reset PKCE URL parsing, export requests, user management, pipeline stages, trends, human cancer rates, Vet-ICD-O categories, etc.)
 - CI: `.github/workflows/ci.yml` runs both suites + TypeScript check + ESLint on every push to `main`/`database` and every PR
 - DB is fully mocked in backend tests; no PostgreSQL container is needed for CI
@@ -208,7 +216,7 @@ These features have backend support but no frontend UI, or are entirely missing:
 | **Distributed rate limiting** | In-memory per-process | N/A | SlowAPI + auth-failure tracking are per-instance. See future_plans.md §6 for the Redis migration plan |
 | **Distributed response cache** | `cachetools` per-process | N/A | TTLCache lives in each Cloud Run instance. Cache hit rate drops as instance count grows. Redis migration is documented |
 | **Age data population** | Migrations 028–029 exist | Age filter shows "all" only | `patients.birth_date` column exists but is not populated from the current prediction CSV format — re-ingest with updated input data required to activate age group filtering |
-| **Recently shipped** (April–May 2026) | — | — | CSV export with admin approval, case-level review queue, plain-language search, trend chart (recharts), Google OAuth, password reset PKCE, role-request workflow, Cancer by Age tab, age group filter, Non-Cancer exclusion from public stats, top-1 prediction per patient filtering |
+| **Recently shipped** (April–June 2026) | — | — | CSV export with admin approval, case-level review queue, plain-language search, trend chart (recharts), Google OAuth, password reset PKCE, role-request workflow, Cancer by Age tab, age group filter, Non-Cancer exclusion from public stats, top-1 prediction per patient filtering; **PCCP metric** replacing raw counts across all views (overview map, Cancer Types, Cancer by Age, Breed Disparities, Analysis) with dual-denominator (within-group + global) breakdown on breed and age tabs and small-cohort disclaimer banners |
 
 ---
 
@@ -424,8 +432,8 @@ Job startup takes ~60–90 seconds (container pull + model load) before inferenc
 ### Query `case_diagnoses` for Cancer Type Data
 All cancer type information lives in `case_diagnoses`. There is no `cancer_cases` table — it was removed in an earlier refactor. Always query `case_diagnoses` joined to `patients` for type-level analysis.
 
-### Dog Population Data Unavailable
-The dashboard shows case counts, not incidence rates. Dog population by California county is not available, so rates cannot be calculated. Do not add population or rate fields to the UI without sourcing this data.
+### No Dog Population Denominator — PCCP Used Instead
+True population-based incidence rates (cases per 10,000 dogs) cannot be calculated because county-level dog census data is unavailable. The dashboard instead uses **PCCP** (Pathology-Confirmed Cancer Proportion): cancer patients divided by all pathology-tested patients × 100. The denominator is the tested cohort, not the general dog population. This is a valid epidemiological metric but reflects the tested population at the VMTH, not all dogs in California.
 
 ### Target Architecture Doc is Outdated
 `docs/target-architecture.md` describes an earlier design using Redis + Celery for the NLP worker. The actual implementation uses GCP Batch instead. Refer to `docs/GCP_BATCH_SETUP.md` and `backend/app/services/gcp_batch_service.py` for the current design.

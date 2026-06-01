@@ -100,10 +100,12 @@ auth:             GET  /api/v1/auth/me
 dashboard:        GET  /api/v1/dashboard/summary
                   GET  /api/v1/dashboard/filters
 incidence:        GET  /api/v1/incidence
-                  GET  /api/v1/incidence/by-cancer-type
+                  GET  /api/v1/incidence/pccp             -- per-county PCCP (Eq 1; primary map endpoint)
+                  GET  /api/v1/incidence/by-cancer-type   -- per-type PCCP + patient counts (Eq 3)
                   GET  /api/v1/incidence/by-species
                   GET  /api/v1/incidence/by-breed
-                  GET  /api/v1/incidence/breed-detail
+                  GET  /api/v1/incidence/breed-detail     -- dual PCCP per cancer type (Eq 5 + Eq 6)
+                  GET  /api/v1/incidence/age-detail       -- dual PCCP per cancer type (Eq 7 + Eq 8)
 geo:              GET  /api/v1/geo/counties
                   GET  /api/v1/geo/counties/{county_id}
 trends:           GET  /api/v1/trends/yearly

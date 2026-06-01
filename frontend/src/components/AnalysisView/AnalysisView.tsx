@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import DeckGL from '@deck.gl/react';
 import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { MapViewState, PickingInfo } from '@deck.gl/core';
@@ -203,10 +202,31 @@ interface DeckMapProps {
   legend: React.ReactNode;
 }
 
-function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
+interface ExpandedDeckMapProps {
+  layers: (GeoJsonLayer | ScatterplotLayer)[];
+  getTooltip: (info: PickingInfo) => { html: string; style?: Record<string, string | undefined> } | null;
+  title: string;
+  subtitle?: React.ReactNode;
+  headerRight?: React.ReactNode;
+  legend: React.ReactNode;
+  onClose: () => void;
+}
+
+function ExpandedDeckMap({ layers, getTooltip, title, subtitle, headerRight, legend, onClose }: ExpandedDeckMapProps) {
   const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
-  const [expanded, setExpanded] = useState(false);
-  const [expandedViewState, setExpandedViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
+
+  // DeckGL doesn't measure its container size until the DOM has settled after
+  // a modal opens — dispatching resize on the next animation frame fixes this.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const isDefaultView =
     viewState.longitude === INITIAL_VIEW_STATE.longitude &&
@@ -215,42 +235,9 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
     viewState.pitch === INITIAL_VIEW_STATE.pitch &&
     viewState.bearing === INITIAL_VIEW_STATE.bearing;
 
-  const isExpandedDefaultView =
-    expandedViewState.longitude === INITIAL_VIEW_STATE.longitude &&
-    expandedViewState.latitude === INITIAL_VIEW_STATE.latitude &&
-    expandedViewState.zoom === INITIAL_VIEW_STATE.zoom &&
-    expandedViewState.pitch === INITIAL_VIEW_STATE.pitch &&
-    expandedViewState.bearing === INITIAL_VIEW_STATE.bearing;
-
-  useEffect(() => {
-    if (!expanded) return;
-    document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false); };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [expanded]);
-
-  const expandButton = (
-    <button
-      onClick={(e) => { e.stopPropagation(); setExpandedViewState(viewState); setExpanded(true); }}
-      className="p-1.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700 transition-colors"
-      title="Expand map"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="15 3 21 3 21 9" />
-        <polyline points="9 21 3 21 3 15" />
-        <line x1="21" y1="3" x2="14" y2="10" />
-        <line x1="3" y1="21" x2="10" y2="14" />
-      </svg>
-    </button>
-  );
-
   return (
-    <>
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+    <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow-xl border border-gray-200 max-w-5xl w-full mx-4 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
@@ -262,10 +249,19 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
           </div>
           <div className="flex items-center gap-2">
             {headerRight}
-            {expandButton}
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+            >
+              <span className="sr-only">Close</span>
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
-        <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
+        <div className="relative" style={{ height: 560, backgroundColor: '#f1f5f9' }}>
           <DeckGL
             viewState={viewState}
             onViewStateChange={({ viewState: nextViewState }) =>
@@ -274,7 +270,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
             controller
             layers={layers}
             getTooltip={getTooltip}
-            style={{ position: 'absolute', inset: '0', background: '#f1f5f9' }}
+            style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: '#f1f5f9' }}
           />
           <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
             {legend}
@@ -282,61 +278,75 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
           <MapResetButton onClick={() => setViewState(INITIAL_VIEW_STATE)} disabled={isDefaultView} />
         </div>
       </div>
+    </div>
+  );
+}
 
-      {expanded && createPortal(
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={() => setExpanded(false)}
-        >
-          <div
-            className="relative bg-white rounded-xl shadow-2xl overflow-hidden flex flex-col"
-            style={{ width: '90vw', height: '90vh' }}
-            onClick={(e) => e.stopPropagation()}
+function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
+  const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const isDefaultView =
+    viewState.longitude === INITIAL_VIEW_STATE.longitude &&
+    viewState.latitude === INITIAL_VIEW_STATE.latitude &&
+    viewState.zoom === INITIAL_VIEW_STATE.zoom &&
+    viewState.pitch === INITIAL_VIEW_STATE.pitch &&
+    viewState.bearing === INITIAL_VIEW_STATE.bearing;
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative">
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+            {title}
+          </h3>
+          {subtitle && (
+            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{subtitle}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {headerRight}
+          <button
+            type="button"
+            onClick={() => setIsExpanded(true)}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-[var(--color-teal)] text-[var(--color-teal)] hover:bg-[var(--color-teal)] hover:text-white transition-colors"
           >
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3 shrink-0">
-              <div>
-                <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-                  {title}
-                </h3>
-                {subtitle && (
-                  <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{subtitle}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {headerRight}
-                <button
-                  onClick={() => setExpanded(false)}
-                  className="p-1.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700 transition-colors"
-                  title="Close"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div className="relative flex-1" style={{ backgroundColor: '#f1f5f9' }}>
-              <DeckGL
-                viewState={expandedViewState}
-                onViewStateChange={({ viewState: nextViewState }) =>
-                  setExpandedViewState(nextViewState as MapViewState)
-                }
-                controller
-                layers={layers}
-                getTooltip={getTooltip}
-                style={{ position: 'absolute', inset: '0', background: '#f1f5f9' }}
-              />
-              <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
-                {legend}
-              </div>
-              <MapResetButton onClick={() => setExpandedViewState(INITIAL_VIEW_STATE)} disabled={isExpandedDefaultView} />
-            </div>
-          </div>
-        </div>,
-        document.body
+            Expand
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
+        <DeckGL
+          viewState={viewState}
+          onViewStateChange={({ viewState: nextViewState }) =>
+            setViewState(nextViewState as MapViewState)
+          }
+          controller
+          layers={layers}
+          getTooltip={getTooltip}
+          style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: '#f1f5f9' }}
+        />
+        <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
+          {legend}
+        </div>
+        <MapResetButton onClick={() => setViewState(INITIAL_VIEW_STATE)} disabled={isDefaultView} />
+      </div>
+
+      {isExpanded && (
+        <ExpandedDeckMap
+          layers={layers}
+          getTooltip={getTooltip}
+          title={title}
+          subtitle={subtitle}
+          headerRight={headerRight}
+          legend={legend}
+          onClose={() => setIsExpanded(false)}
+        />
       )}
-    </>
+    </div>
   );
 }
 

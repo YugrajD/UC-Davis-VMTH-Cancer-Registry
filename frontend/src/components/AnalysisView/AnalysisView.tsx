@@ -215,6 +215,13 @@ interface ExpandedDeckMapProps {
 function ExpandedDeckMap({ layers, getTooltip, title, subtitle, headerRight, legend, onClose }: ExpandedDeckMapProps) {
   const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
 
+  // Clone layers (same IDs, fresh instances) so the expanded DeckGL context
+  // owns its own WebGL state and doesn't conflict with the normal map.
+  const expandedLayers = useMemo(
+    () => layers.map(l => l.clone()),
+    [layers],
+  );
+
   // DeckGL doesn't measure its container size until the DOM has settled after
   // a modal opens — dispatching resize on the next animation frame fixes this.
   useEffect(() => {
@@ -268,7 +275,7 @@ function ExpandedDeckMap({ layers, getTooltip, title, subtitle, headerRight, leg
               setViewState(nextViewState as MapViewState)
             }
             controller
-            layers={layers}
+            layers={expandedLayers}
             getTooltip={getTooltip}
             style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: '#f1f5f9' }}
           />

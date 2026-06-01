@@ -424,19 +424,7 @@ export function ChoroplethMap({
             {subtitleText}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
-          <button
-            type="button"
-            onClick={() => setIsExpanded(true)}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-[var(--color-teal)] text-[var(--color-teal)] hover:bg-[var(--color-teal)] hover:text-white transition-colors"
-          >
-            Expand
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" />
-            </svg>
-          </button>
-        </div>
+        <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
       </div>
 
       {/* Normal map — always mounted so it renders immediately */}
@@ -452,6 +440,24 @@ export function ChoroplethMap({
           style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
         />
         <MapLegend countRange={countRange} showSuperfund={false} />
+        <div className="absolute top-4 right-4 z-10 group">
+          <button
+            type="button"
+            onClick={() => setIsExpanded(true)}
+            aria-label="Expand map"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" />
+            </svg>
+          </button>
+          <div
+            role="tooltip"
+            className="absolute top-full right-0 mt-1.5 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-md"
+          >
+            Expand map
+          </div>
+        </div>
         <MapResetButton
           onClick={() => setViewState(INITIAL_VIEW_STATE)}
           disabled={isAtDefaultView(viewState)}

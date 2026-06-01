@@ -308,7 +308,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
     viewState.bearing === INITIAL_VIEW_STATE.bearing;
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative">
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative flex flex-col">
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
@@ -318,21 +318,9 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
             <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{subtitle}</p>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {headerRight}
-          <button
-            type="button"
-            onClick={() => setIsExpanded(true)}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-[var(--color-teal)] text-[var(--color-teal)] hover:bg-[var(--color-teal)] hover:text-white transition-colors"
-          >
-            Expand
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" />
-            </svg>
-          </button>
-        </div>
+        {headerRight}
       </div>
-      <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
+      <div className="relative flex-1" style={{ minHeight: '400px', backgroundColor: '#f1f5f9' }}>
         <DeckGL
           viewState={viewState}
           onViewStateChange={({ viewState: nextViewState }) =>
@@ -345,6 +333,24 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
         />
         <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
           {legend}
+        </div>
+        <div className="absolute top-4 right-4 z-10 group">
+          <button
+            type="button"
+            onClick={() => setIsExpanded(true)}
+            aria-label="Expand map"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" />
+            </svg>
+          </button>
+          <div
+            role="tooltip"
+            className="absolute top-full right-0 mt-1.5 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-md"
+          >
+            Expand map
+          </div>
         </div>
         <MapResetButton onClick={() => setViewState(INITIAL_VIEW_STATE)} disabled={isDefaultView} />
       </div>

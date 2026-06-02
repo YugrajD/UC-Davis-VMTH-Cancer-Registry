@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FilterState, CountyData, RegionSummary, ZipCodeData } from '../types';
 import {
+  fetchIncidence,
   fetchIncidenceByZip,
   fetchPCCPByCounty,
   type IncidenceRecord,
@@ -85,6 +86,23 @@ export function buildZipCodeDataFromIncidence(records: IncidenceRecord[]): ZipCo
 
   return Array.from(counts.entries())
     .map(([zipCode, count]) => ({ zipCode, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export function buildCountyDataFromIncidence(records: IncidenceRecord[]): CountyData[] {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    if (!record.county) continue;
+    counts.set(record.county, (counts.get(record.county) ?? 0) + record.count);
+  }
+
+  return Array.from(counts.entries())
+    .map(([county, count]) => ({
+      county,
+      region: regionForCounty(county),
+      count,
+      fips: '',
+    }))
     .sort((a, b) => b.count - a.count);
 }
 
@@ -221,17 +239,41 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetchPCCPByCounty({
-          sex: sex && sex !== 'all' ? sex : undefined,
-          ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
-          yearStart,
-          yearEnd,
-          cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
-        });
+        let cd: CountyData[];
+        let oc = 0;
+        let ot = 0;
+        let op = 0;
+
+        try {
+          const response = await fetchPCCPByCounty({
+            sex: sex && sex !== 'all' ? sex : undefined,
+            ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
+            yearStart,
+            yearEnd,
+            cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
+          });
+          const pccpData = buildCountyDataFromPCCP(response);
+          cd = pccpData.countyData;
+          oc = pccpData.overallCancerPatients;
+          ot = pccpData.overallTotalPatients;
+          op = pccpData.overallPccp;
+        } catch {
+          // Older local backends do not expose /incidence/pccp yet. Fall back
+          // to raw incidence counts so the map stays usable during branch tests.
+          const response = await fetchIncidence({
+            cancerTypes: cancerTypeFilterValue(cancerType),
+            sex: sexFilterValue(sex),
+            ageGroup: ageGroupFilterValue(ageGroup),
+            yearStart,
+            yearEnd,
+          });
+          cd = buildCountyDataFromIncidence(response.data);
+          oc = response.total;
+          ot = response.total;
+          op = response.total;
+        }
         if (cancelled) return;
 
-        const { countyData: cd, overallCancerPatients: oc, overallTotalPatients: ot, overallPccp: op } =
-          buildCountyDataFromPCCP(response);
         setCountyData(cd);
         setOverallCancerPatients(oc);
         setOverallTotalPatients(ot);

@@ -364,7 +364,6 @@ function CancerMap({
     return m;
   }, [zipCodeData]);
 
-  const topZipCodes = useMemo(() => zipCodeData.slice(0, 3), [zipCodeData]);
   const activeCountRange = geoLevel === 'zcta' ? zipCodeCountRange : countRange;
 
   const colorScale = useMemo(
@@ -439,16 +438,7 @@ function CancerMap({
     ? 'Case count by county'
     : geoLevel === 'tract'
       ? 'Case count by county · census tract boundaries'
-      : (
-          <>
-            Case count by ZIP/ZCTA
-            {topZipCodes.length > 0 && (
-              <span className="ml-1 text-[var(--color-text-secondary)]">
-                · Top ZIPs: {topZipCodes.map(z => `${z.zipCode}: ${z.count.toLocaleString()}`).join(' · ')}
-              </span>
-            )}
-          </>
-        );
+      : 'Case count by ZIP/ZCTA';
 
   return (
     <DeckMap
@@ -458,11 +448,6 @@ function CancerMap({
       subtitle={subtitle}
       headerRight={
         <div className="flex items-center gap-1.5 flex-wrap justify-end">
-          {geoLevel === 'zcta' && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-              ZIP counts active
-            </span>
-          )}
           {filters.cancerType !== 'All Types' && (
             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
               {filters.cancerType}

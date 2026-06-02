@@ -171,7 +171,6 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const zipCodeDataMap = useMemo(() => makeZipCodeDataMap(zipCodeData), [zipCodeData]);
-  const topZipCodes = useMemo(() => zipCodeData.slice(0, 3), [zipCodeData]);
   const activeCountRange = geoLevel === 'zcta' ? zipCodeCountRange : countRange;
   const colorScale = useMemo(() => makeColorScale(activeCountRange), [activeCountRange]);
 
@@ -281,7 +280,7 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
     ? 'Case counts by county (expanded view)'
     : geoLevel === 'tract'
       ? 'Case count by county · census tract boundaries'
-      : `Case count by ZIP/ZCTA${topZipCodes.length ? ` · Top ZIPs: ${topZipCodes.map(z => `${z.zipCode}: ${z.count.toLocaleString()}`).join(' · ')}` : ''}`;
+      : 'Case count by ZIP/ZCTA';
 
   return (
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
@@ -370,7 +369,6 @@ export function ChoroplethMap({
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const zipCodeDataMap = useMemo(() => makeZipCodeDataMap(zipCodeData), [zipCodeData]);
-  const topZipCodes = useMemo(() => zipCodeData.slice(0, 3), [zipCodeData]);
   const activeCountRange = geoLevel === 'zcta' ? zipCodeCountRange : countRange;
   const colorScale = useMemo(() => makeColorScale(activeCountRange), [activeCountRange]);
 
@@ -445,7 +443,7 @@ export function ChoroplethMap({
     ? 'Case count by county'
     : geoLevel === 'tract'
       ? 'Case count by county · census tract boundaries'
-      : `Case count by ZIP/ZCTA${topZipCodes.length ? ` · Top ZIPs: ${topZipCodes.map(z => `${z.zipCode}: ${z.count.toLocaleString()}`).join(' · ')}` : ''}`;
+      : 'Case count by ZIP/ZCTA';
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative">
@@ -460,11 +458,6 @@ export function ChoroplethMap({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {geoLevel === 'zcta' && (
-            <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-              ZIP counts active
-            </span>
-          )}
           <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
           <button
             type="button"

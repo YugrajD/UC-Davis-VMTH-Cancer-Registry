@@ -154,7 +154,7 @@ function tooltipHeader(props: Record<string, unknown>, geoLevel: GeoLevel, count
 // Filter popover button — small icon button that toggles a dropdown panel
 // ---------------------------------------------------------------------------
 
-function MapFilterButton({ children }: { children: React.ReactNode }) {
+function MapFilterButton({ children, label = 'Filters' }: { children: React.ReactNode; label?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -172,7 +172,7 @@ function MapFilterButton({ children }: { children: React.ReactNode }) {
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        aria-label="Filters"
+        aria-label={label}
         className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent ${open ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]' : 'bg-white border-gray-200 shadow-sm text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
       >
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -184,7 +184,7 @@ function MapFilterButton({ children }: { children: React.ReactNode }) {
           role="tooltip"
           className="absolute top-full right-0 mt-1.5 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-md z-20"
         >
-          Filters
+          {label}
         </div>
       )}
       {open && (
@@ -225,7 +225,7 @@ function ExpandedDeckMap({ layers, getTooltip, title, subtitle, headerRight, leg
   // Clone layers (same IDs, fresh instances) so the expanded DeckGL context
   // owns its own WebGL state and doesn't conflict with the normal map.
   const expandedLayers = useMemo(
-    () => layers.map(l => l.clone()),
+    () => layers.map(l => l.clone({})),
     [layers],
   );
 

@@ -4,7 +4,7 @@
 **Team:** ECS 193A Team 14  
 **Authors:** Yugraj Dhillon, David Estrella, Chun Ho Li, Justin Pak  
 **Handoff Date:** April 15, 2026  
-**Last Updated:** May 18, 2026  
+**Last Updated:** June 2, 2026  
 **Repository:** <https://github.com/ECS-193A-Team-14/UC-Davis-VMTH-Cancer-Registry>
 
 ---

@@ -1,9 +1,5 @@
 export interface IcdLabel { code: string; term: string; }
 
-export function formatIcdOptionLabel(label: IcdLabel): string {
-  return `${label.code} (${label.term})`;
-}
-
 export const ICD_LABELS: IcdLabel[] = [
   { code: '8000/0', term: 'Neoplasm, benign' },
   { code: '8000/1', term: 'Neoplasm, uncertain whether benign or malignant' },
@@ -857,3 +853,4 @@ export const ICD_LABELS: IcdLabel[] = [
 export const ICD_CODE_MAP = new Map<string, string>(
   ICD_LABELS.map(l => [l.term, l.code])
 );
+

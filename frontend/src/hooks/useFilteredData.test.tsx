@@ -1,17 +1,32 @@
 import { renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MOCK_COUNTY_DATA } from '../data/mockData';
 import type { FilterState } from '../types';
 import {
-  applyFilters,
+  applyCountyDemoFilters,
   getCountRange,
   useCountyDataMap,
   useFilteredData,
 } from './useFilteredData';
 
+vi.mock('../api/client', () => ({
+  fetchPCCPByCounty: vi.fn().mockResolvedValue({
+    data: MOCK_COUNTY_DATA.map(c => ({
+      county: c.county,
+      cancer_patients: c.count,
+      total_patients: c.count * 10,
+      pccp: c.count / (c.count * 10) * 100,
+    })),
+    overall_cancer_patients: MOCK_COUNTY_DATA.reduce((s, c) => s + c.count, 0),
+    overall_total_patients: MOCK_COUNTY_DATA.reduce((s, c) => s + c.count * 10, 0),
+    overall_pccp: 10,
+  }),
+}));
+
 const defaultFilters: FilterState = {
   rateType: 'incidence',
   sex: 'all',
+  ageGroup: 'all',
   cancerType: 'All Types',
   breed: 'All Breeds',
 };
@@ -22,7 +37,8 @@ describe('useFilteredData', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.countyData).toEqual(MOCK_COUNTY_DATA);
+    expect(result.current.countyData).toHaveLength(MOCK_COUNTY_DATA.length);
+    expect(result.current.countyData.map(c => c.county)).toEqual(MOCK_COUNTY_DATA.map(c => c.county));
   });
 
   it('returns deterministic filtered county data for the same filters', () => {
@@ -33,7 +49,7 @@ describe('useFilteredData', () => {
       breed: 'Golden Retriever',
     };
 
-    expect(applyFilters(MOCK_COUNTY_DATA, filters)).toEqual(applyFilters(MOCK_COUNTY_DATA, filters));
+    expect(applyCountyDemoFilters(MOCK_COUNTY_DATA, filters)).toEqual(applyCountyDemoFilters(MOCK_COUNTY_DATA, filters));
   });
 
   it('returns a default count range for empty or zero county counts', () => {

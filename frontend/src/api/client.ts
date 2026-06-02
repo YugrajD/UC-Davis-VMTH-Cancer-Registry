@@ -92,7 +92,7 @@ interface FilterParams {
   yearEnd?: number;
 }
 
-function filtersToParams(filters: FilterParams): URLSearchParams {
+export function filtersToParams(filters: FilterParams): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.species?.length) {
     filters.species.forEach(s => params.append('species', s));
@@ -118,7 +118,7 @@ function filtersToParams(filters: FilterParams): URLSearchParams {
   return params;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+export async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(apiUrl(url));
   if (!response.ok) {
     throw new ApiError(response.status, `API error: ${response.status}`);

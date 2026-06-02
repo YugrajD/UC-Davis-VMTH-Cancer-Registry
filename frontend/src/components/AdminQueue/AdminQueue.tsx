@@ -330,7 +330,7 @@ function JobCard({
               type="text"
               value={approveClinicName}
               onChange={(e) => onClinicNameChange(e.target.value)}
-              placeholder="e.g. UC Davis VMTH"
+              placeholder="Clinic name (e.g. UC Davis VMTH)"
               disabled={actionLoading === job.id}
               className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-300 disabled:opacity-50"
             />

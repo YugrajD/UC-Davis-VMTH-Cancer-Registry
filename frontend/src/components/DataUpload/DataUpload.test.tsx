@@ -21,6 +21,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 vi.mock('../../api/client', () => ({
   uploadCSV: mocks.uploadCSV,
   fetchMyJobs: mocks.fetchMyJobs,
+  fetchFilterOptions: vi.fn().mockResolvedValue({ cancer_types: [], breeds: [], species: [] }),
 }));
 
 const completedJob: IngestionJob = {
@@ -41,7 +42,9 @@ const processingJob: IngestionJob = {
 };
 
 function csvFile(name = 'clinical.csv') {
-  return new File(['a,b\n1,2'], name, { type: 'text/csv' });
+  const header = 'Date of Birth,Sex,Species,Breed,Zipcode Zipcode,RfrrVtrn Zipcode Zipcode,DtOfRq,Text';
+  const row = '2020-01-01,Male,Canine,Labrador,95616,95616,2020-01-01,Normal pathology';
+  return new File([`${header}\n${row}`], name, { type: 'text/csv' });
 }
 
 function invokeClickHandler(element: HTMLElement) {
@@ -60,19 +63,23 @@ beforeEach(() => {
 });
 
 describe('DataUpload', () => {
-  it('disables submit until Dataset A is selected', async () => {
+  it('disables submit until a file and clinic name are provided', async () => {
+    mocks.authState.user = { email: 'user@example.com' };
     const user = userEvent.setup();
     render(<DataUpload />);
 
     const submit = screen.getByRole('button', { name: /submit for review/i });
     expect(submit).toBeDisabled();
 
-    await user.upload(screen.getByLabelText(/choose dataset a file/i), csvFile());
+    await user.upload(screen.getByLabelText(/choose dataset file/i), csvFile());
+    expect(submit).toBeDisabled(); // still disabled — no clinic name
 
+    await user.type(screen.getByPlaceholderText(/uc davis vmth/i), 'VMTH');
     expect(submit).toBeEnabled();
   });
 
-  it('shows a Dataset A required error if upload is invoked without Dataset A', async () => {
+  it('shows a file required error if upload is invoked without a file', async () => {
+    mocks.authState.user = { email: 'user@example.com' };
     render(<DataUpload />);
 
     const submit = screen.getByRole('button', { name: /submit for review/i });
@@ -80,21 +87,20 @@ describe('DataUpload', () => {
       invokeClickHandler(submit);
     });
 
-    expect(await screen.findByText('Dataset A is required.')).toBeInTheDocument();
+    expect(await screen.findByText('Please select a dataset file.')).toBeInTheDocument();
   });
 
-  it('shows selected filenames for Dataset A and optional Dataset B', async () => {
+  it('shows the selected filename after choosing a file', async () => {
+    mocks.authState.user = { email: 'user@example.com' };
     const user = userEvent.setup();
     render(<DataUpload />);
 
-    await user.upload(screen.getByLabelText(/choose dataset a file/i), csvFile('a.csv'));
-    await user.upload(screen.getByLabelText(/choose dataset b file/i), csvFile('b.csv'));
+    await user.upload(screen.getByLabelText(/choose dataset file/i), csvFile('clinical.csv'));
 
-    expect(screen.getByText('a.csv selected')).toBeInTheDocument();
-    expect(screen.getByText('b.csv selected')).toBeInTheDocument();
+    expect(screen.getByText('clinical.csv selected')).toBeInTheDocument();
   });
 
-  it('uploads selected files with the token, confirms submission, and refreshes jobs', async () => {
+  it('uploads the file with token and clinic name, confirms submission, and refreshes jobs', async () => {
     const user = userEvent.setup();
     mocks.authState.user = { email: 'user@example.com' };
     mocks.authState.getAccessToken.mockResolvedValue('access-token');
@@ -102,33 +108,38 @@ describe('DataUpload', () => {
 
     await waitFor(() => expect(mocks.fetchMyJobs).toHaveBeenCalledWith('access-token'));
 
-    const fileA = csvFile('a.csv');
-    const fileB = csvFile('b.csv');
-    await user.upload(screen.getByLabelText(/choose dataset a file/i), fileA);
-    await user.upload(screen.getByLabelText(/choose dataset b file/i), fileB);
+    const file = csvFile('clinical.csv');
+    await user.upload(screen.getByLabelText(/choose dataset file/i), file);
+    await user.type(screen.getByPlaceholderText(/uc davis vmth/i), 'VMTH');
     await user.click(screen.getByRole('button', { name: /submit for review/i }));
 
-    await waitFor(() => expect(mocks.uploadCSV).toHaveBeenCalledWith(fileA, fileB, 'access-token'));
+    await waitFor(() => expect(mocks.uploadCSV).toHaveBeenCalledWith(file, 'access-token', 'VMTH'));
     expect(screen.getByText('Submitted for Review')).toBeInTheDocument();
     expect(mocks.fetchMyJobs).toHaveBeenCalledTimes(2);
   });
 
   it('shows upload failure messages', async () => {
+    mocks.authState.user = { email: 'user@example.com' };
     const user = userEvent.setup();
+    mocks.authState.getAccessToken.mockResolvedValue('access-token');
     mocks.uploadCSV.mockRejectedValue(new Error('Upload rejected'));
     render(<DataUpload />);
 
-    await user.upload(screen.getByLabelText(/choose dataset a file/i), csvFile());
+    await user.upload(screen.getByLabelText(/choose dataset file/i), csvFile());
+    await user.type(screen.getByPlaceholderText(/uc davis vmth/i), 'VMTH');
     await user.click(screen.getByRole('button', { name: /submit for review/i }));
 
     expect(await screen.findByText('Upload rejected')).toBeInTheDocument();
   });
 
   it('reset clears files, submitted state, and errors', async () => {
+    mocks.authState.user = { email: 'user@example.com' };
     const user = userEvent.setup();
+    mocks.authState.getAccessToken.mockResolvedValue('access-token');
     render(<DataUpload />);
 
-    await user.upload(screen.getByLabelText(/choose dataset a file/i), csvFile('a.csv'));
+    await user.upload(screen.getByLabelText(/choose dataset file/i), csvFile('a.csv'));
+    await user.type(screen.getByPlaceholderText(/uc davis vmth/i), 'VMTH');
     await user.click(screen.getByRole('button', { name: /submit for review/i }));
     expect(await screen.findByText('Submitted for Review')).toBeInTheDocument();
 
@@ -136,7 +147,6 @@ describe('DataUpload', () => {
 
     expect(screen.queryByText('a.csv selected')).not.toBeInTheDocument();
     expect(screen.queryByText('Submitted for Review')).not.toBeInTheDocument();
-    expect(screen.queryByText('Dataset A is required.')).not.toBeInTheDocument();
   });
 
   it('does not render My Uploads for signed-out users', () => {

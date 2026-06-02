@@ -76,12 +76,11 @@ describe('api client', () => {
     await expect(fetchMe('token')).rejects.toThrow('HTTP 401');
   });
 
-  it('uploads CSV files as FormData with optional auth', async () => {
+  it('uploads CSV files as FormData with auth and clinic name', async () => {
     fetchMock().mockResolvedValue(jsonResponse({ id: 12, status: 'pending_review' }));
-    const datasetA = new File(['a,b\n1,2'], 'dataset-a.csv', { type: 'text/csv' });
-    const datasetB = new File(['x,y\n3,4'], 'dataset-b.csv', { type: 'text/csv' });
+    const dataset = new File(['a,b\n1,2'], 'dataset.csv', { type: 'text/csv' });
 
-    await uploadCSV(datasetA, datasetB, 'upload-token');
+    await uploadCSV(dataset, 'upload-token', 'VMTH');
 
     const [, init] = fetchMock().mock.calls[0];
     expect(fetchMock()).toHaveBeenCalledWith('/api/v1/ingest/upload', expect.objectContaining({
@@ -90,8 +89,8 @@ describe('api client', () => {
     }));
     expect(init?.body).toBeInstanceOf(FormData);
     const formData = init?.body as FormData;
-    expect(formData.get('dataset_a')).toBe(datasetA);
-    expect(formData.get('dataset_b')).toBe(datasetB);
+    expect(formData.get('dataset_a')).toBe(dataset);
+    expect(formData.get('clinic_name')).toBe('VMTH');
   });
 
   it('serializes multiple job status filters', async () => {
@@ -115,7 +114,7 @@ describe('api client', () => {
         Authorization: 'Bearer token',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ action: 'approve', rejection_reason: null }),
+      body: JSON.stringify({ action: 'approve', rejection_reason: null, model_folder: null, clinic_name: null }),
     });
   });
 

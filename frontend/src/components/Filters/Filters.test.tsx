@@ -4,9 +4,24 @@ import { describe, expect, it, vi } from 'vitest';
 import type { FilterState } from '../../types';
 import { Filters } from './Filters';
 
+vi.mock('../../api/client', () => ({
+  fetchFilterOptions: vi.fn().mockResolvedValue({
+    cancer_types: [
+      { name: 'Lymphoma' },
+      { name: 'Mast Cell Tumor' },
+    ],
+    breeds: [
+      { name: 'Golden Retriever' },
+      { name: 'Labrador Retriever' },
+    ],
+    species: [],
+  }),
+}));
+
 const defaultFilters: FilterState = {
   rateType: 'incidence',
   sex: 'all',
+  ageGroup: 'all',
   cancerType: 'All Types',
   breed: 'All Breeds',
 };
@@ -17,10 +32,15 @@ describe('Filters', () => {
     const onFilterChange = vi.fn();
     render(<Filters filters={defaultFilters} onFilterChange={onFilterChange} />);
 
-    const [, sexSelect, cancerSelect, breedSelect] = screen.getAllByRole('combobox');
+    // Dropdowns: [rateType, sex, ageGroup, cancerType, breed, yearStart, yearEnd]
+    const selects = screen.getAllByRole('combobox');
+    const sexSelect = selects[1];
+    const cancerSelect = selects[3];
+    const breedSelect = selects[4];
+
     await user.selectOptions(sexSelect, 'male_neutered');
-    await user.selectOptions(cancerSelect, 'Lymphoma');
-    await user.selectOptions(breedSelect, 'Golden Retriever');
+    await user.selectOptions(cancerSelect, await screen.findByRole('option', { name: 'Lymphoma' }));
+    await user.selectOptions(breedSelect, await screen.findByRole('option', { name: 'Golden Retriever' }));
 
     expect(onFilterChange).toHaveBeenNthCalledWith(1, {
       ...defaultFilters,

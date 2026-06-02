@@ -11,7 +11,7 @@ async function loadLoginModal({
 } = {}) {
   vi.resetModules();
   vi.doMock('../../contexts/AuthContext', () => ({
-    useAuth: () => ({ signIn }),
+    useAuth: () => ({ signIn, clearAuthError: vi.fn(), authError: null }),
   }));
   vi.doMock('../../lib/supabase', () => ({
     supabaseConfigured: configured,

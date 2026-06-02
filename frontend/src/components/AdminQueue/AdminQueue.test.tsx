@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   reviewJob: vi.fn(),
   fetchJobPreview: vi.fn(),
   cancelJob: vi.fn(),
+  fetchAvailableModels: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -23,6 +24,7 @@ vi.mock('../../api/client', () => ({
   reviewJob: mocks.reviewJob,
   fetchJobPreview: mocks.fetchJobPreview,
   cancelJob: mocks.cancelJob,
+  fetchAvailableModels: mocks.fetchAvailableModels,
 }));
 
 function confirmMock() {
@@ -61,6 +63,7 @@ beforeEach(() => {
   mocks.reviewJob.mockResolvedValue(job({ status: 'processing' }));
   mocks.fetchJobPreview.mockResolvedValue('col\nvalue');
   mocks.cancelJob.mockResolvedValue(job({ status: 'cancelled' }));
+  mocks.fetchAvailableModels.mockResolvedValue(['production']);
   confirmMock().mockReturnValue(true);
 });
 
@@ -134,9 +137,15 @@ describe('AdminQueue', () => {
     render(<AdminQueue />);
 
     await screen.findByText('Job #1');
-    await user.click(screen.getByRole('button', { name: /approve/i }));
+    await user.click(screen.getByRole('button', { name: /^approve$/i }));
 
-    await waitFor(() => expect(mocks.reviewJob).toHaveBeenCalledWith('admin-token', 1, 'approve'));
+    // Approval requires clinic name — fill it in then confirm
+    await user.type(await screen.findByPlaceholderText(/clinic name/i), 'VMTH');
+    await user.click(screen.getByRole('button', { name: /confirm approve/i }));
+
+    await waitFor(() => expect(mocks.reviewJob).toHaveBeenCalledWith(
+      'admin-token', 1, 'approve', undefined, 'production', 'VMTH',
+    ));
     expect(mocks.fetchJobs).toHaveBeenCalledTimes(2);
   });
 
@@ -187,11 +196,11 @@ describe('AdminQueue', () => {
     render(<AdminQueue />);
 
     await screen.findByText('Job #1');
-    const previewButton = screen.getAllByRole('button', { name: /preview a/i })[0];
+    const previewButton = screen.getAllByRole('button', { name: /^preview$/i })[0];
     await user.click(previewButton);
 
     expect(previewButton).toBeDisabled();
-    expect(mocks.fetchJobPreview).toHaveBeenCalledWith('admin-token', 1, 'a');
+    expect(mocks.fetchJobPreview).toHaveBeenCalledWith('admin-token', 1);
 
     resolvePreview('col\nvalue123');
     expect(await screen.findByText('value123')).toBeInTheDocument();
@@ -207,7 +216,10 @@ describe('AdminQueue', () => {
     render(<AdminQueue />);
 
     await screen.findByText('Job #1');
-    await user.click(screen.getByRole('button', { name: /approve/i }));
+    await user.click(screen.getByRole('button', { name: /^approve$/i }));
+
+    await user.type(await screen.findByPlaceholderText(/clinic name/i), 'VMTH');
+    await user.click(screen.getByRole('button', { name: /confirm approve/i }));
 
     await waitFor(() => expect(alertMock()).toHaveBeenCalledWith('Approve failed upstream'));
   });

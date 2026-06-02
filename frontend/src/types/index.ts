@@ -29,6 +29,11 @@ export interface CountyData {
   totalPatients?: number;
 }
 
+export interface ZipCodeData {
+  zipCode: string;
+  count: number;
+}
+
 export interface RegionSummary {
   name: string;
   type: 'state' | 'catchment' | 'region' | 'county';

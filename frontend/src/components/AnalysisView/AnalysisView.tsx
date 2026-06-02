@@ -4,7 +4,7 @@ import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { MapViewState, PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
-import { useFilteredData } from '../../hooks/useFilteredData';
+import { useFilteredData, useZipCodeData } from '../../hooks/useFilteredData';
 import { useYearlyTrendsData } from '../../hooks/useYearlyTrendsData';
 import { fetchFilterOptions } from '../../api/client';
 import { yearRange, countForYear, pccpForYear, OTHER_SERIES_NAME } from '../../lib/trends';
@@ -476,6 +476,7 @@ function CancerMap({
   };
 
   const { countyData, countRange, excludedCases, totalCases } = useFilteredData(filters);
+  const { zipCodeData, countRange: zipCodeCountRange } = useZipCodeData(filters);
 
   const countyDataMap = useMemo(() => {
     const m = new Map<string, CountyData>();
@@ -483,12 +484,20 @@ function CancerMap({
     return m;
   }, [countyData]);
 
+  const zipCodeDataMap = useMemo(() => {
+    const m = new Map<string, number>();
+    zipCodeData.forEach(z => m.set(z.zipCode, z.count));
+    return m;
+  }, [zipCodeData]);
+
+  const activeCountRange = geoLevel === 'zcta' ? zipCodeCountRange : countRange;
+
   const colorScale = useMemo(
     () =>
       scaleLinear<string>()
-        .domain([0, countRange.max / 2, countRange.max])
+        .domain([0, activeCountRange.max / 2, activeCountRange.max])
         .range(['#E6F3F5', '#6BB5BF', '#1A6B77']),
-    [countRange],
+    [activeCountRange],
   );
 
   const [hovered, setHovered] = useState<string | null>(null);
@@ -502,20 +511,21 @@ function CancerMap({
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
+          const props = feature.properties as Record<string, unknown>;
+          const key = hoverKeyFromFeature(props, geoLevel);
           if (key && key === hovered) return HOVER_COLOR;
-          const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
-          const info = countyDataMap.get(county.toLowerCase());
-          const count = info?.count ?? 0;
+          const count = geoLevel === 'zcta'
+            ? zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim()) ?? 0
+            : countyDataMap.get(countyFromFeature(props, geoLevel).toLowerCase())?.count ?? 0;
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
         getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) =>
           setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, geoLevel) : null),
-        updateTriggers: { getFillColor: [countyDataMap, colorScale, hovered, geoLevel], data: [geoLevel] },
+        updateTriggers: { getFillColor: [countyDataMap, zipCodeDataMap, colorScale, hovered, geoLevel], data: [geoLevel] },
       }),
-    [countyDataMap, colorScale, hovered, geoLevel],
+    [countyDataMap, zipCodeDataMap, colorScale, hovered, geoLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -529,12 +539,17 @@ function CancerMap({
     if (info.layer?.id === 'cancer-counties') {
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
-      const count = countyDataMap.get(county.toLowerCase())?.count ?? 0;
+      const count = geoLevel === 'zcta'
+        ? zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim()) ?? 0
+        : countyDataMap.get(county.toLowerCase())?.count ?? 0;
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>` : '';
       const header = tooltipHeader(props, geoLevel, county);
+      const body = geoLevel === 'zcta'
+        ? `${count.toLocaleString()} cases`
+        : `${count.toFixed(1)} per 100 tested`;
       return {
-        html: `${header}<br/>${count.toFixed(1)} per 100 tested${sfStr}`,
+        html: `${header}<br/>${body}${sfStr}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -552,7 +567,7 @@ function CancerMap({
     ? 'Cancer PCCP by county'
     : geoLevel === 'tract'
       ? 'Cancer PCCP by county · census tract boundaries'
-      : 'Cancer PCCP by county · ZCTA boundaries';
+      : 'Case count by ZIP/ZCTA';
 
   return (
     <DeckMap
@@ -633,10 +648,10 @@ function CancerMap({
       }
       legend={
         <GradientLegend
-          label="Cases"
+          label={geoLevel === 'zcta' ? 'Cases' : 'PCCP per 100'}
           gradient="linear-gradient(to right, #E6F3F5, #6BB5BF, #1A6B77)"
-          min={String(countRange.min)}
-          max={String(countRange.max)}
+          min={String(activeCountRange.min)}
+          max={String(activeCountRange.max)}
           extra={
             showSuperfund ? (
               <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">

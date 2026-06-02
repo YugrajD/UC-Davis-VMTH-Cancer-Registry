@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { FilterState, CountyData, RegionSummary } from '../types';
-import { fetchPCCPByCounty, type PCCPResponse } from '../api/client';
+import type { FilterState, CountyData, RegionSummary, ZipCodeData } from '../types';
+import {
+  fetchIncidenceByZip,
+  fetchPCCPByCounty,
+  type IncidenceRecord,
+  type PCCPResponse,
+} from '../api/client';
 import { isUcDavisCatchmentRegion, regionForCounty } from '../data/californiaRegions';
 
 export interface FilteredDataState {
@@ -19,6 +24,13 @@ export interface FilteredDataState {
   overallCancerPatients: number;
   /** Overall total patients (denominator) across all counties. */
   overallTotalPatients: number;
+}
+
+export interface FilteredZipCodeDataState {
+  zipCodeData: ZipCodeData[];
+  countRange: { min: number; max: number };
+  loading: boolean;
+  error: string | null;
 }
 
 const EMPTY_REGION_SUMMARY: RegionSummary = {
@@ -63,6 +75,31 @@ function seededRandom(seed: string) {
   };
 }
 
+export function buildZipCodeDataFromIncidence(records: IncidenceRecord[]): ZipCodeData[] {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const zipCode = record.zip_code?.trim().slice(0, 5);
+    if (!zipCode) continue;
+    counts.set(zipCode, (counts.get(zipCode) ?? 0) + record.count);
+  }
+
+  return Array.from(counts.entries())
+    .map(([zipCode, count]) => ({ zipCode, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function sexFilterValue(sex: FilterState['sex']) {
+  return sex && sex !== 'all' ? sex : undefined;
+}
+
+function ageGroupFilterValue(ageGroup: FilterState['ageGroup']) {
+  return ageGroup && ageGroup !== 'all' ? ageGroup : undefined;
+}
+
+function cancerTypeFilterValue(cancerType: string) {
+  return cancerType && cancerType !== 'All Types' ? [cancerType] : undefined;
+}
+
 export function applyCountyDemoFilters(base: CountyData[], filters: FilterState): CountyData[] {
   const isDefault =
     (!filters.sex || filters.sex === 'all') &&
@@ -89,8 +126,40 @@ export function applyCountyDemoFilters(base: CountyData[], filters: FilterState)
   }).filter(c => c.count > 0);
 }
 
+export function applyZipCodeDemoFilters(base: ZipCodeData[], filters: FilterState): ZipCodeData[] {
+  const isDefault =
+    (!filters.sex || filters.sex === 'all') &&
+    (!filters.cancerType || filters.cancerType === 'All Types') &&
+    (!filters.breed || filters.breed === 'All Breeds');
+
+  if (isDefault) return base;
+
+  const key = `zip|${filters.sex}|${filters.cancerType}|${filters.breed}`;
+  const rand = seededRandom(key);
+
+  let fraction = 1;
+  if (filters.sex && filters.sex !== 'all') fraction *= 0.25;
+  if (filters.cancerType && filters.cancerType !== 'All Types') fraction *= 0.12;
+  if (filters.breed && filters.breed !== 'All Breeds') fraction *= 0.10;
+
+  return base.map(z => {
+    const variation = 0.6 + rand() * 0.8;
+    const newCount = Math.max(0, Math.round(z.count * fraction * variation));
+    return { ...z, count: newCount };
+  }).filter(z => z.count > 0);
+}
+
 export function getCountRange(countyData: CountyData[]) {
   const counts = countyData.map(c => c.count).filter(n => n > 0);
+  if (counts.length === 0) return { min: 0, max: 1 };
+  return {
+    min: Math.min(...counts),
+    max: Math.max(...counts),
+  };
+}
+
+export function getZipCodeCountRange(zipCodeData: ZipCodeData[]) {
+  const counts = zipCodeData.map(z => z.count).filter(n => n > 0);
   if (counts.length === 0) return { min: 0, max: 1 };
   return {
     min: Math.min(...counts),
@@ -115,6 +184,24 @@ export function createFilteredDataState(
     countyData: filteredCountyData,
     regionSummary: filteredCountyData.length > 0 ? regionSummary : EMPTY_REGION_SUMMARY,
     countRange: getCountRange(filteredCountyData),
+  };
+}
+
+export function createFilteredZipCodeDataState(
+  zipCodeData: ZipCodeData[],
+  filters: FilterState,
+  options: { applyServerSideFilters?: boolean } = {},
+): Omit<FilteredZipCodeDataState, 'loading' | 'error'> {
+  const filteredZipCodeData = applyZipCodeDemoFilters(
+    zipCodeData,
+    options.applyServerSideFilters === false
+      ? ({ cancerType: 'All Types', breed: filters.breed, sex: 'all', ageGroup: 'all', rateType: filters.rateType } as FilterState)
+      : filters,
+  );
+
+  return {
+    zipCodeData: filteredZipCodeData,
+    countRange: getZipCodeCountRange(filteredZipCodeData),
   };
 }
 
@@ -184,6 +271,59 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
     overallPccp,
     overallCancerPatients,
     overallTotalPatients,
+  };
+}
+
+export function useZipCodeData(filters: FilterState): FilteredZipCodeDataState {
+  const { cancerType, sex, ageGroup, yearStart, yearEnd } = filters;
+  const [zipCodeData, setZipCodeData] = useState<ZipCodeData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadZipCodeData() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetchIncidenceByZip({
+          cancerTypes: cancerTypeFilterValue(cancerType),
+          sex: sexFilterValue(sex),
+          ageGroup: ageGroupFilterValue(ageGroup),
+          yearStart,
+          yearEnd,
+        });
+        if (cancelled) return;
+
+        setZipCodeData(buildZipCodeDataFromIncidence(response.data));
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Unable to load ZIP code data');
+        setZipCodeData([]);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadZipCodeData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cancerType, sex, ageGroup, yearStart, yearEnd]);
+
+  const derivedState = useMemo(
+    () => createFilteredZipCodeDataState(zipCodeData, filters, { applyServerSideFilters: false }),
+    [zipCodeData, filters],
+  );
+
+  return {
+    ...derivedState,
+    loading,
+    error,
   };
 }
 

@@ -70,12 +70,28 @@ class IncidenceRecord(BaseModel):
     breed: Optional[str] = None
     year: Optional[int] = None
     count: int
+    pccp: Optional[float] = None
+    total_patients: Optional[int] = None
 
 
 class IncidenceResponse(BaseModel):
     data: List[IncidenceRecord]
     total: int
     filters_applied: dict
+
+
+class PCCPCountyRecord(BaseModel):
+    county: str
+    cancer_patients: int
+    total_patients: int
+    pccp: float
+
+
+class PCCPResponse(BaseModel):
+    data: List[PCCPCountyRecord]
+    overall_cancer_patients: int
+    overall_total_patients: int
+    overall_pccp: float
 
 
 # --- GeoJSON ---
@@ -144,6 +160,8 @@ class TrendPoint(BaseModel):
     count: int
     deceased: Optional[int] = None
     alive: Optional[int] = None
+    pccp: Optional[float] = None
+    total_patients: Optional[int] = None
 
 
 class TrendSeries(BaseModel):
@@ -172,6 +190,8 @@ class ClassifyResult(BaseModel):
 class BreedCancerTypeCount(BaseModel):
     cancer_type: str
     count: int
+    pccp_within_breed: Optional[float] = None  # Eq 6: count / breed_total_patients * 100
+    pccp_of_all: Optional[float] = None        # Eq 5: count / global_total_patients * 100
 
 class BreedCountyCount(BaseModel):
     county_name: str
@@ -185,9 +205,42 @@ class BreedSexCount(BaseModel):
 class BreedDetailOut(BaseModel):
     breed: str
     total_cases: int
+    breed_total_patients: Optional[int] = None
+    global_total_patients: Optional[int] = None
+    pccp_within_breed: Optional[float] = None
+    pccp_of_all: Optional[float] = None
     sex_breakdown: List[BreedSexCount]
     cancer_types: List[BreedCancerTypeCount]
     county_cases: List[BreedCountyCount]
+
+
+# --- Age Detail ---
+
+class AgeCancerTypeCount(BaseModel):
+    cancer_type: str
+    count: int
+    pccp_within_age: Optional[float] = None   # Eq 6 equiv: count / age_total_patients * 100
+    pccp_of_all: Optional[float] = None       # Eq 5 equiv: count / global_total_patients * 100
+
+class AgeCountyCount(BaseModel):
+    county_name: str
+    fips_code: str
+    count: int
+
+class AgeSexCount(BaseModel):
+    sex: str
+    count: int
+
+class AgeDetailOut(BaseModel):
+    age_group: str
+    total_cases: int
+    age_total_patients: Optional[int] = None
+    global_total_patients: Optional[int] = None
+    pccp_within_age: Optional[float] = None
+    pccp_of_all: Optional[float] = None
+    sex_breakdown: List[AgeSexCount]
+    cancer_types: List[AgeCancerTypeCount]
+    county_cases: List[AgeCountyCount]
 
 
 # --- Filter Options ---

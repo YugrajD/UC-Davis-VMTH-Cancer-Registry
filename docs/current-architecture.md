@@ -73,21 +73,23 @@ The backend enforces multiple layers of security:
 species (id, name)
 breeds (id, species_id, name)
 cancer_types (id, name, description, confirmed, icd_o_morphology_code)
-counties (id, name, fips_code, geom, population, area_sq_miles)
-patients (id, species_id, breed_id, sex, age_years, weight_kg, county_id, registered_date, anon_id)
-cancer_cases (id, patient_id, cancer_type_id, diagnosis_date, stage, outcome, county_id)
-case_diagnoses (id, patient_id, cancer_type_id, predicted_term, confidence, method, review_status, ...)
-pathology_reports (id, case_id, report_text, classification, confidence_score, report_date)
-ingestion_logs (id, filename, ...)
-ingestion_jobs (id, status, uploaded_by_email, storage_path, batch_job_name, ...)
+counties (id, name, fips_code, geom, population, area_sq_miles, is_catchment)
+patients (id, species_id, breed_id, sex, birth_date, county_id, zip_code, anon_id,
+          diagnosis_date, outcome, data_source)
+  -- Note: no cancer_cases table; diagnosis_date and outcome are on patients directly
+case_diagnoses (id, patient_id, cancer_type_id, predicted_term, predicted_group,
+                icd_o_code, confidence, prediction_method, review_status,
+                pathology_report_id, ingestion_job_id, ...)
+pathology_reports (id, patient_id, gcs_path, report_date, created_at)
+ingestion_jobs (id, status, uploaded_by_sub, storage_path, batch_job_name, ...)
 user_roles (email, is_admin, is_uploader, is_reviewer)
 role_requests (id, email, requested_role, status, reason, ...)
 export_requests (id, email, status, reason, ...)
 diagnosis_review_events (id, case_diagnosis_id, action, ...)
-calenviroscreen_data (county_id, ces_score, pollution_burden, ...)
+calenviroscreen (county_id, ces_score, pollution_burden, ...)
 
 Materialized Views:
-  mv_county_cancer_incidence
+  mv_county_cancer_incidence  -- top-1 prediction per patient, Non-Cancer excluded
   mv_yearly_trends
 ```
 
@@ -98,10 +100,12 @@ auth:             GET  /api/v1/auth/me
 dashboard:        GET  /api/v1/dashboard/summary
                   GET  /api/v1/dashboard/filters
 incidence:        GET  /api/v1/incidence
-                  GET  /api/v1/incidence/by-cancer-type
+                  GET  /api/v1/incidence/pccp             -- per-county PCCP (Eq 1; primary map endpoint)
+                  GET  /api/v1/incidence/by-cancer-type   -- per-type PCCP + patient counts (Eq 3)
                   GET  /api/v1/incidence/by-species
                   GET  /api/v1/incidence/by-breed
-                  GET  /api/v1/incidence/breed-detail
+                  GET  /api/v1/incidence/breed-detail     -- dual PCCP per cancer type (Eq 5 + Eq 6)
+                  GET  /api/v1/incidence/age-detail       -- dual PCCP per cancer type (Eq 7 + Eq 8)
 geo:              GET  /api/v1/geo/counties
                   GET  /api/v1/geo/counties/{county_id}
 trends:           GET  /api/v1/trends/yearly

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchUserRoles,
+  fetchAllUserRoles,
   fetchPendingRoleRequests,
   resolveRoleRequest,
   fetchPendingExportRequests,
@@ -12,6 +13,16 @@ import {
   type RoleRequest,
   type ExportRequest,
 } from '../../api/client';
+
+function RoleDot({ active }: { active: boolean }) {
+  return (
+    <span
+      className={`inline-block w-2.5 h-2.5 rounded-full ${
+        active ? 'bg-emerald-500' : 'bg-gray-200'
+      }`}
+    />
+  );
+}
 
 function StatusBadge({ value, label }: { value: boolean; label: string }) {
   return (
@@ -48,11 +59,30 @@ export function UserManagement() {
   const [pendingExportLoading, setPendingExportLoading] = useState(false);
   const [resolvingExportId, setResolvingExportId] = useState<number | null>(null);
 
+  // All memberships list
+  const [allUsers, setAllUsers] = useState<UserRoles[]>([]);
+  const [allUsersLoading, setAllUsersLoading] = useState(false);
+  const [membershipFilter, setMembershipFilter] = useState<'all' | 'admin' | 'uploader' | 'reviewer'>('all');
+
   // Form state for the toggles. Synced from `roles` whenever a new
   // record is loaded.
   const [formAdmin, setFormAdmin] = useState(false);
   const [formUploader, setFormUploader] = useState(false);
   const [formReviewer, setFormReviewer] = useState(false);
+
+  const loadAllUsers = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setAllUsersLoading(true);
+    try {
+      const users = await fetchAllUserRoles(token);
+      setAllUsers(users);
+    } catch {
+      // silently fail
+    } finally {
+      setAllUsersLoading(false);
+    }
+  }, [getAccessToken]);
 
   const loadPendingRequests = useCallback(async () => {
     const token = await getAccessToken();
@@ -83,9 +113,11 @@ export function UserManagement() {
   }, [getAccessToken]);
 
   useEffect(() => {
-    loadPendingRequests(); // eslint-disable-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadAllUsers();
+    loadPendingRequests();
     loadPendingExportRequests();
-  }, [loadPendingRequests, loadPendingExportRequests]);
+  }, [loadAllUsers, loadPendingRequests, loadPendingExportRequests]);
 
   const handleResolve = useCallback(async (requestId: number, action: 'approve' | 'deny') => {
     const token = await getAccessToken();
@@ -174,18 +206,39 @@ export function UserManagement() {
       setFormUploader(data.is_uploader);
       setFormReviewer(data.is_reviewer);
       setSavedAt(new Date().toLocaleTimeString());
+      await loadAllUsers();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setSaving(false);
     }
-  }, [getAccessToken, loadedEmail, formAdmin, formUploader, formReviewer]);
+  }, [getAccessToken, loadAllUsers, loadedEmail, formAdmin, formUploader, formReviewer]);
 
   const dirty =
     roles !== null &&
     (formAdmin !== roles.is_admin ||
       formUploader !== (roles.is_admin || roles.is_uploader) ||
       formReviewer !== (roles.is_admin || roles.is_reviewer));
+
+  const ROLE_FILTERS = [
+    { key: 'all', label: 'All' },
+    { key: 'admin', label: 'Admin' },
+    { key: 'uploader', label: 'Uploader' },
+    { key: 'reviewer', label: 'Reviewer' },
+  ] as const;
+
+  const filteredUsers = allUsers.filter((u) => {
+    if (membershipFilter === 'admin') return u.is_admin;
+    if (membershipFilter === 'uploader') return u.is_uploader;
+    if (membershipFilter === 'reviewer') return u.is_reviewer;
+    return true;
+  });
+
+  const handleEditUser = (email: string) => {
+    setEmailInput(email);
+    setError(null);
+    setSavedAt(null);
+  };
 
   return (
     <div className="space-y-4">
@@ -198,6 +251,92 @@ export function UserManagement() {
           uploader and reviewer. Admins cannot edit their own roles or
           the roles of other admins.
         </p>
+      </div>
+
+      {/* Current Memberships */}
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              Current Memberships
+            </h3>
+            {!allUsersLoading && (
+              <span className="text-xs text-gray-500">{filteredUsers.length} of {allUsers.length}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            {ROLE_FILTERS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setMembershipFilter(key)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${
+                  membershipFilter === key
+                    ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]'
+                    : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              onClick={loadAllUsers}
+              disabled={allUsersLoading}
+              className="ml-1 px-2.5 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded-full hover:border-gray-400 disabled:opacity-50 transition-colors"
+            >
+              {allUsersLoading ? '…' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+
+        {allUsersLoading && allUsers.length === 0 ? (
+          <div className="flex justify-center p-6">
+            <div className="w-5 h-5 border-2 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
+          </div>
+        ) : filteredUsers.length === 0 ? (
+          <p className="px-4 py-6 text-sm text-center text-gray-500">No users found.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-2 text-left font-medium">Email</th>
+                  <th className="px-4 py-2 text-center font-medium">Admin</th>
+                  <th className="px-4 py-2 text-center font-medium">Uploader</th>
+                  <th className="px-4 py-2 text-center font-medium">Reviewer</th>
+                  <th className="px-4 py-2 text-left font-medium">Updated</th>
+                  <th className="px-4 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredUsers.map((u) => (
+                  <tr key={u.email} className="hover:bg-gray-50">
+                    <td className="px-4 py-2.5 font-medium text-[var(--color-text-primary)] max-w-[220px] truncate">{u.email}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <RoleDot active={u.is_admin} />
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <RoleDot active={u.is_uploader} />
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <RoleDot active={u.is_reviewer} />
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+                      {u.updated_at ? new Date(u.updated_at).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        onClick={() => handleEditUser(u.email)}
+                        className="px-2.5 py-1 text-xs font-medium text-[var(--color-teal)] border border-[var(--color-teal)] rounded hover:bg-teal-50 transition-colors"
+                      >
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Pending Role Requests */}

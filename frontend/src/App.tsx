@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
@@ -17,11 +17,12 @@ function AppContent() {
   const [filters, setFilters] = useState<FilterState>({
     rateType: 'incidence',
     sex: 'all',
+    ageGroup: 'all',
     cancerType: 'All Types',
     breed: 'All Breeds',
   });
 
-  const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
+  const { countyData, regionSummary, countRange, loading, error, overallPccp, overallCancerPatients, overallTotalPatients } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);
   const { passwordRecovery } = useAuth();
   const [cancerCategory, setCancerCategory] = useState<VetIcdOCategoryId | 'all'>('all');
@@ -62,10 +63,22 @@ function AppContent() {
           <UserManagement />
         ) : activeTab === 'breed-disparities' ? (
           <BreedDisparitiesView />
+        ) : activeTab === 'cancer-by-age' ? (
+          <AgeDisparitiesView />
         ) : activeTab === 'analysis' ? (
           <AnalysisView />
         ) : activeTab === 'cancer-types' ? (
           <div className="space-y-6">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3">
+              <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                <span className="font-semibold">PCCP (Pathology-Confirmed Cancer Proportion)</span> — percentage of all pathology-tested animals diagnosed with each cancer type.
+                The denominator is all petbert-tested animals regardless of cancer type.
+                Figures for rare cancer types (fewer than 10 cases) may be statistically unstable and should be interpreted with caution.
+              </p>
+            </div>
             <div className="bg-white rounded-lg border border-gray-200 p-4">
               <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
                 This view shows the distribution of cancer types across all ingested PetBERT cases.
@@ -156,7 +169,7 @@ function AppContent() {
                               style={{ width: `${width}%` }}
                             >
                               <span className="text-xs font-semibold text-white">
-                                {record.count.toLocaleString()}
+                                {(record.pccp ?? record.count).toFixed(1)}
                               </span>
                             </div>
                           </div>
@@ -228,6 +241,19 @@ function AppContent() {
               onCountyHover={setHoveredCounty}
               onCountyClick={handleCountyClick}
             />
+            {overallTotalPatients > 0 && (
+              <div
+                title={`Overall PCCP: ${overallPccp.toFixed(1)}% — ${overallCancerPatients} cancer patients out of ${overallTotalPatients} tested`}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 cursor-help"
+              >
+                <svg className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                <span className="text-[11px] font-medium text-blue-700">
+                  Overall PCCP: {overallPccp.toFixed(1)}% · {overallCancerPatients} cancer / {overallTotalPatients} tested
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

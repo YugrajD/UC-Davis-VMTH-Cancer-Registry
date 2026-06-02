@@ -41,8 +41,8 @@ function isAtDefaultView(v: MapViewState): boolean {
 
 const GEO_LEVEL_OPTIONS: { value: GeoLevel; label: string }[] = [
   { value: 'county', label: 'County' },
-  { value: 'tract', label: 'Tract' },
   { value: 'zcta', label: 'ZCTA' },
+  { value: 'tract', label: 'Tract' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -97,11 +97,11 @@ function MapLegend({
 }) {
   return (
     <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
-      <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">Cases</p>
+      <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">PCCP per 100</p>
       <div className="w-28 h-3 rounded" style={{ background: 'linear-gradient(to right, #E6F3F5, #6BB5BF, #1A6B77)' }} />
       <div className="flex justify-between mt-1">
-        <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.min}</span>
-        <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.max}</span>
+        <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.min.toFixed(1)}</span>
+        <span className="text-[10px] text-[var(--color-text-secondary)]">{countRange.max.toFixed(1)}</span>
       </div>
       <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
         <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
@@ -221,7 +221,7 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
         : '';
       const header = tooltipHeader(props, geoLevel, county);
       const body = countyInfo
-        ? `${countyInfo.count.toLocaleString()} cases${sfStr}`
+        ? `${countyInfo.count.toFixed(1)} per 100 tested${sfStr}`
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -249,10 +249,10 @@ function ExpandedMap({ data, countRange, onClose }: ExpandedMapProps) {
   };
 
   const subtitleText = geoLevel === 'county'
-    ? 'Case counts by county (expanded view)'
+    ? 'Cancer proportion per 100 tested (expanded view)'
     : geoLevel === 'tract'
-      ? 'Case count by county · census tract boundaries'
-      : 'Case count by county · ZCTA boundaries';
+      ? 'Cancer PCCP by county · census tract boundaries'
+      : 'Cancer PCCP by county · ZCTA boundaries';
 
   return (
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
@@ -391,7 +391,7 @@ export function ChoroplethMap({
       const countyInfo = countyDataMap.get(county.toLowerCase());
       const header = tooltipHeader(props, geoLevel, county);
       const body = countyInfo
-        ? `${countyInfo.count.toLocaleString()} cases`
+        ? `${countyInfo.count.toFixed(1)} per 100 tested`
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -407,10 +407,10 @@ export function ChoroplethMap({
   };
 
   const subtitleText = geoLevel === 'county'
-    ? 'Case count by county'
+    ? 'Cancer proportion per 100 tested'
     : geoLevel === 'tract'
-      ? 'Case count by county · census tract boundaries'
-      : 'Case count by county · ZCTA boundaries';
+      ? 'Cancer PCCP by county · census tract boundaries'
+      : 'Cancer PCCP by county · ZCTA boundaries';
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative">
@@ -424,19 +424,7 @@ export function ChoroplethMap({
             {subtitleText}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
-          <button
-            type="button"
-            onClick={() => setIsExpanded(true)}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-[var(--color-teal)] text-[var(--color-teal)] hover:bg-[var(--color-teal)] hover:text-white transition-colors"
-          >
-            Expand
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" />
-            </svg>
-          </button>
-        </div>
+        <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
       </div>
 
       {/* Normal map — always mounted so it renders immediately */}
@@ -452,6 +440,24 @@ export function ChoroplethMap({
           style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: MAP_BG_CSS }}
         />
         <MapLegend countRange={countRange} showSuperfund={false} />
+        <div className="absolute top-4 right-4 z-10 group">
+          <button
+            type="button"
+            onClick={() => setIsExpanded(true)}
+            aria-label="Expand map"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" />
+            </svg>
+          </button>
+          <div
+            role="tooltip"
+            className="absolute top-full right-0 mt-1.5 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-md"
+          >
+            Expand map
+          </div>
+        </div>
         <MapResetButton
           onClick={() => setViewState(INITIAL_VIEW_STATE)}
           disabled={isAtDefaultView(viewState)}

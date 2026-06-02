@@ -21,6 +21,7 @@ lerna-debug.log*
 # Build output
 frontend/dist/
 frontend/.vite/
+frontend/coverage/
 dist-ssr/
 *.local
 
@@ -31,6 +32,9 @@ logs/
 # Environment
 .env
 .env.local
+
+# GCP service account keys
+secrets/
 
 # Claude Code
 CLAUDE.md
@@ -179,3 +183,6 @@ ml-*/
 
 # Local archive (gitignored experimental/legacy artifacts moved out of ml/)
 _archive/
+
+# Local implementation plans (never commit — working drafts only)
+plans/

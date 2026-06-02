@@ -108,7 +108,7 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty }:
                 className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors"
                 onClick={() => handleSort('count')}
               >
-                Count <SortIcon field="count" activeField={sortField} direction={sortDirection} />
+                PCCP <SortIcon field="count" activeField={sortField} direction={sortDirection} />
               </th>
             </tr>
           </thead>
@@ -132,7 +132,7 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty }:
                     </span>
                   </td>
                   <td className="py-2 px-3 text-sm text-right tabular-nums font-semibold" style={countStyle}>
-                    {county.count.toLocaleString()}
+                    {county.count.toFixed(1)}
                   </td>
                 </tr>
               );
@@ -147,12 +147,12 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty }:
           Showing {data.length} counties
         </span>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-[var(--color-text-secondary)]">Cases:</span>
+          <span className="text-xs text-[var(--color-text-secondary)]">PCCP:</span>
           <div className="flex items-center">
             <div className="w-20 h-3 rounded" style={{ background: 'linear-gradient(to right, #E6F3F5, #1A6B77)' }} />
           </div>
           <span className="text-xs text-[var(--color-text-secondary)]">
-            {countRange.min} - {countRange.max}
+            {countRange.min.toFixed(1)} – {countRange.max.toFixed(1)}
           </span>
         </div>
       </div>

@@ -19,7 +19,7 @@ A full-stack veterinary cancer registry for UC Davis VMTH researchers. Pathology
 - **Auth**: Supabase Auth — email/password, Google OAuth, PKCE-flow password reset (JWT HS256/ES256)
 - **Frontend hosting**: Vercel
 - **Backend hosting**: GCP Cloud Run
-- **CI/CD**: GitHub Actions (357 tests: 63 backend pytest + 294 frontend vitest)
+- **CI/CD**: GitHub Actions (412 tests: 117 backend pytest + 295 frontend vitest)
 - **Local orchestration**: Docker Compose
 
 ## Features
@@ -27,12 +27,13 @@ A full-stack veterinary cancer registry for UC Davis VMTH researchers. Pathology
 | Tab | Description | Access |
 |-----|-------------|--------|
 | **Overview** | Summary stats, top-level metrics, species/breed breakdown, county choropleth | Public |
-| **Cancer Types** | Vet-ICD-O-canine-1 cancer-type breakdown filtered by category | Public |
-| **Breed Disparities** | Breed-level case counts and demographic comparisons | Public |
-| **Analysis** | Multi-map comparison (VMTH vs CalEnviroScreen vs human cancer vs pesticides), correlation scatter plot, yearly cancer trend chart, pesticide trend chart | Public |
-| **Data Upload** | CSV/XLSX upload with file-content validation and rate limiting | Uploader / Admin |
+| **Cancer Types** | Vet-ICD-O-canine-1 cancer-type breakdown filtered by category (Non-Cancer excluded) | Public |
+| **Cancer by Age** | Cancer case distribution by age group with sex and breed filters | Public |
+| **Breed Disparities** | Breed-level case counts and demographic comparisons (Non-Cancer excluded) | Public |
+| **Analysis** | Multi-map comparison (VMTH vs CalEnviroScreen vs human cancer vs pesticides), correlation scatter plot, yearly cancer trend chart, pesticide trend chart (real API data) | Public |
+| **Data Upload** | CSV/XLSX upload with file-content validation, rate limiting, and friendly column display names | Uploader / Admin |
 | **Review Queue** | Admin-only queue to preview, approve, or reject ingestion jobs | Reviewer / Admin |
-| **Diagnosis Review** | Per-diagnosis review queue with source-text panel and audit log | Reviewer / Admin |
+| **Diagnosis Review** | Per-diagnosis review queue with cancer group filter, source-text panel, and audit log | Reviewer / Admin |
 | **User Management** | DB-backed user role assignment + role-request approval queue | Admin |
 | **Data Export** | Filtered CSV download with admin-approval workflow (one-time-use approvals) | Authenticated + approved |
 
@@ -144,13 +145,11 @@ Admins implicitly hold uploader and reviewer privileges, so `UPLOADER_EMAILS` / 
 
 ### 4. Run Database Migrations
 
-The migration SQL files are in `database/migrations/` and must be run in numeric order (currently 001 through 023). Run them through the Supabase SQL Editor:
+The migration SQL files are in `database/migrations/` and must be run in numeric order (currently 001 through 029). Run them through the Supabase SQL Editor:
 
 1. Supabase Dashboard → **SQL Editor**
 2. Open each migration file locally, copy its contents, paste into the SQL Editor, and click **Run**
-3. Run them in numeric order: `001_extensions.sql`, `002_lookup_tables.sql`, …, `023_update_materialized_views.sql`
-
-Migration 023 is also auto-applied on backend startup if the `sex` column is missing from the materialized views, but running it explicitly is recommended for a clean install.
+3. Run them in numeric order: `001_extensions.sql`, `002_lookup_tables.sql`, …, `029_add_age_group_to_mvs.sql`
 
 Alternatively, you can run them from the command line using `psql`:
 

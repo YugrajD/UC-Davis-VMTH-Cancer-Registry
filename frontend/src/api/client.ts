@@ -34,12 +34,28 @@ export interface IncidenceRecord {
   breed?: string;
   year?: number;
   count: number;
+  pccp?: number;
+  total_patients?: number;
 }
 
 export interface IncidenceResponse {
   data: IncidenceRecord[];
   total: number;
   filters_applied: Record<string, unknown>;
+}
+
+export interface PCCPCountyRecord {
+  county: string;
+  cancer_patients: number;
+  total_patients: number;
+  pccp: number;
+}
+
+export interface PCCPResponse {
+  data: PCCPCountyRecord[];
+  overall_cancer_patients: number;
+  overall_total_patients: number;
+  overall_pccp: number;
 }
 
 export interface GeoJSONFeatureProperties {
@@ -71,11 +87,12 @@ interface FilterParams {
   cancerTypes?: string[];
   counties?: string[];
   sex?: string;
+  ageGroup?: string;
   yearStart?: number;
   yearEnd?: number;
 }
 
-function filtersToParams(filters: FilterParams): URLSearchParams {
+export function filtersToParams(filters: FilterParams): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.species?.length) {
     filters.species.forEach(s => params.append('species', s));
@@ -89,6 +106,9 @@ function filtersToParams(filters: FilterParams): URLSearchParams {
   if (filters.sex && filters.sex !== 'all') {
     params.append('sex', filters.sex);
   }
+  if (filters.ageGroup && filters.ageGroup !== 'all') {
+    params.append('age_group', filters.ageGroup);
+  }
   if (filters.yearStart) {
     params.append('year_start', String(filters.yearStart));
   }
@@ -98,7 +118,7 @@ function filtersToParams(filters: FilterParams): URLSearchParams {
   return params;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+export async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(apiUrl(url));
   if (!response.ok) {
     throw new ApiError(response.status, `API error: ${response.status}`);
@@ -157,6 +177,17 @@ export async function fetchIncidenceByBreed(filters: FilterParams = {}): Promise
   return fetchJson(url);
 }
 
+export async function fetchPCCPByCounty(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> & { cancerType?: string } = {}): Promise<PCCPResponse> {
+  const params = new URLSearchParams();
+  if (filters.sex && filters.sex !== 'all') params.append('sex', filters.sex);
+  if (filters.ageGroup && filters.ageGroup !== 'all') params.append('age_group', filters.ageGroup);
+  if (filters.yearStart) params.append('year_start', String(filters.yearStart));
+  if (filters.yearEnd) params.append('year_end', String(filters.yearEnd));
+  if (filters.cancerType && filters.cancerType !== 'All Types') params.append('cancer_type', filters.cancerType);
+  const url = params.toString() ? `/api/v1/incidence/pccp?${params}` : '/api/v1/incidence/pccp';
+  return fetchJson(url);
+}
+
 export async function fetchCountiesGeoJSON(filters: FilterParams = {}): Promise<GeoJSONResponse> {
   const params = filtersToParams(filters);
   const url = params.toString() ? `/api/v1/geo/counties?${params}` : '/api/v1/geo/counties';
@@ -170,6 +201,8 @@ export interface TrendPointApi {
   count: number;
   deceased: number | null;
   alive: number | null;
+  pccp?: number | null;
+  total_patients?: number | null;
 }
 
 export interface TrendSeriesApi {
@@ -198,14 +231,37 @@ export async function fetchTrendsByCancerType(filters: FilterParams = {}): Promi
 export interface BreedDetail {
   breed: string;
   total_cases: number;
+  breed_total_patients?: number;
+  global_total_patients?: number;
+  pccp_within_breed?: number;
+  pccp_of_all?: number;
   sex_breakdown: { sex: string; count: number }[];
-  cancer_types: { cancer_type: string; count: number }[];
+  cancer_types: { cancer_type: string; count: number; pccp_within_breed?: number; pccp_of_all?: number }[];
   county_cases: { county_name: string; fips_code: string; count: number }[];
 }
 
 export async function fetchBreedDetail(breed: string): Promise<BreedDetail> {
   const params = new URLSearchParams({ breed });
   return fetchJson(`/api/v1/incidence/breed-detail?${params}`);
+}
+
+// --- Age Detail ---
+
+export interface AgeDetail {
+  age_group: string;
+  total_cases: number;
+  age_total_patients?: number;
+  global_total_patients?: number;
+  pccp_within_age?: number;
+  pccp_of_all?: number;
+  sex_breakdown: { sex: string; count: number }[];
+  cancer_types: { cancer_type: string; count: number; pccp_within_age?: number; pccp_of_all?: number }[];
+  county_cases: { county_name: string; fips_code: string; count: number }[];
+}
+
+export async function fetchAgeDetail(age_group: string): Promise<AgeDetail> {
+  const params = new URLSearchParams({ age_group });
+  return fetchJson(`/api/v1/incidence/age-detail?${params}`);
 }
 
 // --- CalEnviroScreen ---
@@ -258,6 +314,10 @@ export async function fetchUserRoles(token: string, email: string): Promise<User
     `/api/v1/admin/users/${encodeURIComponent(normalized)}/roles`,
     token,
   );
+}
+
+export async function fetchAllUserRoles(token: string): Promise<UserRoles[]> {
+  return fetchJsonAuth('/api/v1/admin/users/roles', token);
 }
 
 export async function updateUserRoles(
@@ -474,6 +534,11 @@ export interface DiagnosisDetail extends PendingDiagnosis {
   reviewed_at: string | null;
   reviewer_notes: string | null;
   events: DiagnosisReviewEvent[];
+  /** Patient demographic fields for reviewer context */
+  patient_sex: string | null;
+  patient_breed: string | null;
+  test_request_date: string | null;
+  patient_age: number | null;
 }
 
 export type ReviewActionKind = 'confirm' | 'correct' | 'reject';

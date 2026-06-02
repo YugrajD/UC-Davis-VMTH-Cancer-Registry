@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ICD_LABELS, type IcdLabel } from '../../data/icdLabels';
+import { ICD_LABELS, formatIcdOptionLabel, type IcdLabel } from '../../data/icdLabels';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   ApiError,
@@ -115,10 +115,12 @@ function SourceText({ text }: { text: string | null }) {
 
 function IcdCombobox({
   value,
+  selectedTerm,
   onInput,
   onSelect,
 }: {
   value: string;
+  selectedTerm: string;
   onInput: (code: string) => void;
   onSelect: (label: IcdLabel) => void;
 }) {
@@ -128,8 +130,20 @@ function IcdCombobox({
   const filtered = useMemo(() => {
     const q = value.trim().toLowerCase();
     if (!q) return ICD_LABELS.slice(0, 10);
-    return ICD_LABELS.filter(l => l.code.toLowerCase().includes(q)).slice(0, 10);
+    return ICD_LABELS.filter(l =>
+      l.code.toLowerCase().includes(q) || l.term.toLowerCase().includes(q)
+    ).slice(0, 10);
   }, [value]);
+
+  const selectedOptionIndex = useMemo(() => {
+    const code = value.trim();
+    if (!code) return '';
+    const term = selectedTerm.trim();
+    const exactIndex = ICD_LABELS.findIndex(l => l.code === code && l.term === term);
+    if (exactIndex !== -1) return String(exactIndex);
+    const index = ICD_LABELS.findIndex(l => l.code === code);
+    return index === -1 ? '' : String(index);
+  }, [selectedTerm, value]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -143,15 +157,36 @@ function IcdCombobox({
 
   return (
     <div ref={containerRef} className="relative">
-      <input
-        type="text"
-        value={value}
-        onChange={e => { onInput(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
-        placeholder="Type to search ICD-O codes…"
-        autoComplete="off"
-      />
+      <div className="mt-1 grid grid-cols-[minmax(8rem,0.45fr)_minmax(12rem,1fr)] gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={e => { onInput(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
+          placeholder="Type code…"
+          autoComplete="off"
+        />
+        <select
+          value={selectedOptionIndex}
+          onChange={e => {
+            if (!e.target.value) return;
+            const label = ICD_LABELS[Number(e.target.value)];
+            if (label) {
+              onSelect(label);
+              setOpen(false);
+            }
+          }}
+          className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-white"
+        >
+          <option value="">Select ICD-O code</option>
+          {ICD_LABELS.map((label, index) => (
+            <option key={`${label.code}-${label.term}-${index}`} value={index}>
+              {formatIcdOptionLabel(label)}
+            </option>
+          ))}
+        </select>
+      </div>
       {open && filtered.length > 0 && (
         <ul className="absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto">
           {filtered.map((l, i) => (
@@ -162,10 +197,9 @@ function IcdCombobox({
                 onSelect(l);
                 setOpen(false);
               }}
-              className="flex items-baseline justify-between gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-teal-50"
+              className="px-2 py-1.5 text-sm cursor-pointer hover:bg-teal-50"
             >
-              <span className="shrink-0 font-mono text-xs text-gray-700">{l.code}</span>
-              <span className="truncate text-gray-500 text-xs">{l.term}</span>
+              <span className="block truncate text-gray-700">{formatIcdOptionLabel(l)}</span>
             </li>
           ))}
         </ul>
@@ -268,6 +302,9 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
   const [correctName, setCorrectName] = useState(detail.predicted_term ?? detail.cancer_type_name);
   const [correctIcd, setCorrectIcd] = useState(detail.icd_o_code ?? '');
   const [notes, setNotes] = useState('');
+  const hasCorrection =
+    correctName.trim() !== detail.cancer_type_name ||
+    correctIcd.trim() !== (detail.icd_o_code ?? '');
 
   return (
     <div className="p-6 space-y-5">
@@ -376,6 +413,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
               Confirmed Vet-ICD-O code
               <IcdCombobox
                 value={correctIcd}
+                selectedTerm={correctName}
                 onInput={code => setCorrectIcd(code)}
                 onSelect={label => {
                   setCorrectIcd(label.code);
@@ -410,7 +448,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
                   notes: notes || undefined,
                 })
               }
-              disabled={busy || !correctName.trim() || correctName === detail.cancer_type_name}
+              disabled={busy || !correctName.trim() || !hasCorrection}
               className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
               Edit

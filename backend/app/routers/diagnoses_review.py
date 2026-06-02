@@ -15,7 +15,7 @@ with confirmed=False and surfaces for admin sign-off elsewhere.
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -110,6 +110,11 @@ class DiagnosisDetail(PendingDiagnosis):
     reviewed_at: Optional[datetime]
     reviewer_notes: Optional[str]
     events: list[ReviewEventOut]
+    # Patient demographic fields for reviewer context
+    patient_sex: Optional[str]
+    patient_breed: Optional[str]
+    test_request_date: Optional[date]
+    patient_age: Optional[int]
 
 
 class ReviewAction(BaseModel):
@@ -132,7 +137,7 @@ async def _get_or_404(db: AsyncSession, diagnosis_id: int) -> CaseDiagnosis:
         select(CaseDiagnosis)
         .options(
             selectinload(CaseDiagnosis.cancer_type),
-            selectinload(CaseDiagnosis.patient),
+            selectinload(CaseDiagnosis.patient).selectinload(Patient.breed),
             selectinload(CaseDiagnosis.review_events),
             selectinload(CaseDiagnosis.pathology_report),
         )
@@ -182,10 +187,21 @@ async def _fetch_report_text(diag: CaseDiagnosis) -> str | None:
         return None
 
 
+def _patient_age(birth: date | None, ref: date | None) -> int | None:
+    if birth is None:
+        return None
+    ref = ref or datetime.now(timezone.utc).date()
+    age = ref.year - birth.year
+    if (ref.month, ref.day) < (birth.month, birth.day):
+        age -= 1
+    return age
+
+
 def _to_detail(diag: CaseDiagnosis, report_text: str | None = None) -> DiagnosisDetail:
+    patient = diag.patient
     return DiagnosisDetail(
         id=diag.id,
-        patient_anon_id=diag.patient.anon_id if diag.patient else None,
+        patient_anon_id=patient.anon_id if patient else None,
         cancer_type_id=diag.cancer_type_id,
         cancer_type_name=diag.cancer_type.name if diag.cancer_type else "",
         icd_o_code=diag.icd_o_code,
@@ -219,6 +235,13 @@ def _to_detail(diag: CaseDiagnosis, report_text: str | None = None) -> Diagnosis
             )
             for e in diag.review_events
         ],
+        patient_sex=patient.sex if patient else None,
+        patient_breed=patient.breed.name if (patient and patient.breed) else None,
+        test_request_date=patient.diagnosis_date if patient else None,
+        patient_age=_patient_age(
+            patient.birth_date if patient else None,
+            patient.diagnosis_date if patient else None,
+        ),
     )
 
 

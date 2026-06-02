@@ -7,6 +7,7 @@ import type { FilterState } from '../types';
 const DEFAULT_FILTERS: FilterState = {
   rateType: 'incidence',
   sex: 'all',
+  ageGroup: 'all',
   cancerType: 'All Types',
   breed: 'All Breeds',
 };

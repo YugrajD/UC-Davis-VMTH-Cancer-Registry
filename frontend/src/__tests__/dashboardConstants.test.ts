@@ -186,6 +186,7 @@ describe('TABS', () => {
     expect(ids).toContain('overview');
     expect(ids).toContain('breed-disparities');
     expect(ids).toContain('cancer-types');
+    expect(ids).toContain('cancer-by-age');
     expect(ids).toContain('analysis');
   });
 
@@ -201,8 +202,8 @@ describe('TABS', () => {
     expect(ids).toContain('user-management');
   });
 
-  it('contains exactly 8 tabs', () => {
-    expect(TABS.length).toBe(8);
+  it('contains exactly 9 tabs', () => {
+    expect(TABS.length).toBe(9);
   });
 
   it('every tab has a non-empty label', () => {

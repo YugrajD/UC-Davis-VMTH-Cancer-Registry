@@ -10,6 +10,8 @@
 export interface TrendPoint {
   year: number;
   count: number;
+  pccp?: number;
+  total_patients?: number;
 }
 
 export interface TrendSeries {
@@ -43,15 +45,27 @@ export function topNWithOther(series: TrendSeries[], n: number): TrendSeries[] {
   const top = sorted.slice(0, n);
   const rest = sorted.slice(n);
 
-  const otherByYear = new Map<number, number>();
+  // For Other: sum patient counts per year; total_patients is shared across all series in a year.
+  const otherByYear = new Map<number, { count: number; total_patients?: number }>();
   for (const s of rest) {
     for (const p of s.data) {
-      otherByYear.set(p.year, (otherByYear.get(p.year) ?? 0) + p.count);
+      const cur = otherByYear.get(p.year) ?? { count: 0, total_patients: p.total_patients };
+      otherByYear.set(p.year, {
+        count: cur.count + p.count,
+        total_patients: cur.total_patients ?? p.total_patients,
+      });
     }
   }
   const otherData: TrendPoint[] = Array.from(otherByYear.entries())
     .sort((a, b) => a[0] - b[0])
-    .map(([year, count]) => ({ year, count }));
+    .map(([year, { count, total_patients }]) => {
+      const point: TrendPoint = { year, count };
+      if (total_patients != null && total_patients > 0) {
+        point.total_patients = total_patients;
+        point.pccp = Math.round((count / total_patients) * 100 * 100) / 100;
+      }
+      return point;
+    });
 
   return [
     ...top.map((s) => ({ name: s.name, data: [...s.data] })),
@@ -81,4 +95,15 @@ export function countForYear(series: TrendSeries, year: number): number {
     if (p.year === year) return p.count;
   }
   return 0;
+}
+
+/**
+ * Look up a series' PCCP for a given year, returning null when absent.
+ * Returns null (not 0) so callers can distinguish "no data" from "zero rate".
+ */
+export function pccpForYear(series: TrendSeries, year: number): number | null {
+  for (const p of series.data) {
+    if (p.year === year) return p.pccp ?? null;
+  }
+  return null;
 }

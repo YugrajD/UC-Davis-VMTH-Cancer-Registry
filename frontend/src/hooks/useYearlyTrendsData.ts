@@ -32,7 +32,12 @@ export function useYearlyTrendsData(): YearlyTrendsState {
         // chart only renders total counts per year.
         const normalized: TrendSeries[] = response.series.map((s) => ({
           name: s.name,
-          data: s.data.map((p) => ({ year: p.year, count: p.count })),
+          data: s.data.map((p) => {
+            const point: TrendSeries['data'][0] = { year: p.year, count: p.count };
+            if (p.pccp != null) point.pccp = p.pccp;
+            if (p.total_patients != null) point.total_patients = p.total_patients;
+            return point;
+          }),
         }));
         setSeries(topNWithOther(normalized, TOP_N));
       } catch (err) {

@@ -218,8 +218,8 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
     Zip preference: primary zip first; falls back to referral zip when missing.
 
     Returns: {anon_id: {"sex": str|None, "breed": str|None,
-                         "diagnosis_date": date|None, "species": str|None,
-                         "zip": str|None}}
+                         "diagnosis_date": date|None, "birth_date": date|None,
+                         "species": str|None, "zip": str|None}}
     """
     text = csv_bytes.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
@@ -243,6 +243,10 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
         if raw_date.lower() == "nan":
             raw_date = ""
 
+        raw_birth_date = str(row.get("Date of Birth", "")).strip()
+        if raw_birth_date.lower() in ("nan", ""):
+            raw_birth_date = ""
+
         raw_species = str(row.get("Species", "")).strip()
         if raw_species.lower() == "nan":
             raw_species = ""
@@ -258,6 +262,7 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
                 "sex": None,
                 "breed": None,
                 "diagnosis_date": None,
+                "birth_date": None,
                 "species": None,
                 "zip": None,
             }
@@ -270,6 +275,9 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
 
         if result[anon_id]["diagnosis_date"] is None and raw_date:
             result[anon_id]["diagnosis_date"] = _parse_date(raw_date)
+
+        if result[anon_id]["birth_date"] is None and raw_birth_date:
+            result[anon_id]["birth_date"] = _parse_date(raw_birth_date)
 
         if result[anon_id]["species"] is None and raw_species:
             result[anon_id]["species"] = raw_species
@@ -394,6 +402,7 @@ async def ingest_upload(
         raw_zip = demo.get("zip") or ""
         breed_name = demo.get("breed") or ""
         diagnosis_date = demo.get("diagnosis_date")
+        birth_date = demo.get("birth_date")
         sp_name = demo.get("species") or ""
 
         sp_id = species_map.get(sp_name, dog_species_id) if sp_name else dog_species_id
@@ -412,6 +421,7 @@ async def ingest_upload(
             "county_id": county_id,
             "zip_code": raw_zip or None,
             "data_source": "petbert",
+            "birth_date": birth_date,
             "diagnosis_date": diagnosis_date,
             "outcome": None,
         })
@@ -423,7 +433,7 @@ async def ingest_upload(
             index_elements=["anon_id"],
             set_={col: ins_stmt.excluded[col] for col in [
                 "species_id", "breed_id", "sex", "county_id",
-                "zip_code", "data_source", "diagnosis_date",
+                "zip_code", "data_source", "birth_date", "diagnosis_date",
             ]},
         ))
     patients_inserted = len(patient_values)

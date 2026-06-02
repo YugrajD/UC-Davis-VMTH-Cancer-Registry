@@ -29,6 +29,20 @@ SEX_MAP = {
 }
 
 
+AGE_GROUP_SQL = (
+    "CASE "
+    "WHEN p.birth_date IS NULL OR p.diagnosis_date IS NULL THEN 'Unknown' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) BETWEEN 0 AND 2 THEN 'young' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) BETWEEN 3 AND 5 THEN 'juvenile' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) BETWEEN 6 AND 8 THEN 'adult' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) BETWEEN 9 AND 11 THEN 'old' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) >= 12 THEN 'senior' "
+    "ELSE 'Unknown' END"
+)
+
+VALID_AGE_GROUPS = {"young", "juvenile", "adult", "old", "senior"}
+
+
 @router.get("/counties", response_model=GeoJSONResponse)
 @limiter.limit("60/minute")
 @cached_response("geo_counties", ttl=settings.CACHE_TTL_GEO)
@@ -39,6 +53,7 @@ async def get_counties_geojson(
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
     year_end: Optional[int] = Query(None, ge=1900, le=2100),
     sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
     db: AsyncSession = Depends(get_db),
 ):
     # Build dynamic WHERE clause
@@ -58,6 +73,9 @@ async def get_counties_geojson(
         if mapped_sex:
             conditions.append("p.sex = :sex")
             params["sex"] = mapped_sex
+    if age_group and age_group in VALID_AGE_GROUPS:
+        conditions.append(AGE_GROUP_SQL + " = :age_group")
+        params["age_group"] = age_group
 
     conditions.append("p.data_source = 'petbert'")
     # All values in `conditions` are developer-controlled string literals;

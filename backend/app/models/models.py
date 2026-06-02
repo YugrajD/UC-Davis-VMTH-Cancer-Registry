@@ -73,6 +73,7 @@ class Patient(Base):
     anon_id = Column(String(100), nullable=True, unique=True, index=True)
     zip_code = Column(String(10), nullable=True)
     data_source = Column(String(20), nullable=True, default="mock")
+    birth_date = Column(Date, nullable=True)
     diagnosis_date = Column(Date, nullable=True)
     outcome = Column(String(20), nullable=True)
 

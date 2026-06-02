@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { FilterState, Sex, RateType } from '../../types';
-import { SEX_OPTIONS, RATE_OPTIONS } from '../../types';
+import type { FilterState, Sex, AgeGroup, RateType } from '../../types';
+import { SEX_OPTIONS, AGE_GROUP_OPTIONS, RATE_OPTIONS } from '../../types';
 import { fetchFilterOptions } from '../../api/client';
 
 interface FiltersProps {
@@ -84,6 +84,26 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
             {SEX_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>
                 {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Age */}
+        <div>
+          <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5 uppercase tracking-wide">
+            Age at Diagnosis
+          </label>
+          <select
+            value={filters.ageGroup}
+            onChange={(e) => handleChange('ageGroup', e.target.value as AgeGroup)}
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md bg-white
+                       focus:ring-2 focus:ring-[var(--color-teal)] focus:border-[var(--color-teal)]
+                       transition-colors duration-150"
+          >
+            {AGE_GROUP_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}{option.range ? ` (${option.range})` : ''}
               </option>
             ))}
           </select>
@@ -181,6 +201,10 @@ export function Filters({ filters, onFilterChange }: FiltersProps) {
             if (filters.cancerType !== 'All Types') parts.push(filters.cancerType);
             if (filters.breed !== 'All Breeds') parts.push(filters.breed);
             if (filters.sex !== 'all') parts.push(SEX_OPTIONS.find(s => s.value === filters.sex)?.label ?? '');
+            if (filters.ageGroup !== 'all') {
+              const ag = AGE_GROUP_OPTIONS.find(a => a.value === filters.ageGroup);
+              if (ag) parts.push(`${ag.label} (${ag.range})`);
+            }
             if (filters.yearStart && filters.yearEnd) parts.push(`${filters.yearStart}–${filters.yearEnd}`);
             else if (filters.yearStart) parts.push(`from ${filters.yearStart}`);
             else if (filters.yearEnd) parts.push(`to ${filters.yearEnd}`);

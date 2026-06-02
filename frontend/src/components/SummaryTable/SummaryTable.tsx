@@ -100,7 +100,7 @@ function SummaryRow({
           title={hasChildren ? `Sort within ${item.name} (${effectiveSortDirection === 'desc' ? 'descending' : 'ascending'})` : undefined}
         >
           <span className="inline-flex items-center justify-end">
-            {item.count.toLocaleString()}
+            {item.count.toFixed(1)}
             {hasChildren && <SortIcon direction={effectiveSortDirection} />}
           </span>
         </td>
@@ -172,7 +172,7 @@ export function SummaryTable({ data }: SummaryTableProps) {
             Regional Summary
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Case counts by region and county
+            PCCP by region and county
           </p>
         </div>
       </div>
@@ -189,7 +189,7 @@ export function SummaryTable({ data }: SummaryTableProps) {
                 onClick={() => setGlobalSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'))}
                 title={globalSortDirection === 'desc' ? 'Sort ascending' : 'Sort descending'}
               >
-                Count
+                PCCP
                 <svg
                   className={`w-3 h-3 ml-1 inline-block transition-transform ${
                     globalSortDirection === 'asc' ? 'rotate-180' : ''

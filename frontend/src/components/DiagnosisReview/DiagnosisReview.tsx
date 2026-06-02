@@ -113,6 +113,67 @@ function SourceText({ text }: { text: string | null }) {
   );
 }
 
+function IcdCombobox({
+  value,
+  onInput,
+  onSelect,
+}: {
+  value: string;
+  onInput: (code: string) => void;
+  onSelect: (label: IcdLabel) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q) return ICD_LABELS.slice(0, 10);
+    return ICD_LABELS.filter(l => l.code.toLowerCase().includes(q)).slice(0, 10);
+  }, [value]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={value}
+        onChange={e => { onInput(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
+        placeholder="Type to search ICD-O codes…"
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto">
+          {filtered.map((l, i) => (
+            <li
+              key={i}
+              onMouseDown={e => {
+                e.preventDefault();
+                onSelect(l);
+                setOpen(false);
+              }}
+              className="flex items-baseline justify-between gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-teal-50"
+            >
+              <span className="shrink-0 font-mono text-xs text-gray-700">{l.code}</span>
+              <span className="truncate text-gray-500 text-xs">{l.term}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface DetailPanelProps {
   detail: DiagnosisDetail | null;
   loading: boolean;
@@ -218,8 +279,35 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           <StatusPill status={detail.review_status} />
         </div>
         <p className="text-xs text-gray-500">
-          Patient {detail.patient_anon_id ?? '—'} · diagnosis #{detail.diagnosis_index ?? '?'} · ICD-O {detail.icd_o_code ?? '—'}
+          Patient {detail.patient_anon_id ?? '—'} · diagnosis #{detail.diagnosis_index ?? '?'} · Vet-ICD-O {detail.icd_o_code ?? '—'}
         </p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs bg-gray-50 border border-gray-100 rounded p-3">
+        <div>
+          <p className="text-gray-500 mb-0.5">Diagnosis</p>
+          <p className="font-medium text-[var(--color-text-primary)] break-words">
+            {detail.source_diagnosis?.trim() || '—'}
+          </p>
+        </div>
+        <div>
+          <p className="text-gray-500 mb-0.5">Test request date</p>
+          <p className="font-medium tabular-nums">{detail.test_request_date ?? '—'}</p>
+        </div>
+        <div>
+          <p className="text-gray-500 mb-0.5">Sex</p>
+          <p className="font-medium">{detail.patient_sex ?? '—'}</p>
+        </div>
+        <div>
+          <p className="text-gray-500 mb-0.5">Age</p>
+          <p className="font-medium tabular-nums">
+            {detail.patient_age !== null ? `${detail.patient_age} yr` : '—'}
+          </p>
+        </div>
+        <div>
+          <p className="text-gray-500 mb-0.5">Breed</p>
+          <p className="font-medium break-words">{detail.patient_breed ?? '—'}</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4 text-xs">
@@ -241,28 +329,18 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
 
       <SourceText text={detail.original_text} />
 
-      {(detail.source_diagnosis || detail.predicted_term || detail.icd_o_code) && (
-        <div className="space-y-2">
-          {detail.source_diagnosis && detail.source_diagnosis.trim() && (
+      {(detail.predicted_term || detail.icd_o_code) && (
+        <div className="grid grid-cols-2 gap-4 text-xs">
+          {detail.predicted_term && (
             <div>
-              <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
-              <p className="text-sm whitespace-pre-wrap text-[var(--color-text-primary)]">{detail.source_diagnosis}</p>
+              <p className="text-gray-500 mb-1">Predicted cancer type</p>
+              <p className="text-sm">{detail.predicted_term}</p>
             </div>
           )}
-          {(detail.predicted_term || detail.icd_o_code) && (
-            <div className="grid grid-cols-2 gap-4">
-              {detail.predicted_term && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Predicted term</p>
-                  <p className="text-sm">{detail.predicted_term}</p>
-                </div>
-              )}
-              {detail.icd_o_code && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Predicted code</p>
-                  <p className="text-sm font-mono">{detail.icd_o_code}</p>
-                </div>
-              )}
+          {detail.icd_o_code && (
+            <div>
+              <p className="text-gray-500 mb-1">Predicted Vet-ICD-O code</p>
+              <p className="text-sm font-mono">{detail.icd_o_code}</p>
             </div>
           )}
         </div>
@@ -272,7 +350,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
         <div className="bg-gray-50 border border-gray-200 rounded p-3">
           <p className="text-xs text-gray-500 mb-1">Original PetBERT prediction (before correction)</p>
           <p className="text-sm">
-            {detail.original_predicted_term} · ICD-O {detail.original_icd_o_code ?? '—'}
+            {detail.original_predicted_term} · Vet-ICD-O {detail.original_icd_o_code ?? '—'}
           </p>
         </div>
       )}
@@ -284,7 +362,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           </h4>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-gray-600">
-              Correct term
+              Confirmed cancer type
               <TermCombobox
                 value={correctName}
                 onInput={term => setCorrectName(term)}
@@ -295,12 +373,14 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
               />
             </label>
             <label className="text-xs text-gray-600">
-              ICD-O code
-              <input
-                type="text"
+              Confirmed Vet-ICD-O code
+              <IcdCombobox
                 value={correctIcd}
-                onChange={(e) => setCorrectIcd(e.target.value)}
-                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
+                onInput={code => setCorrectIcd(code)}
+                onSelect={label => {
+                  setCorrectIcd(label.code);
+                  setCorrectName(label.term);
+                }}
               />
             </label>
           </div>
@@ -333,14 +413,14 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
               disabled={busy || !correctName.trim() || correctName === detail.cancer_type_name}
               className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              Correct
+              Edit
             </button>
             <button
-              onClick={() => onAction('reject', { notes: notes || undefined })}
-              disabled={busy}
-              className="px-3 py-1.5 text-sm font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+              onClick={() => onAction('correct', { cancer_type_name: 'Non-Cancer', notes: notes || undefined })}
+              disabled={busy || detail.cancer_type_name === 'Non-Cancer'}
+              className="px-3 py-1.5 text-sm font-medium bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50"
             >
-              Reject
+              Non-Cancer
             </button>
           </div>
         </div>
@@ -581,8 +661,9 @@ export function DiagnosisReview() {
             </h2>
             <p className="text-sm text-[var(--color-text-secondary)] mt-1">
               Triage low-confidence and ambiguous predictions before they enter
-              public dashboard stats. Confirm to accept, Correct to assign a
-              different cancer type, or Reject to drop the prediction.
+              public dashboard stats. Confirm to accept the predicted terms, Edit to assign a
+              different cancer type, or Non-Cancer to mark the prediction as a
+              non-malignant diagnosis.
             </p>
           </div>
           {canAudit && (

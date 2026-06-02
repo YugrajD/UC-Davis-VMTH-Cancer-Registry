@@ -222,6 +222,7 @@ function AppContent() {
           <div className="space-y-6" id="filters-panel">
             <Filters filters={filters} onFilterChange={setFilters} />
             <ChoroplethMap
+              filters={filters}
               data={countyData}
               countRange={countRange}
               hoveredCounty={hoveredCounty}

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     loading: false,
     signOut: vi.fn(),
     signIn: vi.fn(),
+    getAccessToken: vi.fn().mockResolvedValue(null),
   },
 }));
 

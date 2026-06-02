@@ -73,7 +73,13 @@ async function loadAuthContext({
       },
     },
   }));
-  vi.doMock('../api/client', () => ({ fetchMe }));
+  vi.doMock('../api/client', () => ({
+    fetchMe,
+    ApiError: class ApiError extends Error {
+      status: number;
+      constructor(status: number, message: string) { super(message); this.status = status; }
+    },
+  }));
 
   const authModule = await import('./AuthContext');
 

@@ -386,7 +386,7 @@ export function ChoroplethMap({
           const county = countyFromFeature(props, geoLevel);
           const isHovered =
             (key && key === localHovered) ||
-            (hoveredCounty != null && county.toLowerCase() === hoveredCounty.toLowerCase());
+            (geoLevel !== 'zcta' && hoveredCounty != null && county.toLowerCase() === hoveredCounty.toLowerCase());
           if (isHovered) return HOVER_COLOR;
           const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
@@ -398,7 +398,7 @@ export function ChoroplethMap({
           const key = props ? hoverKeyFromFeature(props, geoLevel) : null;
           const county = props ? countyFromFeature(props, geoLevel) : null;
           setLocalHovered(key);
-          onCountyHover?.(county ?? null);
+          onCountyHover?.(geoLevel === 'zcta' ? null : county ?? null);
         },
         onClick: ({ object }) => {
           if (!object) return;

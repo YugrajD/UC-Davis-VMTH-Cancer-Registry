@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { fetchJobs, reviewJob, fetchJobPreview, cancelJob, type IngestionJob } from '../../api/client';
+import { fetchJobs, reviewJob, fetchJobPreview, cancelJob, fetchAvailableModels, type IngestionJob } from '../../api/client';
 import { STAGE_LABELS, LOCAL_STAGES, GCP_STAGES } from '../shared/pipelineStages';
 
 const ACTIVE_STATUSES = ['pending_review', 'processing'];
@@ -87,6 +87,60 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function ResultSummary({ summary }: { summary: NonNullable<IngestionJob['result_summary']> }) {
+  const total = summary.high_confidence + summary.medium_confidence + summary.low_confidence;
+  const pct = (n: number) => total > 0 ? Math.round((n / total) * 100) : 0;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-2">Model results</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+        <div className="bg-gray-50 rounded-md px-3 py-2 text-center">
+          <p className="text-lg font-bold text-[var(--color-text-primary)]">{summary.patients}</p>
+          <p className="text-xs text-[var(--color-text-secondary)]">Records</p>
+        </div>
+        <div className="bg-gray-50 rounded-md px-3 py-2 text-center">
+          <p className="text-lg font-bold text-[var(--color-text-primary)]">{summary.diagnoses}</p>
+          <p className="text-xs text-[var(--color-text-secondary)]">Diagnoses</p>
+        </div>
+        <div className="bg-gray-50 rounded-md px-3 py-2 text-center">
+          <p className="text-lg font-bold text-[var(--color-text-primary)]">
+            {summary.avg_confidence !== null ? `${summary.avg_confidence}%` : '—'}
+          </p>
+          <p className="text-xs text-[var(--color-text-secondary)]">Avg confidence</p>
+        </div>
+        <div className="bg-gray-50 rounded-md px-3 py-2">
+          <div className="flex items-center gap-1 mb-1">
+            <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+            <span className="text-xs text-gray-600">{pct(summary.high_confidence)}% high ≥80%</span>
+          </div>
+          <div className="flex items-center gap-1 mb-1">
+            <span className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />
+            <span className="text-xs text-gray-600">{pct(summary.medium_confidence)}% med 50–79%</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+            <span className="text-xs text-gray-600">{pct(summary.low_confidence)}% low &lt;50%</span>
+          </div>
+        </div>
+      </div>
+      {(summary.top_cancer_types ?? []).length > 0 && (
+        <div>
+          <p className="text-xs text-[var(--color-text-secondary)] mb-1">Top predicted cancer types</p>
+          <div className="flex flex-wrap gap-1.5">
+            {(summary.top_cancer_types ?? []).map(ct => (
+              <span key={ct.name} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 text-xs border border-teal-100">
+                {ct.name}
+                <span className="font-semibold">{ct.count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PreviewModal({ content, filename, onClose }: { content: string; filename: string; onClose: () => void }) {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -143,9 +197,17 @@ function JobCard({
   job,
   actionLoading,
   previewLoading,
+  approveJobId,
+  selectedModelFolder,
+  availableModels,
+  approveClinicName,
   rejectJobId,
   rejectReason,
-  onApprove,
+  onApproveOpen,
+  onApproveConfirm,
+  onApproveCancel,
+  onModelFolderChange,
+  onClinicNameChange,
   onRejectOpen,
   onRejectConfirm,
   onRejectCancel,
@@ -156,14 +218,22 @@ function JobCard({
   job: IngestionJob;
   actionLoading: number | null;
   previewLoading: string | null;
+  approveJobId: number | null;
+  selectedModelFolder: string;
+  availableModels: string[];
+  approveClinicName: string;
   rejectJobId: number | null;
   rejectReason: string;
-  onApprove: (id: number) => void;
+  onApproveOpen: (id: number) => void;
+  onApproveConfirm: (id: number) => void;
+  onApproveCancel: () => void;
+  onModelFolderChange: (v: string) => void;
+  onClinicNameChange: (v: string) => void;
   onRejectOpen: (id: number) => void;
   onRejectConfirm: (id: number) => void;
   onRejectCancel: () => void;
   onRejectReasonChange: (v: string) => void;
-  onPreview: (id: number, dataset: 'a' | 'b', filename: string) => void;
+  onPreview: (id: number, filename: string) => void;
   onCancel: (id: number) => void;
 }) {
   return (
@@ -179,8 +249,8 @@ function JobCard({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-[var(--color-text-secondary)]">
             <p>Uploaded by: <span className="font-medium text-[var(--color-text-primary)]">{job.uploaded_by_email}</span></p>
             <p>Date: {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}</p>
-            <p>Dataset A: <span className="font-mono">{job.dataset_a_filename}</span></p>
-            <p>Dataset B: <span className="font-mono">{job.dataset_b_filename}</span></p>
+            <p>File: <span className="font-mono">{job.dataset_a_filename}</span></p>
+            {job.model_folder && <p>Model: <span className="font-medium text-[var(--color-text-primary)]">{job.model_folder}</span></p>}
             {job.reviewed_by_email && <p>Reviewed by: {job.reviewed_by_email}</p>}
             {job.reviewed_at && <p>Reviewed: {new Date(job.reviewed_at).toLocaleString()}</p>}
             {job.rejection_reason && <p className="text-red-600">Reason: {job.rejection_reason}</p>}
@@ -189,35 +259,34 @@ function JobCard({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => onPreview(job.id, 'a', job.dataset_a_filename)}
-            disabled={previewLoading === `${job.id}-a`}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
-          >
-            {previewLoading === `${job.id}-a` && (
-              <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-            )}
-            Preview A
-          </button>
-          <button
-            onClick={() => onPreview(job.id, 'b', job.dataset_b_filename)}
-            disabled={previewLoading === `${job.id}-b`}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
-          >
-            {previewLoading === `${job.id}-b` && (
-              <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-            )}
-            Preview B
-          </button>
+          {['completed', 'failed'].includes(job.status) ? (
+            <span
+              title="File was removed after processing"
+              className="px-3 py-1.5 text-xs font-medium text-gray-400 border border-gray-200 rounded-md cursor-not-allowed inline-flex items-center gap-1.5"
+            >
+              Preview
+            </span>
+          ) : (
+            <button
+              onClick={() => onPreview(job.id, job.dataset_a_filename)}
+              disabled={previewLoading === `${job.id}`}
+              className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
+            >
+              {previewLoading === `${job.id}` && (
+                <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+              )}
+              Preview
+            </button>
+          )}
 
           {job.status === 'pending_review' && (
             <>
               <button
-                onClick={() => onApprove(job.id)}
+                onClick={() => onApproveOpen(job.id)}
                 disabled={actionLoading === job.id}
                 className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
               >
-                {actionLoading === job.id ? '...' : 'Approve'}
+                Approve
               </button>
               <button
                 onClick={() => onRejectOpen(job.id)}
@@ -245,6 +314,57 @@ function JobCard({
         <PipelineStageIndicator stage={job.processing_stage} />
       )}
 
+      {/* Model result summary — shown on completed jobs */}
+      {job.status === 'completed' && job.result_summary && (
+        <ResultSummary summary={job.result_summary} />
+      )}
+
+      {/* Approve confirmation panel with clinic name + model selector */}
+      {approveJobId === job.id && (
+        <div className="mt-3 border-t border-gray-100 pt-3 space-y-2">
+          <div>
+            <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+              Clinic name <span className="text-red-500">*</span>
+            </p>
+            <input
+              type="text"
+              value={approveClinicName}
+              onChange={(e) => onClinicNameChange(e.target.value)}
+              placeholder="e.g. UC Davis VMTH"
+              disabled={actionLoading === job.id}
+              className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-300 disabled:opacity-50"
+            />
+          </div>
+          <p className="text-xs font-medium text-[var(--color-text-secondary)]">Select model</p>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedModelFolder}
+              onChange={(e) => onModelFolderChange(e.target.value)}
+              disabled={actionLoading === job.id}
+              className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-green-300 disabled:opacity-50"
+            >
+              {availableModels.map(folder => (
+                <option key={folder} value={folder}>{folder}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => onApproveConfirm(job.id)}
+              disabled={actionLoading === job.id || !approveClinicName.trim()}
+              className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {actionLoading === job.id ? '...' : 'Confirm Approve'}
+            </button>
+            <button
+              onClick={onApproveCancel}
+              className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Reject confirmation panel */}
       {rejectJobId === job.id && (
         <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3">
           <input
@@ -279,12 +399,18 @@ export function AdminQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [approveJobId, setApproveJobId] = useState<number | null>(null);
+  const [selectedModelFolder, setSelectedModelFolder] = useState('production');
+  const [availableModels, setAvailableModels] = useState<string[]>(['production']);
+  const [approveClinicName, setApproveClinicName] = useState('');
   const [rejectJobId, setRejectJobId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [preview, setPreview] = useState<{ content: string; filename: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'queue' | 'archive'>('queue');
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>('all');
+  const [archivePage, setArchivePage] = useState(1);
+  const ARCHIVE_PAGE_SIZE = 10;
 
   const loadJobs = useCallback(async () => {
     try {
@@ -301,8 +427,27 @@ export function AdminQueue() {
   }, [getAccessToken]);
 
   useEffect(() => {
-    loadJobs();
+    loadJobs(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [loadJobs]);
+
+  // Fetch available model folders once on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token || cancelled) return;
+        const models = await fetchAvailableModels(token);
+        if (!cancelled) {
+          setAvailableModels(models.length > 0 ? models : ['production']);
+          setSelectedModelFolder(models.includes('production') ? 'production' : (models[0] ?? 'production'));
+        }
+      } catch {
+        // keep the default ['production'] on error
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [getAccessToken]);
 
   // Auto-poll when any job is processing
   useEffect(() => {
@@ -312,13 +457,27 @@ export function AdminQueue() {
     return () => clearInterval(interval);
   }, [jobs, loadJobs]);
 
-  const handleApprove = async (jobId: number) => {
-    if (!confirm('Approve this upload for processing?')) return;
+  const handleApproveOpen = (jobId: number) => {
+    setRejectJobId(null);
+    setRejectReason('');
+    if (approveJobId === jobId) {
+      setApproveJobId(null);
+      setApproveClinicName('');
+    } else {
+      setApproveJobId(jobId);
+      const job = jobs.find(j => j.id === jobId);
+      setApproveClinicName(job?.clinic_name ?? '');
+    }
+  };
+
+  const handleApproveConfirm = async (jobId: number) => {
     setActionLoading(jobId);
     try {
       const token = await getAccessToken();
       if (!token) return;
-      await reviewJob(token, jobId, 'approve');
+      await reviewJob(token, jobId, 'approve', undefined, selectedModelFolder, approveClinicName.trim() || undefined);
+      setApproveJobId(null);
+      setApproveClinicName('');
       await loadJobs();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Approve failed');
@@ -326,6 +485,8 @@ export function AdminQueue() {
       setActionLoading(null);
     }
   };
+
+  const handleApproveCancel = () => { setApproveJobId(null); setApproveClinicName(''); };
 
   const handleReject = async (jobId: number) => {
     setActionLoading(jobId);
@@ -358,13 +519,13 @@ export function AdminQueue() {
     }
   };
 
-  const handlePreview = async (jobId: number, dataset: 'a' | 'b', filename: string) => {
-    const key = `${jobId}-${dataset}`;
+  const handlePreview = async (jobId: number, filename: string) => {
+    const key = `${jobId}`;
     setPreviewLoading(key);
     try {
       const token = await getAccessToken();
       if (!token) return;
-      const content = await fetchJobPreview(token, jobId, dataset);
+      const content = await fetchJobPreview(token, jobId);
       setPreview({ content, filename });
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Preview failed');
@@ -374,17 +535,30 @@ export function AdminQueue() {
   };
 
   const queueJobs = jobs.filter(j => ACTIVE_STATUSES.includes(j.status));
-  const archiveJobs = jobs
+  const allArchiveJobs = jobs
     .filter(j => ARCHIVE_STATUSES.includes(j.status))
     .filter(j => archiveFilter === 'all' || j.status === archiveFilter);
+  const archiveTotalPages = Math.max(1, Math.ceil(allArchiveJobs.length / ARCHIVE_PAGE_SIZE));
+  const archiveJobs = allArchiveJobs.slice(
+    (archivePage - 1) * ARCHIVE_PAGE_SIZE,
+    archivePage * ARCHIVE_PAGE_SIZE,
+  );
 
   const sharedJobCardProps = {
     actionLoading,
     previewLoading,
+    approveJobId,
+    selectedModelFolder,
+    availableModels,
+    approveClinicName,
     rejectJobId,
     rejectReason,
-    onApprove: handleApprove,
-    onRejectOpen: (id: number) => setRejectJobId(rejectJobId === id ? null : id),
+    onApproveOpen: handleApproveOpen,
+    onApproveConfirm: handleApproveConfirm,
+    onApproveCancel: handleApproveCancel,
+    onModelFolderChange: setSelectedModelFolder,
+    onClinicNameChange: setApproveClinicName,
+    onRejectOpen: (id: number) => { setApproveJobId(null); setRejectJobId(rejectJobId === id ? null : id); },
     onRejectConfirm: handleReject,
     onRejectCancel: () => { setRejectJobId(null); setRejectReason(''); },
     onRejectReasonChange: setRejectReason,
@@ -455,7 +629,7 @@ export function AdminQueue() {
             {activeView === 'archive' && (
               <select
                 value={archiveFilter}
-                onChange={e => setArchiveFilter(e.target.value as ArchiveFilter)}
+                onChange={e => { setArchiveFilter(e.target.value as ArchiveFilter); setArchivePage(1); }}
                 className="text-sm border border-gray-300 rounded-md px-2 py-1.5 text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] bg-white"
               >
                 <option value="all">All statuses</option>
@@ -493,7 +667,7 @@ export function AdminQueue() {
 
       {/* Archive View */}
       {activeView === 'archive' && (
-        archiveJobs.length === 0 ? (
+        allArchiveJobs.length === 0 ? (
           <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
             <p className="text-sm text-[var(--color-text-secondary)]">
               {archiveFilter === 'all'
@@ -506,6 +680,41 @@ export function AdminQueue() {
             {archiveJobs.map(job => (
               <JobCard key={job.id} job={job} {...sharedJobCardProps} />
             ))}
+            {/* Pagination controls */}
+            <div className="bg-white rounded-lg border border-gray-200 px-4 py-3 flex items-center justify-between">
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Showing {(archivePage - 1) * ARCHIVE_PAGE_SIZE + 1}–{Math.min(archivePage * ARCHIVE_PAGE_SIZE, allArchiveJobs.length)} of {allArchiveJobs.length} jobs
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setArchivePage(p => Math.max(1, p - 1))}
+                  disabled={archivePage === 1}
+                  className="px-2.5 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  ‹ Prev
+                </button>
+                {Array.from({ length: archiveTotalPages }, (_, i) => i + 1).map(page => (
+                  <button
+                    key={page}
+                    onClick={() => setArchivePage(page)}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                      page === archivePage
+                        ? 'bg-[var(--color-teal)] text-white'
+                        : 'text-gray-600 border border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setArchivePage(p => Math.min(archiveTotalPages, p + 1))}
+                  disabled={archivePage === archiveTotalPages}
+                  className="px-2.5 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next ›
+                </button>
+              </div>
+            </div>
           </div>
         )
       )}

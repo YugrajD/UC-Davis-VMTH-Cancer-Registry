@@ -51,12 +51,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--diff",
-        default=os.path.join(config.LLM_ANNOTATION_DIR, "cleanup_diff.csv"),
+        default=os.path.join(config.ANNOTATION_DIR, "cleanup_diff.csv"),
         help="Diff CSV (only changed rows).",
     )
     parser.add_argument(
         "--summary",
-        default=os.path.join(config.LLM_ANNOTATION_DIR, "cleanup_summary.json"),
+        default=os.path.join(config.ANNOTATION_DIR, "cleanup_summary.json"),
         help="Aggregate summary JSON.",
     )
     parser.add_argument(

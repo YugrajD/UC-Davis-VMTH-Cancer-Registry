@@ -1,7 +1,10 @@
 """Train a LabelPresenceClassifier for a single ICD group.
 
-Uses the TF-IDF selected report embedding (768-dim, n_cols=1) from the
-embedding cache paired with the corresponding label embedding from the same cache.
+Reads the cache entry under "concat_3" — the 2304-dim per-row concat
+(3 sections × 768) produced by the production pipeline. The LP head is built
+with n_cols=3, col_pair_mode=True, col_combine="learned" so each section
+scores the label independently through a shared MLP, then a learned 3→1
+weighted sum combines per-section logits.
 
 Designed to be called once per ICD group by run_training.py --mode train-label-presence.
 """
@@ -64,12 +67,14 @@ def train_label_presence(
     pos_weight: float = 1.0,
     recall_weight: float = 0.5,
     weight_decay: float = 1e-4,
-    patience: int = 0,
     device: str = "auto",
     seed: int = 42,
     model_name: str = "SAVSNET/PetBERT",
     labels_csv: str = "ml/ICD_labels/labels.csv",
     report_csv: str = "ml/data/report.csv",
+    n_cols: int = 3,
+    col_pair_mode: bool = True,
+    col_combine: str = "learned",
 ) -> float:
     """Train LabelPresenceClassifier for one group. Returns best validation score."""
     torch.manual_seed(seed)
@@ -105,13 +110,13 @@ def train_label_presence(
     case_id_to_idx = {cid: i for i, cid in enumerate(cache["case_ids"])}
     label_text_to_idx = {t: i for i, t in enumerate(cache["label_texts"])}
 
-    # Use TF-IDF selected embedding (768-dim, single column) as report embedding
-    tfidf_col = "tfidf_selected"
-    if tfidf_col not in cache["col_embeddings"]:
-        print(f"  Error: 'tfidf_selected' column not found in cache. Run TF-IDF pipeline first.")
+    # Use the concat-3 per-row embedding (2304-dim) as report embedding.
+    concat_col = "concat_3"
+    if concat_col not in cache["col_embeddings"]:
+        print(f"  Error: 'concat_3' column not found in cache. Rebuild the embedding cache first.")
         return 0.0
-    tfidf_embs = cache["col_embeddings"][tfidf_col]   # (N_cases, 768)
-    label_embs_all = cache["label_embeddings"]          # (M_labels, 768)
+    report_embs_all = cache["col_embeddings"][concat_col]  # (N_cases, 2304)
+    label_embs_all = cache["label_embeddings"]              # (M_labels, 768)
 
     report_list, label_list, target_list, kept_case_ids = [], [], [], []
     skipped = 0
@@ -121,7 +126,7 @@ def train_label_presence(
         if cidx is None or lidx is None:
             skipped += 1
             continue
-        report_list.append(tfidf_embs[cidx])
+        report_list.append(report_embs_all[cidx])
         label_list.append(label_embs_all[lidx])
         target_list.append(float(row["target"]))
         kept_case_ids.append(cid)
@@ -158,13 +163,17 @@ def train_label_presence(
     print(f"  Split: {len(train_ds)} train / {len(val_ds)} val  (pos={int(n_pos)}, neg={int(n_neg)})")
 
     # --- Model ----------------------------------------------------------------
-    # n_cols=1 + col_pair_mode=False: input is [report_emb (768) | label_emb (768)] → 1536
+    # Default: n_cols=3, col_pair_mode=True, col_combine="learned"
+    # — each section's 768-dim embedding scores the label independently via a
+    # shared 1536→hidden→1 MLP; per-section logits are combined by a learned 3→1
+    # head. Report embeddings expected shape: (B, n_cols * 768) = (B, 2304).
     model = LabelPresenceClassifier(
         emb_dim=PETBERT_EMB_DIM,
         hidden_dim=hidden_dim,
         dropout=dropout,
-        n_cols=1,
-        col_pair_mode=False,
+        n_cols=n_cols,
+        col_pair_mode=col_pair_mode,
+        col_combine=col_combine,
     ).to(dev)
 
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)
@@ -173,7 +182,6 @@ def train_label_presence(
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     best_score = -1.0
-    epochs_since_best = 0
     best_epoch = 0
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -204,13 +212,7 @@ def train_label_presence(
         if improved:
             best_score = score
             best_epoch = epoch
-            epochs_since_best = 0
             model.save(out_path)
-        else:
-            epochs_since_best += 1
-            if patience > 0 and epochs_since_best >= patience:
-                print(f"  Early stop at epoch {epoch} (patience={patience}; best={best_epoch})")
-                break
 
     print(f"  Best score: {best_score:.3f} (epoch {best_epoch}) -> {out_path}")
     return best_score

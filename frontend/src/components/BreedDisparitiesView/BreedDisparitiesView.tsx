@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
+import { fetchFilterOptions, fetchBreedDetail } from '../../api/client';
 import type { BreedDetail } from '../../api/client';
-import { MOCK_BREEDS, getMockBreedDetail } from '../../data/mockData';
 
 const GEO_URL =
   'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
@@ -15,12 +15,14 @@ const MAP_PROJECTION_CONFIG = {
 export function BreedDisparitiesView() {
   const [breeds, setBreeds] = useState<string[]>([]);
   const [selectedBreed, setSelectedBreed] = useState<string>('');
+  const [loadedBreed, setLoadedBreed] = useState<string>('');
   const [detail, setDetail] = useState<BreedDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingBreeds, setLoadingBreeds] = useState(true);
+
+  const loadingDetail = selectedBreed !== '' && selectedBreed !== loadedBreed;
 
   // Autocomplete state
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState<string>('');
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -34,46 +36,45 @@ export function BreedDisparitiesView() {
     y: number;
   } | null>(null);
 
-  // Load breed list from mock data
   useEffect(() => {
-    const breedNames = [...MOCK_BREEDS].sort();
-    setBreeds(breedNames);
-    if (breedNames.length > 0) {
-      setSelectedBreed(breedNames[0]);
-      setQuery(breedNames[0]);
-    }
+    fetchFilterOptions()
+      .then(opts => {
+        const names = [...new Set(opts.breeds.map(b => b.name))].sort();
+        setBreeds(names);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingBreeds(false));
   }, []);
 
-  // Get breed detail from mock data
   useEffect(() => {
     if (!selectedBreed) return;
-    setLoading(true);
-    setError(null);
-    setDetail(getMockBreedDetail(selectedBreed));
-    setLoading(false);
+    fetchBreedDetail(selectedBreed)
+      .then((data) => {
+        setDetail(data);
+        setLoadedBreed(selectedBreed);
+      })
+      .catch(() => {
+        setDetail(null);
+        setLoadedBreed(selectedBreed);
+      });
   }, [selectedBreed]);
 
   // Filtered suggestions
   const suggestions = useMemo(() => {
-    if (!query.trim()) return breeds.slice(0, 20);
+    if (!query.trim()) return breeds;
     const lower = query.toLowerCase();
-    return breeds.filter((b) => b.toLowerCase().includes(lower)).slice(0, 20);
+    return breeds.filter((b) => b.toLowerCase().includes(lower));
   }, [query, breeds]);
 
-  // Reset highlight when suggestions change
-  useEffect(() => {
-    setHighlightedIndex(0);
-  }, [suggestions]);
+  const effectiveHighlightedIndex = Math.min(highlightedIndex, Math.max(0, suggestions.length - 1));
 
-  // Scroll highlighted item into view
   useEffect(() => {
     if (isOpen && listRef.current) {
-      const item = listRef.current.children[highlightedIndex] as HTMLElement | undefined;
+      const item = listRef.current.children[effectiveHighlightedIndex] as HTMLElement | undefined;
       item?.scrollIntoView({ block: 'nearest' });
     }
-  }, [highlightedIndex, isOpen]);
+  }, [effectiveHighlightedIndex, isOpen]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (inputRef.current && !inputRef.current.parentElement?.contains(e.target as Node)) {
@@ -109,8 +110,8 @@ export function BreedDisparitiesView() {
         break;
       case 'Enter':
         e.preventDefault();
-        if (suggestions[highlightedIndex]) {
-          selectBreed(suggestions[highlightedIndex]);
+        if (suggestions[effectiveHighlightedIndex]) {
+          selectBreed(suggestions[effectiveHighlightedIndex]);
         }
         break;
       case 'Escape':
@@ -119,7 +120,6 @@ export function BreedDisparitiesView() {
     }
   };
 
-  // Map helpers
   const countyMap = useMemo(() => {
     const m = new Map<string, number>();
     detail?.county_cases.forEach((c) => m.set(c.county_name.toLowerCase(), c.count));
@@ -138,11 +138,30 @@ export function BreedDisparitiesView() {
       .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
   }, [countRange]);
 
-  // Bar chart max
-  const maxCancerCount = detail?.cancer_types[0]?.count || 1;
+  const maxPccp = detail?.cancer_types[0]?.pccp_within_breed ?? detail?.cancer_types[0]?.count ?? 1;
+
+  if (loadingBreeds) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-[var(--color-text-secondary)]">Loading breeds…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
+      {/* PCCP disclaimer */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3">
+        <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+        </svg>
+        <p className="text-xs text-amber-800 leading-relaxed">
+          <span className="font-semibold">PCCP (Pathology-Confirmed Cancer Proportion)</span> — percentage of pathology-tested animals with a confirmed cancer diagnosis.
+          Two denominators are shown: <span className="font-medium">% within breed</span> uses only tested animals of that breed; <span className="font-medium">% of all tested</span> uses all tested animals regardless of breed.
+          Figures for small cohorts (fewer than 10 tested animals) may be statistically unstable and should be interpreted with caution.
+        </p>
+      </div>
+
       {/* Breed Autocomplete */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-4">
         <label
@@ -170,7 +189,7 @@ export function BreedDisparitiesView() {
           {isOpen && suggestions.length > 0 && (
             <ul
               ref={listRef}
-              className="absolute z-40 mt-1 w-full max-h-60 overflow-auto bg-white border border-gray-200 rounded-md shadow-lg"
+              className="absolute z-40 mt-1 w-full max-h-96 overflow-auto bg-white border border-gray-200 rounded-md shadow-lg"
             >
               {suggestions.map((breed, i) => (
                 <li
@@ -178,7 +197,7 @@ export function BreedDisparitiesView() {
                   onMouseDown={() => selectBreed(breed)}
                   onMouseEnter={() => setHighlightedIndex(i)}
                   className={`px-3 py-2 text-sm cursor-pointer ${
-                    i === highlightedIndex
+                    i === effectiveHighlightedIndex
                       ? 'bg-[var(--color-teal)] text-white'
                       : 'text-[var(--color-text-primary)] hover:bg-gray-50'
                   } ${breed === selectedBreed ? 'font-semibold' : ''}`}
@@ -196,46 +215,48 @@ export function BreedDisparitiesView() {
         </div>
       </div>
 
-      {/* Loading / Error */}
-      {loading && (
-        <div className="bg-white rounded-lg border border-gray-200 p-12 flex flex-col items-center justify-center">
-          <div className="w-8 h-8 border-4 border-gray-200 border-t-[var(--color-teal)] rounded-full animate-spin" />
-          <p className="mt-4 text-sm text-[var(--color-text-secondary)]">
-            Loading breed data...
-          </p>
+      {loadingDetail && (
+        <div className="flex items-center justify-center h-32">
+          <p className="text-sm text-[var(--color-text-secondary)]">Loading breed data…</p>
         </div>
       )}
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
-          <svg
-            className="w-5 h-5 text-red-500 flex-shrink-0"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fillRule="evenodd"
-              d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-              clipRule="evenodd"
-            />
-          </svg>
-          <p className="text-sm text-red-700">{error}</p>
-        </div>
-      )}
-
-      {!loading && !error && detail && (
+      {!loadingDetail && detail && (
         <>
           {/* Summary Stats */}
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
               <span className="font-semibold text-[var(--color-text-primary)]">
                 {detail.breed}
-              </span>{' '}
-              has{' '}
-              <span className="font-semibold text-[var(--color-teal-dark)]">
-                {detail.total_cases.toLocaleString()}
-              </span>{' '}
-              total case diagnoses across{' '}
+              </span>
+              {detail.pccp_within_breed != null && detail.breed_total_patients != null ? (
+                <>
+                  {': '}
+                  <span className="font-semibold text-[var(--color-teal-dark)]">
+                    {detail.pccp_within_breed.toFixed(1)}%
+                  </span>
+                  {' within-breed PCCP '}
+                  <span className="text-[var(--color-text-secondary)]">
+                    ({detail.total_cases} of {detail.breed_total_patients} tested)
+                  </span>
+                  {detail.pccp_of_all != null && (
+                    <span className="text-[var(--color-text-secondary)]">
+                      {' · '}
+                      <span className="font-medium">{detail.pccp_of_all.toFixed(2)}%</span>
+                      {' of all tested (n = '}{detail.global_total_patients?.toLocaleString()}{')'}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  {' has '}
+                  <span className="font-semibold text-[var(--color-teal-dark)]">
+                    {detail.total_cases.toLocaleString()}
+                  </span>
+                  {' cancer patients'}
+                </>
+              )}
+              {' across '}
               <span className="font-semibold">{detail.county_cases.length}</span> counties.
               {detail.sex_breakdown.length > 0 && (
                 <>
@@ -259,7 +280,7 @@ export function BreedDisparitiesView() {
                   Cancer Type Breakdown
                 </h3>
                 <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                  Top cancer types for {detail.breed}
+                  Top cancer types for {detail.breed} · PCCP per 100 tested
                 </p>
               </div>
               <div className="p-6">
@@ -268,12 +289,19 @@ export function BreedDisparitiesView() {
                     No cancer type data available for this breed.
                   </p>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
+                    {/* Column headers */}
+                    <div className="flex items-center gap-3 mb-1">
+                      <span className="w-40 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Cancer Type</span>
+                      <div className="flex-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right pr-1">% within breed</div>
+                      <span className="w-24 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right">% of all tested</span>
+                    </div>
                     {detail.cancer_types.slice(0, 15).map((ct) => {
-                      const width = Math.max(5, (ct.count / maxCancerCount) * 100);
+                      const primaryVal = ct.pccp_within_breed ?? ct.count;
+                      const width = Math.max(5, (primaryVal / maxPccp) * 100);
                       return (
-                        <div key={ct.cancer_type} className="flex items-center gap-4">
-                          <span className="w-48 text-sm text-[var(--color-text-primary)] truncate">
+                        <div key={ct.cancer_type} className="flex items-center gap-3">
+                          <span className="w-40 text-sm text-[var(--color-text-primary)] truncate" title={ct.cancer_type}>
                             {ct.cancer_type}
                           </span>
                           <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
@@ -282,10 +310,13 @@ export function BreedDisparitiesView() {
                               style={{ width: `${width}%` }}
                             >
                               <span className="text-xs font-semibold text-white">
-                                {ct.count.toLocaleString()}
+                                {ct.pccp_within_breed != null ? `${ct.pccp_within_breed.toFixed(1)}%` : ct.count.toLocaleString()}
                               </span>
                             </div>
                           </div>
+                          <span className="w-24 text-xs text-[var(--color-text-secondary)] text-right tabular-nums">
+                            {ct.pccp_of_all != null ? `${ct.pccp_of_all.toFixed(2)}%` : '—'}
+                          </span>
                         </div>
                       );
                     })}
@@ -357,7 +388,7 @@ export function BreedDisparitiesView() {
                 {/* Legend */}
                 <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
                   <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">
-                    Cases
+                    Cancer Patients
                   </p>
                   <div
                     className="w-28 h-3 rounded"
@@ -398,7 +429,7 @@ export function BreedDisparitiesView() {
                       </p>
                       <p className="text-xs text-[var(--color-text-secondary)] mt-1">
                         {tooltip.count > 0
-                          ? `${tooltip.count.toLocaleString()} cases`
+                          ? `${tooltip.count.toLocaleString()} cancer patients`
                           : 'No data'}
                       </p>
                     </div>
@@ -408,6 +439,76 @@ export function BreedDisparitiesView() {
             </div>
           </div>
         </>
+      )}
+
+      {!loadingDetail && !detail && !selectedBreed && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+                Cancer Type Breakdown
+              </h3>
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                Top cancer types for selected breed
+              </p>
+            </div>
+            <div className="p-6 flex items-center justify-center h-48">
+              <p className="text-sm text-[var(--color-text-secondary)]">Select a breed to view data</p>
+            </div>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+                County Distribution
+              </h3>
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                Where selected breed cases are located
+              </p>
+            </div>
+            <div className="relative" style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
+              <ComposableMap
+                projection="geoMercator"
+                projectionConfig={MAP_PROJECTION_CONFIG}
+                width={400}
+                height={400}
+                style={{ width: '100%', height: '100%' }}
+              >
+                <Geographies geography={GEO_URL}>
+                  {({ geographies }) =>
+                    geographies.map((geo) => (
+                      <Geography
+                        key={geo.rsmKey}
+                        geography={geo}
+                        fill="#E5E7EB"
+                        stroke="#FFFFFF"
+                        strokeWidth={0.5}
+                        style={{
+                          default: { outline: 'none' },
+                          hover: { outline: 'none' },
+                          pressed: { outline: 'none' },
+                        }}
+                      />
+                    ))
+                  }
+                </Geographies>
+              </ComposableMap>
+              <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
+                  <span className="text-[10px] text-[var(--color-text-secondary)]">No data</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!loadingDetail && !detail && selectedBreed && (
+        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            No data available for {selectedBreed}.
+          </p>
+        </div>
       )}
     </div>
   );

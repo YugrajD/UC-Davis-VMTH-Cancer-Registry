@@ -1,0 +1,577 @@
+"""Per-diagnosis manual review workflow.
+
+Pairs with database/migrations/010_diagnosis_review.sql. Admin-only.
+
+Endpoints:
+  GET  /api/v1/diagnoses/pending          - paginated triage queue
+  GET  /api/v1/diagnoses/{id}             - full detail incl. event log
+  POST /api/v1/diagnoses/{id}/review      - confirm | correct | reject
+  GET  /api/v1/diagnoses/pending/count    - badge counter
+
+The router writes to diagnosis_review_events on every state change so
+multiple reviewers can collaborate without losing history. When a
+reviewer corrects to a brand-new cancer type, the type is auto-created
+with confirmed=False and surfaces for admin sign-off elsewhere.
+"""
+
+import asyncio
+from datetime import date, datetime, timezone
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.auth import CurrentUser, get_current_user, require_reviewer
+from app.config import settings
+from app.rate_limit import limiter
+from app.database import get_db
+from app.rate_limit import limiter
+from app.models.models import (
+    CancerType,
+    CaseDiagnosis,
+    DiagnosisReviewEvent,
+    IngestionJob,
+    Patient,
+)
+
+_VALID_STATUSES = frozenset({"pending", "confirmed", "corrected", "rejected"})
+_UNIDENTIFIED_METHODS = ("low_confidence", "unidentified_cancer")
+
+
+def _apply_cancer_group_filter(query, cancer_group: Optional[str]):
+    """Filter by prediction category: 'cancer', 'non_cancer', or 'unidentified'."""
+    if cancer_group == "non_cancer":
+        return query.where(CancerType.name == "Non-Cancer")
+    if cancer_group == "unidentified":
+        return query.where(CaseDiagnosis.prediction_method.in_(_UNIDENTIFIED_METHODS))
+    if cancer_group == "cancer":
+        return query.where(
+            CancerType.name != "Non-Cancer",
+            or_(
+                CaseDiagnosis.prediction_method.is_(None),
+                CaseDiagnosis.prediction_method.notin_(_UNIDENTIFIED_METHODS),
+            ),
+        )
+    return query
+
+
+router = APIRouter(prefix="/api/v1/diagnoses", tags=["diagnoses-review"])
+
+
+# --- Schemas --------------------------------------------------------------
+
+
+class PendingDiagnosis(BaseModel):
+    id: int
+    patient_anon_id: Optional[str]
+    cancer_type_id: int
+    cancer_type_name: str
+    icd_o_code: Optional[str]
+    predicted_term: Optional[str]
+    confidence: Optional[float]
+    top2_margin: Optional[float]
+    prediction_method: Optional[str]
+    diagnosis_index: Optional[int]
+    review_status: str
+    ingestion_job_id: Optional[int] = None
+    job_filename: Optional[str] = None
+    job_created_at: Optional[datetime] = None
+
+
+class ReviewEventOut(BaseModel):
+    id: int
+    actor_email: str
+    action: str
+    from_status: Optional[str]
+    to_status: str
+    cancer_type_id_before: Optional[int]
+    cancer_type_id_after: Optional[int]
+    icd_o_code_before: Optional[str]
+    icd_o_code_after: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+
+
+class DiagnosisDetail(PendingDiagnosis):
+    original_cancer_type_id: Optional[int]
+    original_icd_o_code: Optional[str]
+    original_predicted_term: Optional[str]
+    # Raw source text PetBERT classified — the "Clinical Diagnoses" cell from
+    # the upload.  Reviewers use this to sanity-check the model's prediction.
+    # Null for diagnoses ingested before the May 2026 ingestion-service fix.
+    original_text: Optional[str]
+    # Diagnosis text from the clinic's dataset (optional column). Null when
+    # the clinic's upload did not include a diagnoses column.
+    source_diagnosis: Optional[str]
+    reviewed_by_email: Optional[str]
+    reviewed_at: Optional[datetime]
+    reviewer_notes: Optional[str]
+    events: list[ReviewEventOut]
+    # Patient demographic fields for reviewer context
+    patient_sex: Optional[str]
+    patient_breed: Optional[str]
+    test_request_date: Optional[date]
+    patient_age: Optional[int]
+
+
+class ReviewAction(BaseModel):
+    action: Literal["confirm", "correct", "reject"]
+    cancer_type_name: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Required for 'correct'. If unknown, will be auto-created with confirmed=False.",
+    )
+    icd_o_code: Optional[str] = Field(default=None, max_length=20)
+    predicted_term: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, max_length=5000)
+
+
+# --- Helpers --------------------------------------------------------------
+
+
+async def _get_or_404(db: AsyncSession, diagnosis_id: int) -> CaseDiagnosis:
+    result = await db.execute(
+        select(CaseDiagnosis)
+        .options(
+            selectinload(CaseDiagnosis.cancer_type),
+            selectinload(CaseDiagnosis.patient).selectinload(Patient.breed),
+            selectinload(CaseDiagnosis.review_events),
+            selectinload(CaseDiagnosis.pathology_report),
+        )
+        .where(CaseDiagnosis.id == diagnosis_id)
+    )
+    diag = result.scalar_one_or_none()
+    if diag is None:
+        raise HTTPException(status_code=404, detail="Diagnosis not found")
+    return diag
+
+
+async def _resolve_or_create_cancer_type(
+    db: AsyncSession, name: str
+) -> tuple[int, bool]:
+    """Return (cancer_type_id, was_created). New types are inserted with
+    confirmed=False so the admin sign-off list can pick them up."""
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="cancer_type_name is empty")
+
+    existing = await db.execute(
+        select(CancerType.id).where(CancerType.name == name)
+    )
+    row = existing.scalar_one_or_none()
+    if row is not None:
+        return row, False
+
+    new_type = CancerType(name=name, confirmed=False)
+    db.add(new_type)
+    await db.flush()
+    return new_type.id, True
+
+
+async def _fetch_report_text(diag: CaseDiagnosis) -> str | None:
+    """Fetch pathology report text from GCS if available, else return None."""
+    if not diag.pathology_report or not diag.pathology_report.gcs_path:
+        return None
+    if not settings.GCS_BUCKET:
+        return None
+    try:
+        from app.services.gcp_batch_service import download_report_text_from_gcs
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, download_report_text_from_gcs, diag.pathology_report.gcs_path
+        )
+    except Exception:
+        return None
+
+
+def _patient_age(birth: date | None, ref: date | None) -> int | None:
+    if birth is None:
+        return None
+    ref = ref or datetime.now(timezone.utc).date()
+    age = ref.year - birth.year
+    if (ref.month, ref.day) < (birth.month, birth.day):
+        age -= 1
+    return age
+
+
+def _to_detail(diag: CaseDiagnosis, report_text: str | None = None) -> DiagnosisDetail:
+    patient = diag.patient
+    return DiagnosisDetail(
+        id=diag.id,
+        patient_anon_id=patient.anon_id if patient else None,
+        cancer_type_id=diag.cancer_type_id,
+        cancer_type_name=diag.cancer_type.name if diag.cancer_type else "",
+        icd_o_code=diag.icd_o_code,
+        predicted_term=diag.predicted_term,
+        confidence=float(diag.confidence) if diag.confidence is not None else None,
+        top2_margin=float(diag.top2_margin) if diag.top2_margin is not None else None,
+        prediction_method=diag.prediction_method,
+        diagnosis_index=diag.diagnosis_index,
+        review_status=diag.review_status,
+        original_cancer_type_id=diag.original_cancer_type_id,
+        original_icd_o_code=diag.original_icd_o_code,
+        original_predicted_term=diag.original_predicted_term,
+        original_text=report_text,
+        source_diagnosis=diag.pathology_report.source_diagnosis if diag.pathology_report else None,
+        reviewed_by_email=diag.reviewed_by_email,
+        reviewed_at=diag.reviewed_at,
+        reviewer_notes=diag.reviewer_notes,
+        events=[
+            ReviewEventOut(
+                id=e.id,
+                actor_email=e.actor_email,
+                action=e.action,
+                from_status=e.from_status,
+                to_status=e.to_status,
+                cancer_type_id_before=e.cancer_type_id_before,
+                cancer_type_id_after=e.cancer_type_id_after,
+                icd_o_code_before=e.icd_o_code_before,
+                icd_o_code_after=e.icd_o_code_after,
+                notes=e.notes,
+                created_at=e.created_at,
+            )
+            for e in diag.review_events
+        ],
+        patient_sex=patient.sex if patient else None,
+        patient_breed=patient.breed.name if (patient and patient.breed) else None,
+        test_request_date=patient.diagnosis_date if patient else None,
+        patient_age=_patient_age(
+            patient.birth_date if patient else None,
+            patient.diagnosis_date if patient else None,
+        ),
+    )
+
+
+# --- Endpoints ------------------------------------------------------------
+
+
+@router.get("")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def list_diagnoses(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+    status: Optional[str] = Query(default=None, max_length=20),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    ingestion_job_id: Optional[int] = None,
+    year: Optional[int] = Query(default=None, ge=1900, le=2100),
+    patient_id: Optional[str] = Query(default=None, max_length=100),
+    clinic: Optional[str] = Query(default=None, max_length=255),
+    cancer_group: Optional[str] = Query(default=None, max_length=20),
+) -> list[PendingDiagnosis]:
+    """All diagnoses with optional status/year/patient/clinic/cancer_group filter; non-admins scoped to their own jobs."""
+    if not user.is_uploader:
+        raise HTTPException(status_code=403, detail="Uploader or admin role required")
+
+    query = (
+        select(
+            CaseDiagnosis,
+            CancerType.name,
+            Patient.anon_id,
+            IngestionJob.dataset_a_filename,
+            IngestionJob.created_at,
+        )
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .outerjoin(IngestionJob, IngestionJob.id == CaseDiagnosis.ingestion_job_id)
+    )
+
+    if status and status in _VALID_STATUSES:
+        query = query.where(CaseDiagnosis.review_status == status)
+
+    if not user.is_admin:
+        uploader_job_ids = select(IngestionJob.id).where(
+            IngestionJob.uploaded_by_sub == user.sub
+        )
+        query = query.where(CaseDiagnosis.ingestion_job_id.in_(uploader_job_ids))
+
+    if ingestion_job_id is not None:
+        query = query.where(CaseDiagnosis.ingestion_job_id == ingestion_job_id)
+    if year is not None:
+        query = query.where(func.extract("year", Patient.diagnosis_date) == year)
+    if patient_id:
+        query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
+    if clinic and user.is_admin:
+        query = query.where(IngestionJob.clinic_name == clinic)
+    query = _apply_cancer_group_filter(query, cancer_group)
+
+    query = (
+        query.order_by(
+            CaseDiagnosis.ingestion_job_id.desc().nulls_last(),
+            CaseDiagnosis.confidence.asc().nulls_first(),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await db.execute(query)).all()
+    return [
+        PendingDiagnosis(
+            id=d.id,
+            patient_anon_id=anon_id,
+            cancer_type_id=d.cancer_type_id,
+            cancer_type_name=ct_name,
+            icd_o_code=d.icd_o_code,
+            predicted_term=d.predicted_term,
+            confidence=float(d.confidence) if d.confidence is not None else None,
+            top2_margin=float(d.top2_margin) if d.top2_margin is not None else None,
+            prediction_method=d.prediction_method,
+            diagnosis_index=d.diagnosis_index,
+            review_status=d.review_status,
+            ingestion_job_id=d.ingestion_job_id,
+            job_filename=job_filename,
+            job_created_at=job_created_at,
+        )
+        for d, ct_name, anon_id, job_filename, job_created_at in rows
+    ]
+
+
+@router.get("/pending/count")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def pending_count(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _reviewer: CurrentUser = Depends(require_reviewer),
+) -> dict:
+    """Cheap counter for the nav badge."""
+    result = await db.execute(
+        select(func.count(CaseDiagnosis.id)).where(
+            CaseDiagnosis.review_status == "pending"
+        )
+    )
+    return {"count": result.scalar() or 0}
+
+
+@router.get("/pending")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def list_pending(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    reviewer: CurrentUser = Depends(require_reviewer),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    cancer_type_id: Optional[int] = None,
+    method: Optional[str] = Query(default=None, max_length=50),
+    max_confidence: Optional[float] = None,
+    ingestion_job_id: Optional[int] = None,
+    year: Optional[int] = Query(default=None, ge=1900, le=2100),
+    patient_id: Optional[str] = Query(default=None, max_length=100),
+    clinic: Optional[str] = Query(default=None, max_length=255),
+    cancer_group: Optional[str] = Query(default=None, max_length=20),
+) -> list[PendingDiagnosis]:
+    """Paginated review queue, optionally filtered."""
+    query = (
+        select(
+            CaseDiagnosis,
+            CancerType.name,
+            Patient.anon_id,
+            IngestionJob.dataset_a_filename,
+            IngestionJob.created_at,
+        )
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .outerjoin(IngestionJob, IngestionJob.id == CaseDiagnosis.ingestion_job_id)
+        .where(CaseDiagnosis.review_status == "pending")
+    )
+    if cancer_type_id is not None:
+        query = query.where(CaseDiagnosis.cancer_type_id == cancer_type_id)
+    if method is not None:
+        query = query.where(CaseDiagnosis.prediction_method == method)
+    if max_confidence is not None:
+        query = query.where(CaseDiagnosis.confidence <= max_confidence)
+    if ingestion_job_id is not None:
+        query = query.where(CaseDiagnosis.ingestion_job_id == ingestion_job_id)
+    if year is not None:
+        query = query.where(func.extract("year", Patient.diagnosis_date) == year)
+    if patient_id:
+        query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
+    if clinic and reviewer.is_admin:
+        query = query.where(IngestionJob.clinic_name == clinic)
+    query = _apply_cancer_group_filter(query, cancer_group)
+
+    query = (
+        query.order_by(
+            CaseDiagnosis.ingestion_job_id.desc().nulls_last(),
+            CaseDiagnosis.confidence.asc().nulls_first(),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await db.execute(query)).all()
+    return [
+        PendingDiagnosis(
+            id=d.id,
+            patient_anon_id=anon_id,
+            cancer_type_id=d.cancer_type_id,
+            cancer_type_name=ct_name,
+            icd_o_code=d.icd_o_code,
+            predicted_term=d.predicted_term,
+            confidence=float(d.confidence) if d.confidence is not None else None,
+            top2_margin=float(d.top2_margin) if d.top2_margin is not None else None,
+            prediction_method=d.prediction_method,
+            diagnosis_index=d.diagnosis_index,
+            review_status=d.review_status,
+            ingestion_job_id=d.ingestion_job_id,
+            job_filename=job_filename,
+            job_created_at=job_created_at,
+        )
+        for d, ct_name, anon_id, job_filename, job_created_at in rows
+    ]
+
+
+@router.get("/uploaders")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def list_uploaders(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[str]:
+    """Admin-only: distinct clinic names for the clinic filter dropdown."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    result = await db.execute(
+        select(IngestionJob.clinic_name)
+        .where(IngestionJob.clinic_name.isnot(None))
+        .distinct()
+        .order_by(IngestionJob.clinic_name)
+    )
+    return [row[0] for row in result.all()]
+
+
+@router.get("/count")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def count_diagnoses(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+    status: Optional[str] = Query(default=None, max_length=20),
+    year: Optional[int] = Query(default=None, ge=1900, le=2100),
+    patient_id: Optional[str] = Query(default=None, max_length=100),
+    clinic: Optional[str] = Query(default=None, max_length=255),
+    cancer_group: Optional[str] = Query(default=None, max_length=20),
+) -> dict:
+    """Row count matching the same filters as list_diagnoses; used for pagination."""
+    if not user.is_uploader:
+        raise HTTPException(status_code=403, detail="Uploader or admin role required")
+
+    query = (
+        select(func.count(CaseDiagnosis.id))
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .outerjoin(IngestionJob, IngestionJob.id == CaseDiagnosis.ingestion_job_id)
+    )
+
+    if status and status in _VALID_STATUSES:
+        query = query.where(CaseDiagnosis.review_status == status)
+
+    if not user.is_admin:
+        uploader_job_ids = select(IngestionJob.id).where(
+            IngestionJob.uploaded_by_sub == user.sub
+        )
+        query = query.where(CaseDiagnosis.ingestion_job_id.in_(uploader_job_ids))
+
+    if year is not None:
+        query = query.where(func.extract("year", Patient.diagnosis_date) == year)
+    if patient_id:
+        query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
+    if clinic and user.is_admin:
+        query = query.where(IngestionJob.clinic_name == clinic)
+    query = _apply_cancer_group_filter(query, cancer_group)
+
+    result = await db.execute(query)
+    return {"count": result.scalar() or 0}
+
+
+@router.get("/{diagnosis_id}")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def get_diagnosis(
+    request: Request,
+    diagnosis_id: int,
+    db: AsyncSession = Depends(get_db),
+    _reviewer: CurrentUser = Depends(require_reviewer),
+) -> DiagnosisDetail:
+    diag = await _get_or_404(db, diagnosis_id)
+    report_text = await _fetch_report_text(diag)
+    return _to_detail(diag, report_text)
+
+
+@router.post("/{diagnosis_id}/review")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def review_diagnosis(
+    request: Request,
+    diagnosis_id: int,
+    body: ReviewAction,
+    db: AsyncSession = Depends(get_db),
+    reviewer: CurrentUser = Depends(require_reviewer),
+) -> DiagnosisDetail:
+    # Lock the row before reading status to prevent concurrent double-reviews.
+    locked = await db.execute(
+        select(CaseDiagnosis)
+        .where(CaseDiagnosis.id == diagnosis_id)
+        .with_for_update()
+    )
+    diag = locked.scalar_one_or_none()
+    if diag is None:
+        raise HTTPException(status_code=404, detail="Diagnosis not found")
+
+    if diag.review_status not in ("pending", "confirmed", "corrected"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot review a diagnosis in status '{diag.review_status}'",
+        )
+
+    from_status = diag.review_status
+    ct_before = diag.cancer_type_id
+    code_before = diag.icd_o_code
+
+    if body.action == "confirm":
+        diag.review_status = "confirmed"
+    elif body.action == "reject":
+        diag.review_status = "rejected"
+    elif body.action == "correct":
+        if not body.cancer_type_name:
+            raise HTTPException(
+                status_code=400,
+                detail="'correct' requires cancer_type_name",
+            )
+        new_ct_id, _created = await _resolve_or_create_cancer_type(
+            db, body.cancer_type_name
+        )
+        if diag.original_cancer_type_id is None:
+            # Preserve PetBERT's original prediction the first time we
+            # overwrite it. Subsequent corrections leave original_* intact.
+            diag.original_cancer_type_id = ct_before
+            diag.original_icd_o_code = code_before
+            diag.original_predicted_term = diag.predicted_term
+        diag.cancer_type_id = new_ct_id
+        diag.icd_o_code = body.icd_o_code or None
+        if body.predicted_term is not None:
+            diag.predicted_term = body.predicted_term
+        diag.review_status = "corrected"
+
+    diag.reviewed_by_email = reviewer.email
+    diag.reviewed_at = datetime.now(timezone.utc)
+    if body.notes:
+        diag.reviewer_notes = body.notes
+
+    db.add(DiagnosisReviewEvent(
+        case_diagnosis_id=diag.id,
+        actor_email=reviewer.email,
+        action=body.action,
+        from_status=from_status,
+        to_status=diag.review_status,
+        cancer_type_id_before=ct_before,
+        cancer_type_id_after=diag.cancer_type_id,
+        icd_o_code_before=code_before,
+        icd_o_code_after=diag.icd_o_code,
+        notes=body.notes,
+    ))
+
+    await db.commit()
+
+    refreshed = await _get_or_404(db, diagnosis_id)
+    report_text = await _fetch_report_text(refreshed)
+    return _to_detail(refreshed, report_text)

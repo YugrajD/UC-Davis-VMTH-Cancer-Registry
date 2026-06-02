@@ -26,10 +26,9 @@ import psycopg2
 # Config
 # ---------------------------------------------------------------------------
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL_SYNC",
-    "postgresql://postgres:postgres@localhost:5432/vmth_cancer",
-)
+DATABASE_URL = os.getenv("DATABASE_URL_SYNC")
+if not DATABASE_URL:
+    sys.exit("ERROR: DATABASE_URL_SYNC environment variable is required")
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/database/data"))
 

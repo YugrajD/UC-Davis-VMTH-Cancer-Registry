@@ -1,0 +1,33 @@
+# Normalize line endings on commit: stored as LF in repo, checked out as LF on disk.
+# Overrides any per-clone core.autocrlf setting so Windows/Unix contributors
+# always commit the same bytes.
+* text=auto eol=lf
+
+# Shell scripts must always be LF regardless of platform
+*.sh    text eol=lf
+
+# Explicit binary types — do not normalize or diff as text
+*.png            binary
+*.jpg            binary
+*.jpeg           binary
+*.gif            binary
+*.svg            binary
+*.pdf            binary
+*.zip            binary
+*.gz             binary
+*.tar            binary
+*.pt             binary
+*.bin            binary
+*.onnx           binary
+*.safetensors    binary
+*.npz            binary
+*.joblib         binary
+*.pkl            binary
+*.parquet        binary
+*.feather        binary
+*.arrow          binary
+*.xlsx           binary
+*.xls            binary
+*.xlsm           binary
+*.pptx           binary
+*.docx           binary

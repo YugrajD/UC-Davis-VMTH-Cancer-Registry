@@ -29,7 +29,6 @@ services:
     volumes:
       - ./backend:/app
       - ./ml:/ml
-      - uploads_data:/app/uploads
       - ./secrets:/app/secrets:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -39,7 +38,12 @@ services:
       dockerfile: Dockerfile
     container_name: vmth_cancer_frontend
     environment:
-      VITE_API_URL: http://backend:8000
+      # VITE_API_URL is intentionally empty in dev: the browser must use
+      # relative URLs so they go through the Vite dev-server proxy. The
+      # proxy itself uses DEV_PROXY_TARGET (read in vite.config.ts) to
+      # forward to the backend over the docker network.
+      VITE_API_URL: ""
+      DEV_PROXY_TARGET: http://backend:8000
       VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
       VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     ports:
@@ -106,13 +110,17 @@ services:
     volumes:
       - ./ml-worker:/worker
       - ./ml:/ml
-    ports:
-      - "8001:8001"
     environment:
       HF_HOME: /ml/.cache/huggingface
       PETBERT_MODEL_PATH: ${PETBERT_MODEL_PATH:-/ml/models/petbert}
+      LABELS_CSV_PATH: ${LABELS_CSV_PATH:-/ml/ICD_labels/labels.csv}
+      GROUP_CLASSIFIER_PATH: ${GROUP_CLASSIFIER_PATH:-/ml/output/checkpoints/group/group_classifier_best.pt}
+      CASE_PRESENCE_CLASSIFIER_PATH: ${CASE_PRESENCE_CLASSIFIER_PATH:-}
+      LP_THRESHOLDS_JSON_PATH: ${LP_THRESHOLDS_JSON_PATH:-}
+      UNCOMMON_GROUPS_PATH: ${UNCOMMON_GROUPS_PATH:-}
+    ports:
+      - "8001:8001"
     command: uvicorn app:app --host 0.0.0.0 --port 8001 --reload
 
 volumes:
   frontend_node_modules:
-  uploads_data:

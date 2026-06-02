@@ -4,6 +4,7 @@
 **Team:** ECS 193A Team 14  
 **Authors:** Yugraj Dhillon, David Estrella, Chun Ho Li, Justin Pak  
 **Handoff Date:** April 15, 2026  
+**Last Updated:** May 28, 2026  
 **Repository:** https://github.com/ECS-193A-Team-14/UC-Davis-VMTH-Cancer-Registry  
 
 ---
@@ -42,6 +43,7 @@ The VMTH Cancer Registry is a web application for UC Davis veterinary researcher
 |---|---|
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS v4, react-simple-maps, d3-scale |
 | Backend | FastAPI, Python 3.11, SQLAlchemy async, Pydantic v2 |
+| ASGI server | gunicorn + uvicorn workers (production), uvicorn (dev) |
 | Database | PostgreSQL 16 + PostGIS 3.4, hosted on Supabase |
 | NLP Model | PetBERT (110M param BERT pretrained on veterinary EHR data) |
 | ML Inference | GCP Batch (production), local ml-worker container (development) |
@@ -77,7 +79,7 @@ UC-Davis-VMTH-Cancer-Registry/
 ├── ml-worker/                 # Dockerized ML worker for local dev
 │   └── Dockerfile.batch       # Production GCP Batch container
 ├── database/
-│   └── migrations/            # 013 SQL migrations (run in order)
+│   └── migrations/            # 029 SQL migrations (run in order)
 └── docs/                      # Architecture docs, workstream plans
 ```
 
@@ -88,10 +90,11 @@ UC-Davis-VMTH-Cancer-Registry/
 | `DataUpload` | `components/DataUpload/` | Implemented |
 | `AdminQueue` | `components/AdminQueue/` | Implemented |
 | `ChoroplethMap` | `components/ChoroplethMap/` | Implemented |
-| `Filters` | `components/Filters/` | Partial (no year/species in UI) |
-| `TrendChart` | `components/TrendChart/` | **Not implemented** |
+| `Filters` | `components/Filters/` | Implemented (sex, cancer type, breed, age group) |
+| `AgeDisparitiesView` | `components/AgeDisparitiesView/` | Implemented (Cancer by Age tab) |
+| `BreedDisparitiesView` | `components/BreedDisparitiesView/` | Implemented |
+| `AnalysisView` | `components/AnalysisView/` | Implemented (multi-map, scatter, trend charts using real API data) |
 | Case detail view | — | **Not implemented** |
-| CSV export button | — | **Not implemented** |
 | Plain-language search bar | — | **Not implemented** |
 
 ### Key Backend Routers
@@ -105,6 +108,11 @@ UC-Davis-VMTH-Cancer-Registry/
 | `incidence` | `routers/incidence.py` | Case counts by type/breed/species |
 | `search` | `routers/search.py` | PetBERT classification endpoint |
 | `auth` | `routers/auth.py` | `/auth/me` for role checking |
+| `diagnoses_review` | `routers/diagnoses_review.py` | Per-diagnosis review actions + uploader audit list |
+| `admin` | `routers/admin.py` | Refresh materialized views |
+| `role_requests` | `routers/role_requests.py` | Role request submit/list/approve/deny |
+| `export` | `routers/export.py` | Data export requests and CSV generation |
+| `admin_users` | `routers/admin_users.py` | Per-user role assignment (admin only) |
 
 ---
 
@@ -115,7 +123,9 @@ UC-Davis-VMTH-Cancer-Registry/
 - Admin approval queue — all jobs require admin approval before processing
 - Job status tracking with auto-polling (pending_review → processing → completed/failed)
 - GCP Batch integration (`USE_GCP_BATCH=true` in `.env`) with local fallback
-- Anon ID normalization (`"ID_37"`, `"37"`, `"37.0"` all resolve to `"ID_37"`)
+- Flexible column name support: `case_id` accepted as alias for `anon_id`; short and long zip column names both accepted in Dataset A (`Zipcode` / `Zipcode Zipcode`, `RfrrVtrnZipcode` / `RfrrVtrn Zipcode Zipcode`)
+- Dual predictions format support: per-row (explicit `diagnosis_index` column) and numbered-string (`"1) X 2) Y"`) formats both parsed automatically
+- Anon ID normalization (`"ID_37"`, `"37"`, `"37.0"` all resolve to `"ID_37"`; `"CASE-0001"` passes through unchanged)
 - Idempotent re-runs (case_diagnoses deleted before re-insert)
 
 ### NLP Pipeline
@@ -127,22 +137,71 @@ UC-Davis-VMTH-Cancer-Registry/
 
 ### Map Dashboard
 - California county choropleth map (react-simple-maps + d3-scale)
-- Filters: sex, cancer type, breed (wired end-to-end)
-- Sortable county table with hover-to-highlight
-- Hierarchical summary table (California → UC Davis Catchment → Regions → Counties)
-- Case counts only (no incidence rate — dog population by county unavailable)
+- Filters: sex, cancer type, breed, **age group** (wired end-to-end)
+- Sortable county table and hierarchical summary table with hover-to-highlight
+- **PCCP (Pathology-Confirmed Cancer Proportion)** replaces raw case counts across all views: overview map, county tables, Analysis tab, Cancer Types tab, Cancer by Age tab, and Breed Disparities tab
+  - **Eq 1**: county-level PCCP = cancer patients / all tested patients per county × 100 (overview map)
+  - **Eq 3**: per-type PCCP = patients with type X / all tested patients × 100 (Cancer Types tab)
+  - **Eq 5**: breed×type PCCP using global denominator (all tested dogs) — "% of all tested"
+  - **Eq 6**: breed×type PCCP using breed denominator (tested dogs of that breed) — "% within breed"
+  - **Eq 7**: age×type PCCP using global denominator — "% of all tested"
+  - **Eq 8**: age×type PCCP using age-group denominator — "% within age group"
+- Sex and age-group filters apply to both the PCCP numerator and denominator; cancer type filter applies to numerator only
+- `/api/v1/incidence/pccp` is the primary map data endpoint — uses `COUNT(DISTINCT patient_id)` to avoid diagnosis-level double-counting
+- Only **confirmed** or **corrected** `case_diagnoses` rows are counted (enforced by `apply_review_filter`)
+- **Non-Cancer** predictions excluded from numerators but included in denominators (they represent tested-but-cancer-free animals)
+- PCCP disclaimer banners shown on Cancer Types, Cancer by Age, and Breed Disparities tabs with small-cohort caution notice
+
+### Diagnosis Audit View (May 2026)
+- Uploaders and admins can browse all diagnoses by status (Pending / Confirmed / Corrected / Rejected / All) via a status filter pill bar on the Diagnosis Review tab
+- Non-admin uploaders see only diagnoses from jobs they submitted (`ingestion_job.uploaded_by_sub == user.sub` subquery)
+- Admins see all diagnoses across all jobs
+- Pathology report text (`case_diagnoses.original_text` — the `Text` column from Dataset A) is surfaced in the detail panel for each diagnosis, labeled "Pathology report text"
+- **Cancer group filter** (Cancer / Non-Cancer / Unidentified) in the review filter row
+- **Type filter** positioned after Clinic in the review filter row for a more logical flow
+- **Page number input** and total page count displayed in pagination bar
 
 ### Authentication & Security
 - Supabase Auth with email/password sign-in
 - JWT validation in FastAPI (`auth.py`)
 - Admin role enforcement on upload and review endpoints
 - RLS enabled on all Supabase tables (`012_enable_rls.sql`) — direct anon/authenticated key access is blocked; all queries go through FastAPI as the postgres superuser
+- Admin self-edit and cross-admin edit protection: `PUT /api/v1/admin/users/{email}/roles` rejects requests where the caller is editing their own roles (HTTP 400) or a target who is already an admin (HTTP 403); the frontend disables the form for both cases with explanatory banners
+- Proactive JWT refresh in `AuthContext.getAccessToken()`: token is refreshed 60 seconds before expiry so the backend never receives an expired JWT, preventing the in-memory auth-failure rate limiter from accumulating failures and triggering 429s during normal pagination
 
 ### Database
-- 13 migrations applied in order (001–013)
+- 29 migrations applied in order (001–029); all migrations run at startup via the database service
 - PostGIS county boundaries for all 58 CA counties
 - `data_source = 'petbert'` distinguishes real ingested data from seed/mock data
 - One case per patient (dog) model — prevents double-counting
+- Materialized views (`mv_county_cancer_incidence`, `mv_yearly_trends`) refreshed after each ingest and via `POST /api/v1/admin/refresh-views`
+- Migrations 028–029 add `patients.birth_date` and `age_group` column to materialized views; re-ingest required to populate age data
+
+### Security Hardening (May 2026)
+- Three full security review rounds completed; see `docs/current-architecture.md` for the layer-by-layer summary
+- JWT auth hardened: algorithm pinning (HS256/ES256/RS256/EdDSA only), generic error messages, in-memory failure rate limiting (5/15-minute IP lockout)
+- Per-IP brute-force tracking has a 10 k IP cap with oldest-half eviction to bound memory
+- Request body size enforced on **actual received bytes** (not just `Content-Length`) — 10 MB default, 50 MB for uploads
+- CSV formula injection sanitization on every export cell
+- Path-traversal defense via `pathlib.relative_to()` on every file system operation
+- Race conditions fixed: atomic `UPDATE WHERE status='pending' RETURNING` for export approvals, `SELECT FOR UPDATE` for diagnosis review
+- Supabase PKCE flow for password reset: link arrives at the app as `?token_hash=...&type=recovery`, verified client-side so Gmail/Outlook link previews can't consume the OTP
+- Admin gating on every `/admin/*` and `/diagnoses/*` mutation; reviewer role for read-only review queue access
+- API docs (`/docs`, `/redoc`, `/openapi.json`) are 404 in production (`DEBUG=false`)
+- Strict security response headers on every response: `x-frame-options: DENY`, HSTS, nosniff, referrer-policy
+- `.claudeignore` blocks Claude from reading `.env` or `secrets/`; pre-commit hook blocks committing secrets
+
+### Test Suite (May–June 2026)
+- Backend: **131 pytest tests** across 12 files (admin users, admin refresh-views, dashboard, incidence, security, review threshold analysis, ingestion service, GCP Batch service, diagnoses router, ML worker thresholds)
+- Frontend: **295 vitest tests** across 15 files (filtered data, cancer types, CalEnviroScreen, password reset PKCE URL parsing, export requests, user management, pipeline stages, trends, human cancer rates, Vet-ICD-O categories, etc.)
+- CI: `.github/workflows/ci.yml` runs both suites + TypeScript check + ESLint on every push to `main`/`database` and every PR
+- DB is fully mocked in backend tests; no PostgreSQL container is needed for CI
+
+### Scalability (May 2026)
+- Backend container uses gunicorn with configurable `WORKERS` env var (defaults to 1 for single-vCPU Cloud Run)
+- PostgreSQL connection pool is env-tunable via `DB_POOL_SIZE` (default 5) and `DB_MAX_OVERFLOW` (default 10)
+- Cloud Run service template at `backend/service.yaml` with recommended limits, autoscaling, and Secret Manager refs
+- See `docs/handoff/future_plans.md §6` for the scale-to-thousands-of-users plan
 
 ---
 
@@ -152,15 +211,12 @@ These features have backend support but no frontend UI, or are entirely missing:
 
 | Feature | Backend Status | Frontend Status | Notes |
 |---|---|---|---|
-| **Trend line chart** | `trends.py` endpoints ready | No chart component | Need to install recharts and build `TrendChart.tsx` — see `docs/workstream-5-trend-visualization.md` |
-| **Case detail view** | Data exists in DB | No panel/modal | `case_diagnoses` stores confidence + raw text but no UI surfaces it |
-| **CSV export** | No endpoint | No button | Need `GET /api/v1/export` and a download button |
-| **Plain-language search** | `search.py` classify endpoint exists | No search bar | Endpoint works; just needs a UI input |
-| **Year range filter** | Backend supports `year_start`/`year_end` params | Not wired in `Filters.tsx` | Small frontend change |
-| **Species filter** | Backend supports `species` param | Not wired in `Filters.tsx` | Small frontend change |
-| **Case-level low-confidence review queue** | Pipeline flags `low_confidence` method | No per-case review UI | Current review is job-level (approve/reject entire upload), not case-level |
 | **Fine-tuning trigger** | Local scripts in `ml/scripts/` | No trigger | `run_training_cycle.py` works locally; no GCP Batch integration for training |
 | **Multi-clinic source tagging** | `data_source` column exists | No filter/display | Currently hardcoded to `'petbert'` |
+| **Distributed rate limiting** | In-memory per-process | N/A | SlowAPI + auth-failure tracking are per-instance. See future_plans.md §6 for the Redis migration plan |
+| **Distributed response cache** | `cachetools` per-process | N/A | TTLCache lives in each Cloud Run instance. Cache hit rate drops as instance count grows. Redis migration is documented |
+| **Age data population** | Migrations 028–029 exist | Age filter shows "all" only | `patients.birth_date` column exists but is not populated from the current prediction CSV format — re-ingest with updated input data required to activate age group filtering |
+| **Recently shipped** (April–June 2026) | — | — | CSV export with admin approval, case-level review queue, plain-language search, trend chart (recharts), Google OAuth, password reset PKCE, role-request workflow, Cancer by Age tab, age group filter, Non-Cancer exclusion from public stats, top-1 prediction per patient filtering; **PCCP metric** replacing raw counts across all views (overview map, Cancer Types, Cancer by Age, Breed Disparities, Analysis) with dual-denominator (within-group + global) breakdown on breed and age tabs and small-cohort disclaimer banners |
 
 ---
 
@@ -214,7 +270,7 @@ Requires:
 docker compose run --rm ingest
 ```
 
-Expected output: 395 patients, 395 cancer_cases, ~2,348 case_diagnoses.
+Expected output: 395 patients, ~2,348 case_diagnoses.
 
 ### Use GCP Batch for Inference (Production)
 
@@ -265,18 +321,22 @@ The service account key (`gcp-sa-key.json`) lives in `secrets/` which is git-ign
 
 ```
 patients
-  id, anon_id (UNIQUE), species_id, breed_id, sex, age_years,
-  weight_kg, county_id, zip_code, data_source ('petbert' for real data)
-
-cancer_cases
-  id, patient_id → patients, cancer_type_id (nullable),
-  county_id, diagnosis_date, stage, outcome
-  NOTE: One row per patient (dog). Types live in case_diagnoses.
+  id, anon_id (UNIQUE), species_id, breed_id, sex,
+  county_id, zip_code, data_source ('petbert' for real data),
+  diagnosis_date, outcome
 
 case_diagnoses
-  id, case_id → cancer_cases, cancer_type_id → cancer_types,
-  icd_o_code, predicted_term, predicted_group, original_text,
-  confidence, prediction_method ('low_confidence' if below threshold)
+  id, patient_id → patients (direct FK — no intermediate cancer_cases table),
+  cancer_type_id → cancer_types, icd_o_code, predicted_term, predicted_group,
+  pathology_report_id → pathology_reports (nullable; NULL when no source text in predictions),
+  confidence, prediction_method ('low_confidence' if below threshold),
+  review_status ('pending'|'confirmed'|'corrected'|'rejected'),
+  ingestion_job_id → ingestion_jobs
+
+pathology_reports
+  id, patient_id → patients, gcs_path (e.g. 'reports/{job_id}/{anon_id}.txt'),
+  report_date, created_at
+  (source text is stored in GCS, not inline in case_diagnoses)
 
 cancer_types
   id, name (Vet-ICD-O group name)
@@ -286,17 +346,23 @@ counties
 
 ingestion_jobs
   id, status (pending_review/processing/completed/failed/rejected),
-  batch_job_name, user_id, created_at, updated_at
+  batch_job_name, uploaded_by_sub (Supabase user sub for uploader scoping),
+  created_at, updated_at
 
-species, breeds, calenviroscreen, ingestion_logs
+user_roles
+  email, is_admin, is_uploader, is_reviewer, updated_by_email, updated_at
+
+role_requests, export_requests, diagnosis_review_events,
+species, breeds, calenviroscreen, ingestion_logs, pathology_reports
 ```
 
 ### Important Design Decisions
 
-1. **One case per patient:** A dog with multiple diagnoses has one `cancer_cases` row and multiple `case_diagnoses` rows. This prevents double-counting.
-2. **`cancer_cases.cancer_type_id` is nullable:** Types live in `case_diagnoses`, not on the case itself.
+1. **No `cancer_cases` table:** It was removed. `diagnosis_date` and `outcome` live on `patients`. Multiple diagnoses per patient are rows in `case_diagnoses` with a direct `patient_id` FK.
+2. **One patient per dog:** A dog with multiple diagnoses has one `patients` row and multiple `case_diagnoses` rows. This prevents double-counting.
 3. **`data_source = 'petbert'`:** All dashboard queries filter on this to exclude seed/mock data.
 4. **RLS with no permissive policies:** All table access goes through FastAPI (postgres superuser). The Supabase anon/authenticated keys cannot read or write any table directly.
+5. **Pathology report text in GCS, not inline:** When `original_text` is present in the predictions CSV, it is uploaded to GCS (`reports/{job_id}/{anon_id}.txt`) and a `pathology_reports` row is created pointing to it. `case_diagnoses.pathology_report_id` links there. If the predictions CSV has no `original_text` column, `pathology_report_id` is `NULL` and the Diagnosis Review panel shows no source text.
 
 ---
 
@@ -306,12 +372,20 @@ species, breeds, calenviroscreen, ingestion_logs
 
 | File | Columns | Purpose |
 |---|---|---|
-| Dataset A | `anon_id`, `DtOfRq`, `Sex`, `Species`, `Breed`, `Clinical Diagnoses`, `Text` | Demographics + pathology report text (PetBERT input) |
-| Dataset B | `anon_id`, `Sex`, `Zipcode` | Supplementary ZIP code for county mapping |
+| Dataset A (demographics) | `case_id` (or `anon_id`), `DtOfRq`, `Sex`, `Species`, `Breed`, `Zipcode` (or `Zipcode Zipcode`), `RfrrVtrnZipcode` (or `RfrrVtrn Zipcode Zipcode`) | Patient demographics and ZIP for county mapping |
+| Predictions CSV | `case_id` (or `anon_id`), `diagnosis_index`, `predicted_term`, `predicted_group`, `predicted_code`, `confidence`, `method`, `original_text` (optional) | PetBERT ML output — one row per rank (per-row format) or numbered strings (`"1) X 2) Y"`) |
 
-### Anon ID Normalization (Critical)
+Both `anon_id` and `case_id` are accepted as the patient ID column in both files. The parsers detect the column name present and use whichever is available.
 
-CSV uses `"ID_37"`, Excel may export `"37"` or `"37.0"`. All formats normalize to `"ID_<number>"` via `normalize_anon_id()`. Without this, only ~269 of 395 patients match.
+### Anon ID Normalization
+
+`normalize_anon_id()` canonicalizes patient IDs before any matching:
+- `"37"` / `"37.0"` → `"ID_37"` (plain integers and Excel float exports)
+- `"ID_37"` → `"ID_37"` (already canonical)
+- `"CASE-0001"` → `"CASE-0001"` (non-numeric prefixes pass through unchanged)
+- `""` / `"nan"` → `""` (row is skipped)
+
+Without normalization, only ~269 of 395 patients match across CSV/Excel export formats.
 
 ### Pipeline Steps
 
@@ -319,7 +393,7 @@ CSV uses `"ID_37"`, Excel may export `"37"` or `"37.0"`. All formats normalize t
 2. Ingestion job is submitted via upload UI
 3. Admin approves job in AdminQueue
 4. GCP Batch (or local ml-worker) runs `batch_predict.py`
-5. Results written to `patients`, `cancer_cases`, `case_diagnoses` in Supabase
+5. Results written to `patients` and `case_diagnoses` in Supabase
 6. Map dashboard queries update automatically
 
 ### PetBERT Inference
@@ -347,52 +421,59 @@ CSV uses `"ID_37"`, Excel may export `"37"` or `"37.0"`. All formats normalize t
 ## 11. Known Issues and Gotchas
 
 ### Anon ID Format Mismatch
-CSV files may export anon IDs in different formats (`"ID_37"` vs `"37"` vs `"37.0"`). The `normalize_anon_id()` function in the ingestion pipeline handles this, but if you see unexpectedly low patient match counts, check that normalization is running.
+CSV files may export anon IDs in different formats (`"ID_37"` vs `"37"` vs `"37.0"`). `normalize_anon_id()` converts all numeric variants to `"ID_<number>"`. Non-numeric prefixes like `"CASE-0001"` pass through unchanged. The column may be named `anon_id` or `case_id` — both are accepted. If you see unexpectedly low patient match counts, verify the ID column name and that normalization is running.
 
 ### Re-run Idempotency
-Re-running the ingestion pipeline on the same dataset deletes and re-inserts `case_diagnoses` for affected patients. This is intentional. `cancer_cases` rows are upserted (not deleted), so case IDs are stable across re-runs.
+Re-running the ingestion pipeline on the same dataset deletes and re-inserts `case_diagnoses` for affected patients. This is intentional. `patients` rows are upserted (not deleted), so patient IDs are stable across re-runs.
 
 ### GCP Batch Cold Start
 Job startup takes ~60–90 seconds (container pull + model load) before inference begins. This is normal. The frontend polls job status every 10 seconds.
 
-### `cancer_cases.cancer_type_id` is Nullable
-Do not query `cancer_cases.cancer_type_id` for cancer type analysis — it is intentionally NULL for PetBERT cases. Always query `case_diagnoses` for type-level data.
+### Query `case_diagnoses` for Cancer Type Data
+All cancer type information lives in `case_diagnoses`. There is no `cancer_cases` table — it was removed in an earlier refactor. Always query `case_diagnoses` joined to `patients` for type-level analysis.
 
-### Dog Population Data Unavailable
-The dashboard shows case counts, not incidence rates. Dog population by California county is not available, so rates cannot be calculated. Do not add population or rate fields to the UI without sourcing this data.
+### No Dog Population Denominator — PCCP Used Instead
+True population-based incidence rates (cases per 10,000 dogs) cannot be calculated because county-level dog census data is unavailable. The dashboard instead uses **PCCP** (Pathology-Confirmed Cancer Proportion): cancer patients divided by all pathology-tested patients × 100. The denominator is the tested cohort, not the general dog population. This is a valid epidemiological metric but reflects the tested population at the VMTH, not all dogs in California.
 
 ### Target Architecture Doc is Outdated
 `docs/target-architecture.md` describes an earlier design using Redis + Celery for the NLP worker. The actual implementation uses GCP Batch instead. Refer to `docs/GCP_BATCH_SETUP.md` and `backend/app/services/gcp_batch_service.py` for the current design.
+
+### HTTP 429 on Pagination / Auth Rate Limiter
+The backend tracks JWT verification failures per IP in memory (5 failures per 15-minute window). If a user's session token expires mid-session and the frontend sends several requests before refreshing, those failed verifications accumulate and eventually trigger 429 responses for all subsequent requests from that IP — including valid ones.
+
+**Fix shipped (May 2026):** `AuthContext.getAccessToken()` now proactively calls `supabase.auth.refreshSession()` when the token expires within 60 seconds, so the backend never receives an expired JWT during normal use.
+
+**If 429 still appears in staging/development:** restart the backend container to reset the in-memory counter, then have the affected user sign out and sign back in.
 
 ---
 
 ## 12. Remaining Work
 
-Listed in priority order based on user stories:
+Listed in priority order. Most of the original handoff backlog has shipped (test suite, CSV export, trend chart, case-level review queue, year/species filters, plain-language search). What remains:
 
-### High Priority (user-facing gaps)
+### High Priority — Scale & Reliability
 
-1. **Trend line chart** — Backend endpoints exist (`/api/v1/trends/yearly`, `/api/v1/trends/by-cancer-type`). Install `recharts` and build `TrendChart.tsx`. Full spec in `docs/workstream-5-trend-visualization.md`.
+1. **Distributed rate limiting and response cache** — Both are per-process today (`slowapi` + `cachetools`). With multiple Cloud Run instances, rate limits are effectively `N × WORKERS × limit` and cache hit rate falls off. Migrate both to Redis (Memorystore on GCP, or Upstash). See `docs/handoff/future_plans.md §6.6` for the concrete plan.
 
-2. **Year range and species filters** — Backend already accepts `year_start`, `year_end`, `species` params. Only frontend wiring needed in `Filters.tsx`.
+2. **Materialized view refresh cron** — `POST /api/v1/admin/refresh-views` exists for manual refresh, but the view is otherwise only refreshed at the end of each ingestion. Set up Cloud Scheduler to hit the refresh endpoint nightly so data stays fresh even when no upload happened that day.
 
-3. **Case detail view** — Add a modal or panel that shows raw report text, predicted term/group/code, and confidence score when a user clicks a case. Data is in `case_diagnoses`.
+3. **Observability** — Add structured logging (already partially in place with `logger.info` calls) and ship logs/metrics to Cloud Logging + Cloud Monitoring. Build a dashboard for: request latency p50/p95/p99, error rate per endpoint, DB pool exhaustion events, auth-failure rate.
 
-4. **CSV export** — Add `GET /api/v1/export` endpoint and a download button in the dashboard. Should respect active filters and return all matching `case_diagnoses` rows.
+### Medium Priority — Product
 
-### Medium Priority
+4. **Fine-tuning via GCP Batch** — Local training pipeline exists in `ml/scripts/run_training_cycle.py`. Add a GCP Batch job definition and an API endpoint (`POST /api/v1/training/submit`) to trigger fine-tuning when enough labeled data has accumulated.
 
-5. **Plain-language search UI** — `POST /api/v1/search/classify` endpoint exists and works. Add a search bar that submits free text and shows matching cases without requiring ICD codes.
+5. **Multi-clinic source tagging** — `patients.data_source` column is in place but hardcoded to `'petbert'`. Extend the ingestion pipeline to tag records by clinic and add a source filter to the dashboard. (Prerequisite for any multi-tenant work — see `future_plans.md` for the full multi-clinic plan.)
 
-6. **Case-level low-confidence review** — Current review is job-level (approve/reject entire batch). Build a per-case review queue where predictions with `method = 'low_confidence'` can be individually approved or corrected by authorized reviewers.
+6. **Audit log** — Add an `audit_log` table that records every privileged action (role change, export approval, diagnosis review, refresh-views). Currently `diagnosis_review_events` is the only audit table.
+
+7. **Account deletion / data retention** — No `DELETE /api/v1/users/me` exists. For GDPR/CCPA compliance, add user-initiated account deletion and a clinic-data deletion endpoint for system admins.
 
 ### Low Priority
 
-7. **Fine-tuning via GCP Batch** — Local training pipeline exists in `ml/scripts/run_training_cycle.py`. Add a GCP Batch job definition and an API endpoint (`POST /api/v1/training/submit`) to trigger fine-tuning when enough labeled data has accumulated.
+8. **Federated cross-clinic queries** — Once multi-clinic tagging ships, expose anonymized aggregate-only queries across clinics for state-wide research.
 
-8. **Multi-clinic source tagging** — `patients.data_source` column is in place but hardcoded to `'petbert'`. Extend the ingestion pipeline to tag records by clinic and add a source filter to the dashboard.
-
-9. **Test suite** — No tests exist. See `docs/workstream-8-tests.md` for the planned test suite. Backend: pytest + httpx. Frontend: Vitest + Testing Library.
+9. **FHIR integration** — Long-term, replace manual CSV upload with a FHIR pull from clinic EHR systems. Treat as 2–3 year horizon.
 
 ---
 

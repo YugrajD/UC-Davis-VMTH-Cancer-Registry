@@ -1,9 +1,11 @@
 // Type definitions
 export type Sex = 'all' | 'male_intact' | 'male_neutered' | 'female_intact' | 'female_spayed';
 
+export type AgeGroup = 'all' | 'young' | 'juvenile' | 'adult' | 'old' | 'senior';
+
 export type RateType = 'incidence' | 'mortality';
 
-export type TabType = 'overview' | 'breed-disparities' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue';
+export type TabType = 'overview' | 'breed-disparities' | 'cancer-by-age' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management';
 
 export interface CancerRecord {
   county: string;
@@ -24,6 +26,7 @@ export interface CountyData {
   fips: string;
   population?: number;
   rate?: number;
+  totalPatients?: number;
 }
 
 export interface RegionSummary {
@@ -38,8 +41,11 @@ export interface RegionSummary {
 export interface FilterState {
   rateType: RateType;
   sex: Sex;
+  ageGroup: AgeGroup;
   cancerType: string;
   breed: string;
+  yearStart?: number;
+  yearEnd?: number;
 }
 
 export interface Tab {
@@ -50,11 +56,14 @@ export interface Tab {
 // Constants
 export const TABS: Tab[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'breed-disparities', label: 'Breed Disparities' },
+  { id: 'breed-disparities', label: 'Cancer by Breed' },
+  { id: 'cancer-by-age', label: 'Cancer by Age' },
   { id: 'cancer-types', label: 'Cancer Types' },
   { id: 'analysis', label: 'Analysis' },
   { id: 'data-upload', label: 'Data Upload' },
   { id: 'review-queue', label: 'Review Queue' },
+  { id: 'diagnosis-review', label: 'Diagnosis Review' },
+  { id: 'user-management', label: 'User Management' },
 ] as const;
 
 export interface CalEnviroScreenData {
@@ -118,14 +127,48 @@ export const CES_INDICATORS: { value: CESIndicator; label: string }[] = [
 
 export const CANCER_TYPES: string[] = [
   'All Types',
-  'Lymphoma',
-  'Osteosarcoma',
-  'Mast Cell Tumor',
-  'Hemangiosarcoma',
-  'Melanoma',
-  'Transitional Cell Carcinoma',
-  'Soft Tissue Sarcoma',
-  'Mammary Carcinoma',
+  'Adenomas and adenocarcinomas',
+  'Epithelial neoplasms, NOS',
+  'Blood vessel tumors',
+  'Mast cell neoplasms',
+  'Osseous and chondromatous neoplasms',
+  'Lipomatous neoplasms',
+  'Adnexal and skin appendage neoplasms',
+  'Melanocytoma and Melanomas',
+  'Soft tissue tumors and sarcomas, NOS',
+  'Fibromatous neoplasms',
+  'Squamous cell neoplasms',
+  'Malignant lymphomas, NOS or diffuse',
+  'Mature T- and NK-cell lymphomas',
+  'Neoplasms of histiocytes and accessory lymphoid cells',
+  'Neoplasms, NOS',
+  'Meningiomas',
+  'Specialized gonadal neoplasms',
+  'Gliomas',
+  'Complex mixed and stromal neoplasms',
+  'Transitional cell papillomas and carcinomas',
+  'Paragangliomas and glomus tumors',
+  'Myomatous neoplasms',
+  'Nerve sheath tumors',
+  'Odontogenic tumors',
+  'Basal cell neoplasms',
+  'Germ cell neoplasms',
+  'Myxomatous neoplasms',
+  'Thymic epithelial neoplasms',
+  'Plasma cell neoplasms',
+  'Cystic, mucinous and serous neoplasms',
+  'Synovial-like neoplasms',
+  'Mesothelial neoplasms',
+  'Precursor cell lymphoblastic lymphomas',
+  'Mature B-cell lymphomas',
+  'Ductal and lobular neoplasms',
+  'Myeloid leukemias',
+  'Granular cell tumors',
+  'Miscellaneous bone tumors',
+  'Lymphoid leukemias',
+  'Lymphatic vessel tumors',
+  'Myelodysplastic syndromes',
+  'Acinar cell neoplasms',
 ];
 
 export const BREEDS: string[] = [
@@ -148,6 +191,15 @@ export const SEX_OPTIONS: { value: Sex; label: string }[] = [
   { value: 'male_neutered', label: 'Male Neutered' },
   { value: 'female_intact', label: 'Female Intact' },
   { value: 'female_spayed', label: 'Female Spayed' },
+];
+
+export const AGE_GROUP_OPTIONS: { value: AgeGroup; label: string; range: string }[] = [
+  { value: 'all', label: 'All Ages', range: '' },
+  { value: 'young', label: 'Young', range: '0–2 yrs' },
+  { value: 'juvenile', label: 'Juvenile', range: '3–5 yrs' },
+  { value: 'adult', label: 'Adult', range: '6–8 yrs' },
+  { value: 'old', label: 'Old', range: '9–11 yrs' },
+  { value: 'senior', label: 'Senior', range: '≥12 yrs' },
 ];
 
 export const RATE_OPTIONS: { value: RateType; label: string }[] = [

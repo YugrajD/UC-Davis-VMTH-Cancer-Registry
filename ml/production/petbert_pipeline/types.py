@@ -15,7 +15,6 @@ TaskMode = Literal["categorize", "neighbors", "both"]
 class ScanConfig:
     csv_path: str
     id_col: str
-    text_cols: tuple[str, ...]  # columns to embed independently; empty = TF-IDF selection
     model_name: str
     local_only: bool
     out_dir: str
@@ -27,7 +26,6 @@ class ScanConfig:
     embedding_min_sim: float
     device: str
     labels_csv_path: str
-    tfidf_vectorizer_path: str = _config.TFIDF_VECTORIZER_PATH
     embedding_cache_path: str | None = None
     group_classifier_path: str | None = None
     group_classifier_threshold: float = 0.3
@@ -39,7 +37,9 @@ class ScanConfig:
     label_presence_thresholds_json: str | None = None
     tail_max_predictions: int = 2
     tail_max_group_prob_gap: float = 0.08
+    rerank_stage3: bool = False
     uncommon_groups_path: str = _config.UNCOMMON_GROUPS_TXT
+    embed_only: bool = False
 
 
 @dataclass(frozen=True)

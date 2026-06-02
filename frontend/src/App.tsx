@@ -1,9 +1,14 @@
-import { useState } from 'react';
-import { AuthProvider } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue } from './components';
+import { useMemo, useState } from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import type { TabType, FilterState } from './types';
+import {
+  VET_ICD_O_CATEGORIES,
+  classifyCancerType,
+  type VetIcdOCategoryId,
+} from './data/vetIcdOCategories';
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -12,12 +17,32 @@ function AppContent() {
   const [filters, setFilters] = useState<FilterState>({
     rateType: 'incidence',
     sex: 'all',
+    ageGroup: 'all',
     cancerType: 'All Types',
     breed: 'All Breeds',
   });
 
-  const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
+  const { countyData, regionSummary, countRange, loading, error, overallPccp, overallCancerPatients, overallTotalPatients } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);
+  const { passwordRecovery } = useAuth();
+  const [cancerCategory, setCancerCategory] = useState<VetIcdOCategoryId | 'all'>('all');
+
+  // Counts per VET-ICD-O-Canine-1 category for the current cancer-types data.
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<VetIcdOCategoryId, number>();
+    for (const r of cancerTypesState.data) {
+      const cat = classifyCancerType(r.cancer_type);
+      counts.set(cat, (counts.get(cat) ?? 0) + r.count);
+    }
+    return counts;
+  }, [cancerTypesState.data]);
+
+  const filteredCancerTypes = useMemo(() => {
+    if (cancerCategory === 'all') return cancerTypesState.data;
+    return cancerTypesState.data.filter(
+      (r) => classifyCancerType(r.cancer_type) === cancerCategory,
+    );
+  }, [cancerTypesState.data, cancerCategory]);
 
   const handleCountyClick = (county: string) => {
     setSelectedCounty(selectedCounty === county ? null : county);
@@ -32,18 +57,84 @@ function AppContent() {
           <DataUpload />
         ) : activeTab === 'review-queue' ? (
           <AdminQueue />
+        ) : activeTab === 'diagnosis-review' ? (
+          <DiagnosisReview />
+        ) : activeTab === 'user-management' ? (
+          <UserManagement />
         ) : activeTab === 'breed-disparities' ? (
           <BreedDisparitiesView />
+        ) : activeTab === 'cancer-by-age' ? (
+          <AgeDisparitiesView />
         ) : activeTab === 'analysis' ? (
-          <AnalysisView countyData={countyData} countRange={countRange} />
+          <AnalysisView />
         ) : activeTab === 'cancer-types' ? (
           <div className="space-y-6">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3">
+              <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                <span className="font-semibold">PCCP (Pathology-Confirmed Cancer Proportion)</span> — percentage of all pathology-tested animals diagnosed with each cancer type.
+                The denominator is all petbert-tested animals regardless of cancer type.
+                Figures for rare cancer types (fewer than 10 cases) may be statistically unstable and should be interpreted with caution.
+              </p>
+            </div>
             <div className="bg-white rounded-lg border border-gray-200 p-4">
               <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
                 This view shows the distribution of cancer types across all ingested PetBERT cases.
                 Use the filters above to focus on specific sex or cancer types.
               </p>
             </div>
+
+            <div className="bg-white rounded-lg border border-gray-200 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+                  VET-ICD-O-Canine-1 Category
+                </h3>
+                <a
+                  href="https://pmc.ncbi.nlm.nih.gov/articles/PMC8946502/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-[var(--color-teal)] hover:underline"
+                >
+                  about this classification
+                </a>
+              </div>
+              <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+                Filter cancer types by organ-system grouping from the Vet-ICD-O-canine-1 standard.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {(() => {
+                  const allCount = cancerTypesState.data.reduce((s, r) => s + r.count, 0);
+                  const pills: Array<{ id: VetIcdOCategoryId | 'all'; label: string; count: number }> = [
+                    { id: 'all', label: 'All', count: allCount },
+                    ...VET_ICD_O_CATEGORIES
+                      .map((c) => ({ id: c.id, label: c.label, count: categoryCounts.get(c.id) ?? 0 }))
+                      .filter((p) => p.count > 0),
+                  ];
+                  return pills.map((pill) => {
+                    const active = cancerCategory === pill.id;
+                    return (
+                      <button
+                        key={pill.id}
+                        onClick={() => setCancerCategory(pill.id)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                          active
+                            ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]'
+                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        {pill.label}
+                        <span className={`ml-1.5 ${active ? 'text-teal-100' : 'text-gray-500'}`}>
+                          {pill.count.toLocaleString()}
+                        </span>
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
             <div className="bg-white rounded-lg border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
                 Cancer Types Distribution
@@ -56,18 +147,16 @@ function AppContent() {
                 <p className="text-sm text-[var(--color-text-secondary)]">Loading cancer type data...</p>
               ) : cancerTypesState.error ? (
                 <p className="text-sm text-red-600">Error: {cancerTypesState.error}</p>
-              ) : cancerTypesState.data.length === 0 ? (
+              ) : filteredCancerTypes.length === 0 ? (
                 <p className="text-sm text-[var(--color-text-secondary)]">
-                  No cancer type data found for the selected filters.
+                  No cancer types in this category for the selected filters.
                 </p>
               ) : (
                 <div className="space-y-4">
-                  {cancerTypesState.data
-                    .slice()
-                    .sort((a, b) => b.count - a.count)
-                    .slice(0, 10)
-                    .map((record) => {
-                      const maxCount = cancerTypesState.data[0]?.count || 1;
+                  {(() => {
+                    const sorted = filteredCancerTypes.slice().sort((a, b) => b.count - a.count).slice(0, 10);
+                    const maxCount = sorted[0]?.count || 1;
+                    return sorted.map((record) => {
                       const width = Math.max(5, (record.count / maxCount) * 100);
                       return (
                         <div key={record.cancer_type} className="flex items-center gap-4">
@@ -80,13 +169,14 @@ function AppContent() {
                               style={{ width: `${width}%` }}
                             >
                               <span className="text-xs font-semibold text-white">
-                                {record.count.toLocaleString()}
+                                {(record.pccp ?? record.count).toFixed(1)}
                               </span>
                             </div>
                           </div>
                         </div>
                       );
-                    })}
+                    });
+                  })()}
                 </div>
               )}
             </div>
@@ -98,7 +188,7 @@ function AppContent() {
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
             This dashboard provides a customized interface for querying and visualizing
             cancer incidence data for dogs across California. The data covers the
-            UC Davis VMTH catchment area, which includes Northern California and the Central Valley
+            UC Davis VMTH catchment area, which includes Northern and Central California
             regions. Use the filters on the right to explore data by cancer type, breed, and sex.
         </p>
       </div>
@@ -151,6 +241,19 @@ function AppContent() {
               onCountyHover={setHoveredCounty}
               onCountyClick={handleCountyClick}
             />
+            {overallTotalPatients > 0 && (
+              <div
+                title={`Overall PCCP: ${overallPccp.toFixed(1)}% — ${overallCancerPatients} cancer patients out of ${overallTotalPatients} tested`}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 cursor-help"
+              >
+                <svg className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                <span className="text-[11px] font-medium text-blue-700">
+                  Overall PCCP: {overallPccp.toFixed(1)}% · {overallCancerPatients} cancer / {overallTotalPatients} tested
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -159,6 +262,7 @@ function AppContent() {
       </main>
 
       <Footer />
+      {passwordRecovery && <ResetPasswordModal />}
     </div>
   );
 }

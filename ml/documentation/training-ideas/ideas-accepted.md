@@ -39,29 +39,34 @@ embedding space drift and silent regression.
 
 ---
 
-## Three-Stage Pipeline (CasePresenceClassifier → GroupClassifier → KW Correction)
+## Four-Stage Pipeline (CasePresenceClassifier → GroupClassifier → per-group LabelPresenceClassifier → KW Correction)
 
-**Status:** Implemented — Phase 23 Run 10. Current production architecture.
+**Status:** Implemented — Phase 23 Run 10 (initial 3-stage) → Phase 28 (Stage 3a per-group LabelPresenceClassifier added). Current production architecture.
 
 **Problem:** Binary PresenceClassifier generated too many FP predictions (comparing every report
-against every label). No mechanism to reject non-cancer cases early.
+against every label). No mechanism to reject non-cancer cases early. And the single-classifier
+argmax over ~857 labels created a hard CO floor.
 
 **Implementation:**
 1. **CasePresenceClassifier** (`case_presence_classifier.py`): Binary gate — rejects non-cancer
-   cases before group prediction. Trained with `recall_weight=0.85` (Phase 25) to minimize FN.
-   Threshold `--case-presence-threshold 0.5` for best G+S vs FP trade-off.
-2. **GroupClassifier** (`group_classifier.py`): Multi-label sigmoid over 49 groups.
-   Threshold `--group-classifier-threshold 0.90` — critical, CLI default is 0.3 which causes
-   prediction explosion.
-3. **KW correction** (`behavior_keywords.py`): Narrows candidates within the predicted group
-   by ICD-O behavior digit. Rule-based, no retraining needed.
+   cases before group prediction. Trained with `recall_weight=0.85` to minimize FN.
+   Production threshold `--case-presence-threshold 0.85` (Phase 25 used 0.5; the concat-3
+   stack tightened this to 0.85 alongside the 2304-dim gate retrain — see "2304-dim case-presence gate" below).
+2. **GroupClassifier** (`group_classifier.py`): Multi-label sigmoid over 25 post-uncommon groups.
+   Production threshold `--group-classifier-threshold 0.85` (CLI default is 0.3 — must override).
+3. **Per-group LabelPresenceClassifier** (`label_presence_classifier.py`, Phase 28+): one
+   per-group MLP scores labels within the active group. Default `n_cols=3, col_pair_mode=True,
+   col_combine="learned"` matches concat-3 inference.
+4. **KW correction** (`behavior_keywords.py` + `subtype_keywords.py`): Narrows candidates by
+   ICD-O behavior digit and (for 6 groups) subtype keywords. Rule-based, no retraining needed.
 
-**Result (Phase 25, test set, per-label evaluation, 2026-05-02):**
-G+S = 51.8% | CO = 19.3% | FP = 4.7% | FN = 24.1% | Total = 8,744 rows
+**Result (Phase 25, test set, per-label evaluation, 2026-05-02 — historical 3-stage baseline):**
+G+S = 51.8% | CO = 19.3% | FP = 4.7% | FN = 24.1% | Total = 8,744 rows.
+After Phase 28 + concat-3 + per-section contrastive (2026-05-13), the same 4-stage pipeline reaches **G+S 62.1% on eval-half** — see the concat-3 entries below.
 
 **Key finding (Phase 25):** CasePresenceClassifier recall_weight matters. Training with
 `--case-presence-recall-weight 0.7` caused FN = 25% (gate too aggressive). Retraining with
-`--case-presence-recall-weight 0.85` fixed this (FN = 4.5% at gate=0.5, G+S = 62.6%).
+`--case-presence-recall-weight 0.85` fixed this.
 
 ---
 
@@ -71,7 +76,7 @@ G+S = 51.8% | CO = 19.3% | FP = 4.7% | FN = 24.1% | Total = 8,744 rows
 
 **Problem:** Phase 24 GroupClassifier best checkpoint was at epoch 120/150 with macro F1=0.3136. Loss was still trending when training stopped — headroom for further convergence.
 
-**Result:** Best macro F1 = **0.4335** at epoch 219/300 (vs 0.3136 — +0.120). Model plateaued after epoch 219; last 80 epochs produced no new best. End-to-end evaluation (gate=0.5, group-t=0.85, all Tier 2 changes):
+**Result:** Best macro F1 = **0.4335** at epoch 219/300 (vs 0.3136 — +0.120) on the Phase 26 TF-IDF backbone. Superseded by the concat-3 + per-section contrastive backbone — see the per-section contrastive entry below for the current F1=0.5712 at epoch 258. The hyperparameter recipe (`--epochs 300 --lr 5e-5 --dropout 0.1 --max-class-weight 50 --weight-decay 1e-3`) is unchanged across backbones; only the F1 ceiling moved. Model plateaued after epoch 219 on the old backbone; last 80 epochs produced no new best. End-to-end evaluation (gate=0.5, group-t=0.85, all Tier 2 changes):
 
 | Stage | G+S | CO | FP | FN | Total |
 |-------|-----|----|----|-----|-------|
@@ -154,3 +159,63 @@ on `(report_text, label_text)` positive pairs from LLM annotation. Backbone chec
 
 **Result:** Binary G+S jumped from ~22% (frozen backbone, Phases 1–16) to ~70% (Phase 17–18).
 The adapted backbone is the primary factor enabling all subsequent performance gains.
+
+---
+
+## Per-LP Threshold Calibration
+
+**Status:** Implemented — 2026-05-10. Production default.
+
+**Problem:** A single `label_presence_threshold=0.5` across all per-group LP heads (precision spans 0.18–0.96) is wrong by construction. The optimal sigmoid threshold is group-specific.
+
+**Implementation:** New script `ml/scripts/sweep_lp_thresholds.py` reads the per-(case, label) score CSV from `run_evaluation.py --stage label-presence` and sweeps thresholds 0.05–0.95 in 0.05 steps per LP on a sweep-half (eval-half held out unbiased). Writes the chosen thresholds to `ml/output/checkpoints/label_presence/lp_thresholds.json` (single consolidated map). Production loads it via `--label-presence-thresholds-json` (auto-detected when the file exists); any LP missing from the map falls back to `--label-presence-threshold` (default 0.5).
+
+**Result:** Top-1 exact-term Good +8.7 pp on test eval-half; +0.082 macro F1 / +0.19 micro F1 over the flat-0.5 baseline. 13 of 17 LPs landed at t≥0.85 in the live calibration.
+
+---
+
+## Stage-2 Tail-Gate (`--tail-max-predictions` + `--tail-max-group-prob-gap`)
+
+**Status:** Implemented — 2026-05-11. Production default.
+
+**Problem:** After the argmax-fallback fix, Stage 2 could still emit several below-threshold groups per case (each one a row in the predictions CSV). Tail groups far below the top score were inflating CO because Stage 3a / KW still ran on them.
+
+**Implementation:** New params `tail_max_predictions` (cap predictions per case, default 2) and `tail_max_group_prob_gap` (drop tail groups whose probability is more than this far below the top, default 0.08), wired through `ScanConfig` (`types.py`) and the CLI (`cli.py`). Sweep tool at `ml/scripts/sweep_tail_gate.py` (no retrain).
+
+**Result:** +0.9 pp G+S (CO −4.6 pp, FN +3.3 pp) at K=2, gap=0.08 on test set, n=10,334. Pre-tail-gate baseline (`evaluation_history.csv` row 40, no gate) archived at `ml/output/archive/2026-05-11_pre-tailgate-default/`.
+
+---
+
+## concat-3 Text Representation
+
+**Status:** Implemented — 2026-05-12 in `ml-3-stage/`, promoted to `ml/` 2026-05-13. Production default.
+
+**Problem:** The TF-IDF text selector concatenated HIST + FINAL COMMENT + COMMENT then truncated to 512 tokens — 26.7% of cases overflowed and lost sentence-level signal. Single 768-dim mean-pooled report embedding also flattened section structure that Stage 2 / Stage 3a could exploit.
+
+**Implementation:** Three synthetic columns (`__sec_0__` = HIST, `__sec_1__` = FC+C, `__sec_2__` = ANCILLARY) are built per row; each section is embedded independently against the full 512-token budget; the three 768-dim views are concatenated per row into a 2304-dim `tfidf_selected` cache key. New `--concat-3` flag on `run_production.py` selects this path. Downstream classifiers (Stage 1 gate, GroupClassifier, LabelPresenceClassifier) consume the 2304-dim view; 768-dim cosine fallbacks use the masked-mean (`mean_embeddings`).
+
+**Result:** +1.5 pp G+S over TF-IDF on default PetBERT; +10.9 pp more when stacked with the per-section contrastive backbone (see next entry). Embedding cache keys updated: `col___sec_{0,1,2}__ (N, 768)`, `col_tfidf_selected (N, 2304)`, `mean_embeddings (N, 768)`, plus 768-dim `label_embeddings`.
+
+---
+
+## Per-Section Contrastive Backbone
+
+**Status:** Implemented — 2026-05-12. Production default.
+
+**Problem:** The Round-1 InfoNCE backbone was trained on TF-IDF-selected text — its embedding geometry aligned reports-as-one-blob with labels. Under concat-3 inference, each section is embedded *independently*, so the report-side anchor seen at inference time no longer matches what the backbone was trained against.
+
+**Implementation:** Backbone retrained on per-section `(section_text, label_text)` pairs — each row's HIST, FC+C, and ANC sections each generate a pair with the row's gold label. Pair builder lives in `ml-3-stage/training/contrastive/build_contrastive_dataset.py::build_per_section_contrastive_pairs` (not yet ported to `ml/training/contrastive/`). Pre-retrain backbone archived at `ml-3-stage/output/archive/2026-05-12_pre-concat3-contrastive/`. `run_embed_compare.py` extended to accept `--model`.
+
+**Result:** **G+S 13.1% → 24.0% (+10.9 pp)** on top of concat-3 alone. CO −10.5 pp, FN −3.1 pp. The per-section alignment is what unlocks the bulk of the concat-3 gains.
+
+---
+
+## 2304-dim Case-Presence Gate
+
+**Status:** Implemented — 2026-05-12. Production default.
+
+**Problem:** The legacy 768-dim CasePresenceClassifier was trained on mean-pooled report embeddings. Under concat-3, the natural Stage-1 input is the 2304-dim per-row concat — the gate should see the same view the downstream classifiers see.
+
+**Implementation:** `CasePresenceClassifier(emb_dim=2304)` retrained on the concat-3 cache; `emb_dim` is now saved in the checkpoint and auto-detected at load time. Threshold sweep (0.30–0.95) picked **t=0.85** as the operating point. New training package at `ml/training/case_presence/`, exposed via `run_training.py --mode train-case-presence`. Production CLI: `--case-presence-classifier`, `--case-presence-threshold` (default updated to 0.85 to match the gate's operating point). No-retrain sweep tool at `ml/scripts/sweep_case_gate_threshold.py`.
+
+**Result:** F1=0.942 val. Stacked with per-section contrastive + concat_3 + CO-bank cycle: **G+S 51.8%** on test split (vs 13.1% default-PetBERT baseline, +38.7 pp total). Subsequent integration into the 4-stage pipeline (with per-LP thresholds and tail-gate) yields the current production baseline of G+S 62.1% on eval-half.

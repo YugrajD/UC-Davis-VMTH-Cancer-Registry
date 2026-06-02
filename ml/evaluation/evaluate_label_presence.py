@@ -38,9 +38,14 @@ from utils.encoding import safe_filename
 
 
 def _load_cache_minimal(path: Path) -> tuple[list[str], np.ndarray, np.ndarray]:
-    """Read case_ids, mean_embeddings, label_embeddings from the cache NPZ."""
+    """Read case_ids, concat-3 report embeddings, and label_embeddings."""
     data = np.load(path, allow_pickle=True)
-    return list(data["case_ids"]), data["mean_embeddings"], data["label_embeddings"]
+    if "col_concat_3" not in data.files:
+        raise ValueError(
+            f"Embedding cache {path} is missing the 'col_concat_3' key. "
+            "Rebuild the cache by deleting it and re-running run_production.py."
+        )
+    return list(data["case_ids"]), data["col_concat_3"], data["label_embeddings"]
 
 
 def _load_annotation(annotation_csv: Path) -> tuple[
@@ -301,8 +306,7 @@ def main() -> int:
     parser.add_argument("--embedding-cache", default=config.EMBEDDING_CACHE_NPZ)
     parser.add_argument("--annotation-csv", default=config.ANNOTATION_CSV)
     parser.add_argument("--labels-csv", default=config.LABELS_CSV)
-    parser.add_argument("--out-dir",
-                        default=f"{config.OUTPUT_EVALUATION_DIR}/{config.BEST_PREDICTIONS_SUBDIR}")
+    parser.add_argument("--out-dir", default=config.OUTPUT_EVALUATION_DIR)
     parser.add_argument("--test-cases", default="")
     parser.add_argument("--uncommon-groups", default=config.UNCOMMON_GROUPS_TXT)
     parser.add_argument("--threshold", type=float, default=0.5)

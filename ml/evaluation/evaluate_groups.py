@@ -100,9 +100,13 @@ def evaluate_groups(
 
     filter_ids = load_filter_ids(cases_txt)
 
-    # Build col_emb_concat in the same order as production (pipeline.py:200-204).
+    # Build col_emb_concat in the same order as production (pipeline.py):
+    # exclude the "concat_3" per-row concat alias so the input matches
+    # the head's training shape (concat of the per-section views only).
+    concat_input_cols = [c for c in col_names if c != "concat_3"] or col_names
     col_emb_concat = np.concatenate(
-        [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0) for col in col_names],
+        [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
+         for col in concat_input_cols],
         axis=1,
     ).astype(np.float32)
 
@@ -303,8 +307,7 @@ def main() -> int:
                         default=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_best.pt")
     parser.add_argument("--embedding-cache", default=config.EMBEDDING_CACHE_NPZ)
     parser.add_argument("--annotation-csv", default=config.ANNOTATION_CSV)
-    parser.add_argument("--out-dir",
-                        default=f"{config.OUTPUT_EVALUATION_DIR}/{config.BEST_PREDICTIONS_SUBDIR}")
+    parser.add_argument("--out-dir", default=config.OUTPUT_EVALUATION_DIR)
     parser.add_argument("--test-cases", default="")
     parser.add_argument("--threshold", type=float, default=0.85)
     parser.add_argument("--label", default="")

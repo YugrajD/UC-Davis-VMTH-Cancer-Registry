@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FilterState } from '../types';
-import type { IncidenceRecord } from '../api/client';
-import { MOCK_CANCER_TYPE_INCIDENTS } from '../data/mockData';
+import { fetchIncidenceByCancerType, type IncidenceRecord } from '../api/client';
 
 // Deterministic seeded random for stable filter results
 function seededRandom(seed: string) {
@@ -17,24 +16,20 @@ function seededRandom(seed: string) {
   };
 }
 
-interface CancerTypesState {
+export interface CancerTypesState {
   data: IncidenceRecord[];
   loading: boolean;
   error: string | null;
 }
 
-export function useCancerTypesData(filters: FilterState): CancerTypesState {
-  const [data, setData] = useState<IncidenceRecord[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+export function applyCancerTypeDemoFilters(
+  data: IncidenceRecord[],
+  filters: FilterState,
+  options: { applyServerSideFilters?: boolean } = {},
+): IncidenceRecord[] {
+  let result = data;
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-
-    let result = MOCK_CANCER_TYPE_INCIDENTS;
-
-    // If a specific cancer type is selected, show only that one
+  if (options.applyServerSideFilters !== false) {
     if (filters.cancerType && filters.cancerType !== 'All Types') {
       const match = result.find(r =>
         r.cancer_type.toLowerCase().includes(filters.cancerType.toLowerCase())
@@ -42,7 +37,6 @@ export function useCancerTypesData(filters: FilterState): CancerTypesState {
       result = match ? [match] : result;
     }
 
-    // If sex filter is applied, scale counts down with per-type variation
     if (filters.sex && filters.sex !== 'all') {
       const rand = seededRandom(filters.sex);
       result = result.map(r => ({
@@ -50,19 +44,66 @@ export function useCancerTypesData(filters: FilterState): CancerTypesState {
         count: Math.max(1, Math.round(r.count * 0.25 * (0.6 + rand() * 0.8))),
       }));
     }
+  }
 
-    // If breed filter is applied, scale counts with breed-specific variation
-    if (filters.breed && filters.breed !== 'All Breeds') {
-      const rand = seededRandom(filters.breed);
-      result = result.map(r => ({
-        ...r,
-        count: Math.max(1, Math.round(r.count * 0.1 * (0.5 + rand() * 1.0))),
-      }));
+  // Breed-level cancer-type aggregation is not available from the current
+  // API, so preserve the previous deterministic demo narrowing for breed.
+  if (filters.breed && filters.breed !== 'All Breeds') {
+    const rand = seededRandom(filters.breed);
+    result = result.map(r => ({
+      ...r,
+      count: Math.max(1, Math.round(r.count * 0.1 * (0.5 + rand() * 1.0))),
+    }));
+  }
+
+  return result;
+}
+
+export function useCancerTypesData(filters: FilterState): CancerTypesState {
+  const [apiData, setApiData] = useState<IncidenceRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCancerTypes() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetchIncidenceByCancerType({
+          cancerTypes:
+            filters.cancerType && filters.cancerType !== 'All Types'
+              ? [filters.cancerType]
+              : undefined,
+          sex: filters.sex && filters.sex !== 'all' ? filters.sex : undefined,
+          ageGroup: filters.ageGroup && filters.ageGroup !== 'all' ? filters.ageGroup : undefined,
+        });
+        if (!cancelled) {
+          setApiData(response.data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Unable to load cancer type data');
+          setApiData([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
 
-    setData(result);
-    setLoading(false);
-  }, [filters.cancerType, filters.sex, filters.breed]);
+    loadCancerTypes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.cancerType, filters.sex, filters.ageGroup]);
+
+  const data = useMemo(() => {
+    return applyCancerTypeDemoFilters(apiData, filters, { applyServerSideFilters: false });
+  }, [apiData, filters]);
 
   return { data, loading, error };
 }

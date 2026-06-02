@@ -1,5 +1,6 @@
 import type { CountyData, RegionSummary, CalEnviroScreenData } from '../types';
 import type { IncidenceRecord, BreedDetail } from '../api/client';
+import { isUcDavisCatchmentRegion, regionForCounty } from './californiaRegions';
 
 // --- Mock breed list and breed detail data ---
 // 10 dog breeds from 002_lookup_tables.sql — each gets ~325 cases (uniform pick)
@@ -147,27 +148,22 @@ export function getMockBreedDetail(breed: string): BreedDetail {
 // Solano 8%, Alameda 8%, Yolo 6%, Stanislaus 6%, Butte 4%,
 // El Dorado 5%, Sutter 3%, Nevada 3%, Yuba 2%, Glenn 2%, Colusa 1%, Amador 1%
 export const MOCK_COUNTY_DATA: CountyData[] = [
-  // Central Valley
-  { county: 'Sacramento', region: 'Central Valley', count: 1100, fips: '' },
-  { county: 'San Joaquin', region: 'Central Valley', count: 500, fips: '' },
-  { county: 'Placer', region: 'Central Valley', count: 450, fips: '' },
-  { county: 'Yolo', region: 'Central Valley', count: 300, fips: '' },
-  { county: 'Stanislaus', region: 'Central Valley', count: 300, fips: '' },
-  { county: 'El Dorado', region: 'Central Valley', count: 250, fips: '' },
-
-  // Bay Area
-  { county: 'Contra Costa', region: 'Bay Area', count: 500, fips: '' },
-  { county: 'Solano', region: 'Bay Area', count: 400, fips: '' },
-  { county: 'Alameda', region: 'Bay Area', count: 400, fips: '' },
-
-  // Northern CA
-  { county: 'Butte', region: 'Northern CA', count: 200, fips: '' },
-  { county: 'Sutter', region: 'Northern CA', count: 150, fips: '' },
-  { county: 'Nevada', region: 'Northern CA', count: 150, fips: '' },
-  { county: 'Yuba', region: 'Northern CA', count: 100, fips: '' },
-  { county: 'Glenn', region: 'Northern CA', count: 100, fips: '' },
-  { county: 'Colusa', region: 'Northern CA', count: 50, fips: '' },
-  { county: 'Amador', region: 'Northern CA', count: 50, fips: '' },
+  { county: 'Sacramento', region: regionForCounty('Sacramento'), count: 1100, fips: '' },
+  { county: 'San Joaquin', region: regionForCounty('San Joaquin'), count: 500, fips: '' },
+  { county: 'Placer', region: regionForCounty('Placer'), count: 450, fips: '' },
+  { county: 'Yolo', region: regionForCounty('Yolo'), count: 300, fips: '' },
+  { county: 'Stanislaus', region: regionForCounty('Stanislaus'), count: 300, fips: '' },
+  { county: 'El Dorado', region: regionForCounty('El Dorado'), count: 250, fips: '' },
+  { county: 'Contra Costa', region: regionForCounty('Contra Costa'), count: 500, fips: '' },
+  { county: 'Solano', region: regionForCounty('Solano'), count: 400, fips: '' },
+  { county: 'Alameda', region: regionForCounty('Alameda'), count: 400, fips: '' },
+  { county: 'Butte', region: regionForCounty('Butte'), count: 200, fips: '' },
+  { county: 'Sutter', region: regionForCounty('Sutter'), count: 150, fips: '' },
+  { county: 'Nevada', region: regionForCounty('Nevada'), count: 150, fips: '' },
+  { county: 'Yuba', region: regionForCounty('Yuba'), count: 100, fips: '' },
+  { county: 'Glenn', region: regionForCounty('Glenn'), count: 100, fips: '' },
+  { county: 'Colusa', region: regionForCounty('Colusa'), count: 50, fips: '' },
+  { county: 'Amador', region: regionForCounty('Amador'), count: 50, fips: '' },
 ];
 
 // Pre‑computed helpers derived from MOCK_COUNTY_DATA
@@ -279,9 +275,8 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   const totalCount = countyData.reduce((sum, c) => sum + c.count, 0);
   const totalPop = countyData.reduce((sum, c) => sum + (c.population ?? 0), 0);
   
-  // Catchment area (Northern CA + Bay Area for this example)
-  const catchmentRegions = ['Bay Area', 'Northern CA', 'Central Valley'];
-  const catchmentCounties = countyData.filter(c => catchmentRegions.includes(c.region));
+  // Dashboard grouping only; this does not change stored county-level data.
+  const catchmentCounties = countyData.filter(c => isUcDavisCatchmentRegion(c.region));
   const catchmentCount = catchmentCounties.reduce((sum, c) => sum + c.count, 0);
   const catchmentPop = catchmentCounties.reduce((sum, c) => sum + (c.population ?? 0), 0);
   
@@ -318,9 +313,9 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
         count: catchmentCount,
         population: catchmentPop,
         rate: catchmentPop > 0 ? Math.round((catchmentCount / catchmentPop) * 10000 * 10) / 10 : 0,
-        children: regions.filter(r => catchmentRegions.includes(r.name)),
+        children: regions.filter(r => isUcDavisCatchmentRegion(r.name)),
       },
-      ...regions.filter(r => !catchmentRegions.includes(r.name)),
+      ...regions.filter(r => !isUcDavisCatchmentRegion(r.name)),
     ],
   };
 }

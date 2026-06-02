@@ -1,8 +1,9 @@
 """Pydantic request/response models for the API."""
 
-from pydantic import BaseModel
-from typing import Optional, List, Any
+from typing import Literal, Optional, List, Any
 from datetime import date
+
+from pydantic import BaseModel, Field
 
 
 # --- Lookup Schemas ---
@@ -69,12 +70,28 @@ class IncidenceRecord(BaseModel):
     breed: Optional[str] = None
     year: Optional[int] = None
     count: int
+    pccp: Optional[float] = None
+    total_patients: Optional[int] = None
 
 
 class IncidenceResponse(BaseModel):
     data: List[IncidenceRecord]
     total: int
     filters_applied: dict
+
+
+class PCCPCountyRecord(BaseModel):
+    county: str
+    cancer_patients: int
+    total_patients: int
+    pccp: float
+
+
+class PCCPResponse(BaseModel):
+    data: List[PCCPCountyRecord]
+    overall_cancer_patients: int
+    overall_total_patients: int
+    overall_pccp: float
 
 
 # --- GeoJSON ---
@@ -143,6 +160,8 @@ class TrendPoint(BaseModel):
     count: int
     deceased: Optional[int] = None
     alive: Optional[int] = None
+    pccp: Optional[float] = None
+    total_patients: Optional[int] = None
 
 
 class TrendSeries(BaseModel):
@@ -157,7 +176,7 @@ class TrendsResponse(BaseModel):
 # --- Search / BERT ---
 
 class ClassifyRequest(BaseModel):
-    text: str
+    text: str = Field(..., min_length=1, max_length=50_000)
 
 
 class ClassifyResult(BaseModel):
@@ -166,26 +185,13 @@ class ClassifyResult(BaseModel):
     top_predictions: List[dict]
 
 
-class ReportOut(BaseModel):
-    id: int
-    patient_id: int
-    report_text: str
-    classification: Optional[str] = None
-    confidence_score: Optional[float] = None
-    report_date: date
-    model_config = {"from_attributes": True}
-
-
-class ReportSearchResponse(BaseModel):
-    reports: List[ReportOut]
-    total: int
-
-
 # --- Breed Detail ---
 
 class BreedCancerTypeCount(BaseModel):
     cancer_type: str
     count: int
+    pccp_within_breed: Optional[float] = None  # Eq 6: count / breed_total_patients * 100
+    pccp_of_all: Optional[float] = None        # Eq 5: count / global_total_patients * 100
 
 class BreedCountyCount(BaseModel):
     county_name: str
@@ -199,9 +205,42 @@ class BreedSexCount(BaseModel):
 class BreedDetailOut(BaseModel):
     breed: str
     total_cases: int
+    breed_total_patients: Optional[int] = None
+    global_total_patients: Optional[int] = None
+    pccp_within_breed: Optional[float] = None
+    pccp_of_all: Optional[float] = None
     sex_breakdown: List[BreedSexCount]
     cancer_types: List[BreedCancerTypeCount]
     county_cases: List[BreedCountyCount]
+
+
+# --- Age Detail ---
+
+class AgeCancerTypeCount(BaseModel):
+    cancer_type: str
+    count: int
+    pccp_within_age: Optional[float] = None   # Eq 6 equiv: count / age_total_patients * 100
+    pccp_of_all: Optional[float] = None       # Eq 5 equiv: count / global_total_patients * 100
+
+class AgeCountyCount(BaseModel):
+    county_name: str
+    fips_code: str
+    count: int
+
+class AgeSexCount(BaseModel):
+    sex: str
+    count: int
+
+class AgeDetailOut(BaseModel):
+    age_group: str
+    total_cases: int
+    age_total_patients: Optional[int] = None
+    global_total_patients: Optional[int] = None
+    pccp_within_age: Optional[float] = None
+    pccp_of_all: Optional[float] = None
+    sex_breakdown: List[AgeSexCount]
+    cancer_types: List[AgeCancerTypeCount]
+    county_cases: List[AgeCountyCount]
 
 
 # --- Filter Options ---
@@ -233,6 +272,7 @@ class IngestionResponse(BaseModel):
     warnings: List[str] = []
     row_results: List[IngestionRowResult] = []
     ingestion_log_id: Optional[int] = None
+    result_summary: Optional[dict] = None
 
 
 # --- Ingestion Jobs ---
@@ -241,7 +281,6 @@ class IngestionJobOut(BaseModel):
     id: int
     uploaded_by_email: str
     dataset_a_filename: str
-    dataset_b_filename: str
     status: str
     reviewed_by_email: Optional[str] = None
     reviewed_at: Optional[str] = None
@@ -254,5 +293,7 @@ class IngestionJobOut(BaseModel):
 
 
 class IngestionJobReview(BaseModel):
-    action: str  # "approve" or "reject"
-    rejection_reason: Optional[str] = None
+    action: Literal["approve", "reject"]
+    rejection_reason: Optional[str] = Field(default=None, max_length=2000)
+    model_folder: Optional[str] = Field(default=None, max_length=255)
+    clinic_name: Optional[str] = Field(default=None, max_length=255)

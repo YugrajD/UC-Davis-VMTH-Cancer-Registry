@@ -13,14 +13,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--csv", default=config.REPORTS_CSV, help="Path to input CSV")
     parser.add_argument("--id-col", default="case_id", help="ID column name")
-    parser.add_argument(
-        "--text-cols",
-        default="",
-        help=(
-            "Comma-separated column names to embed independently. "
-            "Empty string (default) activates TF-IDF multi-column text selection."
-        ),
-    )
     parser.add_argument("--model", default="SAVSNET/PetBERT", help="HF model name or local path")
     parser.add_argument(
         "--local-only",
@@ -170,26 +162,36 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--tfidf-vectorizer",
-        default=config.TFIDF_VECTORIZER_PATH,
+        "--rerank-stage3",
+        action="store_true",
+        default=False,
         help=(
-            "Path to the fitted TF-IDF vectorizer joblib file. "
-            "Used for multi-column text selection when --text-cols is empty. "
-            f"Default: {config.TFIDF_VECTORIZER_PATH}"
+            "Re-rank Stage-3 winners across the top-K surviving groups by "
+            "(lp_score - lp_threshold) * group_prob (margin-times-group-prob). "
+            "Default off: labels stay in group-prob order. Only meaningful when "
+            "--tail-max-predictions > 1."
+        ),
+    )
+    parser.add_argument(
+        "--embed-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Stop after Step 3 (cache populated). Useful for building the cache "
+            "before training downstream classifiers without running classification."
         ),
     )
     return parser
 
 
 def build_config(args: argparse.Namespace) -> ScanConfig:
-    text_cols = tuple(c.strip() for c in args.text_cols.split(",") if c.strip())
     label_presence_dir = getattr(args, "label_presence_classifier_dir", None)
     if label_presence_dir == "":
         label_presence_dir = None
+    embed_only = bool(getattr(args, "embed_only", False))
     return ScanConfig(
         csv_path=args.csv,
         id_col=args.id_col,
-        text_cols=text_cols,
         model_name=args.model,
         local_only=args.local_only,
         out_dir=args.out_dir,
@@ -212,7 +214,8 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         label_presence_thresholds_json=args.label_presence_thresholds_json,
         tail_max_predictions=args.tail_max_predictions,
         tail_max_group_prob_gap=args.tail_max_group_prob_gap,
-        tfidf_vectorizer_path=args.tfidf_vectorizer,
+        rerank_stage3=args.rerank_stage3,
+        embed_only=embed_only,
     )
 
 

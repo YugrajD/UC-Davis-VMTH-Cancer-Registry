@@ -38,6 +38,10 @@ secrets/
 
 # Claude Code
 CLAUDE.md
+.claude/
+
+# GCP service account keys
+secrets/
 
 # IDE
 .vscode/*
@@ -59,7 +63,6 @@ Thumbs.db
 geo/data/
 
 # ML backup (local restructure backup — never commit)
-ml-per-stage-backbone/
 ml_backup/
 
 # ML model weights
@@ -75,22 +78,26 @@ ml/model/checkpoints/knn/
 ml/output/
 
 # ML datasets (local)
-ml/data/
+ml/data/*
+!ml/data/validation/
+!ml/data/validation/*.csv
 
 # Database
 pgdata/
-*.sql
 !database/migrations/*.sql
+!database/scripts/*.sql
+
+# Upload staging area — files are patient data and must never be committed
+backend/uploads/
 
 # Ingestion data (real patient data — never commit)
-database/data/**/*.csv
-database/data/**/*.tsv
-database/data/**/*.xlsx
-database/data/**/*.json
+database/data/**
 !database/data/.gitkeep
-
-# Claude Code internal state
-.claude/
+database/data/*.csv
+database/data/*.tsv
+database/data/*.xlsx
+database/data/*.json
+!database/data/.gitkeep
 
 # PetBERT scan output (predictions, embeddings, etc.)
 database/output/
@@ -100,3 +107,82 @@ database/data/output/diagnoses.csv
 database/data/output/reportText.csv
 database/data/patient2.md
 database/data/output/report.csv
+
+# Real patient data dropped at the repo root for local processing.
+# These are large (~50MB-300MB) and contain PHI-derived columns — never commit.
+/AllVisits_deidentified_K9*.csv
+/AllVisits_deidentified_K9*.xlsx
+/[0-9][0-9][0-9][0-9].csv
+/new_data/
+/preprocessed/
+
+# === Patient data (PHI) — belt-and-suspenders ===
+# Block all spreadsheets anywhere in the repo. Patient reports, manual reviews,
+# annotation outputs, and embeddings caches all live in these formats. Existing
+# blocks above cover ml/{data,output} and database/data, but this catches stray
+# files in the repo root, notebooks/, scripts/, or anywhere we don't anticipate.
+*.csv
+*.xlsx
+*.xls
+*.xlsm
+*.tsv
+*.parquet
+*.feather
+*.arrow
+*.pkl
+*.joblib
+*.npz
+*.jsonl
+*.ndjson
+
+# Whitelist non-PHI files we DO want tracked
+!ml/ICD_labels/labels.csv
+!database/migrations/*.sql
+
+# Patient-data file-name patterns — extra safety in case a file lands outside
+# the blocked directories under a different extension
+*spot_check*
+*spot-check*
+*sampled_cases*
+*case_sample*
+*manual_labels*
+*manual-labels*
+*_review*
+!backend/tests/test_*_review*
+*manual_review*
+*gate_flagged*
+*gate-flagged*
+*predictions_with_gates*
+*report_36yr*
+*embedding_cache*
+report_text*
+diagnoses_*
+petbert_predictions*
+petbert_provenance*
+petbert_similarity*
+petbert_visualization*
+petbert_embeddings*
+llm_annotation*
+keyword_annotation*
+
+# Local ML handoff/progress docs currently include case IDs and clinical examples.
+ml/documentation/codex-handoff.md
+ml/documentation/model-and-progress.md
+ml/documentation/fallback-model-notes.md
+
+# Stray pip-install redirect output (e.g. `pip install cachetools>=5.3.0` from
+# the wrong shell creates files literally named `=5.3.0`).  Never useful.
+=*
+
+# Database dumps — never commit; they contain patient data.
+*_dump.sql
+local_dump.sql
+
+# Local restructure/legacy ML directories (never committed)
+ml-*/
+
+# Local archive (gitignored experimental/legacy artifacts moved out of ml/)
+_archive/
+
+# Local implementation plans (never commit — working drafts only)
+plans/

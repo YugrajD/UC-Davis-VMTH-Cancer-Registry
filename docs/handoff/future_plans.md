@@ -154,7 +154,7 @@ The current system requires two separate files (Dataset A and Dataset B). Many c
 
 ### Current State
 
-There is one admin role and one researcher role. Admins can approve all upload jobs. All authenticated users see all data.
+The system has three roles: **Uploader** (can submit files and audit their own diagnoses), **Reviewer** (can approve/reject jobs and review individual predictions), and **Admin** (full access including user management). Roles are stored in the `user_roles` table and enforced in `backend/app/auth.py`. Admins cannot edit their own roles or another admin's roles (self-lockout prevention). Uploaders can browse confirmed/corrected/rejected diagnoses for jobs they submitted.
 
 ### Required Changes
 
@@ -243,21 +243,54 @@ VMTH is primarily canine. Other clinics may submit feline, equine, or exotic ani
 
 ### Current State
 
-The system is designed for a single clinic with ~395 patients and ~2,348 diagnoses. Supabase free tier, single GCP Batch job at a time, Vercel hobby plan.
+The application is provisioned for tens-to-hundreds of active users. The May 2026 scalability pass added gunicorn, configurable connection pooling, an admin refresh-views endpoint, and a Cloud Run service template (`backend/service.yaml`). What remains for thousands of concurrent users is mostly **migrating per-process in-memory state to a shared store** and tuning the scaling envelope.
 
-### Scaling Considerations
+### 6.1 Where the System Bottlenecks First
 
-#### 6.1 Database (Supabase)
+Ordered by what hits the wall first as the user base grows from hundreds → thousands:
+
+| Bottleneck | Why it bites first | Symptom |
+|---|---|---|
+| Per-process rate limiting | `slowapi` and the auth-failure tracker both live in memory. Each Cloud Run instance has its own counters. Effective limit = `instance_count × per_instance_limit` | Brute-force protection weakens proportional to instance count |
+| Per-process response cache | `cachetools.TTLCache` is per-worker. Hit rate falls as `instance_count` rises because the same query lands on a different instance each time | DB read load grows linearly with instance count for "cached" endpoints |
+| PostgreSQL connection ceiling | Supabase pooler limits and PG `max_connections`. With `DB_POOL_SIZE=5`, `MAX_OVERFLOW=10`, `WORKERS=1` and 10 Cloud Run instances → 150 connections | Connection refused errors during traffic spikes |
+| Cold starts | Cloud Run scales to zero by default; cold starts are 2–5 s for this image | Sporadic slow first-request latency for low-traffic periods |
+| Materialized view staleness | Views are only refreshed at ingest-time. Manual `/api/v1/admin/refresh-views` exists but nothing schedules it | Dashboards show stale aggregates if no upload that day |
+
+### 6.2 Configuration Tunables Already in Place
+
+These are env-driven knobs added during the May 2026 pass — they exist but should be reviewed at each scaling milestone.
+
+| Variable | Default | When to raise |
+|---|---|---|
+| `WORKERS` | 1 | When the Cloud Run instance has ≥ 2 vCPUs **and** Redis is wired up for distributed cache/rate-limiting (otherwise multiple workers fragment per-process state further) |
+| `DB_POOL_SIZE` | 5 | When `pool exhausted` warnings appear; raise gradually and watch PG `pg_stat_activity` |
+| `DB_MAX_OVERFLOW` | 10 | Same trigger as above |
+| `FORWARDED_ALLOW_IPS` | `""` | Must be set to `0.0.0.0/0` on Cloud Run, otherwise SlowAPI sees the load balancer IP for every request |
+| `RATE_LIMIT_DEFAULT` | `120/minute` | Per-instance, per-IP. Raise when legitimate users are hitting it |
+| `CACHE_MAX_SIZE` | 256 entries | Raise for endpoints with high cardinality of filter combinations |
+
+The connection-budget rule that ties three of these together:
+
+```
+DB_POOL_SIZE × WORKERS × max_instances ≤ supabase_pooler_connections
+```
+
+For Supabase free tier (15-connection pooler), the safe envelope is `5 × 1 × 3 = 15`. To scale beyond 3 Cloud Run instances, either move to Supabase Pro (60 connections) or switch the URL from the direct connection to the transaction-mode pooler which can multiplex many more clients.
+
+### 6.3 Database (Supabase)
 
 | Trigger | Action |
 |---|---|
 | > 50,000 rows in `case_diagnoses` | Move to Supabase Pro plan (8 GB database, no row limits) |
-| > 500,000 rows | Consider Supabase Enterprise or self-hosted PostgreSQL on GCP Cloud SQL |
+| > 500,000 rows | Consider Supabase Enterprise or self-hosted PostgreSQL on GCP Cloud SQL with read replicas |
 | Cross-clinic aggregate queries become slow | Add materialized views per clinic and a `mv_cross_clinic_summary` view refreshed nightly |
+| Hundreds of concurrent users | Switch `DATABASE_URL` to Supabase's **transaction-mode pooler** URL (port 6543) — PgBouncer multiplexes many clients onto few PG connections, so `DB_POOL_SIZE` can be raised safely |
+| Read-heavy traffic dominates | Add a read replica and route dashboard/incidence/trends/geo endpoints to it (writes still go to the primary) |
 
-The existing materialized view pattern (`mv_county_cancer_incidence`, `mv_yearly_trends`) should be extended to include `clinic_id` partitioning so per-clinic dashboards remain fast.
+The materialized views (`mv_county_cancer_incidence`, `mv_yearly_trends`) are already in place but only refreshed inside `ingest_upload`. Schedule `POST /api/v1/admin/refresh-views` via **Cloud Scheduler** to run nightly so dashboards stay fresh even on no-upload days. Cloud Scheduler → HTTPS target → service account → bearer JWT in header.
 
-#### 6.2 GCP Batch (Inference)
+### 6.4 GCP Batch (Inference)
 
 The current setup runs one Batch job at a time. If multiple clinics submit uploads simultaneously:
 - GCP Batch handles parallelism natively — multiple jobs can run concurrently on separate VMs
@@ -266,17 +299,86 @@ The current setup runs one Batch job at a time. If multiple clinics submit uploa
 
 For a fine-tuning job (A100 GPU, several hours), GCP Batch also supports this — see `docs/GCP_BATCH_SETUP.md` and the handoff doc for details.
 
-#### 6.3 Backend (Cloud Run)
+### 6.5 Backend (Cloud Run)
 
-FastAPI is deployed on GCP Cloud Run, which auto-scales to zero when idle and scales up under load. No changes needed until request volume exceeds ~1,000 concurrent users. At that point, set minimum instance count to 1 to eliminate cold starts.
+FastAPI runs on Cloud Run with the template at `backend/service.yaml`. The current defaults target hundreds of users:
 
-#### 6.4 Frontend (Vercel)
+| Setting | Current | Scaling to thousands |
+|---|---|---|
+| `cpu` | 1 vCPU | 2 vCPU once `WORKERS=2` and Redis is wired |
+| `memory` | 512 Mi | 1 Gi if memory pressure shows in Cloud Logging |
+| `containerConcurrency` | 80 | 100–200 once async paths are confirmed I/O-bound (each await yields the loop) |
+| `maxScale` | 10 | 50+ as traffic grows; watch the DB connection budget rule above |
+| `minScale` | 0 | **1** when low-latency first-request is required (kills cold starts at ~$3/month) |
+| Cold start mitigation | None | Set `minScale: 1` OR enable **CPU always allocated** for the service |
 
-Vercel scales automatically. The only limitation at scale is the free tier's bandwidth cap. Move to Vercel Pro when monthly bandwidth exceeds the free limit (~100 GB/month).
+`WORKERS` should remain at `1` until **all three** of these are true:
+1. The Cloud Run instance has ≥ 2 vCPUs allocated
+2. Redis (or another shared store) is hosting rate-limit and cache state
+3. A load test shows the single worker is CPU-bound (rare for async FastAPI)
 
-#### 6.5 Artifact Registry (Model Storage)
+Without #2, adding workers makes the per-process state fragmentation worse, not better.
+
+### 6.6 Redis Migration (Required for True Horizontal Scaling)
+
+This is the single biggest improvement available. Today, two pieces of state are per-process: rate-limiting (`slowapi` + `_failed_attempts` dict in `app/auth.py`) and response caching (`cachetools.TTLCache` in `app/cache.py`).
+
+**Migration plan:**
+
+1. **Provision Redis** — GCP Memorystore (Basic Tier, 1 GB ≈ $35/month) or Upstash (serverless, pay-per-request, often cheaper at this scale). Connect over the Cloud Run VPC connector.
+
+2. **Migrate rate limiting** — `slowapi` already supports Redis natively:
+   ```python
+   from slowapi.util import get_remote_address
+   limiter = Limiter(
+       key_func=get_client_ip,
+       storage_uri=settings.REDIS_URL,   # was: in-memory
+       strategy="fixed-window",
+   )
+   ```
+   Also migrate `_failed_attempts` in `app/auth.py` to a Redis sorted-set keyed by IP, with a TTL on each entry.
+
+3. **Migrate response cache** — Replace `cachetools.TTLCache` with `redis-py` calls keyed by the same hash we compute today in `_make_cache_key`. Keep the decorator API the same so call sites don't change. Use `SETEX` for TTL and `DEL` patterns for `clear_all_caches`.
+
+4. **Watch the cardinality** — The dashboard's filter combinations are the highest-cardinality cache namespace. Set per-namespace `maxsize` Redis-side using a `LRU` eviction policy at the instance level.
+
+After this migration, raising `WORKERS` and `maxScale` becomes safe — every instance shares state.
+
+### 6.7 Frontend (Vercel)
+
+Vercel scales automatically. Limitations to watch:
+- Free tier bandwidth cap (~100 GB/month). Move to Pro when this is hit; Pro is $20/month and lifts the cap to 1 TB.
+- Function execution time (10 s on Hobby, 60 s on Pro) — the frontend has no server-side functions today, so this is not a current concern.
+
+For the production deploy, ensure `VITE_API_URL` points to the Cloud Run service URL and that the Cloud Run service has `CORS_ORIGINS` set to the Vercel production URL.
+
+### 6.8 Artifact Registry (Model Storage)
 
 Each per-clinic model image is ~7.7 GB. At 10 clinics with 3 versions each, storage is ~230 GB — roughly $5/month in Artifact Registry storage costs. This is acceptable. Add a retention policy to automatically delete images older than the 3 most recent versions per clinic.
+
+### 6.9 Observability and Load Testing
+
+Before declaring "ready for thousands of users," set up:
+
+| Tool | Purpose | Cost |
+|---|---|---|
+| Cloud Logging (structured) | Request logs, error traces | Free up to 50 GiB/month |
+| Cloud Monitoring dashboards | p50/p95/p99 latency, error rate, instance count, DB pool usage | Free up to a generous quota |
+| Cloud Monitoring alert policies | Alert when p99 latency > 2 s or error rate > 1% for 5 min | Free |
+| k6 or Artillery load test | Confirm capacity before traffic spikes (e.g. before a press release or paper publication) | Self-hosted, free |
+
+A good load-test target before claiming "thousands of users": 500 RPS sustained for 10 min against the cached dashboard endpoints with p95 < 500 ms.
+
+### 6.10 Scale Checkpoints
+
+Concrete actions tied to user growth milestones:
+
+| User base | Action |
+|---|---|
+| Up to 200 active | No changes from current defaults. Monitor metrics. |
+| 200 – 1,000 active | Set `minScale: 1` to kill cold starts. Switch Supabase URL to the transaction-mode pooler. |
+| 1,000 – 5,000 active | Migrate rate limiting and cache to Redis (§6.6). Raise `maxScale` to 50. Schedule nightly materialized view refresh. |
+| 5,000+ active | Add a Supabase read replica and route dashboard reads there. Move to Supabase Pro or self-host on Cloud SQL. Provision Memorystore Standard Tier (HA) for Redis. |
 
 ---
 
@@ -419,7 +521,10 @@ The following table ranks the changes by value and effort, assuming a team of 2�
 
 | Priority | Change | Effort | Value |
 |---|---|---|---|
-| 1 | Add `clinics` table and `clinic_id` to patients + jobs | Small | Enables everything else |
+| 0 | **Redis migration for rate limiting + response cache** (§6.6) | Medium | Required to safely scale beyond 3 Cloud Run instances |
+| 0 | **Cloud Scheduler nightly refresh-views** (§6.3) | Small | Keeps dashboards fresh without manual intervention |
+| 0 | **Observability dashboards and alerts** (§6.9) | Small–Medium | Required before declaring "production-ready at scale" |
+| 1 | Add `clinics` table and `clinic_id` to patients + jobs | Small | Enables everything else multi-tenant |
 | 2 | Per-clinic field mapping configuration | Medium | Unblocks non-VMTH clinics |
 | 3 | Clinic-scoped user roles and RLS policies | Medium | Required for data isolation |
 | 4 | Single-file upload option | Small | Most clinics have one export file |
@@ -429,6 +534,8 @@ The following table ranks the changes by value and effort, assuming a team of 2�
 | 8 | Multi-state county boundaries and map | Medium | Enables national expansion |
 | 9 | Cross-clinic aggregate dashboard view | Medium | Core research value at scale |
 | 10 | FHIR API integration | Large | Long-term; EHR vendor dependent |
+
+Priority 0 items are infrastructure prerequisites that should be tackled before — or in parallel with — the multi-tenant work in priorities 1–3.
 
 ### Suggested Phasing
 
@@ -451,3 +558,62 @@ The following table ranks the changes by value and effort, assuming a team of 2�
 - Item 10
 - Evaluate FHIR adoption among target clinic EHR vendors
 - Prototype with one willing clinic
+
+---
+
+## 12. Deferred Product Features
+
+These were planned and scoped in May 2026 but consciously deferred. Each has an existing backend surface (so re-activating it is mostly frontend work) and a documented reason for the deferral.
+
+### 12.1 Plain-Language Search UI
+
+**User stories:** US-15, US-NTH-4 from `requirements_doc_v2.md` — *"query with little to no knowledge of the coding system or SQL"*.
+
+**Status:** Deferred.
+
+**Why:** The existing dashboard filters (cancer type, breed, sex, county, year range) already satisfy the spirit of these user stories by providing structured, taxonomy-aligned navigation that does not require knowledge of ICD codes or SQL. Building a free-text search UI on top of filters would create two ways to do the same thing without enough additional research value to justify the maintenance cost.
+
+**What's already in place:**
+- `POST /api/v1/search/classify` — takes free text and returns suggested Vet-ICD-O codes via PetBERT. Auth-required, rate-limited (`RATE_LIMIT_EXPENSIVE`).
+- `GET /api/v1/search/reports?keyword=...` — searches `case_diagnoses.original_text` for a keyword. Auth-required, LIKE-escaped to prevent injection.
+
+**The narrow use case search would unlock:** finding cases by clinical features that exist in raw report text but aren't captured in any structured field (e.g., "lymph node metastasis," "myxoid," specific histological terms). This is a power-user feature for researchers studying histological detail rather than population-level patterns.
+
+**Trigger to revisit:** When a researcher specifically asks for it. Until then, the backend endpoints stay in place (they cost nothing sitting idle) but the UI is not built.
+
+**Estimated effort if reactivated:** 1–2 days. All frontend — `SearchBar.tsx`, `SearchResults.tsx`, API client helpers, and a new tab or inline result view.
+
+### 12.2 Automated PetBERT Fine-Tuning Trigger
+
+**User story:** US-PL-2 — *"model quality to improve as more labeled data becomes available."*
+
+**Status:** Deferred. The acceptance test (fine-tuning produces equal-or-better held-out scores than the previous version) cannot be satisfied without significant infrastructure work.
+
+**Why:**
+- A single A100 fine-tuning run is **$10–25 in GCP compute** (A100 at ~$2–3/hour × 4–8 hours). At the current labeled-data accumulation rate, training runs would be infrequent but each one is non-trivial.
+- The full plan requires three phases (training pipeline → validation comparison + model versioning → held-out set governance), each ~1 week of work. Total ~3 weeks.
+- The team chose to redirect engineering time toward features with broader user impact (Plans 1 and 2 in this same review). Fine-tuning improves accuracy at the margins; the existing zero-shot PetBERT pipeline is already producing usable predictions.
+
+**What's already in place:**
+- Local training pipeline: `ml/scripts/run_training_cycle.py` works end-to-end on a development machine.
+- Labeled data accumulates naturally — `case_diagnoses.review_status IN ('confirmed', 'corrected')` rows are training-ready pairs of `(original_text, predicted_term)`.
+- The validation CSV `ml/data/validation/review_threshold_validation.csv` is a starting held-out set.
+
+**Three-phase implementation when reactivated:**
+
+| Phase | Scope | Effort |
+|---|---|---|
+| 4A: One-shot batch training | New `ml/production/finetune/` package; new `Dockerfile.finetune` and Artifact Registry image; new `training_jobs` table; `POST /api/v1/training/submit` admin endpoint; GCP Batch A100 job submission service mirroring `gcp_batch_service.py` | ~1 week |
+| 4B: Validation comparison + model versioning | Training writes precision/recall/F1 JSON to GCS; new model tagged `petbert:v{N}` in Artifact Registry; `POST /api/v1/training/jobs/{id}/promote` flips `petbert:current` tag; `POST .../rollback` reverts; frontend admin page with side-by-side metrics | ~1 week |
+| 4C: Held-out validation set governance | New `case_diagnoses.held_out: bool` column; stratified-by-cancer-type validation set selection script; training pipeline excludes held-out rows; validation comparison uses only held-out rows | ~3–5 days |
+
+**Open decisions deferred to reactivation:**
+- Trigger model: manual button only, or auto-trigger when N new reviewed labels accumulate? (Recommend manual to start.)
+- Promotion model: manual click required, or auto-promote when validation F1 improves? (Recommend manual — research registry should not silently swap models.)
+- GCP A100 quota: must be requested from GCP support before the first run; new GCP projects start with zero A100 quota.
+
+**Trigger to revisit:**
+- When ≥ 500 reviewed-and-confirmed labels have accumulated in `case_diagnoses` (current count under 100), AND
+- When the team has bandwidth for a multi-week ML-infrastructure project.
+
+**Until then:** zero-shot PetBERT continues to handle inference; the local `run_training_cycle.py` is available for ad-hoc experiments on a dev machine without involving GCP.

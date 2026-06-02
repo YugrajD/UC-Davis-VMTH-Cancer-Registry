@@ -7,6 +7,23 @@ interface SummaryTableProps {
 
 type SortDirection = 'asc' | 'desc';
 
+function SortIcon({ direction }: { direction: SortDirection }) {
+  return (
+    <svg
+      className={`w-3 h-3 ml-1 inline-block transition-transform ${direction === 'asc' ? 'rotate-180' : ''}`}
+      fill="currentColor"
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+    >
+      <path
+        fillRule="evenodd"
+        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
 interface RowProps {
   item: RegionSummary;
   depth: number;
@@ -50,21 +67,6 @@ function SummaryRow({
 
   const effectiveSortDirection = (sortDirectionByName[item.name] ?? globalSortDirection);
 
-  const SortIcon = ({ direction }: { direction: SortDirection }) => (
-    <svg
-      className={`w-3 h-3 ml-1 inline-block transition-transform ${direction === 'asc' ? 'rotate-180' : ''}`}
-      fill="currentColor"
-      viewBox="0 0 20 20"
-      aria-hidden="true"
-    >
-      <path
-        fillRule="evenodd"
-        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-
   return (
     <>
       <tr className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${getTypeStyles()}`}>
@@ -98,7 +100,7 @@ function SummaryRow({
           title={hasChildren ? `Sort within ${item.name} (${effectiveSortDirection === 'desc' ? 'descending' : 'ascending'})` : undefined}
         >
           <span className="inline-flex items-center justify-end">
-            {item.count.toLocaleString()}
+            {item.count.toFixed(1)}
             {hasChildren && <SortIcon direction={effectiveSortDirection} />}
           </span>
         </td>
@@ -170,7 +172,7 @@ export function SummaryTable({ data }: SummaryTableProps) {
             Regional Summary
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Case counts by region and county
+            PCCP by region and county
           </p>
         </div>
       </div>
@@ -187,7 +189,7 @@ export function SummaryTable({ data }: SummaryTableProps) {
                 onClick={() => setGlobalSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'))}
                 title={globalSortDirection === 'desc' ? 'Sort ascending' : 'Sort descending'}
               >
-                Count
+                PCCP
                 <svg
                   className={`w-3 h-3 ml-1 inline-block transition-transform ${
                     globalSortDirection === 'asc' ? 'rotate-180' : ''

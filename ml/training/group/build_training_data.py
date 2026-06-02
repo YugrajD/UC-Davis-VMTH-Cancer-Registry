@@ -1,13 +1,13 @@
 """Build training data for the GroupClassifier.
 
 Reads:
-  - ml/output/training/embedding_cache.npz       -- tfidf-selected embeddings and case_ids
+  - ml/output/training/embedding_cache.npz       -- concat-3 report embeddings and case_ids
   - ml/output/annotation/annotation.csv          -- ground-truth (case_id, matched_group)
 
 Produces:
   - ml/output/training/group/group_training_data.npz with:
-      embeddings    (N, 768) float32  -- tfidf-selected report embedding per case
-      targets       (N, G)   float32  -- multi-hot group labels (0.0 = non-cancer, 1.0 = present)
+      embeddings    (N, 2304) float32 -- concat-3 report embedding per case
+      targets       (N, G)    float32 -- multi-hot group labels (0.0 = non-cancer, 1.0 = present)
       case_ids      (N,)     object   -- case_id strings
       group_names   (G,)     object   -- group name strings (index = column in targets)
       class_weights (G,)     float32  -- inverse-frequency weights for BCEWithLogitsLoss
@@ -55,7 +55,7 @@ def build_training_data(
 
     cache = np.load(cache_path, allow_pickle=True)
     all_case_ids: list[str] = list(cache["case_ids"])
-    all_embeddings: np.ndarray = cache["col_tfidf_selected"]  # (N, 768)
+    all_embeddings: np.ndarray = cache["col_concat_3"]  # (N, 2304)
 
     # --- Filter to train cases if a split is active --------------------------
     if train_cases_txt:
@@ -71,7 +71,7 @@ def build_training_data(
 
     N = len(case_ids)
     case_idx = {cid: i for i, cid in enumerate(case_ids)}
-    print(f"Embeddings: {embeddings.shape[1]}-dim tfidf-selected")
+    print(f"Embeddings: {embeddings.shape[1]}-dim concat-3")
 
     # --- Load keyword predictions --------------------------------------------
     print(f"Loading keyword predictions: {expectation_csv_path}")

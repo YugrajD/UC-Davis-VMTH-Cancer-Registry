@@ -6,8 +6,8 @@ pass can be inspected in one place.
 
 Usage:
   python ml/annotation/llm_pipeline/audit.py \
-    --before ml/output/annotation/llm/llm_annotation.csv \
-    --after  ml/output/annotation/llm/llm_annotation_cleaned.csv
+    --before ml/output/annotation/llm_annotation.csv \
+    --after  ml/output/annotation/llm_annotation_cleaned.csv
 
 If --after is omitted, only the before sample is printed (useful for spot-checks
 against a fresh re-run of the patched pipeline alone).

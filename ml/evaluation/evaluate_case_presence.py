@@ -27,12 +27,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 from evaluation.common import load_filter_ids, safe_div
 from model.case_presence_classifier import CasePresenceClassifier
+from utils.encoding import npz_col_key
 
 
-def _load_cache_minimal(path: Path) -> tuple[list[str], np.ndarray]:
-    """Read case_ids and mean_embeddings from the cache NPZ without validation."""
+def _load_cache_minimal(
+    path: Path,
+) -> tuple[list[str], np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
+    """Read case_ids, mean_embeddings, and per-column embeddings + content masks."""
     data = np.load(path, allow_pickle=True)
-    return list(data["case_ids"]), data["mean_embeddings"]
+    col_names = list(data["col_names"])
+    col_embeddings = {col: data[f"col_{npz_col_key(col)}"] for col in col_names}
+    col_has_content = {col: data[f"has_{npz_col_key(col)}"] for col in col_names}
+    return (
+        list(data["case_ids"]),
+        data["mean_embeddings"],
+        col_embeddings,
+        col_has_content,
+        col_names,
+    )
 
 
 def _load_cancer_case_ids(annotation_csv: Path) -> set[str]:
@@ -70,14 +82,25 @@ def evaluate_case_presence(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    case_ids, mean_embeddings = _load_cache_minimal(embedding_cache_path)
-    print(f"  Loaded embedding cache: {len(case_ids)} cases, {mean_embeddings.shape[1]}-dim.")
+    case_ids, mean_embeddings, col_embeddings, col_has_content, col_names = \
+        _load_cache_minimal(embedding_cache_path)
+    print(f"  Loaded embedding cache: {len(case_ids)} cases, columns={col_names}.")
+
+    # Match production: the gate feeds the 2304-dim concat-3 per-row view.
+    # Exclude the "concat_3" alias so we re-concat the per-section views.
+    concat_input_cols = [c for c in col_names if c != "concat_3"] or col_names
+    col_emb_concat = np.concatenate(
+        [np.where(col_has_content[col][:, None], col_embeddings[col], 0.0)
+         for col in concat_input_cols],
+        axis=1,
+    ).astype(np.float32)
 
     filter_ids = load_filter_ids(cases_txt)
     if filter_ids is not None:
         keep_idx = [i for i, cid in enumerate(case_ids) if cid in filter_ids]
         case_ids = [case_ids[i] for i in keep_idx]
         mean_embeddings = mean_embeddings[keep_idx]
+        col_emb_concat = col_emb_concat[keep_idx]
         print(f"  Case filter active — evaluating {len(case_ids)} cases.")
 
     cancer_case_ids = _load_cancer_case_ids(annotation_csv)
@@ -85,7 +108,17 @@ def evaluate_case_presence(
 
     print(f"  Loading classifier from {classifier_path}...")
     clf = CasePresenceClassifier.load(classifier_path)
-    cancer_probs = clf.predict_proba(torch.from_numpy(mean_embeddings)).numpy()
+    if clf.emb_dim == mean_embeddings.shape[1]:
+        feats = mean_embeddings
+    elif clf.emb_dim == col_emb_concat.shape[1]:
+        feats = col_emb_concat
+    else:
+        raise ValueError(
+            f"CasePresenceClassifier emb_dim={clf.emb_dim} matches neither "
+            f"mean_embeddings dim={mean_embeddings.shape[1]} nor "
+            f"col_emb_concat dim={col_emb_concat.shape[1]}"
+        )
+    cancer_probs = clf.predict_proba(torch.from_numpy(feats)).numpy()
     del clf
 
     n = len(case_ids)
@@ -185,8 +218,7 @@ def main() -> int:
     parser.add_argument("--classifier", default=config.CASE_PRESENCE_CLASSIFIER_PT)
     parser.add_argument("--embedding-cache", default=config.EMBEDDING_CACHE_NPZ)
     parser.add_argument("--annotation-csv", default=config.ANNOTATION_CSV)
-    parser.add_argument("--out-dir",
-                        default=f"{config.OUTPUT_EVALUATION_DIR}/{config.BEST_PREDICTIONS_SUBDIR}")
+    parser.add_argument("--out-dir", default=config.OUTPUT_EVALUATION_DIR)
     parser.add_argument("--test-cases", default="")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--label", default="", help="Short description for history row.")

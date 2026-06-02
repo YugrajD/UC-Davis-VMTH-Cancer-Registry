@@ -1,13 +1,17 @@
 """GeoJSON map endpoints using PostGIS spatial queries."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func
 from typing import Optional, List
 import json
 
+from app.cache import cached_response
+from app.config import settings
 from app.database import get_db
+from app.rate_limit import limiter
 from app.models.models import County, CancerType, Patient, Species, CaseDiagnosis, CalEnviroScreen
+from app.services.review_filter import apply_review_filter, review_status_sql_in
 from app.schemas.schemas import (
     GeoJSONResponse, GeoJSONFeature, GeoJSONFeatureProperties,
     CountyDetail, CountyOut, TopCancer, SpeciesBreakdown,
@@ -25,13 +29,31 @@ SEX_MAP = {
 }
 
 
+AGE_GROUP_SQL = (
+    "CASE "
+    "WHEN p.birth_date IS NULL OR p.diagnosis_date IS NULL THEN 'Unknown' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) BETWEEN 0 AND 2 THEN 'young' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) BETWEEN 3 AND 5 THEN 'juvenile' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) BETWEEN 6 AND 8 THEN 'adult' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) BETWEEN 9 AND 11 THEN 'old' "
+    "WHEN (EXTRACT(YEAR FROM p.diagnosis_date) - EXTRACT(YEAR FROM p.birth_date)) >= 12 THEN 'senior' "
+    "ELSE 'Unknown' END"
+)
+
+VALID_AGE_GROUPS = {"young", "juvenile", "adult", "old", "senior"}
+
+
 @router.get("/counties", response_model=GeoJSONResponse)
+@limiter.limit("60/minute")
+@cached_response("geo_counties", ttl=settings.CACHE_TTL_GEO)
 async def get_counties_geojson(
-    species: Optional[List[str]] = Query(None),
-    cancer_type: Optional[List[str]] = Query(None),
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    sex: Optional[str] = None,
+    request: Request,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
     db: AsyncSession = Depends(get_db),
 ):
     # Build dynamic WHERE clause
@@ -46,56 +68,59 @@ async def get_counties_geojson(
     if year_end:
         conditions.append("EXTRACT(YEAR FROM p.diagnosis_date) <= :year_end")
         params["year_end"] = year_end
-    if sex and sex != "All" and sex != "all":
+    if sex and sex not in ("All", "all"):
         mapped_sex = SEX_MAP.get(sex)
-        if mapped_sex is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid sex filter. Must be one of: {', '.join(SEX_MAP.keys())}, All",
-            )
-        conditions.append("p.sex = :sex")
-        params["sex"] = mapped_sex
+        if mapped_sex:
+            conditions.append("p.sex = :sex")
+            params["sex"] = mapped_sex
+    if age_group and age_group in VALID_AGE_GROUPS:
+        conditions.append(AGE_GROUP_SQL + " = :age_group")
+        params["age_group"] = age_group
 
     conditions.append("p.data_source = 'petbert'")
-    # If filtering by cancer_type, restrict to patients that have that diagnosis
+    # All values in `conditions` are developer-controlled string literals;
+    # every user-supplied value goes through the `params` dict as a bind param.
     if cancer_type:
+        # review_status_sql_in() returns a hardcoded literal like ('confirmed','corrected')
+        status_in = review_status_sql_in()
         conditions.append(
             "p.id IN (SELECT cd.patient_id FROM case_diagnoses cd "
-            "JOIN cancer_types ct ON ct.id = cd.cancer_type_id WHERE ct.name = ANY(:cancer_type))"
+            "JOIN cancer_types ct ON ct.id = cd.cancer_type_id "
+            "WHERE ct.name = ANY(:cancer_type) AND cd.review_status IN " + status_in + ")"
         )
         params["cancer_type"] = cancer_type
-    where_clause = " AND ".join(conditions)
 
-    query = text(f"""
-        SELECT
-            c.id,
-            c.name,
-            c.fips_code,
-            ST_AsGeoJSON(c.geom)::json AS geometry,
-            COALESCE(case_counts.total, 0) AS total_cases,
-            case_counts.top_cancer
-        FROM counties c
-        LEFT JOIN (
-            SELECT
-                p.county_id,
-                COUNT(DISTINCT p.id) AS total,
-                (SELECT ct2.name
-                 FROM case_diagnoses cd
-                 JOIN patients p2 ON p2.id = cd.patient_id AND p2.data_source = 'petbert'
-                 JOIN cancer_types ct2 ON ct2.id = cd.cancer_type_id
-                 WHERE p2.county_id = p.county_id
-                 GROUP BY ct2.name
-                 ORDER BY COUNT(*) DESC
-                 LIMIT 1
-                ) AS top_cancer
-            FROM patients p
-            JOIN species s ON p.species_id = s.id
-            WHERE {where_clause}
-            GROUP BY p.county_id
-        ) case_counts ON c.id = case_counts.county_id
-        WHERE c.geom IS NOT NULL
-        ORDER BY c.name
-    """)
+    where_clause = " AND ".join(conditions)
+    visible_statuses_sql = review_status_sql_in()
+
+    # NOTE: `where_clause` and `visible_statuses_sql` contain only developer-defined
+    # string literals and named bind params (:name). All user input is in `params`.
+    sql = (
+        "SELECT c.id, c.name, c.fips_code, "
+        "ST_AsGeoJSON(c.geom)::json AS geometry, "
+        "COALESCE(case_counts.total, 0) AS total_cases, "
+        "case_counts.top_cancer "
+        "FROM counties c "
+        "LEFT JOIN ( "
+        "    SELECT p.county_id, COUNT(DISTINCT p.id) AS total, "
+        "    (SELECT ct2.name "
+        "     FROM case_diagnoses cd "
+        "     JOIN patients p2 ON p2.id = cd.patient_id AND p2.data_source = 'petbert' "
+        "     JOIN cancer_types ct2 ON ct2.id = cd.cancer_type_id "
+        "     WHERE p2.county_id = p.county_id "
+        "       AND cd.review_status IN " + visible_statuses_sql + " "
+        "       AND ct2.name != 'Non-Cancer' "
+        "     GROUP BY ct2.name ORDER BY COUNT(*) DESC LIMIT 1"
+        "    ) AS top_cancer "
+        "    FROM patients p "
+        "    JOIN species s ON p.species_id = s.id "
+        "    WHERE " + where_clause + " "
+        "    GROUP BY p.county_id"
+        ") case_counts ON c.id = case_counts.county_id "
+        "WHERE c.geom IS NOT NULL "
+        "ORDER BY c.name"
+    )
+    query = text(sql)
 
     result = await db.execute(query, params)
     rows = result.all()
@@ -117,7 +142,10 @@ async def get_counties_geojson(
 
 
 @router.get("/counties/{county_id}", response_model=CountyDetail)
+@limiter.limit("60/minute")
+@cached_response("geo_county_detail", ttl=settings.CACHE_TTL_GEO)
 async def get_county_detail(
+    request: Request,
     county_id: int,
     db: AsyncSession = Depends(get_db),
 ):
@@ -125,6 +153,7 @@ async def get_county_detail(
     county_result = await db.execute(select(County).where(County.id == county_id))
     county = county_result.scalar_one_or_none()
     if not county:
+        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="County not found")
 
     # Total cases (ingested only) — count distinct patients
@@ -134,8 +163,8 @@ async def get_county_detail(
     )
     total_cases = result.scalar() or 0
 
-    # Cancer breakdown (ingested only; from case_diagnoses)
-    result = await db.execute(
+    # Cancer breakdown (ingested only; confirmed/corrected diagnoses)
+    cancer_breakdown_stmt = apply_review_filter(
         select(CancerType.name, func.count(CaseDiagnosis.id).label("cnt"))
         .select_from(CaseDiagnosis)
         .join(Patient, Patient.id == CaseDiagnosis.patient_id)
@@ -144,6 +173,7 @@ async def get_county_detail(
         .group_by(CancerType.name)
         .order_by(func.count(CaseDiagnosis.id).desc())
     )
+    result = await db.execute(cancer_breakdown_stmt)
     cancer_breakdown = [TopCancer(cancer_type=name, count=cnt) for name, cnt in result.all()]
 
     # Species breakdown (ingested only)
@@ -190,7 +220,10 @@ async def get_county_detail(
 
 
 @router.get("/calenviroscreen", response_model=List[CalEnviroScreenOut])
+@limiter.limit("60/minute")
+@cached_response("calenviroscreen", ttl=settings.CACHE_TTL_CALENVIRO)
 async def get_calenviroscreen(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Return county-level CalEnviroScreen 4.0 data for all counties."""

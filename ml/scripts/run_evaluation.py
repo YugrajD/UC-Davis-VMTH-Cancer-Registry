@@ -2,13 +2,13 @@
 
 No env PYTHONPATH needed — this script adds ml/ to sys.path automatically.
 
-Auto-detects which prediction file to evaluate (contrastive-backbone predictions
-preferred; falls back to binary-backbone predictions).
+Reads `ml/output/production/petbert_predictions.csv` by default (override with
+--prediction-csv) and scores against `ml/output/annotation/annotation.csv`.
 
 Usage:
   python ml/scripts/run_evaluation.py
   python ml/scripts/run_evaluation.py --label "after cycle 3"
-  python ml/scripts/run_evaluation.py --prediction-csv ml/output/production/binary/petbert_predictions.csv
+  python ml/scripts/run_evaluation.py --prediction-csv path/to/predictions.csv
 
 Per-stage evaluation (4-stage pipeline):
   python ml/scripts/run_evaluation.py --stage case-presence --test-cases ml/output/splits/test_cases.txt
@@ -31,11 +31,12 @@ from evaluation import (
     evaluate_common_labels,
     evaluate_groups,
     evaluate_label_presence,
+    evaluate_top_n_verdicts,
     log_evaluation,
 )
 
 
-_STAGE_CHOICES = ["pipeline", "case-based", "common-labels", "case-presence", "groups", "label-presence", "all"]
+_STAGE_CHOICES = ["pipeline", "case-based", "common-labels", "top-n-verdicts", "case-presence", "groups", "label-presence", "all"]
 _DEFAULT_THRESHOLDS = {
     "case-presence": 0.5,
     "groups": 0.85,
@@ -44,8 +45,6 @@ _DEFAULT_THRESHOLDS = {
 
 
 def main() -> int:
-    subdir = config.BEST_PREDICTIONS_SUBDIR
-
     parser = argparse.ArgumentParser(
         description="Score predictions against verified labels and record results to history. "
                     "Use --stage to evaluate one classifier in the 4-stage pipeline.",
@@ -59,7 +58,7 @@ def main() -> int:
     # Pipeline (existing) flags
     parser.add_argument(
         "--prediction-csv",
-        default=f"{config.OUTPUT_PRODUCTION_DIR}/{subdir}/petbert_predictions.csv",
+        default=f"{config.OUTPUT_PRODUCTION_DIR}/petbert_predictions.csv",
         help="Predictions file to evaluate (pipeline stage only).",
     )
     parser.add_argument(
@@ -67,7 +66,7 @@ def main() -> int:
         help="Verified label annotations to score against.",
     )
     parser.add_argument(
-        "--out-dir", default=f"{config.OUTPUT_EVALUATION_DIR}/{subdir}",
+        "--out-dir", default=config.OUTPUT_EVALUATION_DIR,
         help="Directory to write evaluation results.",
     )
     parser.add_argument(
@@ -113,6 +112,21 @@ def main() -> int:
         "--top-n", type=int, default=20,
         help="Number of most-common labels to report (common-labels stage only).",
     )
+    parser.add_argument(
+        "--top-ns", default="25,50,100",
+        help="Comma-separated Ns for top-n-verdicts stage (default: 25,50,100).",
+    )
+    parser.add_argument(
+        "--exclude-macro-groups", default="Neoplasms, NOS",
+        help=("Pipe-separated ICD group names whose terms still appear in the "
+              "top-n-verdicts CSV/table but are excluded from the MACRO row "
+              "(default: 'Neoplasms, NOS'). Pass empty string to disable."),
+    )
+    parser.add_argument(
+        "--min-frequency", type=int, default=0,
+        help=("Drop top-n-verdicts terms with annotation frequency <= this value. "
+              "0 disables (default)."),
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -147,6 +161,18 @@ def main() -> int:
             Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
             cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups,
             top_n=args.top_n,
+        )
+
+    def _run_top_n_verdicts() -> None:
+        top_ns = tuple(int(x) for x in args.top_ns.split(",") if x.strip())
+        exclude_macro_groups = frozenset(
+            g.strip() for g in args.exclude_macro_groups.split("|") if g.strip()
+        )
+        evaluate_top_n_verdicts(
+            Path(args.prediction_csv), Path(args.annotation_csv), out_dir,
+            cases_txt=args.test_cases, uncommon_groups_file=args.uncommon_groups,
+            top_ns=top_ns, exclude_macro_groups=exclude_macro_groups,
+            min_frequency=args.min_frequency,
         )
 
     def _run_case_presence() -> None:
@@ -190,6 +216,8 @@ def main() -> int:
         _run_case_based()
     elif args.stage == "common-labels":
         _run_common_labels()
+    elif args.stage == "top-n-verdicts":
+        _run_top_n_verdicts()
     elif args.stage == "case-presence":
         _run_case_presence()
     elif args.stage == "groups":
@@ -200,6 +228,7 @@ def main() -> int:
         _run_pipeline()
         _run_case_based()
         _run_common_labels()
+        _run_top_n_verdicts()
         _run_case_presence()
         _run_groups()
         _run_label_presence()

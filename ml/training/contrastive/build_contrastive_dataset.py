@@ -1,11 +1,12 @@
 """Build (report_text, label_text) pairs for contrastive PetBERT fine-tuning.
 
 Reads annotation CSV for confirmed (case, term) pairs and report.csv for the
-full report text. Outputs a flat CSV of pairs that train_contrastive.py
-consumes directly.
+report text. Outputs a flat CSV of pairs that train_contrastive.py consumes
+directly.
 
-Label text format: "{term} {group}".
-Report text format: TF-IDF-selected multi-column text matching the production pipeline.
+Pairs are per-section: one row per (case, label, section) where section_text is
+non-empty. Section groups match SECTIONS_3 in scripts/run_embed_compare.py so
+the backbone sees the same text distribution that concat_3 inference consumes.
 """
 
 import argparse
@@ -13,33 +14,26 @@ import csv
 import sys
 from pathlib import Path
 
-# Allow running as a script from any directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import config
-from text_selection import get_selector, SOURCE_COLS as _TFIDF_SOURCE_COLS
+
+_PER_SECTION_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("HISTOPATHOLOGICAL SUMMARY",),
+    ("FINAL COMMENT", "COMMENT"),
+    ("ANCILLARY TESTS",),
+)
 
 
-def build_contrastive_pairs(
-    *,
-    reports_csv: str = config.REPORTS_CSV,
-    annotation_csv: str = config.ANNOTATION_CSV,
-    out_csv: str = config.CONTRASTIVE_PAIRS_CSV,
-    tfidf_vectorizer_path: str = config.TFIDF_VECTORIZER_PATH,
-    min_report_chars: int = 10,
-    train_cases_txt: str = "",
-) -> int:
-    """Build and save contrastive pairs. Returns number of pairs written."""
+def _section_name(group: tuple[str, ...]) -> str:
+    return group[0] if len(group) == 1 else "+".join(group)
 
-    # --- Step 1: Load positive (case_id, term, group) pairs -----------------
-    train_ids: set[str] | None = None
-    if train_cases_txt and Path(train_cases_txt).exists():
-        with open(train_cases_txt, encoding="utf-8") as f:
-            train_ids = {line.strip() for line in f if line.strip()}
-        print(f"  Train/test split active — restricting to {len(train_ids)} train cases.")
 
-    print(f"Loading keyword annotations from {annotation_csv}...")
-    # case_id -> set of (term, group) tuples, deduplicated
+def _load_case_labels(
+    annotation_csv: str,
+    train_ids: set[str] | None,
+) -> dict[str, set[tuple[str, str]]]:
+    """Return case_id → {(term, group), ...} from annotation CSV."""
     case_to_labels: dict[str, set[tuple[str, str]]] = {}
     with open(annotation_csv, encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
@@ -54,56 +48,107 @@ def build_contrastive_pairs(
             if not case_id or not term or not group:
                 continue
             case_to_labels.setdefault(case_id, set()).add((term, group))
+    return case_to_labels
 
-    n_cases = len(case_to_labels)
-    n_total = sum(len(v) for v in case_to_labels.values())
-    print(f"  {n_cases} cases, {n_total} unique (case, label) pairs.")
 
-    # --- Step 2: Join with report text --------------------------------------
-    print(f"Loading report text from {reports_csv}...")
-    selector = get_selector(tfidf_vectorizer_path)
-    pairs: list[dict[str, str]] = []
-    skipped_short = 0
+def _load_train_ids(train_cases_txt: str) -> set[str] | None:
+    if not train_cases_txt or not Path(train_cases_txt).exists():
+        return None
+    with open(train_cases_txt, encoding="utf-8") as f:
+        ids = {line.strip() for line in f if line.strip()}
+    print(f"  Train/test split active — restricting to {len(ids)} train cases.")
+    return ids
 
+
+def _iter_report_rows(reports_csv: str):
+    """Yield (case_id, row_dict) from reports CSV, stripping BOM artifacts."""
     with open(reports_csv, encoding="latin-1") as f:
         reader = csv.DictReader(f)
-        # Strip UTF-8 BOM artifacts that Excel-exported CSVs sometimes add
         if reader.fieldnames:
             reader.fieldnames = [
-                c.lstrip("\ufeff").lstrip("ï»¿") for c in reader.fieldnames
+                c.lstrip("﻿").lstrip("ï»¿") for c in reader.fieldnames
             ]
         for row in reader:
             case_id = row.get("case_id", "").strip()
-            if case_id not in case_to_labels:
-                continue
+            if case_id:
+                yield case_id, row
 
-            col_texts = {
-                col: row.get(col, "").strip()
-                for col in _TFIDF_SOURCE_COLS
-            }
-            report_text = selector.select(col_texts, max_tokens=512)
 
-            if len(report_text) < min_report_chars:
-                skipped_short += 1
-                continue
+def _section_texts(row: dict) -> list[str]:
+    """Return [HIST, FC+C, ANC] section texts joined per group."""
+    out: list[str] = []
+    for group in _PER_SECTION_GROUPS:
+        parts = [(row.get(col, "") or "").strip() for col in group]
+        out.append("\n".join(p for p in parts if p))
+    return out
 
-            for term, group in case_to_labels[case_id]:
+
+def build_contrastive_pairs(
+    *,
+    reports_csv: str = config.REPORTS_CSV,
+    annotation_csv: str = config.ANNOTATION_CSV,
+    out_csv: str = config.CONTRASTIVE_PAIRS_CSV,
+    min_report_chars: int = 10,
+    train_cases_txt: str = "",
+) -> int:
+    """Build per-section (report_text, label_text) pairs. Returns row count.
+
+    Emits one row per (case, label, section) where the section has at least
+    `min_report_chars` characters. Cases with all three sections empty are
+    silently skipped (~0.25% of train cases historically).
+    """
+    train_ids = _load_train_ids(train_cases_txt)
+
+    print(f"Loading annotations from {annotation_csv}...")
+    case_to_labels = _load_case_labels(annotation_csv, train_ids)
+    n_cases = len(case_to_labels)
+    n_total_labels = sum(len(v) for v in case_to_labels.values())
+    print(f"  {n_cases} cases, {n_total_labels} unique (case, label) pairs.")
+
+    print(f"Loading report text from {reports_csv}...")
+    pairs: list[dict[str, str]] = []
+    cases_with_zero_sections = 0
+    per_section_counts = [0] * len(_PER_SECTION_GROUPS)
+
+    for case_id, row in _iter_report_rows(reports_csv):
+        if case_id not in case_to_labels:
+            continue
+
+        kept = [
+            (i, _section_name(_PER_SECTION_GROUPS[i]), t)
+            for i, t in enumerate(_section_texts(row))
+            if len(t) >= min_report_chars
+        ]
+        if not kept:
+            cases_with_zero_sections += 1
+            continue
+
+        for term, group in case_to_labels[case_id]:
+            label_text = f"{term} {group}"
+            for sec_idx, sec_name, sec_text in kept:
+                per_section_counts[sec_idx] += 1
                 pairs.append({
                     "case_id": case_id,
-                    "report_text": report_text,
-                    "label_text": f"{term} {group}",
+                    "section": sec_name,
+                    "report_text": sec_text,
+                    "label_text": label_text,
                     "matched_term": term,
                     "matched_group": group,
                 })
 
-    if skipped_short:
-        print(f"  Skipped {skipped_short} cases with fewer than {min_report_chars} report characters.")
-    print(f"  Generated {len(pairs)} contrastive pairs.")
+    if cases_with_zero_sections:
+        print(
+            f"  Skipped {cases_with_zero_sections} cases with all 3 sections "
+            f"shorter than {min_report_chars} chars."
+        )
+    for i, sec_group in enumerate(_PER_SECTION_GROUPS):
+        print(f"  Section {_section_name(sec_group)!r}: {per_section_counts[i]} pairs")
+    print(f"  Generated {len(pairs)} per-section contrastive pairs.")
 
-    # --- Step 3: Write CSV --------------------------------------------------
     out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["case_id", "report_text", "label_text", "matched_term", "matched_group"]
+    fieldnames = ["case_id", "section", "report_text", "label_text",
+                  "matched_term", "matched_group"]
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -113,185 +158,25 @@ def build_contrastive_pairs(
     return len(pairs)
 
 
-def build_hard_neg_pairs(
-    *,
-    reports_csv: str = config.REPORTS_CSV,
-    annotation_csv: str = config.ANNOTATION_CSV,
-    co_bank_csv: str,
-    out_csv: str = config.HARD_NEG_PAIRS_CSV,
-    tfidf_vectorizer_path: str = config.TFIDF_VECTORIZER_PATH,
-    min_report_chars: int = 10,
-    train_cases_txt: str = "",
-) -> int:
-    """Build hard-negative triplets from the CO (wrong-group) feedback bank.
-
-    For each case_id in the CO bank with verdict='completely_off', we look up
-    the correct label(s) from annotation_csv and the report text from reports_csv,
-    then emit a row for each (correct_label, wrong_label) combination.
-
-    Output columns: case_id, report_text, correct_label_text, wrong_label_text
-
-    Returns number of triplets written.
-    """
-
-    # --- Step 1: Load correct labels from annotation ------------------------
-    train_ids: set[str] | None = None
-    if train_cases_txt and Path(train_cases_txt).exists():
-        with open(train_cases_txt, encoding="utf-8") as f:
-            train_ids = {line.strip() for line in f if line.strip()}
-        print(f"  Train/test split active — restricting to {len(train_ids)} train cases.")
-
-    print(f"Loading keyword annotations from {annotation_csv}...")
-    case_to_correct: dict[str, set[tuple[str, str]]] = {}
-    with open(annotation_csv, encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row.get("method", "") == "no_match":
-                continue
-            case_id = row["case_id"].strip()
-            if train_ids is not None and case_id not in train_ids:
-                continue
-            term = row.get("matched_term", "").strip()
-            group = row.get("matched_group", "").strip()
-            if not case_id or not term or not group:
-                continue
-            case_to_correct.setdefault(case_id, set()).add((term, group))
-
-    # --- Step 2: Load wrong-group predictions from CO bank ------------------
-    print(f"Loading CO bank from {co_bank_csv}...")
-    case_to_wrong: dict[str, set[tuple[str, str]]] = {}
-    with open(co_bank_csv, encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row.get("verdict", "") != "completely_off":
-                continue
-            case_id = row["case_id"].strip()
-            wrong_term = row.get("predicted_term", "").strip()
-            wrong_group = row.get("predicted_group", "").strip()
-            if not case_id or not wrong_term or not wrong_group:
-                continue
-            # Only keep cases that also have a verified correct label
-            if case_id not in case_to_correct:
-                continue
-            case_to_wrong.setdefault(case_id, set()).add((wrong_term, wrong_group))
-
-    eligible = len(case_to_wrong)
-    print(f"  {eligible} cases with both a verified correct label and a wrong-group prediction.")
-
-    # --- Step 3: Join with report text and build triplets -------------------
-    print(f"Loading report text from {reports_csv}...")
-    selector = get_selector(tfidf_vectorizer_path)
-    triplets: list[dict[str, str]] = []
-    skipped_short = 0
-    seen: set[tuple[str, str, str]] = set()  # dedup by (case_id, correct_label, wrong_label)
-
-    with open(reports_csv, encoding="latin-1") as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames:
-            reader.fieldnames = [
-                c.lstrip("\ufeff").lstrip("ï»¿") for c in reader.fieldnames
-            ]
-        for row in reader:
-            case_id = row.get("case_id", "").strip()
-            if case_id not in case_to_wrong:
-                continue
-
-            col_texts = {
-                col: row.get(col, "").strip()
-                for col in _TFIDF_SOURCE_COLS
-            }
-            report_text = selector.select(col_texts, max_tokens=512)
-            if len(report_text) < min_report_chars:
-                skipped_short += 1
-                continue
-
-            for correct_term, correct_group in case_to_correct[case_id]:
-                correct_label_text = f"{correct_term} {correct_group}"
-                for wrong_term, wrong_group in case_to_wrong[case_id]:
-                    wrong_label_text = f"{wrong_term} {wrong_group}"
-                    # Skip if wrong == correct (in-bag false negative)
-                    if wrong_label_text == correct_label_text:
-                        continue
-                    key = (case_id, correct_label_text, wrong_label_text)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    triplets.append({
-                        "case_id": case_id,
-                        "report_text": report_text,
-                        "correct_label_text": correct_label_text,
-                        "wrong_label_text": wrong_label_text,
-                    })
-
-    if skipped_short:
-        print(f"  Skipped {skipped_short} cases with fewer than {min_report_chars} report characters.")
-    print(f"  Generated {len(triplets)} hard-negative triplets.")
-
-    # --- Step 4: Write CSV --------------------------------------------------
-    out_path = Path(out_csv)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["case_id", "report_text", "correct_label_text", "wrong_label_text"]
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(triplets)
-
-    print(f"Saved to {out_path}")
-    return len(triplets)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Build training data for contrastive PetBERT fine-tuning.",
+        description="Build per-section (report, label) pairs for contrastive PetBERT fine-tuning.",
     )
-    parser.add_argument(
-        "--mode",
-        choices=["build-pairs", "build-hard-neg"],
-        default="build-pairs",
-        help=(
-            "build-pairs: (report, label) positive pairs for InfoNCE (default). "
-            "build-hard-neg: (report, correct_label, wrong_label) triplets from CO bank."
-        ),
-    )
-    parser.add_argument("--reports-csv", default=config.REPORTS_CSV,
-                        help=f"Path to report text CSV (default: {config.REPORTS_CSV})")
-    parser.add_argument("--annotation-csv", default=config.ANNOTATION_CSV,
-                        help="Path to annotation CSV")
-    parser.add_argument("--co-bank-csv", default=None,
-                        help="[build-hard-neg] Path to evaluation CO bank CSV "
-                             "(e.g. ml/output/training/binary/evaluation_co_bank.csv)")
-    parser.add_argument("--out-csv", default=None,
-                        help="Output CSV path "
-                             f"(default: {config.CONTRASTIVE_PAIRS_CSV} for build-pairs, "
-                             f"{config.HARD_NEG_PAIRS_CSV} for build-hard-neg)")
+    parser.add_argument("--reports-csv", default=config.REPORTS_CSV)
+    parser.add_argument("--annotation-csv", default=config.ANNOTATION_CSV)
+    parser.add_argument("--out-csv", default=config.CONTRASTIVE_PAIRS_CSV,
+                        help=f"Output CSV (default: {config.CONTRASTIVE_PAIRS_CSV})")
     parser.add_argument("--train-cases", default="",
-                        help="Path to train_cases.txt. When provided, only train cases are "
-                             "included in the output. Generate with create_split.py.")
+                        help="Path to train_cases.txt to restrict cases.")
     args = parser.parse_args(argv)
 
-    if args.mode == "build-pairs":
-        out = args.out_csv or config.CONTRASTIVE_PAIRS_CSV
-        n = build_contrastive_pairs(
-            reports_csv=args.reports_csv,
-            annotation_csv=args.annotation_csv,
-            out_csv=out,
-            train_cases_txt=args.train_cases,
-        )
-        print(f"Done — {n} pairs written.")
-
-    else:  # build-hard-neg
-        if not args.co_bank_csv:
-            print("Error: --co-bank-csv is required for --mode build-hard-neg")
-            return 1
-        out = args.out_csv or config.HARD_NEG_PAIRS_CSV
-        n = build_hard_neg_pairs(
-            reports_csv=args.reports_csv,
-            annotation_csv=args.annotation_csv,
-            co_bank_csv=args.co_bank_csv,
-            out_csv=out,
-            train_cases_txt=args.train_cases,
-        )
-        print(f"Done — {n} triplets written.")
+    n = build_contrastive_pairs(
+        reports_csv=args.reports_csv,
+        annotation_csv=args.annotation_csv,
+        out_csv=args.out_csv,
+        train_cases_txt=args.train_cases,
+    )
+    print(f"Done — {n} per-section pairs written.")
 
     return 0
 

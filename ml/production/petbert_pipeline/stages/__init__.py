@@ -42,8 +42,9 @@ __all__ = [
 def categorize_per_case(
     *,
     texts: list[str],
-    mean_embeddings: np.ndarray,              # (N, 768)
+    mean_embeddings: np.ndarray,              # (N, 768) — cosine fallback (must match label_embeddings dim)
     label_embeddings: np.ndarray,             # (M, 768)
+    lp_embeddings: np.ndarray | None = None,  # (N, 2304) under concat-3; defaults to mean_embeddings
     taxonomy_labels: list["TaxonomyLabel"],
     labels: list[str],
     group_probs: np.ndarray,                  # (N, num_groups)
@@ -57,6 +58,7 @@ def categorize_per_case(
     label_presence_threshold: float = 0.5,
     label_presence_thresholds_per_group: dict[str, float] | None = None,
     tail_max_group_prob_gap: float = 1.0,
+    rerank_stage3: bool = False,
 ) -> CategorizationResult:
     """Dispatch each case to Stage 3a (LP) and/or Stage 3b (KW), assemble result.
 
@@ -67,6 +69,8 @@ def categorize_per_case(
     """
     N = len(texts)
     M = len(labels)
+    if lp_embeddings is None:
+        lp_embeddings = mean_embeddings
 
     group_to_label_indices: dict[str, list[int]] = {}
     for j, tl in enumerate(taxonomy_labels):
@@ -143,6 +147,8 @@ def categorize_per_case(
         k_idxs: list[int] = []
         k_scores: list[float] = []
         k_meths: list[str] = []
+        k_rerank: list[float] = []  # margin × group_prob; embedding entries get -inf
+        k_group_rank: list[int] = []  # rank in per-group loop (0 = top group)
         seen_winners: set[int] = set()
         top_prob = float(case_probs[predicted[0]])
 
@@ -150,6 +156,7 @@ def categorize_per_case(
             if rank > 0 and (top_prob - float(case_probs[g_idx])) > tail_max_group_prob_gap:
                 break
             group_name = group_names[g_idx]
+            group_prob = float(case_probs[g_idx])
             if group_name == "Uncommon":
                 label_idxs = uncommon_label_indices
             else:
@@ -164,7 +171,7 @@ def categorize_per_case(
                 )
                 # Stage 3a: LabelPresenceClassifier picks within the group.
                 lp_pool, lp_score_map = score_within_group(
-                    case_embedding=mean_embeddings[i : i + 1],
+                    case_embedding=lp_embeddings[i : i + 1],
                     label_indices=label_idxs,
                     label_embeddings=label_embeddings,
                     lp_model=lp_model,
@@ -182,9 +189,12 @@ def categorize_per_case(
                     if best_label_idx in seen_winners:
                         continue
                     seen_winners.add(best_label_idx)
+                    lp_score = lp_score_map.get(best_label_idx, group_prob)
                     k_idxs.append(best_label_idx)
-                    k_scores.append(lp_score_map.get(best_label_idx, float(case_probs[g_idx])))
+                    k_scores.append(lp_score)
                     k_meths.append("label_presence")
+                    k_rerank.append((lp_score - lp_t) * group_prob)
+                    k_group_rank.append(rank)
             else:
                 # Stage 3b standalone: keyword filter + cosine similarity.
                 pool = apply_keyword_correction(
@@ -206,8 +216,29 @@ def categorize_per_case(
                     continue
                 seen_winners.add(best_label_idx)
                 k_idxs.append(best_label_idx)
-                k_scores.append(float(case_probs[g_idx]))
+                k_scores.append(group_prob)
                 k_meths.append("embedding")
+                # Embedding fallback isn't on the LP score scale — leave it at
+                # the tail of the re-ranked list rather than mixing scales.
+                k_rerank.append(float("-inf"))
+                k_group_rank.append(rank)
+
+        if rerank_stage3 and len(k_idxs) > 1:
+            # Drop tail-group entries whose LP didn't endorse any in-group label
+            # (margin < 0 ⇒ LP fell back to argmax). Top group (rank 0) is exempt
+            # so the pipeline never abstains on a high-confidence Stage-2 case.
+            kept = [
+                j for j in range(len(k_idxs))
+                if k_group_rank[j] == 0 or k_rerank[j] >= 0
+            ]
+            k_idxs = [k_idxs[j] for j in kept]
+            k_scores = [k_scores[j] for j in kept]
+            k_meths = [k_meths[j] for j in kept]
+            k_rerank = [k_rerank[j] for j in kept]
+            order = sorted(range(len(k_idxs)), key=lambda j: -k_rerank[j])
+            k_idxs = [k_idxs[j] for j in order]
+            k_scores = [k_scores[j] for j in order]
+            k_meths = [k_meths[j] for j in order]
 
         if not k_idxs:
             gate_passed = presence_mask is None or bool(presence_mask[i])

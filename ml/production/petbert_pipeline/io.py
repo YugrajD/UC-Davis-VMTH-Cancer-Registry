@@ -52,8 +52,8 @@ def write_predictions_csv(
             start=1,
         ):
             if method == "low_confidence":
-                term = "Uncategorized"
-                group = "Uncategorized"
+                term = "Non-Cancer"
+                group = "Non-Cancer"
                 code = ""
             elif method == "unidentified_cancer":
                 term = "Unidentified Group"

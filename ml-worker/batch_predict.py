@@ -82,7 +82,7 @@ def _build_scan_config_kwargs(
         out_dir=scan_out_dir,
         max_rows=None,
         batch_size=16,
-        max_length=256,
+        max_length=512,
         neighbors_k=3,
         task="categorize",
         embedding_min_sim=0.6,

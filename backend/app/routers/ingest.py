@@ -71,6 +71,78 @@ def _ensure_csv(raw_bytes: bytes, filename: str) -> bytes:
     )
 
 
+# Matches |H| or |B| section heading markers in pathology reports.
+_SECTION_HEADING_RE = re.compile(r"\|[HB]\|([^|:]+)[^|]*\|\|", re.IGNORECASE)
+# Strips sub-section markers (|U|..||, etc.) from section body content.
+_SUBSECTION_MARKER_RE = re.compile(r"\|[A-Za-z]\|[^|]*\|\|")
+
+# Maps known section name variants to the canonical names the pipeline expects.
+_SECTION_NAME_MAP: dict[str, str] = {
+    "HISTOPATHOLOGY SUMMARY": "HISTOPATHOLOGICAL SUMMARY",
+    "HISTOPATHOLOGIC SUMMARY": "HISTOPATHOLOGICAL SUMMARY",
+    "HISTOLOGICAL SUMMARY": "HISTOPATHOLOGICAL SUMMARY",
+    "HISTOPATHOLOGICAL DESCRIPTION": "HISTOPATHOLOGICAL SUMMARY",
+    "HISTOLOGIC DESCRIPTION": "HISTOPATHOLOGICAL SUMMARY",
+    "FINAL COMMENTS": "FINAL COMMENT",
+    "ANCILLARY TESTING": "ANCILLARY TESTS",
+    "ANCILLARY TEST": "ANCILLARY TESTS",
+    "ANCILLARY DIAGNOSTICS": "ANCILLARY TESTS",
+    "ADDITIONAL TESTS": "ANCILLARY TESTS",
+    "ANCILLARY": "ANCILLARY TESTS",
+    "COMMENTS": "COMMENT",
+    "ORIGINAL COMMENT": "COMMENT",
+}
+
+# The four columns the GCP Batch pipeline reads to build its CONCAT_3 embeddings.
+_PIPELINE_SECTION_COLS = ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "COMMENT", "ANCILLARY TESTS")
+
+
+def _parse_pathology_sections(text: str) -> dict[str, str]:
+    """Split a merged pipe-delimited pathology report into named sections."""
+    matches = list(_SECTION_HEADING_RE.finditer(text))
+    sections: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        raw = m.group(1).strip().upper()
+        name = _SECTION_NAME_MAP.get(raw, raw)
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        content = _SUBSECTION_MARKER_RE.sub("", text[start:end]).strip().lstrip(":").strip()
+        if content:
+            sections[name] = content
+    return sections
+
+
+def _add_pipeline_section_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Pre-parse Text into the four section columns the GCP Batch pipeline expects.
+
+    batch_predict.py skips its own inline extraction when these columns are
+    already present, so pre-parsing here ensures the GCP job uses the same
+    section boundaries as report_conversion.py rather than its own approximation.
+    """
+    if "Text" not in df.columns:
+        return df
+
+    for col in _PIPELINE_SECTION_COLS:
+        if col not in df.columns:
+            df[col] = ""
+
+    for idx in df.index:
+        text = str(df.at[idx, "Text"] or "")
+        if not text:
+            continue
+        secs = _parse_pathology_sections(text)
+        hist = secs.get("HISTOPATHOLOGICAL SUMMARY", text)
+        final = secs.get("FINAL COMMENT", "")
+        comment = secs.get("COMMENT") or final
+        anc = secs.get("ANCILLARY TESTS", "")
+        df.at[idx, "HISTOPATHOLOGICAL SUMMARY"] = hist
+        df.at[idx, "FINAL COMMENT"] = final
+        df.at[idx, "COMMENT"] = comment
+        df.at[idx, "ANCILLARY TESTS"] = anc
+
+    return df
+
+
 # Column name mapping: uploaded name (lowercase) → canonical name expected by GCP Batch image
 _COLUMN_RENAMES = {
     "text (pathology report)": "Text",
@@ -193,6 +265,9 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
     # Add anon_id if missing — one sequential ID per merged patient record.
     if "anon_id" not in df.columns:
         df.insert(0, "anon_id", [f"VMTH_{i}" for i in range(len(df))])
+
+    # Pre-parse pathology sections so the GCP Batch job receives clean columns.
+    df = _add_pipeline_section_columns(df)
 
     return df.to_csv(index=False).encode("utf-8")
 

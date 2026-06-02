@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
-import { createFilteredDataState } from '../hooks/useFilteredData';
+import {
+  buildZipCodeDataFromIncidence,
+  createFilteredDataState,
+  createFilteredZipCodeDataState,
+  getZipCodeCountRange,
+} from '../hooks/useFilteredData';
 import { MOCK_COUNTY_DATA } from '../data/mockData';
 import type { FilterState } from '../types';
 
@@ -250,5 +255,47 @@ describe('useFilteredData — regionSummary', () => {
       const countySum = (region.children ?? []).reduce((s, c) => s + c.count, 0);
       expect(region.count).toBe(countySum);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ZIP/ZCTA incidence helpers
+// ---------------------------------------------------------------------------
+
+describe('useFilteredData — ZIP code data', () => {
+  it('builds ZIP-level counts from incidence records', () => {
+    const zipCodeData = buildZipCodeDataFromIncidence([
+      { cancer_type: 'All', zip_code: '95616', count: 2 },
+      { cancer_type: 'All', zip_code: '95616-1234', count: 3 },
+      { cancer_type: 'All', zip_code: '95817', count: 4 },
+      { cancer_type: 'All', count: 9 },
+    ]);
+
+    expect(zipCodeData).toEqual([
+      { zipCode: '95616', count: 5 },
+      { zipCode: '95817', count: 4 },
+    ]);
+  });
+
+  it('calculates ZIP count range from nonzero ZIP counts', () => {
+    expect(getZipCodeCountRange([
+      { zipCode: '95616', count: 5 },
+      { zipCode: '95817', count: 12 },
+      { zipCode: '99999', count: 0 },
+    ])).toEqual({ min: 5, max: 12 });
+  });
+
+  it('applies deterministic demo filtering for breed-only ZIP filters', () => {
+    const base = [
+      { zipCode: '95616', count: 100 },
+      { zipCode: '95817', count: 80 },
+    ];
+    const filters = { ...DEFAULT_FILTERS, breed: 'Golden Retriever' };
+
+    const a = createFilteredZipCodeDataState(base, filters).zipCodeData;
+    const b = createFilteredZipCodeDataState(base, filters).zipCodeData;
+
+    expect(a).toEqual(b);
+    expect(a.reduce((sum, z) => sum + z.count, 0)).toBeLessThan(180);
   });
 });

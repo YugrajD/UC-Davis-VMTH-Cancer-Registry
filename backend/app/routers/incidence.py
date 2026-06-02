@@ -227,6 +227,55 @@ async def get_incidence_by_breed(
     )
 
 
+@router.get("/by-zip", response_model=IncidenceResponse)
+@limiter.limit("60/minute")
+@cached_response("incidence_by_zip", ttl=settings.CACHE_TTL_INCIDENCE)
+async def get_incidence_by_zip(
+    request: Request,
+    species: Optional[List[str]] = Query(None, max_length=50),
+    cancer_type: Optional[List[str]] = Query(None, max_length=50),
+    county: Optional[List[str]] = Query(None, max_length=100),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    sex: Optional[str] = Query(None, max_length=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return reviewed California cancer diagnosis counts grouped by 5-digit ZIP."""
+    zip_expr = func.substring(func.trim(Patient.zip_code), 1, 5).label("zip_code")
+    stmt = (
+        select(
+            zip_expr,
+            func.count(CaseDiagnosis.id).label("count"),
+        )
+        .select_from(CaseDiagnosis)
+        .join(Patient, Patient.id == CaseDiagnosis.patient_id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .outerjoin(Species, Patient.species_id == Species.id)
+        .outerjoin(County, Patient.county_id == County.id)
+        .where(Patient.zip_code.is_not(None))
+        .where(Patient.county_id.is_not(None))
+        .where(func.length(func.trim(Patient.zip_code)) >= 5)
+    )
+    stmt = _apply_filters(stmt, species, cancer_type, county, year_start, year_end, sex)
+    stmt = stmt.group_by(zip_expr).order_by(func.count(CaseDiagnosis.id).desc())
+
+    result = await db.execute(stmt)
+    data = [
+        IncidenceRecord(cancer_type="All", zip_code=r.zip_code, count=r.count)
+        for r in result.all()
+    ]
+
+    return IncidenceResponse(
+        data=data,
+        total=sum(r.count for r in data),
+        filters_applied={
+            "species": species, "cancer_type": cancer_type,
+            "county": county, "year_start": year_start,
+            "year_end": year_end, "sex": sex
+        }
+    )
+
+
 @router.get("/breed-detail", response_model=BreedDetailOut)
 @limiter.limit("60/minute")
 @cached_response("breed_detail", ttl=settings.CACHE_TTL_INCIDENCE)

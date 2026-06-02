@@ -66,6 +66,7 @@ class DashboardSummary(BaseModel):
 class IncidenceRecord(BaseModel):
     cancer_type: str
     county: Optional[str] = None
+    zip_code: Optional[str] = None
     species: Optional[str] = None
     breed: Optional[str] = None
     year: Optional[int] = None

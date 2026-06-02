@@ -30,6 +30,7 @@ export interface DashboardSummary {
 export interface IncidenceRecord {
   cancer_type: string;
   county?: string;
+  zip_code?: string;
   species?: string;
   breed?: string;
   year?: number;
@@ -154,6 +155,12 @@ export async function fetchIncidenceBySpecies(filters: FilterParams = {}): Promi
 export async function fetchIncidenceByBreed(filters: FilterParams = {}): Promise<IncidenceResponse> {
   const params = filtersToParams(filters);
   const url = params.toString() ? `/api/v1/incidence/by-breed?${params}` : '/api/v1/incidence/by-breed';
+  return fetchJson(url);
+}
+
+export async function fetchIncidenceByZip(filters: FilterParams = {}): Promise<IncidenceResponse> {
+  const params = filtersToParams(filters);
+  const url = params.toString() ? `/api/v1/incidence/by-zip?${params}` : '/api/v1/incidence/by-zip';
   return fetchJson(url);
 }
 

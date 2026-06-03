@@ -243,12 +243,10 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
 
         logger.info("Job %d completed: %d inserted", job_id, ingestion_result.inserted)
         clear_all_caches()
-        _delete_upload_dir(storage_path)
 
     except Exception as e:
         logger.exception("Job %d failed", job_id)
         await _mark_failed(job_id, _safe_error_message(e))
-        _delete_upload_dir(storage_path)
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +409,6 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
         logger.info("Job %d completed via GCP Batch: %d inserted", job_id, ingestion_result.inserted)
         clear_all_caches()
-        _delete_upload_dir(storage_path)
 
         # Cleanup GCS files (best-effort). Disabled by default so scan_output
         # diagnostics remain available after a suspicious successful run.
@@ -426,4 +423,3 @@ async def _process_via_gcp_batch(job_id: int) -> None:
     except Exception as e:
         logger.exception("Job %d failed (GCP Batch path)", job_id)
         await _mark_failed(job_id, _safe_error_message(e))
-        _delete_upload_dir(storage_path)

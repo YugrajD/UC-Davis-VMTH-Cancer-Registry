@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, get_current_user, require_admin, require_reviewer
@@ -113,13 +113,13 @@ def _parse_pathology_sections(text: str) -> dict[str, str]:
 
 
 def _add_pipeline_section_columns(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Pre-parse Text into the four section columns the GCP Batch pipeline expects.
+    """Pre-parse Pathology Text into the four section columns the GCP Batch pipeline expects.
 
     batch_predict.py skips its own inline extraction when these columns are
     already present, so pre-parsing here ensures the GCP job uses the same
     section boundaries as report_conversion.py rather than its own approximation.
     """
-    if "Text" not in df.columns:
+    if "Pathology Text" not in df.columns:
         return df
 
     for col in _PIPELINE_SECTION_COLS:
@@ -127,7 +127,7 @@ def _add_pipeline_section_columns(df: "pd.DataFrame") -> "pd.DataFrame":
             df[col] = ""
 
     for idx in df.index:
-        text = str(df.at[idx, "Text"] or "")
+        text = str(df.at[idx, "Pathology Text"] or "")
         if not text:
             continue
         secs = _parse_pathology_sections(text)
@@ -143,13 +143,18 @@ def _add_pipeline_section_columns(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
-# Column name mapping: uploaded name (lowercase) → canonical name expected by GCP Batch image
+# Column name mapping: uploaded name (lowercase) → canonical name
+# Old canonical names are included so files saved before the rename remain readable.
 _COLUMN_RENAMES = {
-    "text (pathology report)": "Text",
-    "pathology text": "Text",
-    "owner zip code": "Zipcode Zipcode",
-    "veterinary clinic zipcode": "RfrrVtrn Zipcode Zipcode",
-    "date of request": "DtOfRq",
+    "text (pathology report)": "Pathology Text",
+    "pathology text": "Pathology Text",
+    "text": "Pathology Text",                            # old canonical
+    "owner zip code": "Owner Zip Code",
+    "zipcode zipcode": "Owner Zip Code",                 # old canonical
+    "veterinary clinic zipcode": "Veterinary Clinic Zipcode",
+    "rfrrvrtn zipcode zipcode": "Veterinary Clinic Zipcode",  # old canonical
+    "date of request": "Date of Request",
+    "dtofrq": "Date of Request",                         # old canonical
 }
 
 
@@ -262,13 +267,27 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
     # Merge continuation rows into one record per patient.
     df = _merge_continuation_rows(df)
 
-    # Add anon_id if missing — one sequential ID per merged patient record.
-    if "anon_id" not in df.columns:
-        df.insert(0, "anon_id", [f"VMTH_{i}" for i in range(len(df))])
-
     # Pre-parse pathology sections so the GCP Batch job receives clean columns.
     df = _add_pipeline_section_columns(df)
 
+    return df.to_csv(index=False).encode("utf-8")
+
+
+async def _assign_case_ids(csv_bytes: bytes, db: AsyncSession) -> bytes:
+    """Inject CASE-#### anon_ids if the CSV has none, continuing from the DB max.
+
+    Clinics that provide their own anon_id column are left untouched.
+    """
+    df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
+    if "anon_id" in df.columns:
+        return csv_bytes
+    result = await db.execute(
+        text("SELECT COALESCE(MAX(CAST(substring(anon_id FROM 6) AS INTEGER)), 0) "
+             "FROM patients WHERE anon_id ~ '^CASE-[0-9]+$'")
+    )
+    current_max = result.scalar() or 0
+    ids = [f"CASE-{current_max + i + 1:04d}" for i in range(len(df))]
+    df.insert(0, "anon_id", ids)
     return df.to_csv(index=False).encode("utf-8")
 
 
@@ -356,6 +375,9 @@ async def upload_datasets(
     )
     db.add(job)
     await db.flush()
+
+    # Assign CASE-#### anon_ids now that we have DB access and a job ID.
+    dataset_a_bytes = await _assign_case_ids(dataset_a_bytes, db)
 
     # Save file to disk
     storage_path = os.path.join(settings.UPLOAD_DIR, str(job.id))
@@ -464,12 +486,7 @@ async def preview_job_dataset(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(filepath):
-        if job.status in ("completed", "failed"):
-            raise HTTPException(status_code=404, detail="File was removed after processing")
-        raise HTTPException(
-            status_code=404,
-            detail="Upload file not found — it may have been lost during a system restart. Reject this job and ask the uploader to re-submit.",
-        )
+        raise HTTPException(status_code=404, detail="Upload file not available")
 
     def iter_file():
         with open(filepath, "rb") as f:

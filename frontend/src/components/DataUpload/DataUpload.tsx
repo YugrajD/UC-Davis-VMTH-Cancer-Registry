@@ -188,27 +188,22 @@ const REQUIRED_COLUMNS = [
   'Sex',
   'Species',
   'Breed',
-  'Zipcode Zipcode',
-  'RfrrVtrn Zipcode Zipcode',
-  'DtOfRq',
-  'Text',
+  'Owner Zip Code',
+  'Veterinary Clinic Zipcode',
+  'Date of Request',
+  'Pathology Text',
 ];
 
 // Human-readable labels shown in the UI for required column names
-const COLUMN_DISPLAY_NAMES: Record<string, string> = {
-  'Zipcode Zipcode': 'Owner Zip Code',
-  'RfrrVtrn Zipcode Zipcode': 'Veterinary Clinic Zipcode',
-  'DtOfRq': 'Date of Request',
-  'Text': 'Pathology Text',
-};
+const COLUMN_DISPLAY_NAMES: Record<string, string> = {};
 
 // Aliases that map alternate column names to their canonical required name
 const COLUMN_ALIASES: Record<string, string> = {
-  'text (pathology report)': 'Text',
-  'pathology text': 'Text',
-  'owner zip code': 'Zipcode Zipcode',
-  'veterinary clinic zipcode': 'RfrrVtrn Zipcode Zipcode',
-  'date of request': 'DtOfRq',
+  'text (pathology report)': 'Pathology Text',
+  'text': 'Pathology Text',                               // old canonical
+  'zipcode zipcode': 'Owner Zip Code',                    // old canonical
+  'rfrrvrtn zipcode zipcode': 'Veterinary Clinic Zipcode', // old canonical
+  'dtofrq': 'Date of Request',                            // old canonical
 };
 
 /**

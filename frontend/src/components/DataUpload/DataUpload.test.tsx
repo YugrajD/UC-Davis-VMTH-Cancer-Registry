@@ -42,7 +42,7 @@ const processingJob: IngestionJob = {
 };
 
 function csvFile(name = 'clinical.csv') {
-  const header = 'Date of Birth,Sex,Species,Breed,Zipcode Zipcode,RfrrVtrn Zipcode Zipcode,DtOfRq,Text';
+  const header = 'Date of Birth,Sex,Species,Breed,Owner Zip Code,Veterinary Clinic Zipcode,Date of Request,Pathology Text';
   const row = '2020-01-01,Male,Canine,Labrador,95616,95616,2020-01-01,Normal pathology';
   return new File([`${header}\n${row}`], name, { type: 'text/csv' });
 }

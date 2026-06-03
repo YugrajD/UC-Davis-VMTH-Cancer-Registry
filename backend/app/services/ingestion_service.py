@@ -251,9 +251,14 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
         if raw_species.lower() == "nan":
             raw_species = ""
 
-        primary_zip = _clean_zip(row.get("Owner Zip Code") or row.get("Zipcode") or "")
+        primary_zip = _clean_zip(
+            row.get("Owner Zip Code") or row.get("Zipcode Zipcode") or row.get("Zipcode") or ""
+        )
         referral_zip = _clean_zip(
-            row.get("Veterinary Clinic Zipcode") or row.get("RfrrVtrnZipcode") or ""
+            row.get("Veterinary Clinic Zipcode")
+            or row.get("RfrrVtrn Zipcode Zipcode")
+            or row.get("RfrrVtrnZipcode")
+            or ""
         )
         raw_zip = primary_zip or referral_zip
 

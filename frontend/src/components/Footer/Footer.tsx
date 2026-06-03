@@ -54,10 +54,10 @@ export function Footer({ onShare }: FooterProps) {
             <p className="mt-1">
               For questions, contact:{' '}
               <a 
-                href="mailto:vmthcancerregistry@ucdavis.edu" 
+                href="mailto:rkrupasinghe@ucdavis.edu"
                 className="text-[var(--color-teal)] hover:underline"
               >
-                vmthcancerregistry@ucdavis.edu
+                rkrupasinghe@ucdavis.edu
               </a>
             </p>
           </div>

@@ -8,7 +8,7 @@ const GEO_URL =
   'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
 
 const MAP_PROJECTION_CONFIG = {
-  scale: 2400,
+  scale: 1800,
   center: [-119.5, 37.5] as [number, number],
 };
 

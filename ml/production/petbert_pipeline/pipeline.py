@@ -77,8 +77,9 @@ def _load_uncommon_groups(path: str) -> frozenset[str]:
 def run_scan(config: ScanConfig) -> ScanOutputs:
     """Execute the full categorization pipeline end-to-end."""
 
-    if config.group_classifier_path is None and not config.embed_only:
-        raise ValueError("--group-classifier is required (the legacy binary path was removed)")
+    # Retrieval-only mode: no group classifier → cosine similarity across all
+    # labels directly (model_b / single-stage bundle support).
+    retrieval_only = config.group_classifier_path is None and not config.embed_only
 
     # --- Step 0: Prepare output file paths -----------------------------------
     outputs = build_outputs(config.out_dir, config.task)
@@ -220,13 +221,21 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         device=torch_device,
     )
 
-    # Stage 2: GroupClassifier.
-    group_probs, group_names = run_group_classifier(
-        col_emb_concat=col_emb_concat,
-        classifier_path=config.group_classifier_path,
-        presence_gate_mask=presence_gate_mask,
-        device=torch_device,
-    )
+    # Stage 2: GroupClassifier (or uniform retrieval-only fallback).
+    if retrieval_only:
+        # No group classifier — treat every group as equally probable so Stage 3b
+        # cosine similarity runs across all label groups (global nearest-label retrieval).
+        group_names = list(dict.fromkeys(tl.group for tl in label_catalog.taxonomy_labels))
+        group_probs = np.ones((n, len(group_names)), dtype=np.float32)
+        group_probs[~presence_gate_mask] = 0.0
+        print(f"Retrieval-only mode: {len(group_names)} groups, uniform probabilities.")
+    else:
+        group_probs, group_names = run_group_classifier(
+            col_emb_concat=col_emb_concat,
+            classifier_path=config.group_classifier_path,
+            presence_gate_mask=presence_gate_mask,
+            device=torch_device,
+        )
 
     # Stage 3a: load per-group LabelPresenceClassifiers (None disables the stage).
     label_presence_models = load_label_presence_models(
@@ -293,8 +302,15 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     )
 
     # --- Step 6: PCA for 2-D visualization -----------------------------------
-    pca = PCA(n_components=2, random_state=0)
-    pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
+    n_components = min(2, embeddings.shape[0], embeddings.shape[1])
+    pca = PCA(n_components=n_components, random_state=0)
+    pca_2d_partial = pca.fit_transform(embeddings).astype(np.float32, copy=False)
+    # Pad to 2 columns if fewer than 2 components were available (e.g. single-case upload)
+    if n_components < 2:
+        pad = np.zeros((pca_2d_partial.shape[0], 2 - n_components), dtype=np.float32)
+        pca_2d = np.concatenate([pca_2d_partial, pad], axis=1)
+    else:
+        pca_2d = pca_2d_partial
 
     # --- Step 7: Write output files ------------------------------------------
     write_predictions_csv(

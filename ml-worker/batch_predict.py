@@ -82,7 +82,7 @@ def _build_scan_config_kwargs(
         out_dir=scan_out_dir,
         max_rows=None,
         batch_size=16,
-        max_length=256,
+        max_length=512,
         neighbors_k=3,
         task="categorize",
         embedding_min_sim=0.6,
@@ -120,9 +120,9 @@ def main() -> None:
     output_dir = os.environ["OUTPUT_DIR"]
     model_path = os.environ.get("MODEL_PATH", "/tmp/batch_data/models/petbert")
     labels_csv = os.environ.get("LABELS_CSV_PATH", "/tmp/batch_data/models/labels/labels.csv")
-    group_classifier = os.environ.get("GROUP_CLASSIFIER_PATH") or None
-
-    # Optional — set to None/empty if the file wasn't downloaded for this bundle.
+    # Optional — set to None if file wasn't downloaded for this bundle.
+    _gc = os.environ.get("GROUP_CLASSIFIER_PATH") or ""
+    group_classifier = _gc if (_gc and os.path.exists(_gc)) else None
     _cp = os.environ.get("CASE_PRESENCE_CLASSIFIER_PATH") or ""
     case_presence_classifier = _cp if (_cp and os.path.exists(_cp)) else None
     _lp = os.environ.get("LP_THRESHOLDS_JSON_PATH") or ""
@@ -151,9 +151,9 @@ def main() -> None:
     # embedding that caused the CasePresenceClassifier to reject every patient.
     df = pd.read_csv(input_csv, encoding="latin-1")
 
-    if "Text" in df.columns:
+    if "Pathology Text" in df.columns:
         hist_col, final_col, comment_col, anc_col = [], [], [], []
-        for text_val in df["Text"].fillna(""):
+        for text_val in df["Pathology Text"].fillna(""):
             secs = _extract_sections(str(text_val))
             full = str(text_val)
             hist_col.append(secs.get("HISTOPATHOLOGICAL SUMMARY", full))
@@ -219,7 +219,7 @@ def main() -> None:
         for row in csv.DictReader(f):
             aid = row.get("anon_id", "").strip()
             if aid and aid not in orig_text_by_id:
-                orig_text_by_id[aid] = row.get("Text", "").strip()
+                orig_text_by_id[aid] = row.get("Pathology Text", "").strip()
 
     predictions = []
     for anon_id, rows in by_patient.items():

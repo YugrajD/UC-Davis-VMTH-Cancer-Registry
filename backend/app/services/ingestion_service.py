@@ -209,8 +209,8 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
 
     Accepts two column-name conventions for the same fields:
       - Patient ID:  ``anon_id``  or  ``case_id``
-      - Primary zip: ``Zipcode Zipcode``  or  ``Zipcode``
-      - Referral zip: ``RfrrVtrn Zipcode Zipcode``  or  ``RfrrVtrnZipcode``
+      - Primary zip: ``Owner Zip Code``  or  ``Zipcode``
+      - Referral zip: ``Veterinary Clinic Zipcode``  or  ``RfrrVtrnZipcode``
 
     Extracts: sex, breed, diagnosis_date, species, zip per patient.
     Takes first non-empty value per patient (idempotent on duplicate rows).
@@ -239,7 +239,7 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
         if raw_breed.lower() == "nan":
             raw_breed = ""
 
-        raw_date = str(row.get("DtOfRq", "")).strip()
+        raw_date = str(row.get("Date of Request", "")).strip()
         if raw_date.lower() == "nan":
             raw_date = ""
 
@@ -251,9 +251,14 @@ def parse_dataset_a_demographics(csv_bytes: bytes) -> dict[str, dict]:
         if raw_species.lower() == "nan":
             raw_species = ""
 
-        primary_zip = _clean_zip(row.get("Zipcode Zipcode") or row.get("Zipcode") or "")
+        primary_zip = _clean_zip(
+            row.get("Owner Zip Code") or row.get("Zipcode Zipcode") or row.get("Zipcode") or ""
+        )
         referral_zip = _clean_zip(
-            row.get("RfrrVtrn Zipcode Zipcode") or row.get("RfrrVtrnZipcode") or ""
+            row.get("Veterinary Clinic Zipcode")
+            or row.get("RfrrVtrn Zipcode Zipcode")
+            or row.get("RfrrVtrnZipcode")
+            or ""
         )
         raw_zip = primary_zip or referral_zip
 
@@ -429,13 +434,7 @@ async def ingest_upload(
     for i in range(0, len(patient_values), _IN_CHUNK):
         chunk = patient_values[i : i + _IN_CHUNK]
         ins_stmt = pg_insert(Patient.__table__).values(chunk)
-        await db.execute(ins_stmt.on_conflict_do_update(
-            index_elements=["anon_id"],
-            set_={col: ins_stmt.excluded[col] for col in [
-                "species_id", "breed_id", "sex", "county_id",
-                "zip_code", "data_source", "birth_date", "diagnosis_date",
-            ]},
-        ))
+        await db.execute(ins_stmt.on_conflict_do_nothing())
     patients_inserted = len(patient_values)
 
     await db.flush()

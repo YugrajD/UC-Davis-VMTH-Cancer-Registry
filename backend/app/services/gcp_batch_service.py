@@ -172,10 +172,9 @@ def submit_batch_job(job_id: int, model_folder: str = "production") -> str:
                 f"gcloud storage cp -r '{gcs_model_root}/petbert/*' {model_path}/",
                 f"echo 'Downloading labels...'",
                 f"gcloud storage cp '{gcs_model_root}/labels/labels.csv' {labels_csv}",
-                f"echo 'Downloading group classifier (required)...'",
-                f"gcloud storage cp '{gcs_model_root}/checkpoints/group_classifier_best.pt' {group_ckpt}",
                 # Optional — missing files disable the corresponding pipeline stage
                 f"echo 'Downloading optional checkpoints...'",
+                f"gcloud storage cp '{gcs_model_root}/checkpoints/group_classifier_best.pt' {group_ckpt} || echo 'No group_classifier_best.pt; running retrieval-only mode.'",
                 f"gcloud storage cp '{gcs_model_root}/checkpoints/case_presence_classifier.pt' {case_presence_ckpt} || echo 'No case_presence_classifier.pt; Stage 1 gate disabled.'",
                 f"gcloud storage cp '{gcs_model_root}/checkpoints/lp_thresholds.json' {lp_thresholds} || echo 'No lp_thresholds.json; using global LP threshold.'",
                 f"gcloud storage cp '{gcs_model_root}/checkpoints/uncommon_groups.txt' {uncommon_groups_file} || echo 'No uncommon_groups.txt; using empty set.'",

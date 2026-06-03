@@ -113,67 +113,6 @@ function SourceText({ text }: { text: string | null }) {
   );
 }
 
-function IcdCombobox({
-  value,
-  onInput,
-  onSelect,
-}: {
-  value: string;
-  onInput: (code: string) => void;
-  onSelect: (label: IcdLabel) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const filtered = useMemo(() => {
-    const q = value.trim().toLowerCase();
-    if (!q) return ICD_LABELS.slice(0, 10);
-    return ICD_LABELS.filter(l => l.code.toLowerCase().includes(q)).slice(0, 10);
-  }, [value]);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  return (
-    <div ref={containerRef} className="relative">
-      <input
-        type="text"
-        value={value}
-        onChange={e => { onInput(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
-        placeholder="Type to search ICD-O codes…"
-        autoComplete="off"
-      />
-      {open && filtered.length > 0 && (
-        <ul className="absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto">
-          {filtered.map((l, i) => (
-            <li
-              key={i}
-              onMouseDown={e => {
-                e.preventDefault();
-                onSelect(l);
-                setOpen(false);
-              }}
-              className="flex items-baseline justify-between gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-teal-50"
-            >
-              <span className="shrink-0 font-mono text-xs text-gray-700">{l.code}</span>
-              <span className="truncate text-gray-500 text-xs">{l.term}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 interface DetailPanelProps {
   detail: DiagnosisDetail | null;
   loading: boolean;
@@ -374,13 +313,11 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
             </label>
             <label className="text-xs text-gray-600">
               Confirmed Vet-ICD-O code
-              <IcdCombobox
+              <input
+                type="text"
                 value={correctIcd}
-                onInput={code => setCorrectIcd(code)}
-                onSelect={label => {
-                  setCorrectIcd(label.code);
-                  setCorrectName(label.term);
-                }}
+                onChange={(e) => setCorrectIcd(e.target.value)}
+                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
               />
             </label>
           </div>

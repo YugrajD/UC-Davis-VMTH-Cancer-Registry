@@ -302,8 +302,15 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     )
 
     # --- Step 6: PCA for 2-D visualization -----------------------------------
-    pca = PCA(n_components=2, random_state=0)
-    pca_2d = pca.fit_transform(embeddings).astype(np.float32, copy=False)
+    n_components = min(2, embeddings.shape[0], embeddings.shape[1])
+    pca = PCA(n_components=n_components, random_state=0)
+    pca_2d_partial = pca.fit_transform(embeddings).astype(np.float32, copy=False)
+    # Pad to 2 columns if fewer than 2 components were available (e.g. single-case upload)
+    if n_components < 2:
+        pad = np.zeros((pca_2d_partial.shape[0], 2 - n_components), dtype=np.float32)
+        pca_2d = np.concatenate([pca_2d_partial, pad], axis=1)
+    else:
+        pca_2d = pca_2d_partial
 
     # --- Step 7: Write output files ------------------------------------------
     write_predictions_csv(

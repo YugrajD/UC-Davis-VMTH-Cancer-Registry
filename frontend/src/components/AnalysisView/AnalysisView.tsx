@@ -1031,7 +1031,7 @@ function PesticideMap({
     ?? (selectedClass !== 'all' ? (PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass) : null);
 
   const tooltipFilterLabel = activeChemical
-    ?? (selectedClass === 'all' ? 'All Classes' : (PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass));
+    ?? (selectedClass === 'all' ? 'All Categories' : (PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass));
 
   const searchResults = useMemo(() => {
     if (!chemSearch.trim()) return [];
@@ -1133,7 +1133,7 @@ function PesticideMap({
             {/* Mode toggle */}
             <div className="flex gap-0.5 mb-2 p-0.5 bg-gray-100 rounded">
               <button className={tabCls(filterMode === 'class')} onClick={() => { setFilterMode('class'); onChemicalChange(null); setChemSearch(''); }}>
-                By Class
+                By Category
               </button>
               <button className={tabCls(filterMode === 'chemical')} onClick={() => setFilterMode('chemical')}>
                 By Pesticide
@@ -1142,13 +1142,13 @@ function PesticideMap({
 
             {filterMode === 'class' && (
               <label className="block">
-                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Pesticide Class</span>
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Health Category</span>
                 <select
                   value={selectedClass}
                   onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
                   className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
                 >
-                  <option value="all">All Classes</option>
+                  <option value="all">All Categories</option>
                   {PESTICIDE_CLASSES.map(cls => (
                     <option key={cls.value} value={cls.value}>{cls.label}</option>
                   ))}

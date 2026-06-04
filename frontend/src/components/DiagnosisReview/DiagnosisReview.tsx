@@ -224,12 +224,6 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
 
       <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs bg-gray-50 border border-gray-100 rounded p-3">
         <div>
-          <p className="text-gray-500 mb-0.5">Diagnosis</p>
-          <p className="font-medium text-[var(--color-text-primary)] break-words">
-            {detail.source_diagnosis?.trim() || '—'}
-          </p>
-        </div>
-        <div>
           <p className="text-gray-500 mb-0.5">Test request date</p>
           <p className="font-medium tabular-nums">{detail.test_request_date ?? '—'}</p>
         </div>
@@ -267,6 +261,13 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
       </div>
 
       <SourceText text={detail.original_text} />
+
+      <div>
+        <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
+        <p className="text-sm text-[var(--color-text-primary)] break-words">
+          {detail.source_diagnosis?.trim() || '—'}
+        </p>
+      </div>
 
       {(detail.predicted_term || detail.icd_o_code) && (
         <div className="grid grid-cols-2 gap-4 text-xs">

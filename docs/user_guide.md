@@ -29,6 +29,7 @@ Canine cancer data collected at the VMTH represents a valuable epidemiological r
 7. [Analysis Tab](#7-analysis-tab)
 8. [Data Upload Tab](#8-data-upload-tab)
 9. [Review Queue Tab](#9-review-queue-tab)
+    - [9.2.1 Model Selection](#921-model-selection)
 10. [Diagnosis Review Tab](#10-diagnosis-review-tab)
     - [10.1 Status Filter](#101-status-filter)
     - [10.2 Search and Filter](#102-search-and-filter)
@@ -109,6 +110,16 @@ The map shows California counties shaded by **PCCP** (cancer patients per 100 pa
 - **Click** a county to filter the table to that county. Click again to deselect.
 
 The map defaults to a fitted California view. Use the **Reset View** button to return to the default zoom.
+
+A **Geo Level** toggle above the map switches the map between three geographic resolutions:
+
+| Mode | What is shaded | Metric shown |
+|------|----------------|-------------|
+| **County** (default) | California counties | PCCP per 100 tested animals |
+| **ZCTA** | ZIP code tabulation areas | Raw case count |
+| **Tract** | Census tracts | Raw case count |
+
+Hover over any region to see its name and value in a tooltip.
 
 ### 3.4 Regional Summary Table
 
@@ -237,12 +248,22 @@ Two dropdown menus allow selection of an **X variable** and a **Y variable** fro
 
 A scatter plot shows each California county as a point, with the X variable on the horizontal axis and the Y variable on the vertical axis. Hover over a point to see the county name and exact values. This view helps identify correlations or outliers across the county-level dataset.
 
+A **Cancer Type Filters** button in the scatter plot header opens a popover with three selectors:
+
+- **Dog Cancer Type** — filters the VMTH data to a specific cancer type before computing county-level PCCP for the scatter plot axes.
+- **Human Cancer Site** — selects the CCR cancer site when a human cancer variable is active (e.g., "Breast", "Lung and Bronchus"). Defaults to "All Cancer Sites."
+- **Human Sex** — filters human cancer rates by sex. Available options are constrained to what the selected site provides; sex-specific sites hide unavailable options. Defaults to "Both Sexes."
+
 ### 7.3 Four-Map Grid
 
 Below the scatter plot, four side-by-side maps display:
 
 - **Top-left** — VMTH Cancer PCCP by county (baseline reference)
 - **Other three** — the selected X and Y variables as color-encoded county layers
+
+Each map has an **Expand** button (↗) in the top-right corner that opens a full-screen view of that map. Press **Esc** or click the **×** to close.
+
+When some cases have no California county and are excluded from the Cancer Incidence map, an amber **"X% excluded"** badge appears in the map header. Hover over it to see the exact count.
 
 Maps support pan and zoom. Click **Reset View** to return all maps to the California bounding box.
 
@@ -314,6 +335,15 @@ For jobs with status `pending_review`, the following actions are available:
 - **Approve** — sends the file through the PetBERT classification pipeline. The job status changes to `processing`.
 - **Reject** — rejects the submission with an optional rejection reason. The submitter sees the rejection status in their upload list.
 - **Cancel** — withdraws a job that has not yet been approved. Only available to the original submitter or an admin.
+
+#### 9.2.1 Model Selection
+
+When you click **Approve**, a confirmation panel appears with a **Select model** dropdown before the job is dispatched to the pipeline. Two models are available:
+
+- **Model A** — tuned for higher accuracy on a set of specific common cancer labels. Prefer this model when the uploaded dataset is dominated by routine, frequently seen diagnoses.
+- **Model B** — a general-purpose classifier that performs better across the full label space, including rarer cancer types. Prefer this model for mixed or exploratory datasets.
+
+Pick a model, then click **Confirm Approve** to start the job. The choice is recorded on the job and is visible to admins after completion.
 
 ### 9.3 Archive Filter
 
@@ -410,6 +440,10 @@ Users who request a data export appear in the **Export Requests** queue. Each en
 
 After a large ingestion completes, dashboard statistics may be stale because the application caches aggregated data. Click **Refresh Views** to rebuild the materialized views in the database. This operation takes a few seconds and is safe to run at any time.
 
+### 11.5 Current Memberships
+
+A **Current Memberships** table below the role assignment form shows all users who have been assigned at least one role. Filter pills — **All**, **Admin**, **Uploader**, **Reviewer** — narrow the list to users with that role. The table displays each user's email and their current role assignments.
+
 ---
 
 ## 12. Roles and Permissions
@@ -496,6 +530,7 @@ If you experience issues accessing or using the application, follow these steps 
 | **PetBERT** | A BERT-based natural language processing model pretrained on veterinary electronic health records, used to classify pathology report text into cancer types. |
 | **Vet-ICD-O-Canine-1** | The veterinary oncology classification standard used to categorize canine cancer diagnoses in this registry. |
 | **Choropleth map** | A map in which geographic regions (counties) are shaded in proportion to a statistical variable, such as PCCP or cancer patient count. |
+| **ZCTA** | ZIP Code Tabulation Area. A geographic unit used by the US Census Bureau that approximates ZIP code boundaries. Used in the ZCTA map view to show case counts at the ZIP code level. |
 | **Materialized view** | A pre-computed database query result stored for fast retrieval. Must be refreshed after data changes to reflect the latest ingested records. |
 | **CalEnviroScreen** | A statewide environmental justice screening tool developed by the California Office of Environmental Health Hazard Assessment (OEHHA) that scores communities by pollution burden and population vulnerability. |
 | **CDPR** | California Department of Pesticide Regulation. Provides county-level pesticide use data used in the Analysis tab. |

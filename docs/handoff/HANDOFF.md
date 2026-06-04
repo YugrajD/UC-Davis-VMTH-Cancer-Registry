@@ -4,7 +4,7 @@
 **Team:** ECS 193A Team 14  
 **Authors:** Yugraj Dhillon, David Estrella, Chun Ho Li, Justin Pak  
 **Handoff Date:** April 15, 2026  
-**Last Updated:** May 28, 2026  
+**Last Updated:** June 2, 2026  
 **Repository:** https://github.com/ECS-193A-Team-14/UC-Davis-VMTH-Cancer-Registry  
 
 ---
@@ -73,7 +73,8 @@ UC-Davis-VMTH-Cancer-Registry/
 │       ├── models/            # SQLAlchemy ORM models
 │       └── auth.py            # JWT validation middleware
 ├── ml/                        # PetBERT inference pipeline
-│   ├── petbert_scan/          # Core pipeline (embedding, categorization)
+│   ├── production/
+│   │   └── petbert_pipeline/  # Core pipeline (embedding, categorization)
 │   ├── labels/                # Vet-ICD-O-canine-1 taxonomy + embeddings
 │   └── scripts/               # Fine-tuning and training scripts
 ├── ml-worker/                 # Dockerized ML worker for local dev
@@ -151,6 +152,11 @@ UC-Davis-VMTH-Cancer-Registry/
 - Only **confirmed** or **corrected** `case_diagnoses` rows are counted (enforced by `apply_review_filter`)
 - **Non-Cancer** predictions excluded from numerators but included in denominators (they represent tested-but-cancer-free animals)
 - PCCP disclaimer banners shown on Cancer Types, Cancer by Age, and Breed Disparities tabs with small-cohort caution notice
+- **ZCTA/Tract geo-level toggle** on the Overview map: switches between county (PCCP), ZIP code tabulation area (raw case count), and census tract (raw case count) views; uses separate GeoJSON sources per level
+- **Analysis tab — scatter plot cancer type filters**: Dog Cancer Type dropdown filters VMTH data before PCCP computation; Human Cancer Site and Human Sex dropdowns parameterize CCR comparison data; sex options auto-constrain to what the selected site provides
+- **Analysis tab — per-map expand**: each of the four analysis maps has a full-screen expand button; uses a cloned DeckGL layer instance to avoid shared WebGL context issues
+- **Amber excluded-cases badge**: shown on the Cancer Incidence map when cases have no California county (`excludedCases > 0`); hover reveals exact count
+- **Current Memberships table** in User Management: shows all users with assigned roles, filterable by role type (All / Admin / Uploader / Reviewer)
 
 ### Diagnosis Audit View (May 2026)
 - Uploaders and admins can browse all diagnoses by status (Pending / Confirmed / Corrected / Rejected / All) via a status filter pill bar on the Diagnosis Review tab

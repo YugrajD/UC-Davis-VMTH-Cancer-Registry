@@ -274,7 +274,8 @@ async def test_breed_detail_requires_breed_param():
 @pytest.mark.asyncio
 async def test_breed_detail_schema():
     mock_db = AsyncMock()
-    # 6 DB calls: global_denom, breed_denom, total_cases, sex, cancer_types, county
+    # 9 DB calls: global_denom, breed_denom, total_cases, sex, cancer_types,
+    #             county, county_all_tested, county_breed_tested, county_cancer
     mock_db.execute.side_effect = [
         scalar_result(1580),   # global_total_patients (Eq 5 denominator)
         scalar_result(100),    # breed_total_patients (Eq 6 denominator)
@@ -282,6 +283,9 @@ async def test_breed_detail_schema():
         all_result([row(sex="Male", count=6), row(sex="Female", count=4)]),
         all_result([row(cancer_type="Lymphoma", count=10)]),
         all_result([row(county_name="Yolo", fips_code="06113", count=5)]),
+        all_result([row(county_name="Yolo", n=50)]),   # county_all_tested
+        all_result([row(county_name="Yolo", n=20)]),   # county_breed_tested
+        all_result([row(county_name="Yolo", cancer_type="Lymphoma", count=5)]),  # county_cancer
     ]
 
     async def override():

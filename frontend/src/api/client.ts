@@ -244,7 +244,7 @@ export interface BreedDetail {
   pccp_of_all?: number;
   sex_breakdown: { sex: string; count: number }[];
   cancer_types: { cancer_type: string; count: number; pccp_within_breed?: number; pccp_of_all?: number }[];
-  county_cases: { county_name: string; fips_code: string; count: number }[];
+  county_cases: { county_name: string; fips_code: string; count: number; county_all_tested: number; county_breed_tested: number; cancer_types: { cancer_type: string; count: number }[] }[];
 }
 
 export async function fetchBreedDetail(breed: string): Promise<BreedDetail> {
@@ -263,7 +263,7 @@ export interface AgeDetail {
   pccp_of_all?: number;
   sex_breakdown: { sex: string; count: number }[];
   cancer_types: { cancer_type: string; count: number; pccp_within_age?: number; pccp_of_all?: number }[];
-  county_cases: { county_name: string; fips_code: string; count: number }[];
+  county_cases: { county_name: string; fips_code: string; count: number; county_all_tested: number; county_age_tested: number; cancer_types: { cancer_type: string; count: number }[] }[];
 }
 
 export async function fetchAgeDetail(age_group: string): Promise<AgeDetail> {

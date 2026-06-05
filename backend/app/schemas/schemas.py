@@ -186,6 +186,13 @@ class ClassifyResult(BaseModel):
     top_predictions: List[dict]
 
 
+# --- Shared sub-models ---
+
+class CountyCancerCount(BaseModel):
+    cancer_type: str
+    count: int
+
+
 # --- Breed Detail ---
 
 class BreedCancerTypeCount(BaseModel):
@@ -198,6 +205,9 @@ class BreedCountyCount(BaseModel):
     county_name: str
     fips_code: str
     count: int
+    county_all_tested: int = 0
+    county_breed_tested: int = 0
+    cancer_types: List[CountyCancerCount] = []
 
 class BreedSexCount(BaseModel):
     sex: str
@@ -227,6 +237,9 @@ class AgeCountyCount(BaseModel):
     county_name: str
     fips_code: str
     count: int
+    county_all_tested: int = 0
+    county_age_tested: int = 0
+    cancer_types: List[CountyCancerCount] = []
 
 class AgeSexCount(BaseModel):
     sex: str

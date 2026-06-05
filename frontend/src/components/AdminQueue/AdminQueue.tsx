@@ -418,7 +418,7 @@ export function AdminQueue() {
   }, [getAccessToken]);
 
   useEffect(() => {
-    loadJobs(); // eslint-disable-line react-hooks/set-state-in-effect
+    loadJobs();
   }, [loadJobs]);
 
   // Fetch available model folders once on mount

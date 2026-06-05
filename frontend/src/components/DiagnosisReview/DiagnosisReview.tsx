@@ -450,11 +450,11 @@ export function DiagnosisReview() {
   }, [getAccessToken, page, canAudit, statusFilter, cancerGroupFilter, yearFilter, patientIdFilter, clinicFilter]);
 
   useEffect(() => {
-    setPageInput(String(page + 1)); // eslint-disable-line react-hooks/set-state-in-effect
+    setPageInput(String(page + 1));
   }, [page]);
 
   useEffect(() => {
-    load(); // eslint-disable-line react-hooks/set-state-in-effect
+    load();
   }, [load]);
 
   useEffect(() => {
@@ -528,7 +528,7 @@ export function DiagnosisReview() {
   );
 
   useEffect(() => {
-    if (selectedId !== null) loadDetail(selectedId); // eslint-disable-line react-hooks/set-state-in-effect
+    if (selectedId !== null) loadDetail(selectedId);
     else setDetail(null);
   }, [selectedId, loadDetail]);
 

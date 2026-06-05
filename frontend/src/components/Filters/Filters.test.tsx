@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { FilterState } from '../../types';
@@ -15,6 +15,8 @@ vi.mock('../../api/client', () => ({
       { name: 'Labrador Retriever' },
     ],
     species: [],
+    counties: [],
+    year_range: [2020, 2024],
   }),
 }));
 
@@ -56,13 +58,14 @@ describe('Filters', () => {
     });
   });
 
-  it('renders active filter summary as None by default', () => {
+  it('renders active filter summary as None by default', async () => {
     render(<Filters filters={defaultFilters} onFilterChange={vi.fn()} />);
 
     expect(screen.getByText('None')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Lymphoma' })).toBeInTheDocument());
   });
 
-  it('renders active cancer type, breed, and sex summaries', () => {
+  it('renders active cancer type, breed, and sex summaries', async () => {
     render(
       <Filters
         filters={{
@@ -78,5 +81,6 @@ describe('Filters', () => {
     expect(screen.getByText(/active filters:/i).closest('p')).toHaveTextContent(
       'Active filters: Lymphoma, Golden Retriever, Female Spayed',
     );
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Lymphoma' })).toBeInTheDocument());
   });
 });

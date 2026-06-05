@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   },
   uploadCSV: vi.fn(),
   fetchMyJobs: vi.fn(),
+  fetchFilterOptions: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -21,7 +22,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 vi.mock('../../api/client', () => ({
   uploadCSV: mocks.uploadCSV,
   fetchMyJobs: mocks.fetchMyJobs,
-  fetchFilterOptions: vi.fn().mockResolvedValue({ cancer_types: [], breeds: [], species: [] }),
+  fetchFilterOptions: mocks.fetchFilterOptions,
 }));
 
 const completedJob: IngestionJob = {
@@ -60,6 +61,13 @@ beforeEach(() => {
   mocks.authState.getAccessToken.mockResolvedValue(null);
   mocks.uploadCSV.mockResolvedValue(completedJob);
   mocks.fetchMyJobs.mockResolvedValue([]);
+  mocks.fetchFilterOptions.mockResolvedValue({
+    cancer_types: [],
+    counties: [],
+    breeds: [],
+    species: [],
+    year_range: [2020, 2024],
+  });
 });
 
 describe('DataUpload', () => {
@@ -149,9 +157,10 @@ describe('DataUpload', () => {
     expect(screen.queryByText('Submitted for Review')).not.toBeInTheDocument();
   });
 
-  it('does not render My Uploads for signed-out users', () => {
+  it('does not render My Uploads for signed-out users', async () => {
     render(<DataUpload />);
 
+    await waitFor(() => expect(mocks.fetchFilterOptions).toHaveBeenCalled());
     expect(screen.queryByText('My Uploads')).not.toBeInTheDocument();
     expect(mocks.fetchMyJobs).not.toHaveBeenCalled();
   });

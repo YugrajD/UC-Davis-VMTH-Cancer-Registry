@@ -198,6 +198,8 @@ class BreedCountyCount(BaseModel):
     county_name: str
     fips_code: str
     count: int
+    county_all_tested: int = 0
+    county_breed_tested: int = 0
 
 class BreedSexCount(BaseModel):
     sex: str
@@ -227,6 +229,8 @@ class AgeCountyCount(BaseModel):
     county_name: str
     fips_code: str
     count: int
+    county_all_tested: int = 0
+    county_age_tested: int = 0
 
 class AgeSexCount(BaseModel):
     sex: str

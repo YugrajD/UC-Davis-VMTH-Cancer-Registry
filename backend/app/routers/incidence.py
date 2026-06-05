@@ -574,7 +574,42 @@ async def get_breed_detail(
         .order_by(func.count(distinct(Patient.id)).desc())
     )
     county_rows = (await db.execute(county_stmt)).all()
-    county_cases = [BreedCountyCount(county_name=r.county_name, fips_code=r.fips_code, count=r.count) for r in county_rows]
+
+    # --- per-county denominators for map toggle ---
+    county_all_tested_stmt = apply_review_filter(
+        select(County.name.label("county_name"), func.count(distinct(Patient.id)).label("n"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .join(County, Patient.county_id == County.id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .group_by(County.name)
+    )
+    county_all_tested_map = {r.county_name: r.n for r in (await db.execute(county_all_tested_stmt)).all()}
+
+    county_breed_tested_stmt = apply_review_filter(
+        select(County.name.label("county_name"), func.count(distinct(Patient.id)).label("n"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .join(Breed, Patient.breed_id == Breed.id)
+        .join(County, Patient.county_id == County.id)
+        .where(Patient.data_source == "petbert")
+        .where(Breed.name == breed)
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .group_by(County.name)
+    )
+    county_breed_tested_map = {r.county_name: r.n for r in (await db.execute(county_breed_tested_stmt)).all()}
+
+    county_cases = [
+        BreedCountyCount(
+            county_name=r.county_name,
+            fips_code=r.fips_code,
+            count=r.count,
+            county_all_tested=county_all_tested_map.get(r.county_name, 0),
+            county_breed_tested=county_breed_tested_map.get(r.county_name, 0),
+        )
+        for r in county_rows
+    ]
 
     return BreedDetailOut(
         breed=breed,
@@ -703,7 +738,41 @@ async def get_age_detail(
         .order_by(func.count(distinct(Patient.id)).desc())
     )
     county_rows = (await db.execute(county_stmt)).all()
-    county_cases = [AgeCountyCount(county_name=r.county_name, fips_code=r.fips_code, count=r.count) for r in county_rows]
+
+    # --- per-county denominators for map toggle ---
+    county_all_tested_stmt = apply_review_filter(
+        select(County.name.label("county_name"), func.count(distinct(Patient.id)).label("n"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .join(County, Patient.county_id == County.id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .group_by(County.name)
+    )
+    county_all_tested_map = {r.county_name: r.n for r in (await db.execute(county_all_tested_stmt)).all()}
+
+    county_age_tested_stmt = apply_review_filter(
+        select(County.name.label("county_name"), func.count(distinct(Patient.id)).label("n"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .join(County, Patient.county_id == County.id)
+        .where(Patient.data_source == "petbert")
+        .where(CALIFORNIA_PATIENT_FILTER)
+        .where(age_filter)
+        .group_by(County.name)
+    )
+    county_age_tested_map = {r.county_name: r.n for r in (await db.execute(county_age_tested_stmt)).all()}
+
+    county_cases = [
+        AgeCountyCount(
+            county_name=r.county_name,
+            fips_code=r.fips_code,
+            count=r.count,
+            county_all_tested=county_all_tested_map.get(r.county_name, 0),
+            county_age_tested=county_age_tested_map.get(r.county_name, 0),
+        )
+        for r in county_rows
+    ]
 
     return AgeDetailOut(
         age_group=age_group,

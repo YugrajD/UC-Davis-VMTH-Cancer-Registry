@@ -23,9 +23,12 @@ export function AgeDisparitiesView() {
 
   const loadingDetail = selectedAgeGroup !== '' && selectedAgeGroup !== loadedAgeGroup;
 
+  const [mapMode, setMapMode] = useState<'within_age' | 'of_all'>('within_age');
+
   const [tooltip, setTooltip] = useState<{
     county: string;
     count: number;
+    rate: number;
     x: number;
     y: number;
   } | null>(null);
@@ -43,17 +46,28 @@ export function AgeDisparitiesView() {
       });
   }, [selectedAgeGroup]);
 
-  const countyMap = useMemo(() => {
+  const countyCountMap = useMemo(() => {
     const m = new Map<string, number>();
     detail?.county_cases.forEach((c) => m.set(c.county_name.toLowerCase(), c.count));
     return m;
   }, [detail]);
 
+  const countyValueMap = useMemo(() => {
+    const m = new Map<string, number>();
+    detail?.county_cases.forEach((c) => {
+      const denom = mapMode === 'within_age' ? c.county_age_tested : c.county_all_tested;
+      m.set(c.county_name.toLowerCase(), denom > 0 ? (c.count / denom) * 100 : 0);
+    });
+    return m;
+  }, [detail, mapMode]);
+
   const countRange = useMemo(() => {
     if (!detail || detail.county_cases.length === 0) return { min: 0, max: 1 };
-    const counts = detail.county_cases.map((c) => c.count);
-    return { min: Math.min(...counts), max: Math.max(...counts) };
-  }, [detail]);
+    const vals = Array.from(countyValueMap.values());
+    const nonZero = vals.filter((v) => v > 0);
+    if (nonZero.length === 0) return { min: 0, max: 1 };
+    return { min: Math.min(...nonZero), max: Math.max(...nonZero) };
+  }, [detail, countyValueMap]);
 
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
@@ -218,13 +232,41 @@ export function AgeDisparitiesView() {
             {/* Right: County Distribution Map */}
             <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-                <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-                  County Distribution
-                </h3>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                  Where {displayLabel} cases are located
-                </p>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+                      County Distribution
+                    </h3>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                      Where {displayLabel} cases are located
+                    </p>
+                  </div>
+                  <div className="flex rounded-md border border-gray-200 overflow-hidden text-xs shrink-0">
+                    <button
+                      onClick={() => setMapMode('within_age')}
+                      className={`px-2 py-1 ${mapMode === 'within_age' ? 'bg-[var(--color-teal)] text-white font-medium' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
+                    >
+                      % within age
+                    </button>
+                    <button
+                      onClick={() => setMapMode('of_all')}
+                      className={`px-2 py-1 border-l border-gray-200 ${mapMode === 'of_all' ? 'bg-[var(--color-teal)] text-white font-medium' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
+                    >
+                      % of all tested
+                    </button>
+                  </div>
+                </div>
               </div>
+              {mapMode === 'within_age' && (
+                <div className="px-3 py-2 bg-blue-50 border-b border-blue-100 flex gap-2">
+                  <svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                  <p className="text-[11px] text-blue-700 leading-relaxed">
+                    Rates reflect pathology-tested {displayLabel} animals only. This is not representative of the entire {displayLabel} population in each county.
+                  </p>
+                </div>
+              )}
               <div className="relative" style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
                 <ComposableMap
                   projection="geoMercator"
@@ -237,8 +279,8 @@ export function AgeDisparitiesView() {
                     {({ geographies }) =>
                       geographies.map((geo) => {
                         const name = (geo.properties.name || '') as string;
-                        const count = countyMap.get(name.toLowerCase()) ?? 0;
-                        const fill = count > 0 ? colorScale(count) : '#E5E7EB';
+                        const val = countyValueMap.get(name.toLowerCase()) ?? 0;
+                        const fill = val > 0 ? colorScale(val) : '#E5E7EB';
 
                         return (
                           <Geography
@@ -262,7 +304,8 @@ export function AgeDisparitiesView() {
                               const event = e as unknown as React.MouseEvent;
                               setTooltip({
                                 county: name,
-                                count,
+                                count: countyCountMap.get(name.toLowerCase()) ?? 0,
+                                rate: countyValueMap.get(name.toLowerCase()) ?? 0,
                                 x: event.clientX,
                                 y: event.clientY,
                               });
@@ -278,7 +321,7 @@ export function AgeDisparitiesView() {
                 {/* Legend */}
                 <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
                   <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">
-                    Cancer Patients
+                    {mapMode === 'within_age' ? '% within age group' : '% of all tested'}
                   </p>
                   <div
                     className="w-28 h-3 rounded"
@@ -288,10 +331,10 @@ export function AgeDisparitiesView() {
                   />
                   <div className="flex justify-between mt-1">
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.min}
+                      {countRange.min.toFixed(1)}%
                     </span>
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.max}
+                      {countRange.max.toFixed(1)}%
                     </span>
                   </div>
                   <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
@@ -316,11 +359,19 @@ export function AgeDisparitiesView() {
                       <p className="font-semibold text-sm text-[var(--color-text-primary)]">
                         {tooltip.county}
                       </p>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                        {tooltip.count > 0
-                          ? `${tooltip.count.toLocaleString()} cancer patients`
-                          : 'No data'}
-                      </p>
+                      {tooltip.count > 0 ? (
+                        <>
+                          <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                            {tooltip.count.toLocaleString()} cancer patients
+                          </p>
+                          <p className="text-xs text-[var(--color-teal-dark)] font-medium mt-0.5">
+                            {tooltip.rate.toFixed(2)}%{' '}
+                            {mapMode === 'within_age' ? 'within age group' : 'of all tested'}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-[var(--color-text-secondary)] mt-1">No data</p>
+                      )}
                     </div>
                   </div>
                 )}

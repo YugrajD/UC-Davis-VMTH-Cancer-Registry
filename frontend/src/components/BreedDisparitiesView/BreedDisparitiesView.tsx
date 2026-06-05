@@ -36,6 +36,7 @@ export function BreedDisparitiesView() {
     county: string;
     count: number;
     rate: number;
+    cancerTypes: { cancer_type: string; count: number }[];
     x: number;
     y: number;
   } | null>(null);
@@ -127,6 +128,12 @@ export function BreedDisparitiesView() {
   const countyCountMap = useMemo(() => {
     const m = new Map<string, number>();
     detail?.county_cases.forEach((c) => m.set(c.county_name.toLowerCase(), c.count));
+    return m;
+  }, [detail]);
+
+  const countyCancerMap = useMemo(() => {
+    const m = new Map<string, { cancer_type: string; count: number }[]>();
+    detail?.county_cases.forEach((c) => m.set(c.county_name.toLowerCase(), c.cancer_types));
     return m;
   }, [detail]);
 
@@ -417,6 +424,7 @@ export function BreedDisparitiesView() {
                                 county: name,
                                 count: countyCountMap.get(name.toLowerCase()) ?? 0,
                                 rate: countyValueMap.get(name.toLowerCase()) ?? 0,
+                                cancerTypes: countyCancerMap.get(name.toLowerCase()) ?? [],
                                 x: event.clientX,
                                 y: event.clientY,
                               });
@@ -474,12 +482,25 @@ export function BreedDisparitiesView() {
                       {tooltip.count > 0 ? (
                         <>
                           <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                            {tooltip.count.toLocaleString()} cancer patients
+                            {tooltip.count.toLocaleString()} cancer patient{tooltip.count !== 1 ? 's' : ''}
                           </p>
                           <p className="text-xs text-[var(--color-teal-dark)] font-medium mt-0.5">
                             {tooltip.rate.toFixed(2)}%{' '}
                             {mapMode === 'within_breed' ? 'within breed' : 'of all tested'}
                           </p>
+                          {tooltip.cancerTypes.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-gray-100">
+                              <p className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">Cancers</p>
+                              <ul className="space-y-0.5">
+                                {tooltip.cancerTypes.map((ct) => (
+                                  <li key={ct.cancer_type} className="flex justify-between gap-3 text-xs text-[var(--color-text-primary)]">
+                                    <span className="truncate">{ct.cancer_type}</span>
+                                    <span className="text-[var(--color-text-secondary)] tabular-nums shrink-0">{ct.count}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                         </>
                       ) : (
                         <p className="text-xs text-[var(--color-text-secondary)] mt-1">No data</p>

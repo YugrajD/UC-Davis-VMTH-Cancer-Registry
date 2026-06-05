@@ -32,14 +32,24 @@ export function BreedDisparitiesView() {
   const listRef = useRef<HTMLUListElement>(null);
 
   // Tooltip for map
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [tooltip, setTooltip] = useState<{
     county: string;
     count: number;
     rate: number;
     cancerTypes: { cancer_type: string; count: number }[];
+    expanded: boolean;
     x: number;
     y: number;
   } | null>(null);
+
+  const scheduleTooltipClose = () => {
+    closeTimerRef.current = setTimeout(() => setTooltip(null), 120);
+  };
+  const cancelTooltipClose = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  };
 
   useEffect(() => {
     fetchFilterOptions()
@@ -418,18 +428,23 @@ export function BreedDisparitiesView() {
                               },
                               pressed: { fill: '#E87722', outline: 'none' },
                             }}
+                            onClick={() => {
+                              setTooltip(prev => prev?.county === name ? { ...prev, expanded: !prev.expanded } : prev);
+                            }}
                             onMouseEnter={(e) => {
+                              cancelTooltipClose();
                               const event = e as unknown as React.MouseEvent;
-                              setTooltip({
+                              setTooltip(prev => ({
                                 county: name,
                                 count: countyCountMap.get(name.toLowerCase()) ?? 0,
                                 rate: countyValueMap.get(name.toLowerCase()) ?? 0,
                                 cancerTypes: countyCancerMap.get(name.toLowerCase()) ?? [],
+                                expanded: prev?.county === name ? prev.expanded : false,
                                 x: event.clientX,
                                 y: event.clientY,
-                              });
+                              }));
                             }}
-                            onMouseLeave={() => setTooltip(null)}
+                            onMouseLeave={scheduleTooltipClose}
                           />
                         );
                       })
@@ -468,14 +483,16 @@ export function BreedDisparitiesView() {
                 {/* Tooltip */}
                 {tooltip && (
                   <div
-                    className="fixed z-50 pointer-events-none"
+                    className="fixed z-50"
                     style={{
                       left: tooltip.x + 12,
                       top: tooltip.y - 12,
                       transform: 'translateY(-100%)',
                     }}
+                    onMouseEnter={cancelTooltipClose}
+                    onMouseLeave={scheduleTooltipClose}
                   >
-                    <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[160px]">
+                    <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[160px] max-w-[220px]">
                       <p className="font-semibold text-sm text-[var(--color-text-primary)]">
                         {tooltip.county}
                       </p>
@@ -492,13 +509,20 @@ export function BreedDisparitiesView() {
                             <div className="mt-2 pt-2 border-t border-gray-100">
                               <p className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">Cancers</p>
                               <ul className="space-y-0.5">
-                                {tooltip.cancerTypes.map((ct) => (
+                                {(tooltip.expanded ? tooltip.cancerTypes : tooltip.cancerTypes.slice(0, 5)).map((ct) => (
                                   <li key={ct.cancer_type} className="flex justify-between gap-3 text-xs text-[var(--color-text-primary)]">
                                     <span className="truncate">{ct.cancer_type}</span>
                                     <span className="text-[var(--color-text-secondary)] tabular-nums shrink-0">{ct.count}</span>
                                   </li>
                                 ))}
                               </ul>
+                              {tooltip.cancerTypes.length > 5 && (
+                                <p className="mt-1.5 text-[11px] text-[var(--color-text-secondary)] italic">
+                                  {tooltip.expanded
+                                    ? 'Click county to collapse'
+                                    : `+ ${tooltip.cancerTypes.length - 5} more · click county to expand`}
+                                </p>
+                              )}
                             </div>
                           )}
                         </>

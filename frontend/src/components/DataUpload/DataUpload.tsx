@@ -412,7 +412,7 @@ export function DataUpload() {
 
   useEffect(() => {
     if (user) {
-      loadMyJobs(); // eslint-disable-line react-hooks/set-state-in-effect
+      loadMyJobs();
       loadRoleRequests();
       loadExportRequests();
     }
@@ -1137,4 +1137,3 @@ export function DataUpload() {
     </div>
   );
 }
-

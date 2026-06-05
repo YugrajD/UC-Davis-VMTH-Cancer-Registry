@@ -253,13 +253,13 @@ export function AgeDisparitiesView() {
                       onClick={() => setMapMode('within_age')}
                       className={`px-2 py-1 ${mapMode === 'within_age' ? 'bg-[var(--color-teal)] text-white font-medium' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
                     >
-                      % within age
+                      PCCP within age
                     </button>
                     <button
                       onClick={() => setMapMode('of_all')}
                       className={`px-2 py-1 border-l border-gray-200 ${mapMode === 'of_all' ? 'bg-[var(--color-teal)] text-white font-medium' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
                     >
-                      % of all tested
+                      PCCP of all tested
                     </button>
                   </div>
                 </div>
@@ -329,7 +329,7 @@ export function AgeDisparitiesView() {
                 {/* Legend */}
                 <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
                   <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">
-                    {mapMode === 'within_age' ? '% within age group' : '% of all tested'}
+                    {mapMode === 'within_age' ? 'PCCP within age group' : 'PCCP of all tested'}
                   </p>
                   <div
                     className="w-28 h-3 rounded"
@@ -374,7 +374,7 @@ export function AgeDisparitiesView() {
                           </p>
                           <p className="text-xs text-[var(--color-teal-dark)] font-medium mt-0.5">
                             {tooltip.rate.toFixed(2)}%{' '}
-                            {mapMode === 'within_age' ? 'within age group' : 'of all tested'}
+                            {mapMode === 'within_age' ? 'PCCP within age group' : 'PCCP of all tested'}
                           </p>
                           {tooltip.cancerTypes.length > 0 && (
                             <div className="mt-2 pt-2 border-t border-gray-100">

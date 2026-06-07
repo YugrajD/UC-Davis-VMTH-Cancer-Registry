@@ -3,7 +3,6 @@ title = "UC Davis VMTH Cancer Registry"
 authors = ["ECS 193A Team 14"]
 description = "Documentation for the UC Davis VMTH Canine Cancer Registry"
 language = "en"
-multilingual = false
 src = "src"
 
 [output.html]

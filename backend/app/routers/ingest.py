@@ -6,6 +6,7 @@ import logging
 import os
 import pathlib
 import re
+import time
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -335,6 +336,10 @@ async def upload_datasets(
     if not dataset_a.filename:
         raise HTTPException(status_code=400, detail="Dataset file is required")
 
+    # Start timing the server-side upload processing (file receive →
+    # normalization → job created in the review queue) for pipeline analysis.
+    t0 = time.perf_counter()
+
     dataset_a_bytes = await dataset_a.read()
 
     if not dataset_a_bytes:
@@ -387,6 +392,7 @@ async def upload_datasets(
         f.write(dataset_a_bytes)
 
     job.storage_path = storage_path
+    job.upload_duration_ms = int((time.perf_counter() - t0) * 1000)
     await db.commit()
     await db.refresh(job)
 
@@ -621,6 +627,7 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "processing_error": job.processing_error,
         "batch_job_name": job.batch_job_name,
         "result_summary": job.result_summary,
+        "upload_duration_ms": job.upload_duration_ms,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }

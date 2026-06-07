@@ -87,6 +87,13 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// Server-side upload processing time (receive + normalize before the job
+// enters the review queue), surfaced for upload-pipeline time analysis.
+function formatDuration(ms?: number | null): string | null {
+  if (ms == null) return null;
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
 function ResultSummary({ summary }: { summary: NonNullable<IngestionJob['result_summary']> }) {
   const total = summary.high_confidence + summary.medium_confidence + summary.low_confidence;
   const pct = (n: number) => total > 0 ? Math.round((n / total) * 100) : 0;
@@ -251,6 +258,7 @@ function JobCard({
             <p>Date: {job.created_at ? new Date(job.created_at).toLocaleString() : '—'}</p>
             <p>File: <span className="font-mono">{job.dataset_a_filename}</span></p>
             {job.model_folder && <p>Model: <span className="font-medium text-[var(--color-text-primary)]">{job.model_folder}</span></p>}
+            {job.upload_duration_ms != null && <p>Upload time: <span className="font-medium text-[var(--color-text-primary)] tabular-nums">{formatDuration(job.upload_duration_ms)}</span></p>}
             {job.reviewed_by_email && <p>Reviewed by: {job.reviewed_by_email}</p>}
             {job.reviewed_at && <p>Reviewed: {new Date(job.reviewed_at).toLocaleString()}</p>}
             {job.rejection_reason && <p className="text-red-600">Reason: {job.rejection_reason}</p>}

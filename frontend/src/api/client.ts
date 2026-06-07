@@ -375,6 +375,7 @@ export interface IngestionJob {
     low_confidence: number;
     top_cancer_types: { name: string; count: number }[];
   } | null;
+  upload_duration_ms?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

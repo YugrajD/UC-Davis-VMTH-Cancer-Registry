@@ -301,6 +301,7 @@ class IngestionJobOut(BaseModel):
     rejection_reason: Optional[str] = None
     ingestion_log_id: Optional[int] = None
     processing_error: Optional[str] = None
+    upload_duration_ms: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     model_config = {"from_attributes": True}

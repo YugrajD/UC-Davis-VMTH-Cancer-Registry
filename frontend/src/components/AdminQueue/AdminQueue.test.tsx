@@ -87,6 +87,20 @@ describe('AdminQueue', () => {
     expect(screen.queryByText('Job #1')).not.toBeInTheDocument();
   });
 
+  it('renders the upload-time stat when present and omits it otherwise', async () => {
+    mocks.fetchJobs.mockResolvedValue([
+      job({ id: 1, status: 'pending_review', upload_duration_ms: 850 }),
+      job({ id: 2, status: 'pending_review', upload_duration_ms: 1420 }),
+      job({ id: 8, status: 'pending_review', upload_duration_ms: null }),
+    ]);
+    render(<AdminQueue />);
+
+    expect(await screen.findByText('850 ms')).toBeInTheDocument();
+    expect(screen.getByText('1.4 s')).toBeInTheDocument();
+    // Three queue jobs render, but only the two with timing show an "Upload time" label.
+    expect(screen.getAllByText(/Upload time:/)).toHaveLength(2);
+  });
+
   it('exits loading without API calls when there is no token', async () => {
     mocks.authState.getAccessToken.mockResolvedValue(null);
     render(<AdminQueue />);

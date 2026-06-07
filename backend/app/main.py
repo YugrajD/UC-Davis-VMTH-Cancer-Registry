@@ -586,6 +586,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not apply migration 029: %s", e)
 
+    # Add upload_duration_ms column to ingestion_jobs (migration 030).
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "ALTER TABLE ingestion_jobs "
+                "ADD COLUMN IF NOT EXISTS upload_duration_ms INTEGER"
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Could not apply migration 030 (upload_duration_ms): %s", e)
+
     yield
 
 

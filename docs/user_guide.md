@@ -198,7 +198,16 @@ A bar chart displays the top 15 cancer types for the selected age group with two
 
 ### 5.4 County Map
 
-A California choropleth map shades counties by cancer patient count for the selected age group. Hover over a county to see its name and cancer patient count.
+A California choropleth map shades counties by **PCCP** for the selected age group. A toggle above the map switches between two denominator modes:
+
+| Mode | Formula |
+|------|---------|
+| **PCCP within age** | cancer patients of this age group in county ÷ pathology-tested animals of this age group in county × 100 |
+| **PCCP of all tested** | cancer patients of this age group in county ÷ all pathology-tested animals in county × 100 |
+
+> When **PCCP within age** is selected, a disclaimer banner notes that rates reflect pathology-tested animals of that age group only and are not population-representative.
+
+Hover over a county to see a tooltip with the county name, PCCP value, and the cancer types present among patients in that county. Up to 3 cancer types are shown by default; if more are present, a count of additional types is displayed. **Click a county** to expand the full cancer type list; click again to collapse it.
 
 ---
 
@@ -225,7 +234,14 @@ Once a breed is selected, the detail view displays:
   | % within breed (bar width) | patients of this breed with cancer type X ÷ all tested animals of this breed × 100 |
   | % of all tested | patients of this breed with cancer type X ÷ all tested animals × 100 |
 
-- **County Distribution Map** — choropleth shaded by cancer patient count for that breed (geographic distribution; per-county PCCP is not shown due to small county-level denominators)
+- **County Distribution Map** — choropleth shaded by PCCP for that breed. A toggle switches between two denominator modes:
+
+  | Mode | Formula |
+  |------|---------|
+  | **PCCP within breed** | cancer patients of this breed in county ÷ pathology-tested animals of this breed in county × 100 |
+  | **PCCP of all tested** | cancer patients of this breed in county ÷ all pathology-tested animals in county × 100 |
+
+  When **PCCP within breed** is selected, a disclaimer banner notes that rates reflect pathology-tested animals of that breed only. Hover over a county to see the PCCP value and the cancer types present; up to 3 cancer types appear by default. **Click a county** to expand the full cancer type list; click again to collapse.
 - **Sex Distribution** — breakdown of intact vs. neutered males and females
 
 ---

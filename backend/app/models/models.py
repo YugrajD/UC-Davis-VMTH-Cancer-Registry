@@ -238,6 +238,7 @@ class IngestionJob(Base):
     result_summary = Column(JSONB, nullable=True)
     model_folder = Column(String(255), nullable=True)
     clinic_name = Column(String(255), nullable=True)
+    upload_duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
 

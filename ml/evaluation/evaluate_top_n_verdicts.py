@@ -30,7 +30,7 @@ except (AttributeError, OSError):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
-from evaluation.common import load_filter_ids, load_uncommon_groups, safe_div
+from evaluation.common import load_filter_ids, load_uncommon_groups, safe_div, NON_CANCER_PRED_TERMS
 from evaluation.evaluate import load_csv
 from evaluation.evaluate_common_labels import _covers_group
 
@@ -189,12 +189,13 @@ def evaluate_top_n_verdicts(
             term_counts[t] += 1
 
     # Per-case predicted (term, group) sets — dedupes K=2 tail-gate duplicates.
-    # "Uncategorized" predictions are dropped so a case with only abstentions
-    # has an empty prediction set (→ FN bucket for expected terms, no FP).
+    # "Non-Cancer" / "Uncategorized" (legacy) predictions are dropped so a case
+    # with only abstentions has an empty prediction set (→ FN bucket for expected
+    # terms, no FP).
     case_preds: dict[str, set[tuple[str, str]]] = defaultdict(set)
     for row in pb_rows:
         pt = row["predicted_term"]
-        if pt and pt != "Uncategorized":
+        if pt and pt not in NON_CANCER_PRED_TERMS:
             case_preds[row["case_id"]].add((pt, row["predicted_group"]))
 
     # Cases that received at least one real prediction — used to separate

@@ -8,7 +8,7 @@ All three trained heads consume the 2304-dim per-row concat-3 embedding (three 7
 
 ## Stage 1 — CasePresenceClassifier
 
-**Role.** Cancer / non-cancer gate. Cases below threshold short-circuit to `Uncategorized` without reaching Stages 2–4. Reduces false positives from non-cancer reports that share vocabulary with cancer reports.
+**Role.** Cancer / non-cancer gate. Cases below threshold short-circuit to `Non-Cancer` without reaching Stages 2–4. Reduces false positives from non-cancer reports that share vocabulary with cancer reports.
 
 **Files.**
 - Module: `ml/model/case_presence_classifier.py`
@@ -106,7 +106,7 @@ The Uncommon group draws labels from the union of all merged groups in `uncommon
 
 ## Stage 3b / Stage 4 — keyword correction
 
-**Role.** Constrain Stage 3a's pool by behavior code, then by group-specific subtype keywords. When Stage 3a is absent (no `.pt` for a group), keyword correction runs against the full in-group label pool and cosine similarity breaks ties.
+**Role.** Constrain Stage 3a's pool by behavior code, then by group-specific subtype keywords. Stage 3a is required; groups without a loaded LP head are skipped entirely.
 
 **Files.**
 - Stage caller: `ml/production/petbert_pipeline/stages/keyword_correction.py`
@@ -128,15 +128,15 @@ This stage runs unconditionally — no flag to disable it.
 
 `ml/production/petbert_pipeline/stages/__init__.py::categorize_per_case` walks each case:
 
-1. If Stage 1 rejects (or text is empty) → emit `Uncategorized` / empty.
+1. If Stage 1 rejects (or text is empty) → emit the gate-failed sentinel (internal `Uncategorized`, written to predictions.csv as `Non-Cancer` with method `rejected_by_case_presence`) / empty.
 2. Take the predicted group list (after threshold + argmax-fallback + tail-gate).
 3. For each group up to `tail_max_predictions`:
    - If an LP head is loaded for the group: Stage 3a scores → Stage 3b narrows → emit top label.
-   - Else: Stage 3b runs on the full in-group pool → cosine vs label embeddings picks the term.
+   - Else: group is skipped for this case (all production groups have an LP head).
 4. Deduplicate winners across groups; optional rerank via `--rerank-stage3`.
-5. If nothing was selected after the loop → `Unidentified Cancer` (gate passed) or `Uncategorized` (gate failed).
+5. If nothing was selected after the loop → `Unidentified Cancer` (gate passed) or `Non-Cancer` (gate failed; internal sentinel `Uncategorized`).
 
-The dispatcher uses two embedding views: `lp_embeddings` (2304-dim) feeds the LP head, `mean_embeddings` (768-dim) feeds cosine fallback comparisons against 768-dim label embeddings.
+The dispatcher uses one classifier-facing view: `lp_embeddings` (2304-dim concat-3) feeds the LP head. `label_embeddings` (768-dim) feeds the LP head's `[report_emb | label_emb]` concat input.
 
 ---
 
@@ -151,7 +151,7 @@ Verdict definitions (`ml/evaluation/evaluate.py`):
 | `completely_off` | Neither term nor group matches any annotation for this case |
 | `false_positive` | Case has no annotation labels; pipeline emitted a cancer prediction |
 | `false_negative` | Annotated cancer case with no good or slightly-off prediction |
-| `true_negative` | Pipeline emitted `Uncategorized` on a non-cancer case (not counted in totals) |
+| `true_negative` | Pipeline emitted `Non-Cancer` on a non-cancer case (not counted in totals) |
 
 Current production baseline on the held-out eval-half (4,414 rows):
 

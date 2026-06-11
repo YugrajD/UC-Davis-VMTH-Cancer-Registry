@@ -22,7 +22,7 @@ Plus a per-label verdict breakdown matching evaluate.py's semantics
   good              — exact label was in the case's top-5 predictions
   slightly_off      — exact label missed, but some top-5 group covered it
   completely_off    — no top-5 prediction covered the label's group
-  false_negative    — case was abstained on by Stage 1 (predicted Uncategorized)
+  false_negative    — case was abstained on by Stage 1 (predicted Non-Cancer / Uncategorized for legacy CSVs)
   false_positive    — cases where the model predicted this label in top-5 but
                       the annotation does NOT contain it. Broader than
                       evaluate.py's FP definition (which only fires on
@@ -50,7 +50,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 from evaluation.evaluate import load_csv
-from evaluation.common import load_filter_ids, load_uncommon_groups
+from evaluation.common import load_filter_ids, load_uncommon_groups, NON_CANCER_PRED_TERMS
 
 
 def _covers_group(predicted_group: str, expected_group: str,
@@ -94,8 +94,8 @@ def evaluate_common_labels(prediction_csv: Path, expectation_csv: Path, out_dir:
             term_to_group[term] = row["matched_group"].strip()
 
     # Per-case predicted term and group sets (top-5 already in the CSV).
-    # Also flag cases where Stage 1 abstained ("Uncategorized") — those count as
-    # false_negative when an expected label is uncovered, matching evaluate.py.
+    # Also flag cases where Stage 1 abstained ("Non-Cancer" / "Uncategorized" for legacy CSVs)
+    # — those count as false_negative when an expected label is uncovered, matching evaluate.py.
     # Build a reverse index term -> set(case_ids) for the per-label FP count.
     case_pred_terms: dict[str, set[str]] = defaultdict(set)
     case_pred_groups: dict[str, set[str]] = defaultdict(set)
@@ -104,7 +104,7 @@ def evaluate_common_labels(prediction_csv: Path, expectation_csv: Path, out_dir:
     term_to_pred_group: dict[str, str] = {}
     for row in pb_rows:
         cid = row["case_id"]
-        if row["predicted_term"] == "Uncategorized":
+        if row["predicted_term"] in NON_CANCER_PRED_TERMS:
             case_is_uncat.add(cid)
             continue
         if row["predicted_term"]:

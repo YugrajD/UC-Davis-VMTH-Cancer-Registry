@@ -31,12 +31,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run categorization only, neighbors only, or both.",
     )
     parser.add_argument(
-        "--embedding-min-sim",
-        type=float,
-        default=0.6,
-        help="Minimum embedding similarity to accept embedding fallback category.",
-    )
-    parser.add_argument(
         "--device",
         default="auto",
         choices=["auto", "cpu", "cuda", "mps", "xpu"],
@@ -221,7 +215,6 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         max_length=args.max_length,
         neighbors_k=args.neighbors_k,
         task=args.task,
-        embedding_min_sim=args.embedding_min_sim,
         device=args.device,
         labels_csv_path=args.labels_csv,
         embedding_cache_path=args.embedding_cache,

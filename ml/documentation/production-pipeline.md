@@ -39,7 +39,7 @@ Report CSV is read with `latin-1` encoding; BOM artifacts are stripped from colu
    - `__sec_2__` = `ANCILLARY TESTS`
 
    Defined in `pipeline.py::CONCAT_3_SECTIONS`. Empty cells become empty strings (tracked via `has_content` masks).
-3. **Embed each section, then concat.** Either load `--embedding-cache` (validates against current model name + report CSV mtime + labels CSV mtime — see `embedding_cache.py`), or run PetBERT fresh: each `__sec_N__` is tokenized with `--max-length 512`, mean-pooled to 768-dim, and the three vectors concatenated per row into a 2304-dim view stored under cache key `concat_3`. A 768-dim masked-mean across non-empty sections is also computed for cosine-similarity fallbacks against label embeddings.
+3. **Embed each section, then concat.** Either load `--embedding-cache` (validates against current model name + report CSV mtime + labels CSV mtime — see `embedding_cache.py`), or run PetBERT fresh: each `__sec_N__` is tokenized with `--max-length 512`, mean-pooled to 768-dim, and the three vectors concatenated per row into a 2304-dim view stored under cache key `concat_3`. A 768-dim masked-mean across non-empty sections is also computed for the PCA visualization and the embeddings NPZ dump.
 4. **Run the 4-stage pipeline** (`stages/__init__.py::categorize_per_case`). Detailed below.
 5. **Resolve top-k indices to (term, group, code).** `ICD_labels.resolve_taxonomy_matches`.
 6. **Write outputs.** PCA-2D visualization, predictions CSV, provenance, similarity matrix, embeddings NPZ, summary JSON, optional neighbors CSV.
@@ -72,16 +72,16 @@ Per-LP threshold lookup order:
 1. `--label-presence-thresholds-json` → group name → threshold (default `ml/output/checkpoints/label_presence/lp_thresholds.json`).
 2. `--label-presence-threshold` (default 0.5) for any group missing from the JSON.
 
-Labels above threshold are selected; argmax fallback applies when nothing passes. Groups without a corresponding `.pt` (e.g. `Uncommon` if no `uncommon.pt`) fall through directly to Stage 3b. Pass `--label-presence-classifier-dir ""` to disable Stage 3a entirely.
+Labels above threshold are selected; argmax fallback applies when nothing passes. Groups without a corresponding `.pt` are skipped for the case (startup warning lists them). Pass `--label-presence-classifier-dir ""` to disable Stage 3a entirely.
 
 ### Stage 3b / Stage 4 — keyword correction
 
-File: `stages/keyword_correction.py`. Applied to whichever pool Stage 3a produced (or the full in-group label pool when Stage 3a is absent).
+File: `stages/keyword_correction.py`. Applied to the pool Stage 3a produced.
 
 1. **Behavior-code filter** — `ICD_labels/behavior_keywords.py` scores the report text for ICD-O behavior digits (`/0` benign, `/1` borderline, `/2` in situ, `/3` malignant, `/6` metastatic). The highest-ranked digit narrows the pool to labels with matching codes. When no signal is found, the pool passes through.
 2. **Subtype keyword filter** — `ICD_labels/subtype_keywords.py` applies group-specific discriminators for 7 groups: Mast cell neoplasms, Blood vessel tumors, Melanocytoma and Melanomas, Meningiomas, Osseous and chondromatous neoplasms, Gliomas, and Lipomatous neoplasms. Each group has an ordered list of `(regex, label_substr)` rules; first matching rule narrows the pool.
 
-When an LP head is present, cosine-similarity is not used inside the pool — the LP score is the final rank. When Stage 3a is absent, cosine similarity (768-dim masked-mean vs 768-dim label embeddings) breaks ties within the post-filter pool.
+The LP score is the final within-group rank. Stage 3a is required: groups without a loaded LP head are skipped during that case's per-group iteration. All 25 production groups ship with an LP `.pt`.
 
 ### Post-Stage-3 rescue rules
 
@@ -95,15 +95,17 @@ Written under `--out-dir` (default `ml/output/production/`).
 
 | File | Contents |
 |---|---|
-| `petbert_predictions.csv` | One row per (case, rank). Columns: `case_id`, `diagnosis_index`, `predicted_term`, `predicted_group`, `predicted_code`, `confidence`, `method`. |
-| `petbert_provenance.csv` | Per-case traceability — merged input text, token counts, final label, embedding top-1 fallback. |
+| `petbert_predictions.csv` | One row per (case, rank). Columns: `case_id`, `diagnosis_index`, `predicted_term`, `predicted_group`, `predicted_code`, `case_presence_prob`, `confidence`, `group_prob`, `method`. |
+| `petbert_provenance.csv` | Per-case traceability — merged input text, char/token counts, final label, final label index. |
 | `petbert_similarity_scores.csv` | Full N×M label score matrix. |
 | `petbert_visualization.csv` | PCA-2D coordinates per case. |
 | `petbert_embeddings.npz` | 768-dim masked-mean embeddings + case IDs + text. |
 | `petbert_summary.json` | Run metadata + aggregate prediction counts. |
 | `petbert_neighbors.csv` | Top-k nearest cases (only when `--task neighbors` or `--task both`). |
 
-The `method` column in predictions takes values `embedding` (LP head or cosine), `label_presence`, `lipoma_rescue` (post-Stage-3 RESCUE append), `low_confidence` (gate-rejected → `Uncategorized`), `unidentified_cancer` (gate passed but no group), or `empty` (empty text).
+The `method` column in predictions takes values: `label_presence` (LP head pick), `lipoma_rescue` (post-Stage-3 RESCUE append), `rejected_by_case_presence` (gate-rejected → `predicted_term`/`predicted_group` = `Non-Cancer`), or `unidentified_cancer` (gate passed but no group). Empty-text cases produce no row.
+
+`case_presence_prob` is the raw Stage-1 CasePresenceClassifier probability for the case (blank when the gate is disabled). `group_prob` is the Stage-2 GroupClassifier sigmoid probability for that rank's predicted group, kept separate from `confidence` (which carries the LP score for `label_presence` rows).
 
 ## CLI flags
 
@@ -121,7 +123,6 @@ Source of truth: `production/petbert_pipeline/cli.py::build_parser` and the `Sca
 | `--max-length` | 512 | Tokenizer max_length per section |
 | `--neighbors-k` | 3 | k for `--task neighbors` |
 | `--task` | `categorize` | `categorize` / `neighbors` / `both` |
-| `--embedding-min-sim` | 0.6 | Min cosine for embedding fallback |
 | `--device` | `auto` | `auto` / `cpu` / `cuda` / `mps` / `xpu` |
 | `--labels-csv` | `ml/ICD_labels/labels.csv` | Taxonomy CSV |
 | `--embedding-cache` | `ml/output/training/embedding_cache.npz` (via `run_production.py`) | Cache NPZ path |

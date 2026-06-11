@@ -23,8 +23,8 @@ def load_label_presence_models(
 ) -> dict[str, LabelPresenceClassifier] | None:
     """Load per-group LabelPresenceClassifier checkpoints from a directory.
 
-    Returns None when classifier_dir is not set. Missing .pt files are silently
-    skipped — those groups fall back to keyword-only correction.
+    Returns None when classifier_dir is not set. Missing .pt files trigger a
+    startup warning listing the affected groups.
     """
     if classifier_dir is None:
         return None
@@ -39,6 +39,10 @@ def load_label_presence_models(
         if pt_path.exists():
             models[group_name] = LabelPresenceClassifier.load(pt_path)
             models[group_name].eval()
+
+    missing = [g for g in group_names if not (dir_path / f"{safe_filename(g)}.pt").exists()]
+    if missing:
+        print(f"Warning: no LP checkpoint for {len(missing)} group(s); these will produce no winner: {missing}")
 
     if models:
         print(f"Loaded {len(models)}/{len(group_names)} LabelPresenceClassifier models from {classifier_dir}")

@@ -4,7 +4,7 @@ This module handles the core ML operations:
   - Loading the PetBERT model and tokenizer from HuggingFace.
   - Converting free-text strings into 768-dimensional embedding vectors by
     mean-pooling the attended token hidden states from PetBERT's last hidden layer.
-  - Computing cosine similarity between two sets of embeddings.
+  - Embedding multiple columns independently and concatenating their outputs.
   - Finding top-k nearest neighbors within an embedding matrix.
 """
 
@@ -154,21 +154,6 @@ def embed_columns_separate(
 
     total_token_counts = np.stack(token_count_arrays, axis=0).sum(axis=0)
     return col_embeddings, col_has_content, total_token_counts.astype(np.int32, copy=False)
-
-
-def cosine_similarity_matrix(query: np.ndarray, ref: np.ndarray) -> np.ndarray:
-    """Compute pairwise cosine similarity between two embedding matrices.
-
-    Given query (N, D) and ref (M, D), returns an (N, M) matrix where
-    entry [i, j] = cosine_similarity(query[i], ref[j]).
-
-    Cosine similarity = dot(a, b) / (||a|| * ||b||), ranging from -1 to 1.
-    """
-    query_norms = np.linalg.norm(query, axis=1, keepdims=True)
-    query_norms = np.where(query_norms == 0, 1.0, query_norms)
-    ref_norms = np.linalg.norm(ref, axis=1, keepdims=True)
-    ref_norms = np.where(ref_norms == 0, 1.0, ref_norms)
-    return (query / query_norms) @ (ref / ref_norms).T
 
 
 def topk_cosine_neighbors(

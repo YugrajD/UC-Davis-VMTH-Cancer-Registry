@@ -30,7 +30,6 @@ _LIPOMA_RESCUE_GROUP = "Lipomatous neoplasms"
 _LIPOMA_RESCUE_TERM = "Lipoma, NOS"
 _LIPOMA_RESCUE_MIN_GROUP_PROB = 0.5
 
-from ..embedding import cosine_similarity_matrix
 from ..types import CategorizationResult
 from .case_presence_classifier import run_case_presence_classifier
 from .group_classifier import run_group_classifier
@@ -55,9 +54,8 @@ __all__ = [
 def categorize_per_case(
     *,
     texts: list[str],
-    mean_embeddings: np.ndarray,              # (N, 768) — cosine fallback (must match label_embeddings dim)
     label_embeddings: np.ndarray,             # (M, 768)
-    lp_embeddings: np.ndarray | None = None,  # (N, 2304) under concat-3; defaults to mean_embeddings
+    lp_embeddings: np.ndarray,               # (N, 2304) under concat-3
     taxonomy_labels: list["TaxonomyLabel"],
     labels: list[str],
     group_probs: np.ndarray,                  # (N, num_groups)
@@ -82,8 +80,6 @@ def categorize_per_case(
     """
     N = len(texts)
     M = len(labels)
-    if lp_embeddings is None:
-        lp_embeddings = mean_embeddings
 
     group_to_label_indices: dict[str, list[int]] = {}
     for j, tl in enumerate(taxonomy_labels):
@@ -118,8 +114,7 @@ def categorize_per_case(
     top_k_indices: list[list[int]] = []
     top_k_scores: list[list[float]] = []
     top_k_methods: list[list[str]] = []
-    embedding_labels_list: list[str] = []
-    embedding_scores_list: list[float] = []
+    top_k_group_probs: list[list[float]] = []
 
     for i, text in enumerate(texts):
         if not text:
@@ -130,13 +125,11 @@ def categorize_per_case(
             top_k_indices.append([])
             top_k_scores.append([])
             top_k_methods.append([])
-            embedding_labels_list.append("")
-            embedding_scores_list.append(0.0)
+            top_k_group_probs.append([])
             continue
 
         case_probs = group_probs[i]
         top_group_idx = int(np.argmax(case_probs))
-        embedding_scores_list.append(float(case_probs[top_group_idx]))
 
         predicted = sorted(
             [g for g in range(len(group_names)) if case_probs[g] >= threshold],
@@ -150,15 +143,6 @@ def categorize_per_case(
             else:
                 label_str = "Unidentified Cancer" if gate_passed else "Uncategorized"
                 method_str = "unidentified_cancer" if gate_passed else "low_confidence"
-                best_idxs = group_to_label_indices.get(group_names[top_group_idx], [])
-                if best_idxs:
-                    emb_sims = cosine_similarity_matrix(
-                        mean_embeddings[i : i + 1], label_embeddings[best_idxs]
-                    )[0]
-                    best_within = int(np.argmax(emb_sims))
-                    embedding_labels_list.append(labels[best_idxs[best_within]])
-                else:
-                    embedding_labels_list.append(label_str)
                 final_labels.append(label_str)
                 final_indices.append(-1)
                 final_scores.append(float(case_probs[top_group_idx]))
@@ -166,11 +150,13 @@ def categorize_per_case(
                 top_k_indices.append([-1])
                 top_k_scores.append([float(case_probs[top_group_idx])])
                 top_k_methods.append([method_str])
+                top_k_group_probs.append([float(case_probs[top_group_idx])])
                 continue
 
         k_idxs: list[int] = []
         k_scores: list[float] = []
         k_meths: list[str] = []
+        k_group_probs: list[float] = []  # GroupClassifier prob for each rank's predicted group
         k_rerank: list[float] = []  # margin × group_prob; embedding entries get -inf
         k_group_rank: list[int] = []  # rank in per-group loop (0 = top group)
         seen_winners: set[int] = set()
@@ -217,35 +203,9 @@ def categorize_per_case(
                     k_idxs.append(best_label_idx)
                     k_scores.append(lp_score)
                     k_meths.append("label_presence")
+                    k_group_probs.append(float(case_probs[g_idx]))
                     k_rerank.append((lp_score - lp_t) * group_prob)
                     k_group_rank.append(rank)
-            else:
-                # Stage 3b standalone: keyword filter + cosine similarity.
-                pool = apply_keyword_correction(
-                    text=text,
-                    pool=label_idxs,
-                    taxonomy_labels=taxonomy_labels,
-                    labels=labels,
-                    group_name=group_name,
-                )
-                if not pool:
-                    continue
-                pool_embs = label_embeddings[pool]
-                pool_sims = cosine_similarity_matrix(
-                    mean_embeddings[i : i + 1], pool_embs
-                )[0]
-                best_within = int(np.argmax(pool_sims))
-                best_label_idx = pool[best_within]
-                if best_label_idx in seen_winners:
-                    continue
-                seen_winners.add(best_label_idx)
-                k_idxs.append(best_label_idx)
-                k_scores.append(group_prob)
-                k_meths.append("embedding")
-                # Embedding fallback isn't on the LP score scale — leave it at
-                # the tail of the re-ranked list rather than mixing scales.
-                k_rerank.append(float("-inf"))
-                k_group_rank.append(rank)
 
         if rerank_stage3 and len(k_idxs) > 1:
             # Drop tail-group entries whose LP didn't endorse any in-group label
@@ -258,11 +218,13 @@ def categorize_per_case(
             k_idxs = [k_idxs[j] for j in kept]
             k_scores = [k_scores[j] for j in kept]
             k_meths = [k_meths[j] for j in kept]
+            k_group_probs = [k_group_probs[j] for j in kept]
             k_rerank = [k_rerank[j] for j in kept]
             order = sorted(range(len(k_idxs)), key=lambda j: -k_rerank[j])
             k_idxs = [k_idxs[j] for j in order]
             k_scores = [k_scores[j] for j in order]
             k_meths = [k_meths[j] for j in order]
+            k_group_probs = [k_group_probs[j] for j in order]
 
         if not k_idxs:
             gate_passed = presence_mask is None or bool(presence_mask[i])
@@ -272,10 +234,10 @@ def categorize_per_case(
             final_indices.append(-1)
             final_scores.append(0.0)
             methods.append(method_str)
-            embedding_labels_list.append(label_str)
             top_k_indices.append([-1])
             top_k_scores.append([0.0])
             top_k_methods.append([method_str])
+            top_k_group_probs.append([0.0])
             continue
 
         # Intervention 1: Lipoma keyword RESCUE — appends Lipoma, NOS to the
@@ -292,30 +254,27 @@ def categorize_per_case(
             k_idxs.append(lipoma_nos_idx)
             k_scores.append(float(case_probs[lipo_group_idx]))
             k_meths.append("lipoma_rescue")
+            k_group_probs.append(float(case_probs[lipo_group_idx]))
             seen_winners.add(lipoma_nos_idx)
 
         final_labels.append(labels[k_idxs[0]])
         final_indices.append(k_idxs[0])
         final_scores.append(k_scores[0])
-        methods.append("embedding")
-        embedding_labels_list.append(labels[k_idxs[0]])
+        methods.append(k_meths[0])
         top_k_indices.append(k_idxs)
         top_k_scores.append(k_scores)
         top_k_methods.append(k_meths)
-
-    embedding_labels = np.array(embedding_labels_list, dtype=object)
-    embedding_scores = np.array(embedding_scores_list, dtype=np.float32)
+        top_k_group_probs.append(k_group_probs)
 
     return CategorizationResult(
         final_labels=final_labels,
         final_indices=final_indices,
         final_scores=final_scores,
         methods=methods,
-        embedding_labels=embedding_labels,
-        embedding_scores=embedding_scores,
         label_scores=label_scores,
         labels=labels,
         top_k_indices=top_k_indices,
         top_k_scores=top_k_scores,
         top_k_methods=top_k_methods,
+        top_k_group_probs=top_k_group_probs,
     )

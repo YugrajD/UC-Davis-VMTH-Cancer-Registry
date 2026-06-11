@@ -59,6 +59,8 @@ CONCAT_3_SECTIONS: tuple[tuple[str, ...], ...] = (
 
 CONCAT_3_KEY = "concat_3"
 
+_NO_CODE_METHODS = frozenset({"empty", "low_confidence", "unidentified_cancer"})
+
 
 def _validate_columns(dataframe: pd.DataFrame, id_col: str) -> None:
     if id_col not in dataframe.columns:
@@ -258,13 +260,8 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
             )
 
     # Stage 3b: keyword correction lives inside the per-case dispatcher.
-    # The LP head consumes `report_emb_classifier` (2304-dim), but cosine-
-    # similarity fallbacks need a view that matches `label_embeddings` dim
-    # (768) — so pass the 768-dim masked-mean as `mean_embeddings` and the
-    # 2304-dim concat as `lp_embeddings`.
     categorization = categorize_per_case(
         texts=texts,
-        mean_embeddings=embeddings,
         lp_embeddings=report_emb_classifier,
         label_embeddings=label_embeddings,
         taxonomy_labels=label_catalog.taxonomy_labels,
@@ -291,7 +288,7 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         terms, groups, codes = resolve_taxonomy_matches(
             k_idxs, label_catalog.labels, label_catalog.taxonomy_labels
         )
-        codes = [c if m == "embedding" else "" for c, m in zip(codes, k_methods)]
+        codes = [c if m not in _NO_CODE_METHODS else "" for c, m in zip(codes, k_methods)]
         all_k_terms.append(terms)
         all_k_groups.append(groups)
         all_k_codes.append(codes)
@@ -314,6 +311,8 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         all_k_codes=all_k_codes,
         all_k_scores=categorization.top_k_scores,
         all_k_methods=categorization.top_k_methods,
+        case_presence_probs=case_presence_probs,
+        all_k_group_probs=categorization.top_k_group_probs,
     )
 
     write_provenance_csv(
@@ -325,8 +324,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         token_counts=token_counts,
         final_labels=categorization.final_labels,
         final_indices=categorization.final_indices,
-        embedding_labels=categorization.embedding_labels,
-        embedding_scores=categorization.embedding_scores,
         original_row_indices=row_indices,
         diagnosis_indices=[1] * n,
     )
@@ -378,7 +375,6 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
         "embedding_dim": int(embeddings.shape[1]) if embeddings.size else 0,
         "labels": categorization.labels,
         "labels_csv_path": config.labels_csv_path,
-        "embedding_min_sim": float(config.embedding_min_sim),
         "predicted_term_counts": pd.Series(matched_terms).value_counts().to_dict(),
         "predicted_group_counts": pd.Series(matched_groups).value_counts().to_dict(),
         "predicted_code_counts": pd.Series(matched_codes).value_counts().to_dict(),

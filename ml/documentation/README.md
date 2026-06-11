@@ -96,7 +96,7 @@ report.csv (latin-1)
   ▼  predictions.csv + provenance + similarity + visualization + embeddings + summary
 ```
 
-Gate-rejected cases become `Uncategorized`. Cases that pass the gate but fail every group threshold become `Unidentified Cancer` (unless argmax fallback is on — default).
+Gate-rejected cases become `Non-Cancer`. Cases that pass the gate but fail every group threshold become `Unidentified Cancer` (unless argmax fallback is on — default).
 
 ---
 

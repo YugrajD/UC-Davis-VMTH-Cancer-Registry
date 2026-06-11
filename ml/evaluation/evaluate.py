@@ -6,10 +6,10 @@ Each predicted label receives one of six verdicts:
   slightly_off   — correct cancer group, wrong specific term
   completely_off — neither term nor group matches any verified label for this case
   false_positive — model made a positive prediction for a case with no verified labels
-  false_negative — case has verified labels but model predicted "Uncategorized", or case has
-                   no prediction row at all
-  true_negative  — model correctly predicted "Uncategorized" for a non-cancer case
-                   (excluded from evaluation.csv and from metrics)
+  false_negative — case has verified labels but model predicted "Non-Cancer" (or
+                   "Uncategorized" for legacy CSVs), or case has no prediction row at all
+  true_negative  — model correctly predicted "Non-Cancer" / "Uncategorized" for a
+                   non-cancer case (excluded from evaluation.csv and from metrics)
 
 Output files (written to --out-dir):
   evaluation.csv         — all predictions + verdicts, sorted by case_id
@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
+from evaluation.common import NON_CANCER_PRED_TERMS
 
 
 def load_csv(path: Path) -> list[dict]:
@@ -37,11 +38,11 @@ def score_prediction(predicted_term: str, predicted_group: str,
     """Score one petbert prediction against the case's keyword label sets."""
     if not matched_terms:
         # Model correctly abstained on a non-cancer case → true negative, not FP.
-        if predicted_term == "Uncategorized":
+        if predicted_term in NON_CANCER_PRED_TERMS:
             return "true_negative"
         return "false_positive"
     # Model abstained on a confirmed cancer case → false negative, not completely_off.
-    if predicted_term == "Uncategorized":
+    if predicted_term in NON_CANCER_PRED_TERMS:
         return "false_negative"
     if predicted_term in matched_terms:
         return "good"
@@ -111,7 +112,7 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
             true_negative_rows.append(scored_row)
         else:
             out_rows.append(scored_row)
-            if row["predicted_term"] == "Uncategorized" and verdict == "false_negative":
+            if row["predicted_term"] in NON_CANCER_PRED_TERMS and verdict == "false_negative":
                 uncategorized_cancer_case_ids.add(cid)
 
     # Determine which expected terms are covered by good or slightly_off predictions.
@@ -178,7 +179,7 @@ def evaluate(prediction_csv: Path, expectation_csv: Path, out_dir: Path,
     total = len(out_rows) + len(fn_rows)
     n_true_negatives = len(true_negative_rows)
 
-    print(f"\n=== Overall ({total} prediction-cases, {n_true_negatives} correct abstentions excluded) ===")
+    print(f"\n=== Overall ({total} prediction-cases, {n_true_negatives} Non-Cancer abstentions excluded) ===")
     for label, key in [
         ("Good", "good"),
         ("Slightly off", "slightly_off"),

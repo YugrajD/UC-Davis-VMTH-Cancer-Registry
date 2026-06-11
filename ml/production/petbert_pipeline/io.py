@@ -38,23 +38,36 @@ def write_predictions_csv(
     all_k_codes: list[list[str]],
     all_k_scores: list[list[float]],
     all_k_methods: list[list[str]],
+    case_presence_probs: np.ndarray,
+    all_k_group_probs: list[list[float]],
 ) -> pd.DataFrame:
     """Write the presentation-ready predictions file.
 
     One row per (case, prediction rank). ``diagnosis_index`` is the rank of the
     prediction for that case (1 = best match, up to 5). Cases where the text was
     empty produce no rows.
+
+    New columns:
+    - ``case_presence_prob``: raw CasePresenceClassifier probability for the case
+      (blank when the gate is disabled — i.e. classifier_path was None).
+    - ``group_prob``: GroupClassifier sigmoid probability for the rank's predicted group.
+
+    The ``low_confidence`` method (gate-rejected) is renamed to
+    ``rejected_by_case_presence`` and the term/group are set to ``Non-Cancer``.
     """
     rows = []
     for i, patient_id in enumerate(ids):
-        for rank, (term, group, code, score, method) in enumerate(
-            zip(all_k_terms[i], all_k_groups[i], all_k_codes[i], all_k_scores[i], all_k_methods[i]),
+        cp_prob = case_presence_probs[i]
+        for rank, (term, group, code, score, grp_prob, method) in enumerate(
+            zip(all_k_terms[i], all_k_groups[i], all_k_codes[i], all_k_scores[i],
+                all_k_group_probs[i], all_k_methods[i]),
             start=1,
         ):
             if method == "low_confidence":
-                term = "Uncategorized"
-                group = "Uncategorized"
+                term = "Non-Cancer"
+                group = "Non-Cancer"
                 code = ""
+                method = "rejected_by_case_presence"
             elif method == "unidentified_cancer":
                 term = "Unidentified Group"
                 group = "Unidentified Group"
@@ -65,7 +78,9 @@ def write_predictions_csv(
                 "predicted_term": term,
                 "predicted_group": group,
                 "predicted_code": code,
+                "case_presence_prob": "" if np.isnan(cp_prob) else f"{cp_prob:.4f}",
                 "confidence": f"{score:.2f}",
+                "group_prob": f"{grp_prob:.4f}",
                 "method": method,
             })
     pred_df = pd.DataFrame(rows)
@@ -83,8 +98,6 @@ def write_provenance_csv(
     token_counts: np.ndarray,
     final_labels: list[str],
     final_indices: list[int],
-    embedding_labels: np.ndarray,
-    embedding_scores: np.ndarray,
     original_row_indices: list[int],
     diagnosis_indices: list[int],
 ) -> pd.DataFrame:
@@ -98,8 +111,6 @@ def write_provenance_csv(
         "token_count": token_counts,
         "predicted_category": final_labels,
         "predicted_label_index": final_indices,
-        "embedding_category": embedding_labels,
-        "embedding_similarity": embedding_scores,
     })
     prov_df.to_csv(path, index=False)
     return prov_df

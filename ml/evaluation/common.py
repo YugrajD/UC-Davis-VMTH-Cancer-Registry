@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Terms written to predictions.csv for gate-rejected / non-cancer cases.
+# "Non-Cancer" is the current value; "Uncategorized" is the legacy name kept
+# here so evaluation scripts handle both old and new CSVs correctly.
+NON_CANCER_PRED_TERMS = frozenset({"Non-Cancer", "Uncategorized"})
+
 
 def safe_div(num: float, den: float) -> float:
     return num / den if den > 0 else 0.0

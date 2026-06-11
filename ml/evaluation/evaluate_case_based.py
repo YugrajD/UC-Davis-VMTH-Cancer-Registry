@@ -10,13 +10,13 @@ Verdict precedence per case (mirrors evaluate.py's six buckets):
   good           — at least one prediction's term matches an expected term
   slightly_off   — no exact-term hit, but at least one prediction's group
                    matches an expected group (or the uncommon-tier rule fires)
-  completely_off — at least one non-Uncategorized prediction, but none hit
-                   term or group
-  false_negative — every prediction is Uncategorized (or no prediction row),
-                   and the case has expected labels
+  completely_off — at least one non-Non-Cancer prediction, but none hit
+                   term or group (or Uncategorized for legacy CSVs)
+  false_negative — every prediction is Non-Cancer / Uncategorized (or no
+                   prediction row), and the case has expected labels
   false_positive — non-cancer case (no expected labels) with at least one
-                   non-Uncategorized prediction
-  true_negative  — non-cancer case with all-Uncategorized predictions
+                   non-Non-Cancer prediction (or non-Uncategorized for legacy CSVs)
+  true_negative  — non-cancer case with all-Non-Cancer predictions
                    (excluded from totals, matching evaluate.py)
 
 Outputs (in --out-dir):

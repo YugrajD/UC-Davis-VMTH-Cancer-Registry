@@ -41,6 +41,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import config
+from features.recency import recency_weights as _recency_weights
 from model.constants import DEFAULT_HIDDEN_DIM
 from model.group_classifier import GroupClassifier
 
@@ -148,6 +149,7 @@ def train(
     max_group_cases: int,
     dropout: float,
     lr_schedule: str,
+    recency_half_life: float | None = None,
 ) -> None:
     # --- Load training data --------------------------------------------------
     print(f"Loading training data: {training_data_path}")
@@ -162,6 +164,10 @@ def train(
     targets = torch.from_numpy(data["targets"].astype(np.float32))        # (N, G)
     group_names: list[str] = list(data["group_names"])
     class_weights = torch.from_numpy(data["class_weights"].astype(np.float32))  # (G,)
+    # Demographics metadata — persisted in checkpoint so inference can assert width
+    uses_demographics = bool(data.get("uses_demographics", np.bool_(False)))
+    demo_width = int(data.get("demo_width", np.int32(0)))
+    case_ids_all: list[str] = list(data["case_ids"]) if "case_ids" in data else []
 
     # --- Drop sparse groups --------------------------------------------------
     if min_group_cases > 0:
@@ -192,6 +198,9 @@ def train(
         old_N = embeddings.shape[0]
         embeddings = embeddings[keep]
         targets = targets[keep]
+        if case_ids_all:
+            keep_list = keep.tolist()
+            case_ids_all = [case_ids_all[i] for i in keep_list]
         n_cancer = int((targets.sum(dim=1) > 0).sum())
         print(
             f"Per-group cap {max_group_cases}: {embeddings.shape[0]}/{old_N} cases kept "
@@ -220,7 +229,17 @@ def train(
     train_idx, val_idx = _stratified_split(targets.numpy(), val_frac)
     train_size = len(train_idx)
     val_size   = len(val_idx)
-    train_ds = torch.utils.data.Subset(TensorDataset(embeddings, targets), train_idx)
+
+    use_recency = recency_half_life is not None and case_ids_all
+    if use_recency:
+        all_w = _recency_weights(case_ids_all, recency_half_life, demographics_csv=config.DEMOGRAPHICS_CSV)
+        train_ds = torch.utils.data.Subset(
+            TensorDataset(embeddings, targets, torch.from_numpy(all_w.astype(np.float32))),
+            train_idx,
+        )
+    else:
+        train_ds = torch.utils.data.Subset(TensorDataset(embeddings, targets), train_idx)
+
     val_ds   = torch.utils.data.Subset(TensorDataset(embeddings, targets), val_idx)
     train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
     val_loader   = DataLoader(val_ds,   batch_size=256, shuffle=False)
@@ -232,8 +251,13 @@ def train(
 
     # Loss uses raw logits — sigmoid is applied internally.
     pw = class_weights.to(device)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
-    print("Loss: BCE with pos_weight")
+    if use_recency:
+        # reduction="none" so we can multiply per-example weights before averaging.
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pw, reduction="none")
+        print("Loss: BCE with pos_weight + recency weighting")
+    else:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
+        print("Loss: BCE with pos_weight")
 
     # LR scheduler: cosine warm restarts help escape fixed-LR plateaus.
     if lr_schedule == "cosine":
@@ -255,12 +279,20 @@ def train(
         # --- Train -----------------------------------------------------------
         model.train()
         train_loss = 0.0
-        for emb_batch, tgt_batch in train_loader:
+        for batch in train_loader:
+            if use_recency:
+                emb_batch, tgt_batch, w_batch = batch
+                w_batch = w_batch.to(device)  # (B,) — per-example scalar weight
+            else:
+                emb_batch, tgt_batch = batch
             emb_batch = emb_batch.to(device)
             tgt_batch = tgt_batch.to(device)
             optimizer.zero_grad()
             logits = model.net(emb_batch)  # raw logits for BCEWithLogitsLoss
-            loss = criterion(logits, tgt_batch)
+            if use_recency:
+                loss = (criterion(logits, tgt_batch) * w_batch.unsqueeze(1)).mean()
+            else:
+                loss = criterion(logits, tgt_batch)
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * len(emb_batch)
@@ -275,7 +307,8 @@ def train(
                 emb_batch = emb_batch.to(device)
                 tgt_batch = tgt_batch.to(device)
                 logits = model.net(emb_batch)
-                val_loss += criterion(logits, tgt_batch).item() * len(emb_batch)
+                raw = criterion(logits, tgt_batch)
+                val_loss += (raw.mean() if use_recency else raw).item() * len(emb_batch)
                 all_probs.append(torch.sigmoid(logits).cpu())
                 all_targets.append(tgt_batch.cpu())
         val_loss /= val_size
@@ -288,7 +321,7 @@ def train(
         if is_best:
             best_f1 = macro_f1
             best_epoch = epoch
-            model.save(out_path, group_names)
+            model.save(out_path, group_names, uses_demographics=uses_demographics, demo_width=demo_width)
 
         current_lr = optimizer.param_groups[0]["lr"]
         print(f"{epoch:>5}  {train_loss:>10.4f}  {val_loss:>9.4f}  {macro_f1:>9.4f}  {current_lr:>9.2e}  {'*' if is_best else ''}")

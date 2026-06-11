@@ -22,21 +22,27 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+import config
+from features.recency import recency_weights as _recency_weights
 from model.constants import DEFAULT_HIDDEN_DIM, PETBERT_EMB_DIM
 from model.label_presence_classifier import LabelPresenceClassifier
 from production.petbert_pipeline.embedding_cache import load_cache
 
 
 class _PairDataset(Dataset):
-    def __init__(self, report_embs: np.ndarray, label_embs: np.ndarray, targets: np.ndarray):
+    def __init__(self, report_embs: np.ndarray, label_embs: np.ndarray, targets: np.ndarray,
+                 weights: np.ndarray | None = None):
         self.r = torch.from_numpy(report_embs)
         self.l = torch.from_numpy(label_embs)
         self.t = torch.from_numpy(targets)
+        self.w = torch.from_numpy(weights) if weights is not None else None
 
     def __len__(self) -> int:
         return len(self.t)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int):
+        if self.w is not None:
+            return self.r[idx], self.l[idx], self.t[idx], self.w[idx]
         return self.r[idx], self.l[idx], self.t[idx]
 
 
@@ -75,6 +81,7 @@ def train_label_presence(
     n_cols: int = 3,
     col_pair_mode: bool = True,
     col_combine: str = "learned",
+    recency_half_life: float | None = None,
 ) -> float:
     """Train LabelPresenceClassifier for one group. Returns best validation score."""
     torch.manual_seed(seed)
@@ -148,7 +155,12 @@ def train_label_presence(
     splitter = GroupShuffleSplit(n_splits=1, test_size=val_split, random_state=seed)
     train_idx, val_idx = next(splitter.split(report_embs, targets, groups=case_id_arr))
 
-    train_ds = _PairDataset(report_embs[train_idx], label_embs[train_idx], targets[train_idx])
+    use_recency = recency_half_life is not None
+    if use_recency:
+        all_w = _recency_weights(case_id_arr.tolist(), recency_half_life, demographics_csv=config.DEMOGRAPHICS_CSV)
+        train_ds = _PairDataset(report_embs[train_idx], label_embs[train_idx], targets[train_idx], all_w[train_idx])
+    else:
+        train_ds = _PairDataset(report_embs[train_idx], label_embs[train_idx], targets[train_idx])
     val_ds   = _PairDataset(report_embs[val_idx],   label_embs[val_idx],   targets[val_idx])
 
     train_targets = targets[train_idx]
@@ -177,7 +189,10 @@ def train_label_presence(
     ).to(dev)
 
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
+    if use_recency:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pw, reduction="none")
+    else:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -191,10 +206,18 @@ def train_label_presence(
     for epoch in range(1, epochs + 1):
         model.train()
         total_loss = 0.0
-        for r, l, t in train_loader:
+        for batch in train_loader:
+            if use_recency:
+                r, l, t, w = batch
+                w = w.to(dev)
+            else:
+                r, l, t = batch
             r, l, t = r.to(dev), l.to(dev), t.to(dev)
             optimizer.zero_grad()
-            loss = criterion(model(r, l), t)
+            if use_recency:
+                loss = (criterion(model(r, l), t) * w).mean()
+            else:
+                loss = criterion(model(r, l), t)
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * len(t)

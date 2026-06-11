@@ -24,19 +24,23 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 import config
+from features.recency import recency_weights as _recency_weights
 from model.case_presence_classifier import CasePresenceClassifier
 from production.petbert_pipeline import device_from_arg
 
 
 class _CaseDataset(Dataset):
-    def __init__(self, embeddings: np.ndarray, targets: np.ndarray):
+    def __init__(self, embeddings: np.ndarray, targets: np.ndarray, weights: np.ndarray | None = None):
         self.embeddings = torch.from_numpy(embeddings)
         self.targets = torch.from_numpy(targets)
+        self.weights = torch.from_numpy(weights) if weights is not None else None
 
     def __len__(self) -> int:
         return len(self.targets)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int):
+        if self.weights is not None:
+            return self.embeddings[idx], self.targets[idx], self.weights[idx]
         return self.embeddings[idx], self.targets[idx]
 
 
@@ -74,6 +78,7 @@ def train(
     seed: int = 42,
     pos_weight: float = 1.0,
     recall_weight: float = 0.7,
+    recency_half_life: float | None = None,
 ) -> int:
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -90,6 +95,10 @@ def train(
     data = np.load(dataset_path, allow_pickle=True)
     embeddings = data["embeddings"].astype(np.float32)
     targets = data["targets"].astype(np.float32)
+    # Read demographics metadata written by build_case_presence_dataset
+    uses_demographics = bool(data.get("uses_demographics", np.bool_(False)))
+    demo_width = int(data.get("demo_width", np.int32(0)))
+    case_ids_all: list[str] = list(data["case_ids"]) if "case_ids" in data else []
 
     n_pos = int(targets.sum())
     n_neg = len(targets) - n_pos
@@ -100,7 +109,12 @@ def train(
         indices, test_size=val_split, random_state=seed, stratify=targets.astype(int)
     )
 
-    train_ds = _CaseDataset(embeddings[train_idx], targets[train_idx])
+    use_recency = recency_half_life is not None and case_ids_all
+    if use_recency:
+        all_w = _recency_weights(case_ids_all, recency_half_life, demographics_csv=config.DEMOGRAPHICS_CSV)
+        train_ds = _CaseDataset(embeddings[train_idx], targets[train_idx], all_w[train_idx])
+    else:
+        train_ds = _CaseDataset(embeddings[train_idx], targets[train_idx])
     val_ds = _CaseDataset(embeddings[val_idx], targets[val_idx])
 
     train_targets = targets[train_idx]
@@ -126,7 +140,10 @@ def train(
         dropout=dropout,
     ).to(dev)
     pw = torch.tensor([pos_weight], dtype=torch.float32, device=dev)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
+    if use_recency:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pw, reduction="none")
+    else:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -144,10 +161,18 @@ def train(
     for epoch in range(1, epochs + 1):
         model.train()
         total_loss = 0.0
-        for emb, target in train_loader:
+        for batch in train_loader:
+            if use_recency:
+                emb, target, w = batch
+                w = w.to(dev)
+            else:
+                emb, target = batch
             emb, target = emb.to(dev), target.to(dev)
             optimizer.zero_grad()
-            loss = criterion(model(emb), target)
+            if use_recency:
+                loss = (criterion(model(emb), target) * w).mean()
+            else:
+                loss = criterion(model(emb), target)
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * len(target)
@@ -163,7 +188,7 @@ def train(
         )
         if score > best_score:
             best_score = score
-            model.save(checkpoint)
+            model.save(checkpoint, uses_demographics=uses_demographics, demo_width=demo_width)
 
     print(f"\nBest checkpoint (recall_weight={rw}): {best_score:.3f}")
     print(f"Saved: {checkpoint}")

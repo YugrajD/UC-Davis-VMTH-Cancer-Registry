@@ -67,7 +67,7 @@ def _train_groups(args: argparse.Namespace) -> None:
     print("\n=== Step 2b: Train group classifier ===")
     train_group(
         training_data_path=config.GROUP_TRAINING_DATA_NPZ,
-        out_path=f"{config.CHECKPOINT_GROUP_DIR}/group_classifier_current.pt",
+        out_path=f"{args.group_classifier_out}/group_classifier_current.pt",
         epochs=epochs,
         lr=group_lr,
         hidden_dim=DEFAULT_HIDDEN_DIM,
@@ -80,6 +80,7 @@ def _train_groups(args: argparse.Namespace) -> None:
         max_group_cases=0,
         dropout=args.dropout,
         lr_schedule=args.lr_schedule,
+        recency_half_life=args.recency_half_life,
     )
 
 
@@ -137,11 +138,12 @@ def _train_case_presence(args: argparse.Namespace) -> None:
     print("\n=== Step 2b: Train case presence classifier ===")
     train_case_presence(
         dataset_npz=config.CASE_PRESENCE_DATASET_NPZ,
-        out_dir=config.CHECKPOINT_CASE_PRESENCE_DIR,
+        out_dir=args.case_presence_out,
         epochs=epochs,
         device=args.device,
         recall_weight=args.case_presence_recall_weight,
         pos_weight=args.case_presence_pos_weight,
+        recency_half_life=args.recency_half_life,
     )
     print(
         f"\nCheckpoint: {config.CASE_PRESENCE_CLASSIFIER_PT}\n"
@@ -220,6 +222,7 @@ def _train_label_presence(args: argparse.Namespace) -> None:
             n_cols=args.label_presence_n_cols,
             col_pair_mode=args.label_presence_col_pair_mode,
             col_combine=args.label_presence_col_combine,
+            recency_half_life=args.recency_half_life,
         )
         if score > 0:
             trained += 1
@@ -256,6 +259,7 @@ def _train_label_presence(args: argparse.Namespace) -> None:
                 n_cols=args.label_presence_n_cols,
                 col_pair_mode=args.label_presence_col_pair_mode,
                 col_combine=args.label_presence_col_combine,
+                recency_half_life=args.recency_half_life,
             )
             if score > 0:
                 trained += 1
@@ -332,6 +336,13 @@ def main() -> int:
         help=f"[train-groups, train-case-presence] Path to demographics CSV "
              f"(default: {config.DEMOGRAPHICS_CSV})",
     )
+    parser.add_argument(
+        "--recency-half-life",
+        type=float,
+        default=None,
+        help="Exponential half-life in years for recency sample-weighting (keyed on DtOfRq). "
+             "Omit for uniform weights (current behavior).",
+    )
     parser.add_argument("--max-class-weight", type=float, default=50.0,
                         help="[train-groups] Cap per-group BCE pos_weight at this value (default: 50). "
                              "Prevents rare-group class weights (up to 3500x) from dominating training.")
@@ -346,6 +357,13 @@ def main() -> int:
     parser.add_argument("--dropout", type=float, default=0.3,
                         help="[train-groups] MLP dropout probability (default: 0.3). "
                              "Try 0.1 or 0.05 — Phase 26 train/val gap suggests over-regularisation.")
+    parser.add_argument(
+        "--group-classifier-out",
+        default=config.CHECKPOINT_GROUP_DIR,
+        help="[train-groups] Directory for GroupClassifier checkpoint outputs "
+             f"(default: {config.CHECKPOINT_GROUP_DIR}). "
+             "Override to a scratch dir to avoid touching production checkpoints.",
+    )
     parser.add_argument("--lr-schedule", default="none", choices=["none", "cosine"],
                         help="[train-groups] LR schedule (default: none). "
                              "'cosine' uses CosineAnnealingWarmRestarts(T_0=100).")
@@ -358,6 +376,13 @@ def main() -> int:
         default=config.EMBEDDING_CACHE_NPZ,
         help="[train-case-presence] Path to embedding cache NPZ "
              f"(default: {config.EMBEDDING_CACHE_NPZ})",
+    )
+    parser.add_argument(
+        "--case-presence-out",
+        default=config.CHECKPOINT_CASE_PRESENCE_DIR,
+        help="[train-case-presence] Directory for CasePresenceClassifier checkpoint output "
+             f"(default: {config.CHECKPOINT_CASE_PRESENCE_DIR}). "
+             "Override to a scratch dir to avoid touching production checkpoints.",
     )
     parser.add_argument(
         "--case-presence-recall-weight",

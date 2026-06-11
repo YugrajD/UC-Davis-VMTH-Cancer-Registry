@@ -13,6 +13,12 @@ script — every path here is used as the argparse default, not as a hard lock.
 REPORTS_CSV = "ml/data/report.csv"
 DIAGNOSES_CSV = "ml/data/diagnoses.csv"
 LABELS_CSV = "ml/ICD_labels/labels.csv"
+DEMOGRAPHICS_CSV = "ml/data/demographics.csv"
+
+# ---------------------------------------------------------------------------
+# Feature encoder specs (fitted on train data, persisted for inference)
+# ---------------------------------------------------------------------------
+DEMOGRAPHICS_ENCODER_SPEC = "ml/output/training/demographics_encoder_spec.json"
 
 # ---------------------------------------------------------------------------
 # Annotation outputs

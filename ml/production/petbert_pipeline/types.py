@@ -40,6 +40,10 @@ class ScanConfig:
     rerank_stage3: bool = False
     uncommon_groups_path: str = _config.UNCOMMON_GROUPS_TXT
     embed_only: bool = False
+    # Demographics features (Stage 1 + Stage 2 only; default off → byte-identical to prior)
+    use_demographics: bool = False
+    demographics_csv: str = _config.DEMOGRAPHICS_CSV
+    demographics_encoder_spec: str = _config.DEMOGRAPHICS_ENCODER_SPEC
 
 
 @dataclass(frozen=True)

@@ -181,6 +181,27 @@ def build_parser() -> argparse.ArgumentParser:
             "before training downstream classifiers without running classification."
         ),
     )
+    parser.add_argument(
+        "--use-demographics",
+        action="store_true",
+        default=False,
+        help=(
+            "Append demographics features to the Stage 1 (CasePresenceClassifier) and "
+            "Stage 2 (GroupClassifier) input vectors. The checkpoint must have been trained "
+            "with --use-demographics — the stage asserts dimension parity at load time. "
+            "Off by default; byte-identical to prior behaviour when off."
+        ),
+    )
+    parser.add_argument(
+        "--demographics-csv",
+        default=config.DEMOGRAPHICS_CSV,
+        help=f"Path to demographics CSV (default: {config.DEMOGRAPHICS_CSV})",
+    )
+    parser.add_argument(
+        "--demographics-encoder-spec",
+        default=config.DEMOGRAPHICS_ENCODER_SPEC,
+        help=f"Path to persisted demographics encoder spec JSON (default: {config.DEMOGRAPHICS_ENCODER_SPEC})",
+    )
     return parser
 
 
@@ -216,6 +237,9 @@ def build_config(args: argparse.Namespace) -> ScanConfig:
         tail_max_group_prob_gap=args.tail_max_group_prob_gap,
         rerank_stage3=args.rerank_stage3,
         embed_only=embed_only,
+        use_demographics=bool(getattr(args, "use_demographics", False)),
+        demographics_csv=getattr(args, "demographics_csv", config.DEMOGRAPHICS_CSV),
+        demographics_encoder_spec=getattr(args, "demographics_encoder_spec", config.DEMOGRAPHICS_ENCODER_SPEC),
     )
 
 

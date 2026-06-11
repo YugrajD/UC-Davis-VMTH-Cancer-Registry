@@ -60,6 +60,9 @@ def _train_groups(args: argparse.Namespace) -> None:
         uncommon_threshold=args.uncommon_threshold,
         uncommon_groups_out=config.UNCOMMON_GROUPS_TXT,
         excluded_groups=excluded,
+        use_demographics=args.use_demographics,
+        demographics_csv=args.demographics_csv,
+        demographics_encoder_spec=config.DEMOGRAPHICS_ENCODER_SPEC,
     )
     print("\n=== Step 2b: Train group classifier ===")
     train_group(
@@ -127,6 +130,9 @@ def _train_case_presence(args: argparse.Namespace) -> None:
         embedding_cache=args.embedding_cache,
         out=config.CASE_PRESENCE_DATASET_NPZ,
         train_cases_txt=args.train_cases,
+        use_demographics=args.use_demographics,
+        demographics_csv=args.demographics_csv,
+        demographics_encoder_spec=config.DEMOGRAPHICS_ENCODER_SPEC,
     )
     print("\n=== Step 2b: Train case presence classifier ===")
     train_case_presence(
@@ -313,6 +319,19 @@ def main() -> int:
                         help="[all modes] Path to train_cases.txt. "
                              "When provided, only train cases are used during training. "
                              "Generate with ml/training/data/create_split.py.")
+    parser.add_argument(
+        "--use-demographics",
+        action="store_true",
+        default=False,
+        help="[train-groups, train-case-presence] Append demographics features to embeddings "
+             "before training. Off by default — byte-identical to prior behaviour when off.",
+    )
+    parser.add_argument(
+        "--demographics-csv",
+        default=config.DEMOGRAPHICS_CSV,
+        help=f"[train-groups, train-case-presence] Path to demographics CSV "
+             f"(default: {config.DEMOGRAPHICS_CSV})",
+    )
     parser.add_argument("--max-class-weight", type=float, default=50.0,
                         help="[train-groups] Cap per-group BCE pos_weight at this value (default: 50). "
                              "Prevents rare-group class weights (up to 3500x) from dominating training.")

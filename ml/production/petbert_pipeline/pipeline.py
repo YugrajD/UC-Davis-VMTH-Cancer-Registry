@@ -213,19 +213,27 @@ def run_scan(config: ScanConfig) -> ScanOutputs:
     ).astype(np.float32)
 
     # Stage 1: CasePresenceClassifier gate.
-    presence_gate_mask = run_case_presence_classifier(
+    presence_gate_mask, case_presence_probs = run_case_presence_classifier(
         embeddings=report_emb_classifier,
+        case_ids=ids,
         classifier_path=config.case_presence_classifier_path,
         threshold=config.case_presence_threshold,
         device=torch_device,
+        use_demographics=config.use_demographics,
+        demographics_csv=config.demographics_csv,
+        demographics_encoder_spec=config.demographics_encoder_spec,
     )
 
     # Stage 2: GroupClassifier.
     group_probs, group_names = run_group_classifier(
         col_emb_concat=col_emb_concat,
+        case_ids=ids,
         classifier_path=config.group_classifier_path,
         presence_gate_mask=presence_gate_mask,
         device=torch_device,
+        use_demographics=config.use_demographics,
+        demographics_csv=config.demographics_csv,
+        demographics_encoder_spec=config.demographics_encoder_spec,
     )
 
     # Stage 3a: load per-group LabelPresenceClassifiers (None disables the stage).

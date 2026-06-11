@@ -59,12 +59,20 @@ class CasePresenceClassifier(nn.Module):
             results.append(torch.sigmoid(self.forward(batch)).cpu())
         return torch.cat(results, dim=0)
 
-    def save(self, path: str | Path) -> None:
+    def save(
+        self,
+        path: str | Path,
+        *,
+        uses_demographics: bool = False,
+        demo_width: int = 0,
+    ) -> None:
         torch.save(
             {
                 "state_dict": self.state_dict(),
                 "emb_dim": torch.tensor(self.emb_dim),
                 "hidden_dim": torch.tensor(self.net[0].out_features),
+                "uses_demographics": uses_demographics,
+                "demo_width": demo_width,
             },
             path,
         )
@@ -78,3 +86,12 @@ class CasePresenceClassifier(nn.Module):
         )
         model.load_state_dict(data["state_dict"])
         return model
+
+    @staticmethod
+    def load_meta(path: str | Path) -> dict:
+        """Return the non-weight metadata from a checkpoint dict."""
+        data = torch.load(path, map_location="cpu", weights_only=True)
+        return {
+            "uses_demographics": bool(data.get("uses_demographics", False)),
+            "demo_width": int(data.get("demo_width", 0)),
+        }

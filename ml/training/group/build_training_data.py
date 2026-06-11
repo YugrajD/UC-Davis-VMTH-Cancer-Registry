@@ -6,7 +6,7 @@ Reads:
 
 Produces:
   - ml/output/training/group/group_training_data.npz with:
-      embeddings    (N, 2304) float32 -- concat-3 report embedding per case
+      embeddings    (N, 2304[+D]) float32 -- concat-3 report embedding (+ demo block when active)
       targets       (N, G)    float32 -- multi-hot group labels (0.0 = non-cancer, 1.0 = present)
       case_ids      (N,)     object   -- case_id strings
       group_names   (G,)     object   -- group name strings (index = column in targets)
@@ -44,6 +44,9 @@ def build_training_data(
     uncommon_threshold: int = 200,
     uncommon_groups_out: str = "",
     excluded_groups: list[str] | None = None,
+    use_demographics: bool = False,
+    demographics_csv: str = config.DEMOGRAPHICS_CSV,
+    demographics_encoder_spec: str = config.DEMOGRAPHICS_ENCODER_SPEC,
 ) -> None:
     # --- Load embedding cache ------------------------------------------------
     print(f"Loading embedding cache: {cache_path}")
@@ -168,6 +171,19 @@ def build_training_data(
     for g, group_name in enumerate(final_groups):
         print(f"{group_name:<50} {int(positive_counts[g]):>6} {class_weights[g]:>7.2f}")
 
+    # --- Optionally append demographics block --------------------------------
+    demo_width = 0
+    if use_demographics:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+        from features.demographics import DemographicsEncoder
+        enc = DemographicsEncoder()
+        enc.fit(demographics_csv, case_ids)
+        enc.save_spec(demographics_encoder_spec)
+        demo_block = enc.transform(case_ids)
+        embeddings = np.hstack([embeddings, demo_block])
+        demo_width = enc.dim
+        print(f"Demographics appended: {demo_width} features -> embeddings {embeddings.shape}")
+
     # --- Write uncommon group list -------------------------------------------
     if has_uncommon and uncommon_groups_out:
         Path(uncommon_groups_out).parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +200,8 @@ def build_training_data(
         case_ids=np.array(case_ids, dtype=object),
         group_names=np.array(final_groups, dtype=object),
         class_weights=class_weights,
+        uses_demographics=np.bool_(use_demographics),
+        demo_width=np.int32(demo_width),
     )
     print(f"\nSaved: {out_path} ({N} cases, {G} groups)")
 
@@ -232,6 +250,14 @@ def main() -> int:
              "case count (use | not comma, as group names contain commas). "
              "Default: 'Neoplasms, NOS'.",
     )
+    parser.add_argument(
+        "--use-demographics",
+        action="store_true",
+        default=False,
+        help="Append demographics features to each embedding vector.",
+    )
+    parser.add_argument("--demographics-csv", default=config.DEMOGRAPHICS_CSV)
+    parser.add_argument("--demographics-encoder-spec", default=config.DEMOGRAPHICS_ENCODER_SPEC)
     args = parser.parse_args()
     excluded = [g.strip() for g in args.excluded_groups.split("|")] if args.excluded_groups else []
     build_training_data(
@@ -239,6 +265,9 @@ def main() -> int:
         uncommon_threshold=args.uncommon_threshold,
         uncommon_groups_out=args.uncommon_groups_out,
         excluded_groups=excluded,
+        use_demographics=args.use_demographics,
+        demographics_csv=args.demographics_csv,
+        demographics_encoder_spec=args.demographics_encoder_spec,
     )
     return 0
 

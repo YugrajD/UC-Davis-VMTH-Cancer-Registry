@@ -75,7 +75,14 @@ class GroupClassifier(nn.Module):
             results.append(self.forward(batch).cpu())
         return torch.cat(results, dim=0)
 
-    def save(self, path: str | Path, group_names: list[str]) -> None:
+    def save(
+        self,
+        path: str | Path,
+        group_names: list[str],
+        *,
+        uses_demographics: bool = False,
+        demo_width: int = 0,
+    ) -> None:
         """Save model weights and group name mapping to a checkpoint."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         torch.save(
@@ -85,6 +92,8 @@ class GroupClassifier(nn.Module):
                 "num_groups": self.num_groups,
                 "emb_dim": self.emb_dim,
                 "hidden_dim": self.net[0].out_features,
+                "uses_demographics": uses_demographics,
+                "demo_width": demo_width,
             },
             path,
         )
@@ -100,3 +109,12 @@ class GroupClassifier(nn.Module):
         )
         model.load_state_dict(data["state_dict"])
         return model, data["group_names"]
+
+    @staticmethod
+    def load_meta(path: str | Path) -> dict:
+        """Return the non-weight metadata from a checkpoint dict."""
+        data = torch.load(path, map_location="cpu", weights_only=True)
+        return {
+            "uses_demographics": bool(data.get("uses_demographics", False)),
+            "demo_width": int(data.get("demo_width", 0)),
+        }

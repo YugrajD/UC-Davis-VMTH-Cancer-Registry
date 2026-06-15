@@ -13,7 +13,7 @@
         "test:coverage": "vitest run --coverage"
     },
     "dependencies": {
-        "@deck.gl/core": "^9.3.3",
+        "@deck.gl/core": "^9.3.4",
         "@deck.gl/layers": "^9.3.3",
         "@deck.gl/react": "^9.3.3",
         "@supabase/supabase-js": "^2.107.0",

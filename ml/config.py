@@ -27,6 +27,10 @@ ANNOTATION_DIR = "ml/output/annotation"
 ANNOTATION_CSV = f"{ANNOTATION_DIR}/annotation.csv"
 LLM_ANNOTATION_CSV = f"{ANNOTATION_DIR}/llm_annotation.csv"
 LLM_ANNOTATION_CLEANED_CSV = f"{ANNOTATION_DIR}/llm_annotation_cleaned.csv"
+# Gold annotation store (human-confirmed; schema = annotation.csv + tier/verified_by/verified_date/provenance).
+GOLD_ANNOTATION_CSV = f"{ANNOTATION_DIR}/gold_annotation.csv"
+# Human-review surface produced by `run_gold_annotation.py sample` and filled in by the professional (Excel workbook).
+GOLD_EVAL_REVIEW_XLSX = f"{ANNOTATION_DIR}/gold_eval_review.xlsx"
 
 # ---------------------------------------------------------------------------
 # Training intermediates

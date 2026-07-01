@@ -139,4 +139,5 @@ All under `ml/output/` (gitignored).
 | [label-annotation.md](label-annotation.md) | You're running or debugging `run_annotation.py` |
 | [model-training.md](model-training.md) | You want the reasoning behind the 4-stage design and concat-3 representation |
 | [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes |
+| [annotation-redesign-plan.md](annotation-redesign-plan.md) | The approved gold/silver bootstrap plan for a trustworthy annotation corpus (Phase 0 executing) |
 | [archive/training-log/](archive/training-log/) | Historical phase logs — do not consult for current behavior |

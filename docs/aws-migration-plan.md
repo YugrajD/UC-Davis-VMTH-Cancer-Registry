@@ -9,7 +9,7 @@
 
 | Component | Current | Target |
 |---|---|---|
-| Frontend hosting | Vercel | **S3 + CloudFront** |
+| Frontend hosting | Vercel | **AWS Amplify Hosting** |
 | Auth | Supabase Auth | **Amazon Cognito** |
 | Database | Supabase Postgres 16 + PostGIS 3.4 | **RDS for PostgreSQL 16 + PostGIS** |
 | Backend compute | Cloud Run | **App Runner** |
@@ -35,13 +35,13 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
 1. Provision target infra without touching production traffic:
    - **RDS for PostgreSQL 16** with the `postgis` extension enabled (RDS supports PostGIS as a managed extension via `CREATE EXTENSION postgis`). Verify PostGIS 3.4 parity against the RDS-supported version before relying on it.
    - **Amazon Cognito User Pool**: enable email/password + Google OAuth (as a federated IdP) sign-in. Mirror Supabase's redirect URLs. Cognito's hosted UI and password-reset flow differ from Supabase's PKCE `verifyOtp(token_hash)` approach — confirm the equivalent anti-prefetch property (Cognito's confirmation-code flow doesn't embed a clickable link by default, which may already avoid the email-scanner problem; verify before assuming parity).
-   - **S3 buckets**: one for pathology report text / uploads (replaces GCS `uploads/`, `reports/`, `models/` prefixes), one for frontend static assets.
-   - **CloudFront distribution** in front of the frontend S3 bucket, with the custom domain and ACM cert provisioned ahead of DNS cutover.
+   - **S3 bucket**: for pathology report text / uploads (replaces GCS `uploads/`, `reports/`, `models/` prefixes).
+   - **Amplify Hosting app**: connect the frontend's GitHub repo, configure the build (Vite build settings), and set up the custom domain and managed SSL cert ahead of DNS cutover.
    - **ECR repository** for the backend image and the PetBERT batch image (replaces Artifact Registry).
    - **App Runner service** (or ECS Fargate — decide here) pointed at the ECR image, sized to match `backend/service.yaml`'s current resource limits (0.5–1 vCPU, 256–512Mi).
    - **AWS Batch compute environment + job queue + job definition** for PetBERT inference (replaces GCP Batch). Job definition mirrors the 3-runnable structure in `gcp_batch_service.py`: pull model/CSV from S3, run PetBERT container, push predictions back to S3 — but AWS Batch typically does this with one container plus S3-mounted volumes or explicit `aws s3 cp` steps in the entrypoint rather than GCP Batch's runnable list, so the ml-worker entrypoint script needs rework, not just a job-spec swap.
 2. Build the full cutover checklist by inventorying every touchpoint:
-   - **Vercel**: no `vercel.json` in the repo — build settings, env vars, and domain are configured entirely via the Vercel dashboard. Nothing to port from-repo; must be manually replicated into the S3/CloudFront + CI deploy pipeline.
+   - **Vercel**: no `vercel.json` in the repo — build settings, env vars, and domain are configured entirely via the Vercel dashboard. Nothing to port from-repo; must be manually replicated into Amplify Hosting's build settings and env var config.
    - **Supabase — env vars**: `DATABASE_URL`, `DATABASE_URL_SYNC`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
    - **Supabase — backend code**: `backend/app/auth.py` (JWKS client, HS256/ES256 detection, `audience="authenticated"` check)
    - **Supabase — frontend code**: `frontend/src/lib/supabase.ts`, `frontend/src/contexts/AuthContext.tsx`, `frontend/src/components/LoginModal/LoginModal.tsx` (and their `.test.tsx` files)
@@ -52,7 +52,7 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
    - **Docker Compose**: `seed`, `ingest`, `geo-seed` profiles that run against `DATABASE_URL_SYNC`
    - **CI**: `.github/workflows/{ci.yml,pages.yml,update-npm-packages.yml}` — none currently deploy to GCP (deploys are manual via `gcloud builds submit`/`gcloud run services replace`), so this is a net-new CI deploy pipeline to build, not a migration of an existing one
    - **Non-technical workflow**: Supabase Table Editor is used by non-technical team members to browse/edit data directly — needs a replacement before Supabase is decommissioned
-   - **CORS**: FastAPI CORS config must allow the new CloudFront origin
+   - **CORS**: FastAPI CORS config must allow the new Amplify Hosting origin
 
 ## Phase 1 — Database migration (Supabase Postgres → RDS)
 
@@ -90,20 +90,20 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
 4. `FORWARDED_ALLOW_IPS` currently trusts GFE (Google Front End) IPs for correct client-IP resolution behind Cloud Run's proxy — verify App Runner's equivalent proxy behavior (it terminates TLS and forwards `X-Forwarded-For`; confirm trusted-proxy config in the rate-limiting/IP-tracking code in `backend/app/main.py` or wherever `slowapi`/brute-force tracking reads client IP).
 5. Re-evaluate `timeoutSeconds: 300` / `containerConcurrency: 80` against App Runner's request-timeout and concurrency-per-instance settings — App Runner's defaults and tuning knobs differ from Knative's.
 
-## Phase 5 — Frontend hosting migration (Vercel → S3 + CloudFront)
+## Phase 5 — Frontend hosting migration (Vercel → Amplify Hosting)
 
-1. Configure the S3 bucket for static website hosting or as a CloudFront origin (CloudFront + OAC to a private bucket is the more secure/current-practice option over public static website hosting).
-2. Add a CloudFront function or S3 error-document rewrite for SPA client-side routing (all paths → `/index.html`), since this is a client-routed Vite app — equivalent to the `firebase.json` catch-all rewrite considered in the earlier GCP plan.
-3. Move frontend env vars into the CI build pipeline: `VITE_API_URL`, plus Cognito config vars replacing `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
-4. Replace Vercel's GitHub integration with a GitHub Actions deploy step (`aws s3 sync` + CloudFront invalidation), authenticated via an IAM role and GitHub's OIDC provider (avoids long-lived AWS keys in CI).
-5. Migrate the custom domain: lower DNS TTL ahead of cutover, repoint to CloudFront, verify the ACM cert (must be in `us-east-1` for CloudFront) issuance before flipping traffic.
-6. Confirm FastAPI CORS config allows the new CloudFront origin; remove the Vercel origin after cutover completes.
+1. Connect the frontend's GitHub repo to Amplify Hosting and configure the build spec (`amplify.yml`): install, `npm run build`, publish `frontend/dist`. This replaces Vercel's auto-detected build entirely — Amplify's build settings UI/`amplify.yml` is the equivalent of the Vercel dashboard config that currently has no in-repo file.
+2. Amplify Hosting handles SPA rewrites for client-side routing (all paths → `/index.html`) via a rewrite rule in its console/config — simpler than hand-rolling a CloudFront function, no `firebase.json`-style catch-all needed in-repo.
+3. Move frontend env vars into Amplify's environment variables (per-branch): `VITE_API_URL`, plus Cognito config vars replacing `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
+4. Amplify Hosting's Git integration replaces Vercel's directly — push-to-branch triggers a build/deploy automatically, no separate GitHub Actions deploy step or IAM/OIDC wiring needed for the frontend (unlike the S3+CloudFront approach).
+5. Migrate the custom domain: add it in Amplify's domain management, lower DNS TTL ahead of cutover, verify Amplify's managed SSL cert issuance before flipping traffic.
+6. Confirm FastAPI CORS config allows the new Amplify Hosting origin (default `*.amplifyapp.com` during setup, then the custom domain); remove the Vercel origin after cutover completes.
 
 ## Phase 6 — Cutover (single maintenance window)
 
 1. Freeze writes (uploads, ingestion, role/export requests).
 2. Run a final delta `pg_dump`/restore from Supabase → RDS to capture anything written since the Phase 1 snapshot.
-3. Deploy simultaneously: backend to App Runner (new `DATABASE_URL`, Cognito config, S3/AWS Batch config), frontend to S3/CloudFront, DNS flip.
+3. Deploy simultaneously: backend to App Runner (new `DATABASE_URL`, Cognito config, S3/AWS Batch config), frontend to Amplify Hosting, DNS flip.
 4. Smoke test: sign-in (password + Google OAuth), `GET /api/v1/auth/me`, upload → review → diagnosis-review flow (exercises S3 + AWS Batch), choropleth map load (PostGIS-backed `geo` endpoints), export-request download.
 5. Keep the Supabase project, Vercel project, and GCP project intact but idle for a rollback window (1–2 weeks) before decommissioning.
 

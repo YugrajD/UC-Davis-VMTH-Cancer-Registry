@@ -248,20 +248,26 @@ def run():
             county_id, diagnosis_date, outcome
         ))
 
-        # One case_diagnosis per patient (mock data has one cancer type per patient)
-        diagnosis_rows.append((
-            patient_id, cancer_type_id
-        ))
-
-        # Generate pathology report for ~10% of cases (= ~500 reports)
+        # Generate pathology report for ~10% of cases (= ~500 reports).
+        # predicted_term/confidence live on case_diagnoses (the modern home
+        # for PetBERT prediction data); pathology_reports only stores the
+        # report text itself (as source_diagnosis) plus report_date.
+        predicted_term = None
+        confidence = None
         if random.random() < 0.10:
             report_count += 1
             report_text = generate_report(cancer_name)
+            predicted_term = cancer_name
             confidence = round(random.uniform(0.75, 0.99), 4)
             report_date = diagnosis_date + timedelta(days=random.randint(1, 14))
             report_rows.append((
-                patient_id, report_text, cancer_name, confidence, report_date
+                patient_id, report_text, report_date
             ))
+
+        # One case_diagnosis per patient (mock data has one cancer type per patient)
+        diagnosis_rows.append((
+            patient_id, cancer_type_id, predicted_term, confidence
+        ))
 
     # -------------------------------------------------------------------
     # Bulk insert
@@ -278,7 +284,7 @@ def run():
     print(f"Inserting {len(diagnosis_rows)} case diagnoses...")
     execute_values(
         cur,
-        """INSERT INTO case_diagnoses (patient_id, cancer_type_id)
+        """INSERT INTO case_diagnoses (patient_id, cancer_type_id, predicted_term, confidence)
            VALUES %s ON CONFLICT DO NOTHING""",
         diagnosis_rows
     )
@@ -286,8 +292,7 @@ def run():
     print(f"Inserting {len(report_rows)} pathology reports...")
     execute_values(
         cur,
-        """INSERT INTO pathology_reports (patient_id, report_text, classification,
-                                          confidence_score, report_date)
+        """INSERT INTO pathology_reports (patient_id, source_diagnosis, report_date)
            VALUES %s ON CONFLICT DO NOTHING""",
         report_rows
     )

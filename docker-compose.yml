@@ -1,4 +1,65 @@
 services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: vmth_cancer_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: postgis/postgis:16-3.4
+    container_name: vmth_cancer_migrate
+    environment:
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+    volumes:
+      - ./database/migrations:/database/migrations:ro
+      - ./database/scripts/run_migrations.sh:/run_migrations.sh:ro
+    entrypoint: ["sh", "/run_migrations.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Seeds the cognito-local named volume with a fixed User Pool + App Client
+  # (database/docker/cognito-local/seed/) on first run only, so the pool/
+  # client IDs are stable across `docker compose down -v` cycles instead of
+  # cognito-local generating new random IDs every time.
+  cognito-seed:
+    image: busybox:1.36
+    container_name: vmth_cancer_cognito_seed
+    volumes:
+      - ./database/docker/cognito-local/seed:/seed:ro
+      - cognito_local_data:/data
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        if [ ! -f /data/local_vmthdev.json ]; then
+          cp /seed/*.json /data/
+          echo "Seeded cognito-local with fixed pool local_vmthdev"
+        else
+          echo "cognito-local data already present, skipping seed"
+        fi
+
+  cognito-local:
+    image: jagregory/cognito-local:latest
+    container_name: vmth_cancer_cognito_local
+    volumes:
+      - cognito_local_data:/app/.cognito/db
+    ports:
+      - "9229:9229"
+    depends_on:
+      cognito-seed:
+        condition: service_completed_successfully
+
   backend:
     build:
       context: ./backend
@@ -9,8 +70,9 @@ services:
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       CORS_ORIGINS: ${CORS_ORIGINS:-'["http://localhost:5173"]'}
       ML_WORKER_URL: ${ML_WORKER_URL:-http://ml-worker:8001}
-      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
-      SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-local_vmthdev}
+      COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-vmthcancerregistryweb}
+      COGNITO_ISSUER_URL: ${COGNITO_ISSUER_URL:-http://cognito-local:9229}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       UPLOAD_DIR: /app/uploads
       # GCP Batch (optional)
@@ -30,6 +92,11 @@ services:
       - ./backend:/app
       - ./ml:/ml
       - ./secrets:/app/secrets:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      cognito-local:
+        condition: service_started
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -44,8 +111,12 @@ services:
       # forward to the backend over the docker network.
       VITE_API_URL: ""
       DEV_PROXY_TARGET: http://backend:8000
-      VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
-      VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+      VITE_COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-local_vmthdev}
+      VITE_COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-vmthcancerregistryweb}
+      # Browser-facing endpoint — must be reachable from the host (not the
+      # docker network hostname), so cognito-local's published port is used.
+      VITE_COGNITO_ENDPOINT: ${VITE_COGNITO_ENDPOINT:-http://localhost:9229}
+      VITE_COGNITO_GOOGLE_OAUTH_DOMAIN: ${VITE_COGNITO_GOOGLE_OAUTH_DOMAIN:-}
     ports:
       - "5173:5173"
     volumes:
@@ -69,6 +140,9 @@ services:
       - ./geo:/geo
       - ./ml:/ml
     command: python /database/seed/seed_mock_data.py
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     profiles:
       - seed
 
@@ -86,6 +160,9 @@ services:
       - ./backend:/app
       - ./geo:/geo
     command: python /database/seed/ingest_petbert.py
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     profiles:
       - ingest
 
@@ -101,6 +178,9 @@ services:
       - ./database:/database
       - ./geo:/geo
     command: python /database/seed/county_boundaries.py
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     profiles:
       - geo-seed
 
@@ -124,3 +204,5 @@ services:
 
 volumes:
   frontend_node_modules:
+  postgres_data:
+  cognito_local_data:

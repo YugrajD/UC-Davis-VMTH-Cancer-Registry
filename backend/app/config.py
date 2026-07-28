@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     # unset, preventing silent fallback to hardcoded credentials.
     DATABASE_URL: str
     DATABASE_URL_SYNC: str
-    SUPABASE_JWT_SECRET: str
+    COGNITO_USER_POOL_ID: str
+    COGNITO_CLIENT_ID: str
 
     DEBUG: bool = False
 
@@ -20,7 +21,10 @@ class Settings(BaseSettings):
     APP_TITLE: str = "UC Davis VMTH Cancer Registry API"
     APP_VERSION: str = "1.0.0"
     ML_WORKER_URL: str = "http://localhost:8001"
-    SUPABASE_URL: str = ""
+    # Base URL of the Cognito IdP-compatible token issuer used for JWKS
+    # lookups — e.g. https://cognito-idp.{region}.amazonaws.com in production,
+    # or the local cognito-local endpoint in dev.
+    COGNITO_ISSUER_URL: str = "https://cognito-idp.us-east-1.amazonaws.com"
     # Comma-separated email lists. Admins implicitly hold uploader and
     # reviewer privileges, so these env vars only need users who don't
     # also appear in ADMIN_EMAILS.

@@ -8,7 +8,8 @@ import pytest
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("DATABASE_URL_SYNC", "postgresql://test:test@localhost/test")
-os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
+os.environ.setdefault("COGNITO_USER_POOL_ID", "local_test")
+os.environ.setdefault("COGNITO_CLIENT_ID", "test-client-id")
 
 from app.cache import clear_all_caches
 

@@ -13,12 +13,12 @@ A full-stack veterinary cancer registry for UC Davis VMTH researchers. Pathology
 
 - **Frontend**: React 19 + TypeScript (Vite), Tailwind CSS v4, deck.gl, d3-scale, react-simple-maps
 - **Backend**: Python 3.11 + FastAPI, SQLAlchemy async, Pydantic v2, gunicorn + uvicorn workers
-- **Database**: PostgreSQL 16 + PostGIS 3.4 (hosted on Supabase)
+- **Database**: PostgreSQL 16 + PostGIS 3.4 (local Docker container for dev; migrating to RDS for PostgreSQL in production — see `docs/aws-migration-plan.md`)
 - **ML/NLP**: PetBERT (110M-param BERT pretrained on veterinary EHR data) with Vet-ICD-O-canine-1 classification
-- **ML inference**: GCP Batch (production) or local `ml-worker` container (development)
-- **Auth**: Supabase Auth — email/password, Google OAuth, PKCE-flow password reset (JWT HS256/ES256)
-- **Frontend hosting**: Vercel
-- **Backend hosting**: GCP Cloud Run
+- **ML inference**: GCP Batch (current production) or local `ml-worker` container (development) — migrating to AWS Batch
+- **Auth**: Amazon Cognito — self-hosted `cognito-local` emulator for dev, a real Cognito User Pool in production — email/password with confirmation codes, Google OAuth (Hosted UI, prod only), JWT RS256
+- **Frontend hosting**: Vercel (current), migrating to AWS Amplify Hosting
+- **Backend hosting**: GCP Cloud Run (current), migrating to AWS App Runner
 - **CI/CD**: GitHub Actions (412 tests: 117 backend pytest + 295 frontend vitest)
 - **Local orchestration**: Docker Compose
 
@@ -81,9 +81,8 @@ In production (`DEBUG=false`), `/docs`, `/redoc`, and `/openapi.json` return 404
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (v4.0+)
 - [Git](https://git-scm.com/)
-- Access to the team's Supabase project
 
-> **Need access?** Contact **dtestrella@ucdavis.edu** to be invited to the Supabase project.
+Everything below runs entirely on your machine — Postgres/PostGIS and a self-hosted Cognito-compatible auth emulator ([cognito-local](https://github.com/jagregory/cognito-local)) are provisioned as Docker Compose services alongside the app. No AWS account or third-party account is required for local development.
 
 ### 1. Clone the Repository
 
@@ -92,42 +91,13 @@ git clone https://github.com/ECS-193A-Team-14/UC-Davis-VMTH-Cancer-Registry.git
 cd UC-Davis-VMTH-Cancer-Registry
 ```
 
-### 2. Access the Supabase Project
-
-The Supabase project is already set up. To find the credentials you'll need for the next step:
-
-1. Go to [supabase.com/dashboard](https://supabase.com/dashboard) and sign in with the account that was invited to the project
-2. Select the **UC Davis VMTH Cancer Registry** project from the project list
-3. You'll use the Supabase dashboard in the next step to locate API keys and database connection strings
-
-If you don't see the project in your dashboard, you haven't been invited yet — contact **dtestrella@ucdavis.edu** for access.
-
-### 3. Configure Environment Variables
+### 2. Configure Environment Variables
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` in a text editor and fill in each value. Here's where to find them:
-
-#### Database URLs
-
-1. Supabase Dashboard → **Settings** → **Database** → **Connection string** → **URI**
-2. Copy the connection string and replace `[YOUR-PASSWORD]` with your database password and `[PROJECT-REF]` with the project reference shown in the URI
-3. For `DATABASE_URL`, add `+asyncpg` after `postgresql` (e.g. `postgresql+asyncpg://...`)
-4. For `DATABASE_URL_SYNC`, use the URI as-is with `postgresql://...`
-
-#### Supabase Auth Keys
-
-All found at: Supabase Dashboard → **Settings** → **API**
-
-| `.env` variable | Where to find it |
-|---|---|
-| `SUPABASE_JWT_SECRET` | JWT Settings → **JWT Secret**; leave blank for newer ES256/JWKS projects |
-| `SUPABASE_URL` | Project URL (e.g. `https://abcdef.supabase.co`) |
-| `VITE_SUPABASE_URL` | Same as `SUPABASE_URL` |
-| `VITE_SUPABASE_ANON_KEY` | Project API Keys → **anon** / **public** / **publishable** |
-| `VITE_API_URL` | Deployed FastAPI backend base URL for static frontend deployments; leave blank for local Vite proxy |
+The defaults in `.env.example` already point at the local Postgres and cognito-local containers defined in `docker-compose.yml` — no edits are required to get running. You only need to change `ADMIN_EMAILS` (and optionally `UPLOADER_EMAILS`/`REVIEWER_EMAILS`) to match the accounts you'll create in step 5.
 
 #### Role allow-lists (env-var bootstrap)
 
@@ -139,41 +109,59 @@ UPLOADER_EMAILS=charlie@example.com
 REVIEWER_EMAILS=dana@example.com
 ```
 
-Admins implicitly hold uploader and reviewer privileges, so `UPLOADER_EMAILS` / `REVIEWER_EMAILS` only need to list users who don't also appear in `ADMIN_EMAILS`. Emails must exactly match the accounts registered in Supabase Auth (see step 5).
+Admins implicitly hold uploader and reviewer privileges, so `UPLOADER_EMAILS` / `REVIEWER_EMAILS` only need to list users who don't also appear in `ADMIN_EMAILS`. Emails must exactly match the accounts registered in Auth (see step 5).
 
 **Never commit `.env` to git.**
 
-### 4. Run Database Migrations
-
-The migration SQL files are in `database/migrations/` and must be run in numeric order (currently 001 through 029). Run them through the Supabase SQL Editor:
-
-1. Supabase Dashboard → **SQL Editor**
-2. Open each migration file locally, copy its contents, paste into the SQL Editor, and click **Run**
-3. Run them in numeric order: `001_extensions.sql`, `002_lookup_tables.sql`, …, `029_add_age_group_to_mvs.sql`
-
-Alternatively, you can run them from the command line using `psql`:
+### 3. Start Postgres and Run Migrations
 
 ```bash
-# Install psql if you don't have it (macOS)
-brew install libpq && brew link --force libpq
-
-# Run all migrations in order
-for f in database/migrations/0*.sql; do
-  echo "Running $f..."
-  psql "$DATABASE_URL_SYNC" -f "$f"
-done
+docker compose up -d postgres
+docker compose run --rm migrate
 ```
 
-Replace `$DATABASE_URL_SYNC` with your actual sync connection string (or `source .env` first).
+This starts the local PostGIS-enabled Postgres container and applies every file in `database/migrations/` in order. The `migrate` service is safe to re-run any time — migrations use `IF NOT EXISTS` guards throughout.
 
-### 5. Create User Accounts in Supabase Auth
+### 4. Start the Auth Server
 
-#### Create an admin account
+```bash
+docker compose up -d cognito-local
+```
 
-1. Supabase Dashboard → **Authentication** → **Users**
-2. Click **Add User** → **Create new user**
-3. Enter the email and a password
-4. Make sure this email is listed in `ADMIN_EMAILS` in your `.env`
+This runs [cognito-local](https://github.com/jagregory/cognito-local), a self-hosted Cognito emulator, at `http://localhost:9229`. A fixed User Pool (`local_vmthdev`) and App Client (`vmthcancerregistryweb`) are pre-seeded from `database/docker/cognito-local/seed/` on first run, so the IDs in `.env.example` always match — no manual pool creation needed.
+
+### 5. Create User Accounts
+
+With the auth server running, use the AWS CLI against the local endpoint to sign up and confirm an admin account (swap in your own email/password):
+
+```bash
+AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local aws --endpoint http://localhost:9229 --region us-east-1 \
+  cognito-idp sign-up --client-id vmthcancerregistryweb \
+  --username admin@example.com --password 'ChangeMe123!' \
+  --user-attributes Name=email,Value=admin@example.com
+```
+
+cognito-local auto-generates a confirmation code and stores it in plaintext in its local state file — read it and confirm the account:
+
+```bash
+docker exec vmth_cancer_cognito_local cat /app/.cognito/db/local_vmthdev.json \
+  | python3 -c "import json,sys; print(list(json.load(sys.stdin)['Users'].values())[0]['ConfirmationCode'])"
+
+AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local aws --endpoint http://localhost:9229 --region us-east-1 \
+  cognito-idp confirm-sign-up --client-id vmthcancerregistryweb \
+  --username admin@example.com --confirmation-code <code-from-above>
+```
+
+Or just sign up through the app's UI (Sign Up → enter the code shown in the container's state file, same as above).
+
+Alternatively, skip the confirmation code entirely with `admin-confirm-sign-up` (also handy if you fat-fingered a code and want to unstick an account without deleting/recreating it):
+
+```bash
+AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local aws --endpoint http://localhost:9229 --region us-east-1 \
+  cognito-idp admin-confirm-sign-up --user-pool-id local_vmthdev --username admin@example.com
+```
+
+Make sure this email is also listed in `ADMIN_EMAILS` in your `.env`.
 
 Roles (most-privileged at the top — each implies the ones below it):
 
@@ -199,7 +187,7 @@ Or use the helper script:
 ./start.sh
 ```
 
-This starts three services:
+This starts the app services (postgres and cognito-local from steps 3–4 keep running alongside them):
 
 | Service | URL | Description |
 |---|---|---|
@@ -269,14 +257,9 @@ npx vite
 
 The Vite dev server proxies API requests to `http://localhost:8000` automatically.
 
-### Supabase Table Editor
+### Browsing the local database
 
-Non-technical team members can view and edit data directly through the Supabase web UI:
-
-1. Go to [supabase.com/dashboard](https://supabase.com/dashboard)
-2. Sign in with the account that was invited to the project
-3. Select the project
-4. Use the **Table Editor** in the left sidebar to browse tables
+Connect any Postgres client (e.g. `psql`, TablePlus, DBeaver) to `localhost:5432` using the credentials in `.env` (`postgres` / `POSTGRES_PASSWORD`). In production, RDS Query Editor or pgAdmin serves the same purpose (see `docs/aws-migration-plan.md`).
 
 ---
 
@@ -292,14 +275,13 @@ docker compose logs backend --tail 30
 ### Backend can't connect to the database
 
 - Verify `DATABASE_URL` in `.env` uses `+asyncpg` (e.g. `postgresql+asyncpg://...`)
-- Check that your database password has no special characters that need URL-encoding
-- Confirm the project reference and region match your Supabase project
-- Make sure the pooler hostname matches your project's region
+- Confirm the `postgres` container is healthy: `docker compose ps postgres`
+- Make sure migrations have been applied: `docker compose run --rm migrate`
 
 ### "Invalid token" errors when signing in
 
-- Newer Supabase projects use **ES256** tokens (not HS256). The backend auto-detects the algorithm, but `SUPABASE_URL` must be set correctly so it can fetch the JWKS public keys
-- Verify `SUPABASE_URL` matches the **Project URL** in Supabase Dashboard → Settings → API
+- Confirm `cognito-local` is running: `docker compose ps cognito-local`
+- Verify `COGNITO_USER_POOL_ID` and `COGNITO_CLIENT_ID` match between the `backend` and `frontend` services in `.env` (both default to `local_vmthdev` / `vmthcancerregistryweb`, matching the seeded pool)
 - Check backend logs: `docker compose logs backend --tail 30`
 
 ### Review Queue tab doesn't appear after signing in
@@ -311,16 +293,25 @@ docker compose logs backend --tail 30
 ### Frontend shows a blank page
 
 - Check the browser console (F12 → Console) for errors
-- If you see a `createClient` error, verify `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set in `.env`
+- Verify `VITE_COGNITO_USER_POOL_ID` and `VITE_COGNITO_CLIENT_ID` are set in `.env`
 - Restart the frontend container: `docker compose restart frontend`
 
 ### Upload rate limit (429 error)
 
 Uploads share the global rate limit defined by `RATE_LIMIT_WRITE` in `backend/app/config.py` (default 10/minute per IP). Authenticated users see `RATE_LIMIT_DEFAULT` (120/minute) on other endpoints; anonymous IPs get `RATE_LIMIT_ANONYMOUS` (30/minute). All values are env-tunable.
 
-### Password reset email arrives but link says "expired"
+### Sign-up/reset confirmation code never arrives
 
-This is almost always an email-link pre-fetch issue (Gmail / Outlook scanners follow the URL on receipt). The app is configured for Supabase's PKCE flow which is resistant to this, but the Supabase **email template** must also be set to use `{{ .TokenHash }}` not the default `{{ .ConfirmationURL }}`. See `docs/handoff/HANDOFF.md` and the password-reset template snippet in the project's Supabase dashboard.
+cognito-local has no SMTP configured — it doesn't send real emails. The confirmation code is written in plaintext to its local state file instead:
+
+```bash
+docker exec vmth_cancer_cognito_local cat /app/.cognito/db/local_vmthdev.json \
+  | python3 -c "import json,sys; print(list(json.load(sys.stdin)['Users'].values())[0]['ConfirmationCode'])"
+```
+
+In production, real Cognito sends the code by email (Cognito's default email sending, or a configured SES identity).
+
+Or skip the code entirely with `admin-confirm-sign-up` — see [Step 5](#5-create-user-accounts).
 
 ### Docker build fails
 

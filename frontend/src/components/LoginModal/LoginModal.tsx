@@ -176,10 +176,13 @@ export function LoginModal({ onClose }: LoginModalProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">Verification Code</label>
               <input
                 type="text"
+                name="confirmation-code"
+                id="signup-confirmation-code"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 required
                 autoFocus
+                autoComplete="one-time-code"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
                 placeholder="123456"
               />
@@ -220,9 +223,12 @@ export function LoginModal({ onClose }: LoginModalProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
               <input
                 type="email"
+                name="email"
+                id="forgot-email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
+                autoComplete="username"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
                 placeholder="you@example.com"
               />
@@ -257,10 +263,13 @@ export function LoginModal({ onClose }: LoginModalProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">Reset Code</label>
               <input
                 type="text"
+                name="reset-code"
+                id="reset-code"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 required
                 autoFocus
+                autoComplete="one-time-code"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
                 placeholder="123456"
               />
@@ -269,10 +278,13 @@ export function LoginModal({ onClose }: LoginModalProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
               <input
                 type="password"
+                name="new-password"
+                id="reset-new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 minLength={8}
+                autoComplete="new-password"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
                 placeholder="New password"
               />
@@ -281,10 +293,13 @@ export function LoginModal({ onClose }: LoginModalProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
               <input
                 type="password"
+                name="confirm-password"
+                id="reset-confirm-password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
                 minLength={8}
+                autoComplete="new-password"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
                 placeholder="Confirm new password"
               />
@@ -316,9 +331,12 @@ export function LoginModal({ onClose }: LoginModalProps) {
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
               type="email"
+              name="email"
+              id="login-email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoComplete="username"
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
               placeholder="you@example.com"
             />
@@ -338,10 +356,13 @@ export function LoginModal({ onClose }: LoginModalProps) {
             </div>
             <input
               type="password"
+              name="password"
+              id="login-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={mode === 'signup' ? 8 : 6}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
               placeholder="Password"
             />
@@ -352,10 +373,13 @@ export function LoginModal({ onClose }: LoginModalProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
               <input
                 type="password"
+                name="confirm-password"
+                id="signup-confirm-password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
                 minLength={8}
+                autoComplete="new-password"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
                 placeholder="Confirm password"
               />

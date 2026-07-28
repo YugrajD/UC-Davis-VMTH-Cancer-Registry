@@ -39,7 +39,8 @@ jobs:
           # DB is mocked in all tests so DATABASE_URL is never used.
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           DATABASE_URL_SYNC: postgresql://test:test@localhost/test
-          SUPABASE_JWT_SECRET: test-secret
+          COGNITO_USER_POOL_ID: local_test
+          COGNITO_CLIENT_ID: test-client-id
         run: pytest -v
 
   # ---------------------------------------------------------------------------

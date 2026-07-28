@@ -1,18 +1,19 @@
-"""JWT verification dependencies for Supabase Auth.
+"""JWT verification dependencies for Amazon Cognito.
 
-Supports both HS256 (shared secret) and ES256 (JWKS) depending on the
-algorithm in the token header. Supabase newer projects use ES256.
+The frontend forwards Cognito ID tokens (not access tokens) as the bearer
+credential — ID tokens carry the `email` claim needed for role lookup and
+`aud` = the app client ID; Cognito access tokens carry neither (identity
+attributes live only on the ID token, and the access token's `username`
+claim is the opaque `sub`, not the email).
 """
 
 import asyncio
-import base64
 import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional
 
-import httpx
 import jwt
 from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, Request, status
@@ -34,23 +35,12 @@ bearer_scheme_optional = HTTPBearer(auto_error=False)
 _jwks_client: Optional[PyJWKClient] = None
 
 
-def _get_jwks_client() -> Optional[PyJWKClient]:
+def _get_jwks_client() -> PyJWKClient:
     global _jwks_client
-    if _jwks_client is not None:
-        return _jwks_client
-    if settings.SUPABASE_URL:
-        url = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
+    if _jwks_client is None:
+        url = f"{settings.COGNITO_ISSUER_URL.rstrip('/')}/{settings.COGNITO_USER_POOL_ID}/.well-known/jwks.json"
         _jwks_client = PyJWKClient(url, timeout=10)
-        return _jwks_client
-    return None
-
-
-def _decode_hs256_secret(raw: str) -> bytes:
-    """Base64-decode the Supabase JWT secret, falling back to raw bytes."""
-    try:
-        return base64.b64decode(raw)
-    except Exception:
-        return raw.encode()
+    return _jwks_client
 
 
 # --- Auth failure rate limiting (in-memory) ---
@@ -106,44 +96,30 @@ def _record_auth_failure(request: Request) -> None:
 
 
 def _verify_token(token: str) -> dict:
-    """Verify a Supabase JWT, auto-detecting HS256 vs ES256."""
-    # Peek at the header to determine algorithm
+    """Verify a Cognito ID token via JWKS.
+
+    Only RS256 is accepted (Cognito's signing algorithm) — reject anything
+    else to prevent algorithm-confusion attacks.
+    """
     try:
         header = jwt.get_unverified_header(token)
     except jwt.DecodeError as e:
         raise jwt.InvalidTokenError(f"Cannot read token header: {e}")
 
     alg = header.get("alg", "")
-    logger.debug("JWT algorithm: %s", alg)
-
-    if alg == "HS256":
-        secret = _decode_hs256_secret(settings.SUPABASE_JWT_SECRET)
-        return jwt.decode(
-            token, secret, algorithms=["HS256"], audience="authenticated",
-        )
-
-    # ES256 / asymmetric — use JWKS.  Only allow the specific asymmetric
-    # algorithms Supabase may use; reject anything else to prevent
-    # algorithm-confusion attacks (e.g. HS384 falling through here).
-    _ALLOWED_ASYMMETRIC_ALGS = {"ES256", "RS256", "EdDSA"}
-    if alg not in _ALLOWED_ASYMMETRIC_ALGS:
+    if alg != "RS256":
         raise jwt.InvalidTokenError(f"Unsupported algorithm: {alg}")
 
     jwks_client = _get_jwks_client()
-    if jwks_client is None:
-        raise jwt.InvalidTokenError(
-            "SUPABASE_URL is not configured for JWKS verification"
-        )
-
-    logger.debug("Fetching JWKS signing key for %s token", alg)
     signing_key = jwks_client.get_signing_key_from_jwt(token)
-    logger.debug("JWKS signing key obtained")
-    return jwt.decode(
-        token,
-        signing_key.key,
-        algorithms=list(_ALLOWED_ASYMMETRIC_ALGS),
-        audience="authenticated",
+    payload = jwt.decode(
+        token, signing_key.key, algorithms=["RS256"], audience=settings.COGNITO_CLIENT_ID,
     )
+
+    if payload.get("token_use") != "id":
+        raise jwt.InvalidTokenError("Not an ID token")
+
+    return payload
 
 
 @dataclass
@@ -196,7 +172,7 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> CurrentUser:
-    """Decode Supabase JWT and return the current user."""
+    """Decode Cognito ID token and return the current user."""
     _check_auth_rate_limit(request)
     token = credentials.credentials
     try:

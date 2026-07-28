@@ -11,10 +11,21 @@ async function loadLoginModal({
 } = {}) {
   vi.resetModules();
   vi.doMock('../../contexts/AuthContext', () => ({
-    useAuth: () => ({ signIn, clearAuthError: vi.fn(), authError: null }),
+    useAuth: () => ({
+      signIn,
+      signUp: vi.fn(),
+      confirmSignUp: vi.fn(),
+      resendConfirmationCode: vi.fn(),
+      forgotPassword: vi.fn(),
+      confirmForgotPassword: vi.fn(),
+      signInWithGoogle: vi.fn(),
+      googleOAuthConfigured: false,
+      clearAuthError: vi.fn(),
+      authError: null,
+    }),
   }));
-  vi.doMock('../../lib/supabase', () => ({
-    supabaseConfigured: configured,
+  vi.doMock('../../lib/cognito', () => ({
+    authConfigured: configured,
   }));
 
   const module = await import('./LoginModal');
@@ -24,18 +35,18 @@ async function loadLoginModal({
 afterEach(() => {
   vi.resetModules();
   vi.doUnmock('../../contexts/AuthContext');
-  vi.doUnmock('../../lib/supabase');
+  vi.doUnmock('../../lib/cognito');
 });
 
 describe('LoginModal', () => {
-  it('renders an auth configuration warning when Supabase is unconfigured', async () => {
+  it('renders an auth configuration warning when Cognito is unconfigured', async () => {
     const { LoginModal } = await loadLoginModal({ configured: false });
 
     render(<LoginModal onClose={vi.fn()} />);
 
     expect(screen.getByText('Auth not configured')).toBeInTheDocument();
-    expect(screen.getByText('VITE_SUPABASE_URL')).toBeInTheDocument();
-    expect(screen.getByText('VITE_SUPABASE_ANON_KEY')).toBeInTheDocument();
+    expect(screen.getByText('VITE_COGNITO_USER_POOL_ID')).toBeInTheDocument();
+    expect(screen.getByText('VITE_COGNITO_CLIENT_ID')).toBeInTheDocument();
   });
 
   it('submits credentials and closes on successful login', async () => {
@@ -79,5 +90,19 @@ describe('LoginModal', () => {
     fireEvent.click(backdropTarget);
 
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('moves to the confirmation-code step after signing up', async () => {
+    const user = userEvent.setup();
+    const { LoginModal } = await loadLoginModal();
+    render(<LoginModal onClose={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /sign up/i }));
+    await user.type(screen.getByPlaceholderText(/you@example.com/i), 'new@example.com');
+    await user.type(screen.getByPlaceholderText('Password'), 'Password123!');
+    await user.type(screen.getByPlaceholderText(/confirm password/i), 'Password123!');
+    await user.click(screen.getByRole('button', { name: /create account/i }));
+
+    expect(await screen.findByPlaceholderText('123456')).toBeInTheDocument();
   });
 });

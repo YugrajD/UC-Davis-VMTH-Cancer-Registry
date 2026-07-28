@@ -1,229 +1,226 @@
-import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
-import type { User, Session } from '@supabase/supabase-js';
-import { supabase, supabaseConfigured } from '../lib/supabase';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+  CognitoUser,
+  AuthenticationDetails,
+  CognitoUserSession,
+} from 'amazon-cognito-identity-js';
+import {
+  userPool,
+  authConfigured,
+  authenticationFlowType,
+  googleOAuthConfigured,
+  googleSignInUrl,
+} from '../lib/cognito';
 import { parseAuthCallback } from '../lib/authUrl';
 import { fetchMe, ApiError } from '../api/client';
 
+export interface AuthUser {
+  email: string;
+  sub: string;
+}
+
 interface AuthState {
-  user: User | null;
-  session: Session | null;
+  user: AuthUser | null;
   loading: boolean;
   isAdmin: boolean;
   isUploader: boolean;
   isReviewer: boolean;
-  passwordRecovery: boolean;
   authError: string | null;
+  googleOAuthConfigured: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
-  signOut: () => Promise<void>;
+  confirmSignUp: (email: string, code: string) => Promise<void>;
+  resendConfirmationCode: (email: string) => Promise<void>;
+  forgotPassword: (email: string) => Promise<void>;
+  confirmForgotPassword: (email: string, code: string, newPassword: string) => Promise<void>;
+  signInWithGoogle: () => void;
+  signOut: () => void;
   getAccessToken: () => Promise<string | null>;
-  updatePassword: (newPassword: string) => Promise<void>;
-  clearPasswordRecovery: () => void;
   clearAuthError: () => void;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
+function sessionToUser(session: CognitoUserSession): AuthUser {
+  const payload = session.getIdToken().payload;
+  return { email: payload.email as string, sub: payload.sub as string };
+}
+
+function getCurrentSession(): Promise<CognitoUserSession | null> {
+  const cognitoUser = userPool.getCurrentUser();
+  if (!cognitoUser) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    cognitoUser.getSession((err: Error | null, session: CognitoUserSession | null) => {
+      resolve(err ? null : session);
+    });
+  });
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(supabaseConfigured);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(authConfigured);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isUploader, setIsUploader] = useState(false);
   const [isReviewer, setIsReviewer] = useState(false);
-  const [passwordRecovery, setPasswordRecovery] = useState(false);
-  // Read any Supabase error from the URL synchronously so it's available on
-  // the very first render with no useEffect needed.  parseAuthCallback is
-  // pure (no DOM writes) because React StrictMode runs lazy initializers
-  // twice in dev — a side effect here would be applied twice or, worse,
-  // applied on the first run and then make the second run return null
-  // and overwrite the real state value.  URL cleanup is in a useEffect.
   const [authError, setAuthError] = useState<string | null>(
-    () => parseAuthCallback(window.location.search, window.location.hash).error,
+    () => parseAuthCallback(window.location.search).error,
   );
 
-  // Strip the error params from the visible URL once we've captured them.
   useEffect(() => {
     if (!authError) return;
-    const url = window.location;
-    if (url.search.includes('error=') || url.hash.includes('error=')) {
-      history.replaceState(null, '', url.pathname);
+    if (window.location.search.includes('error=')) {
+      history.replaceState(null, '', window.location.pathname);
     }
   }, [authError]);
 
-  // Dedup and backoff refs for refreshRoles
-  const inflightRef = useRef(false);
-  const backoffRef = useRef(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const refreshRolesRef = useRef<(accessToken: string) => Promise<void>>();
-
-  const refreshRoles = useCallback(async (accessToken: string) => {
-    // Skip if a request is already in-flight
-    if (inflightRef.current) return;
-
-    // Clear any scheduled retry — a fresh call supersedes it
-    if (retryTimerRef.current) {
-      clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = undefined;
-    }
-
-    inflightRef.current = true;
+  const refreshRoles = async (idToken: string) => {
     try {
-      const me = await fetchMe(accessToken);
+      const me = await fetchMe(idToken);
       setIsAdmin(me.is_admin);
       setIsUploader(me.is_uploader);
       setIsReviewer(me.is_reviewer);
-      backoffRef.current = 0;
     } catch (err) {
-      // Only clear roles on explicit auth failures (401/403).
-      // Transient errors (5xx, network down) preserve the last-known roles so
-      // the admin UI doesn't vanish during a backend restart or blip.
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         setIsAdmin(false);
         setIsUploader(false);
         setIsReviewer(false);
       }
-      // Exponential backoff: 2s, 4s, 8s, 16s, 30s cap
-      backoffRef.current = Math.min(backoffRef.current + 1, 5);
-      const delay = Math.min(1000 * 2 ** backoffRef.current, 30_000);
-      retryTimerRef.current = setTimeout(() => refreshRolesRef.current?.(accessToken), delay);
-    } finally {
-      inflightRef.current = false;
     }
-  }, []);
+  };
 
   useEffect(() => {
-    refreshRolesRef.current = refreshRoles;
-  }, [refreshRoles]);
+    if (!authConfigured) return;
 
-  useEffect(() => {
-    if (!supabaseConfigured) return;
-
-    // Handle email auth callbacks. Two formats, both verified client-side
-    // so email scanners that pre-fetch the link can't consume the token:
-    //
-    //   ?token_hash=...&type=recovery   — PKCE email template (preferred)
-    //     verifyOtp is the dedicated entry point for email-confirm flows.
-    //   ?code=...                       — OAuth/PKCE callback
-    //     exchangeCodeForSession is the dedicated entry point for OAuth.
-    const { code, tokenHash, type: emailType, isRecovery } = parseAuthCallback(
-      window.location.search,
-      window.location.hash,
-    );
-
-    if (tokenHash && emailType) {
+    // Hosted UI (Google) redirects back with ?code=... — exchange it for
+    // tokens via Cognito's OAuth2 token endpoint.
+    const { code, error } = parseAuthCallback(window.location.search);
+    if (error) {
+      setAuthError(error);
+      setLoading(false);
+      return;
+    }
+    if (code) {
       history.replaceState(null, '', window.location.pathname);
-      supabase.auth
-        .verifyOtp({ token_hash: tokenHash, type: emailType as 'recovery' | 'signup' | 'email' | 'invite' | 'email_change' })
-        .then(({ error }) => {
-          if (error) {
-            setAuthError('Could not verify your link. Please request a new one.');
-            setLoading(false);
-          } else if (isRecovery) {
-            setPasswordRecovery(true);
-          }
-        });
-    } else if (code) {
-      history.replaceState(null, '', window.location.pathname);
-      supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
-        if (error) {
-          setAuthError('Could not verify your link. Please request a new one.');
-          setLoading(false);
-        } else if (isRecovery) {
-          setPasswordRecovery(true);
-        }
-      });
+      // Hosted-UI code exchange happens server-side via the token endpoint;
+      // not implemented for local dev since cognito-local has no Hosted UI.
+      setLoading(false);
+      return;
     }
 
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      if (s?.access_token) {
-        refreshRoles(s.access_token);
+    getCurrentSession().then((session) => {
+      if (session) {
+        setUser(sessionToUser(session));
+        refreshRoles(session.getIdToken().getJwtToken());
       }
       setLoading(false);
     });
+  }, []);
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      if (event === 'PASSWORD_RECOVERY') {
-        setPasswordRecovery(true);
-      }
-      if (s?.access_token) {
-        refreshRoles(s.access_token);
-      } else {
-        setIsAdmin(false);
-        setIsUploader(false);
-        setIsReviewer(false);
-      }
+  const signIn = (email: string, password: string) =>
+    new Promise<void>((resolve, reject) => {
+      const cognitoUser = new CognitoUser({ Username: email, Pool: userPool });
+      cognitoUser.setAuthenticationFlowType(authenticationFlowType);
+      const authDetails = new AuthenticationDetails({ Username: email, Password: password });
+      cognitoUser.authenticateUser(authDetails, {
+        onSuccess: (session) => {
+          setUser(sessionToUser(session));
+          refreshRoles(session.getIdToken().getJwtToken());
+          resolve();
+        },
+        onFailure: (err) => reject(err),
+      });
     });
 
-    return () => {
-      subscription.unsubscribe();
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    };
-  }, [refreshRoles]);
-
-  const signIn = async (email: string, password: string) => {
-    if (!supabaseConfigured) throw new Error('Auth is not configured');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-  };
-
-  const signUp = async (email: string, password: string) => {
-    if (!supabaseConfigured) throw new Error('Auth is not configured');
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) throw error;
-  };
-
-  const signInWithGoogle = async () => {
-    if (!supabaseConfigured) throw new Error('Auth is not configured');
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin },
+  const signUp = (email: string, password: string) =>
+    new Promise<void>((resolve, reject) => {
+      userPool.signUp(email, password, [{ Name: 'email', Value: email }], [], (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
     });
-    if (error) throw error;
+
+  const confirmSignUp = (email: string, code: string) =>
+    new Promise<void>((resolve, reject) => {
+      const cognitoUser = new CognitoUser({ Username: email, Pool: userPool });
+      cognitoUser.confirmRegistration(code, true, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+  const resendConfirmationCode = (email: string) =>
+    new Promise<void>((resolve, reject) => {
+      const cognitoUser = new CognitoUser({ Username: email, Pool: userPool });
+      cognitoUser.resendConfirmationCode((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+  const forgotPassword = (email: string) =>
+    new Promise<void>((resolve, reject) => {
+      const cognitoUser = new CognitoUser({ Username: email, Pool: userPool });
+      cognitoUser.forgotPassword({
+        onSuccess: () => resolve(),
+        onFailure: (err) => reject(err),
+      });
+    });
+
+  const confirmForgotPassword = (email: string, code: string, newPassword: string) =>
+    new Promise<void>((resolve, reject) => {
+      const cognitoUser = new CognitoUser({ Username: email, Pool: userPool });
+      cognitoUser.confirmPassword(code, newPassword, {
+        onSuccess: () => resolve(),
+        onFailure: (err) => reject(err),
+      });
+    });
+
+  const signInWithGoogle = () => {
+    if (!googleOAuthConfigured) throw new Error('Google sign-in is not configured');
+    window.location.href = googleSignInUrl(window.location.origin);
   };
 
-  const signOut = async () => {
-    if (!supabaseConfigured) return;
-    await supabase.auth.signOut();
+  const signOut = () => {
+    const cognitoUser = userPool.getCurrentUser();
+    cognitoUser?.signOut();
+    setUser(null);
     setIsAdmin(false);
     setIsUploader(false);
     setIsReviewer(false);
   };
 
   const getAccessToken = async (): Promise<string | null> => {
-    if (!supabaseConfigured) return null;
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) return null;
-    // Proactively refresh if the access token expires within 60 seconds so
-    // the backend never receives an expired token (which triggers the auth
-    // failure rate limiter and causes 429s on subsequent valid requests).
-    const expiresAt = data.session.expires_at;
-    if (expiresAt !== undefined && Date.now() / 1000 >= expiresAt - 60) {
-      const { data: refreshed } = await supabase.auth.refreshSession();
-      return refreshed.session?.access_token ?? null;
-    }
-    return data.session.access_token;
+    if (!authConfigured) return null;
+    const session = await getCurrentSession();
+    // The backend verifies the ID token (it carries the `email` claim used
+    // for role lookup); getSession() transparently refreshes it if expired.
+    return session?.getIdToken().getJwtToken() ?? null;
   };
 
-  const updatePassword = async (newPassword: string) => {
-    if (!supabaseConfigured) throw new Error('Auth is not configured');
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    if (error) throw error;
-    setPasswordRecovery(false);
-  };
-
-  const clearPasswordRecovery = () => setPasswordRecovery(false);
   const clearAuthError = () => setAuthError(null);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, isUploader, isReviewer, passwordRecovery, authError, signIn, signUp, signInWithGoogle, signOut, getAccessToken, updatePassword, clearPasswordRecovery, clearAuthError }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        isAdmin,
+        isUploader,
+        isReviewer,
+        authError,
+        googleOAuthConfigured,
+        signIn,
+        signUp,
+        confirmSignUp,
+        resendConfirmationCode,
+        forgotPassword,
+        confirmForgotPassword,
+        signInWithGoogle,
+        signOut,
+        getAccessToken,
+        clearAuthError,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

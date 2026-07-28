@@ -2,8 +2,6 @@
 -- Eliminates the pass-through cancer_cases table (1:1 with patients)
 -- Moves diagnosis_date, outcome to patients
 -- Points case_diagnoses and pathology_reports directly to patients
---
--- Run on Supabase BEFORE deploying code changes.
 
 BEGIN;
 

@@ -17,6 +17,6 @@ ALTER TABLE calenviroscreen ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ingestion_jobs ENABLE ROW LEVEL SECURITY;
 
 -- Note: cancer_cases and pathology_reports were removed by later migrations
--- (003_merge_cancer_cases.sql). If they exist in your database, run:
+-- (009b_merge_cancer_cases.sql). If they exist in your database, run:
 --   ALTER TABLE cancer_cases ENABLE ROW LEVEL SECURITY;
 --   ALTER TABLE pathology_reports ENABLE ROW LEVEL SECURITY;

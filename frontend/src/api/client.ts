@@ -292,6 +292,20 @@ export async function fetchMe(token: string): Promise<MeResponse> {
   return fetchJsonAuth('/api/v1/auth/me', token);
 }
 
+/** Permanently delete the current user's own account. Irreversible. */
+export async function deleteAccount(token: string): Promise<void> {
+  const response = await fetch(apiUrl('/api/v1/auth/me'), {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    const raw = err.detail;
+    const msg = typeof raw === 'string' ? raw : `Delete failed: ${response.status}`;
+    throw new ApiError(response.status, msg);
+  }
+}
+
 // --- User-role admin panel ---
 
 export interface UserRoles {

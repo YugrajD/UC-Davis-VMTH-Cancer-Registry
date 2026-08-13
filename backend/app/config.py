@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     ML_WORKER_URL: str = "http://localhost:8001"
     SUPABASE_URL: str = ""
+    # Service-role key — grants full admin access to the Supabase project.
+    # Used only for the account-deletion Admin API call. Never exposed to
+    # the frontend; back end only.
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
     # Comma-separated email lists. Admins implicitly hold uploader and
     # reviewer privileges, so these env vars only need users who don't
     # also appear in ADMIN_EMAILS.

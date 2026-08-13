@@ -5,7 +5,7 @@ export type AgeGroup = 'all' | 'young' | 'juvenile' | 'adult' | 'old' | 'senior'
 
 export type RateType = 'incidence' | 'mortality';
 
-export type TabType = 'overview' | 'breed-disparities' | 'cancer-by-age' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management';
+export type TabType = 'overview' | 'breed-disparities' | 'cancer-by-age' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management' | 'settings';
 
 export interface CancerRecord {
   county: string;
@@ -69,6 +69,7 @@ export const TABS: Tab[] = [
   { id: 'review-queue', label: 'Review Queue' },
   { id: 'diagnosis-review', label: 'Diagnosis Review' },
   { id: 'user-management', label: 'User Management' },
+  { id: 'settings', label: 'Settings' },
 ] as const;
 
 export interface CalEnviroScreenData {

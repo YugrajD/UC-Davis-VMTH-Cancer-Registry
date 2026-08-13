@@ -95,6 +95,7 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
       return isAdmin || isReviewer;
     }
     if (tab.id === 'user-management') return isAdmin;
+    if (tab.id === 'settings') return !!user;
     return true;
   });
 

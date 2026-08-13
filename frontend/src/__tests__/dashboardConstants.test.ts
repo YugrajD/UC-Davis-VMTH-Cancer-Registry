@@ -202,8 +202,13 @@ describe('TABS', () => {
     expect(ids).toContain('user-management');
   });
 
-  it('contains exactly 9 tabs', () => {
-    expect(TABS.length).toBe(9);
+  it('contains the settings tab', () => {
+    const ids = TABS.map(t => t.id);
+    expect(ids).toContain('settings');
+  });
+
+  it('contains exactly 10 tabs', () => {
+    expect(TABS.length).toBe(10);
   });
 
   it('every tab has a non-empty label', () => {

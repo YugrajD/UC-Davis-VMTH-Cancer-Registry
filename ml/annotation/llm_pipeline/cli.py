@@ -12,7 +12,7 @@ import os
 import config
 from .cleanup import CleanupConfig, run_cleanup
 from .client import list_models
-from .pipeline import LLMConfig, LLMOutputs, run_llm_scan
+from .pipeline import LLMConfig, LLMOutputs, backfill_decision_stage, run_llm_scan
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +23,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--list-models", action="store_true", help="List available LM Studio models and exit.")
     parser.add_argument("--compare-models", action="store_true", help="Run all available models on --max-rows rows and print a comparison.")
+    parser.add_argument(
+        "--backfill-stage",
+        action="store_true",
+        help="Add the decision_stage column to an existing annotation CSV and exit. "
+             "Makes no LLM calls; see --annotation-csv.",
+    )
+    parser.add_argument(
+        "--annotation-csv",
+        default=config.ANNOTATION_CSV,
+        help="Annotation CSV to backfill (used only with --backfill-stage).",
+    )
     parser.add_argument("--csv", default=config.DIAGNOSES_CSV, help="Path to input diagnoses CSV.")
     parser.add_argument("--id-col", default="case_id", help="Case ID column name.")
     parser.add_argument("--diag-num-col", default="diagnosis_number", help="Diagnosis number column name.")
@@ -100,6 +111,14 @@ def main() -> int:
 
     if args.compare_models:
         return _run_compare(args)
+
+    if args.backfill_stage:
+        backfill_decision_stage(
+            annotation_csv=args.annotation_csv,
+            labels_csv=args.labels_csv,
+            summary_json=os.path.join(args.out_dir, "llm_summary.json"),
+        )
+        return 0
 
     llm_config = LLMConfig(
         csv_path=args.csv,

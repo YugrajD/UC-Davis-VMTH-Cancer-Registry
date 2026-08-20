@@ -59,6 +59,39 @@ The cleanup pass's verifier models are independent of `LLM_MODEL`; use `--cleanu
 
 `--list-models` prints the models the configured server currently exposes.
 
+## Which stage decided the row
+
+`method` records only the *winning* tier, which leaves `No Match` ambiguous: the LLM may
+have been asked and declined, or may never have been consulted at all. Those are very
+different failures, so every row also carries a `decision_stage`:
+
+| `decision_stage` | Meaning |
+|---|---|
+| `tier1_exact` | The keyword index matched. |
+| `tier2_fuzzy` | Token-overlap matched. |
+| `tier3_llm` | The LLM was called — it matched, hedged, or declined. |
+| `tier3_no_candidates` | Cancer signal present, but the candidate build came back empty, so the LLM was never asked. A pure recall hole. |
+| `no_signal` | No cancer-signal token; Tier 3 was never reached. |
+
+A request failure and a genuine "no match" reply are both counted as `tier3_no_match`, so
+`tier3_llm` on a `No Match` row is an **upper bound** on real declines.
+
+This is what makes the silently-dropped rows measurable, and it is the basis of the
+row-level Tier-3 audit in [annotation-redesign-plan.md](annotation-redesign-plan.md).
+
+**Backfilling an older corpus.** Every gate ahead of the LLM call is deterministic, so the
+stage a row reached is recoverable from its diagnosis text alone — no LLM calls, no re-run:
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --backfill-stage --annotation-csv ml/output/annotation/annotation.csv
+```
+
+It replays the gates, cross-checks the resulting Tier-3 counts against `llm_summary.json`,
+and **aborts before writing** if they disagree — a mismatch means the taxonomy or the
+matching regexes changed since the corpus was generated, so the replay would be unfaithful
+and the cascade should simply be re-run. On success it writes a `.bak` alongside the
+original and swaps the new file in atomically.
+
 ## Known limitations
 
 - **Metastasis maps to primary or generic.** Diagnoses like `"LYMPH NODE: METASTASIS (SEE COMMENT)"` typically resolve to `Neoplasm, metastatic`. The LLM occasionally chooses this even when a primary type appears in the text.
@@ -114,6 +147,7 @@ ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --list-models
 | `matched_keyword` | The keyword/token string that triggered the match |
 | `method` | `Exact` / `Fuzzy` / `LLM` / `Uncertain` / `No Match` |
 | `confidence` | 1.0 (Exact/LLM exact); 0.9 (LLM difflib near-match); 0.85–1.0 (Fuzzy); 0.0 otherwise |
+| `decision_stage` | Which gate of the cascade decided the row — see "Which stage decided the row" |
 
 `llm_annotation_cleaned.csv` has the same schema with rows rewritten per the cleanup vote.
 

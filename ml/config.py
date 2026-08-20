@@ -29,8 +29,12 @@ LLM_ANNOTATION_CSV = f"{ANNOTATION_DIR}/llm_annotation.csv"
 LLM_ANNOTATION_CLEANED_CSV = f"{ANNOTATION_DIR}/llm_annotation_cleaned.csv"
 # Gold annotation store (human-confirmed; schema = annotation.csv + tier/verified_by/verified_date/provenance).
 GOLD_ANNOTATION_CSV = f"{ANNOTATION_DIR}/gold_annotation.csv"
-# Human-review surface produced by `run_gold_annotation.py sample` and filled in by the professional (Excel workbook).
-GOLD_EVAL_REVIEW_XLSX = f"{ANNOTATION_DIR}/gold_eval_review.xlsx"
+# Human-review surface produced by `run_gold_annotation.py sample` and filled in by the
+# professional. Row-level Tier-2/Tier-3 audit — not a per-case set, so not scoreable by evaluate.py.
+TIER3_AUDIT_REVIEW_CSV = f"{ANNOTATION_DIR}/tier3_audit_review.csv"
+# Sidecars written alongside the review CSV: how to fill it in, and the valid (Group, Term, Code) list.
+TIER3_AUDIT_INSTRUCTIONS_MD = f"{ANNOTATION_DIR}/tier3_audit_instructions.md"
+TIER3_AUDIT_TAXONOMY_CSV = f"{ANNOTATION_DIR}/tier3_audit_taxonomy.csv"
 
 # ---------------------------------------------------------------------------
 # Training intermediates

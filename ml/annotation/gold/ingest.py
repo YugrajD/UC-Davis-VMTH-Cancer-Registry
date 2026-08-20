@@ -1,12 +1,13 @@
-"""Ingest a filled review workbook into the gold annotation store.
+"""Ingest a filled review CSV into the gold annotation store.
 
-Reads the filled Excel review workbook, validates verdict values, resolves
-confirmed labels, and writes GOLD_ANNOTATION_CSV.
+Reads the filled review CSV, validates verdict values, resolves confirmed
+labels, and writes GOLD_ANNOTATION_CSV.
 
 Schema of GOLD_ANNOTATION_CSV:
   case_id, diagnosis_number, diagnosis,
   matched_term, matched_group, matched_code, matched_keyword, method, confidence,
-  tier, verified_by, verified_date, provenance
+  tier, verified_by, verified_date, provenance,
+  decision_stage, sample_stratum, sample_weight
 
 Mapping rules:
   verdict=correct   → copy cascade_matched_{term,group,code} into matched_*
@@ -14,7 +15,9 @@ Mapping rules:
                       taxonomy via (group, term), or (term) alone if unambiguous
   verdict=no_cancer / uncertain → matched_term/group/code left empty
 
-Duplicate rows (dup_pass=2) are excluded — they exist only for self-consistency.
+The review CSV has no dropdowns, so a `wrong` row whose confirmed term/group is
+not in the taxonomy is a validation error rather than a silently code-less gold
+row.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from pathlib import Path
 
 from ICD_labels.taxonomy import load_labels_taxonomy
 
-from .xlsx_io import read_review_rows
+from .csv_io import read_review_rows
 
 VALID_VERDICTS = frozenset({"correct", "wrong", "no_cancer", "uncertain"})
 
@@ -36,6 +39,10 @@ _GOLD_FIELDNAMES = [
     "matched_term", "matched_group", "matched_code",
     "matched_keyword", "method", "confidence",
     "tier", "verified_by", "verified_date", "provenance",
+    # Carried from the review CSV: the audit deliberately over-samples the hard
+    # strata, so without these no rate computed off this store can be weighted
+    # back to the Tier-3 population.
+    "decision_stage", "sample_stratum", "sample_weight",
 ]
 
 
@@ -49,26 +56,30 @@ def _taxonomy_index(labels_csv: str):
     return by_group_term, by_term
 
 
-def _resolve_wrong(group: str, term: str, by_group_term, by_term) -> tuple[str, str]:
-    """Return (matched_group, matched_code) for a corrected label; code may be ''."""
+def _resolve_wrong(group: str, term: str, by_group_term, by_term) -> tuple[str, str, str]:
+    """Return (matched_group, matched_code, error) for a corrected label."""
     gt = (group.lower(), term.lower())
     if gt in by_group_term:
-        return group, by_group_term[gt]
+        return group, by_group_term[gt], ""
     # Group left blank or not matching: fall back to term lookup.
     cands = by_term.get(term.lower(), [])
-    if len({g for g, _ in cands}) == 1:
-        return cands[0][0], cands[0][1]   # unambiguous term → backfill group + code
-    return group, ""                      # ambiguous or unknown → keep group, no code
+    if not cands:
+        return "", "", f"confirmed_term {term!r} is not in the taxonomy"
+    groups = sorted({g for g, _ in cands})
+    if len(groups) == 1:
+        return cands[0][0], cands[0][1], ""   # unambiguous term → backfill group + code
+    return "", "", (f"confirmed_term {term!r} does not belong to confirmed_group "
+                    f"{group!r}; valid groups for it: {groups}")
 
 
 def ingest(
-    review_xlsx: str,
+    review_csv: str,
     out_csv: str,
     verified_by: str,
     labels_csv: str,
     provenance: str = "round0",
 ) -> None:
-    """Read a filled review workbook and write the gold annotation store."""
+    """Read a filled review CSV and write the gold annotation store."""
     today = date.today().isoformat()
     out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,10 +89,7 @@ def ingest(
     errors: list[str] = []
     out_rows: list[dict] = []
 
-    for idx, row in enumerate(read_review_rows(review_xlsx), start=2):  # +1 header
-        if row.get("dup_pass", "1").strip() == "2":
-            continue  # duplicates are for consistency only
-
+    for idx, row in enumerate(read_review_rows(review_csv), start=2):  # +1 header
         verdict = row.get("verdict", "").strip().lower()
         cid = row.get("case_id", "")
         if not verdict:
@@ -103,8 +111,11 @@ def ingest(
             if not matched_term:
                 errors.append(f"Row {idx}: verdict=wrong but confirmed_term is empty (case_id={cid})")
                 continue
-            matched_group, matched_code = _resolve_wrong(
+            matched_group, matched_code, err = _resolve_wrong(
                 row.get("confirmed_group", "").strip(), matched_term, by_group_term, by_term)
+            if err:
+                errors.append(f"Row {idx}: {err} (case_id={cid})")
+                continue
         else:  # no_cancer or uncertain
             matched_term = matched_group = matched_code = ""
 
@@ -122,6 +133,9 @@ def ingest(
             "verified_by": verified_by,
             "verified_date": today,
             "provenance": provenance,
+            "decision_stage": row.get("decision_stage", ""),
+            "sample_stratum": row.get("sample_stratum", ""),
+            "sample_weight": row.get("sample_weight", ""),
         })
 
     if errors:

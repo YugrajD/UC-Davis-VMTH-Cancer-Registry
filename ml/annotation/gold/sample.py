@@ -1,16 +1,41 @@
-"""Stratified-random gold-EVAL sample from test cases.
+"""Row-level Tier-3 audit sample from test cases.
 
-Draws ~n_cases cases from test_cases.txt, stratified by cancer group so that
-every group with at least one test case gets at least one sampled case.  Adds
-dup_frac * n_cases duplicate cases (re-listed with dup_pass=2) for
-intra-annotator self-consistency, dispersed through the sheet so repeats are not
-obvious.
+Draws ~n_rows individual diagnosis rows from the stages where the cascade was
+actually working — the LLM tier and the two matchers around it — so every row
+the reviewer touches is a row worth touching.
 
-Emits an Excel review workbook (see xlsx_io) — one row per diagnosis row of each
-sampled case, with cascade predictions joined from annotation.csv and report
-context joined from report.csv.  Also writes a batch-cases ledger (one case_id
-per line) used by `check-split` / evaluation and to exclude already-sampled
-cases from later batches.
+Why rows, not cases:  a per-case sample has to emit every diagnosis row of a
+selected case, and cases picked for their one interesting row drag their
+`no_signal` siblings along — measured at ~66% padding, i.e. ~5 rows reviewed per
+useful row.  Sampling rows directly removes the padding entirely.
+
+The trade this makes:  a row-level sample cannot be scored by `evaluate.py`,
+which compares predictions against a case's *whole* annotated term set and would
+read the un-sampled rows of a partially-covered case as false positives.  This
+sample answers a different question — "when the cascade reached Tier 3, was it
+right, and are its declines silent false negatives?" — and is scored per row.
+
+Strata (`_ROW_QUOTAS`) split the LLM tier by outcome, because an accepted answer,
+a decline and a hedge are three different questions:
+  - the LLM answered            -> is the chosen term right?
+  - the LLM declined            -> is there a cancer here it missed?
+  - the LLM said "uncertain"    -> is the diagnosis genuinely unclassifiable?
+  - candidates never built      -> recall hole upstream of the model
+  - fuzzy token-overlap matched -> is the match the same clinical entity?
+
+Each row carries `sample_stratum` / `sample_weight` (N_h/n_h) so per-stratum
+rates extrapolate back to the Tier-3 population.
+
+Emits a review CSV (see csv_io) plus instructions and taxonomy sidecars, and a
+batch-cases ledger used by `check-split` and to exclude already-audited cases
+from later batches.
+
+The reviewer sees the **diagnosis text only** — no report sections.  The cascade
+maps a single diagnosis string to a label (`pipeline._run_matching_pass` reads
+one column, and the LLM prompt embeds only that string), so a reviewer given the
+HIST summary or final comment would judge on evidence the cascade cannot see,
+and the resulting labels would measure something the cascade cannot be fixed to
+achieve.
 """
 
 from __future__ import annotations
@@ -22,10 +47,7 @@ from pathlib import Path
 
 from ICD_labels.taxonomy import load_labels_taxonomy
 
-from .xlsx_io import write_review_workbook
-
-# Columns from report.csv to include as reviewer context.
-_REPORT_CONTEXT_COLS = ["HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT"]
+from .csv_io import write_instructions, write_review_csv, write_taxonomy_csv
 
 # Blank human-input columns (ICD-O code is derived from group+term at ingest).
 _HUMAN_COLS = ["verdict", "confirmed_term", "confirmed_group", "notes"]
@@ -36,7 +58,24 @@ _CASCADE_COLS = [
     "cascade_matched_group",
     "cascade_matched_code",
     "cascade_method",
+    "decision_stage",
 ]
+
+# Sampling-provenance columns, needed to weight per-stratum rates back to the pool.
+_SAMPLE_COLS = ["sample_stratum", "sample_weight"]
+
+# Share of the row budget per stratum. The two biggest suspected error reservoirs
+# — declines and the candidate-build hole — get the largest slices.
+_ROW_QUOTAS = {
+    "tier3_llm_no_match":  0.25,
+    "tier3_no_candidates": 0.25,
+    "tier3_llm_answered":  0.25,
+    "tier3_llm_uncertain": 0.125,
+    "tier2_fuzzy":         0.125,
+}
+
+# Presentation order: the questions most likely to change the pipeline come first.
+_STRATUM_ORDER = tuple(_ROW_QUOTAS)
 
 
 def _load_case_ids(txt_path: str) -> list[str]:
@@ -44,159 +83,137 @@ def _load_case_ids(txt_path: str) -> list[str]:
         return [line.strip() for line in f if line.strip()]
 
 
-def _load_annotation(annotation_csv: str) -> dict[str, list[dict]]:
-    """Return {case_id: [row, ...]} for every annotated case."""
-    by_case: dict[str, list[dict]] = defaultdict(list)
+def _row_stratum(row: dict) -> str | None:
+    """Return the audit stratum for an annotation row, or None if not auditable."""
+    stage = row.get("decision_stage", "").strip()
+    if stage == "tier2_fuzzy":
+        return "tier2_fuzzy"
+    if stage == "tier3_no_candidates":
+        return "tier3_no_candidates"
+    if stage != "tier3_llm":
+        return None
+    method = row.get("method", "").strip()
+    if method == "No Match":
+        return "tier3_llm_no_match"
+    if method == "Uncertain":
+        return "tier3_llm_uncertain"
+    return "tier3_llm_answered"
+
+
+def _load_auditable_rows(annotation_csv: str, case_ids: set[str]) -> dict[str, list[dict]]:
+    """Return {stratum: [annotation row, ...]} for auditable rows of the given cases."""
+    pools: dict[str, list[dict]] = defaultdict(list)
     with open(annotation_csv, encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
-            by_case[row["case_id"]].append(row)
-    return by_case
+        reader = csv.DictReader(f)
+        if "decision_stage" not in (reader.fieldnames or []):
+            raise SystemExit(
+                f"{annotation_csv} has no 'decision_stage' column — the Tier-3 audit "
+                "cannot select rows.\nBackfill it first:\n"
+                "  ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py --backfill-stage"
+            )
+        for row in reader:
+            if row["case_id"] not in case_ids:
+                continue
+            stratum = _row_stratum(row)
+            if stratum:
+                pools[stratum].append(row)
+    return pools
 
 
-def _load_report_context(reports_csv: str, case_ids: set[str]) -> dict[str, dict[str, str]]:
-    """Return {case_id: {col: value}} for the requested context columns."""
-    context: dict[str, dict[str, str]] = {}
-    try:
-        with open(reports_csv, encoding="latin-1") as f:
-            for row in csv.DictReader(f):
-                cid = row.get("case_id", "")
-                if cid not in case_ids:
-                    continue
-                context[cid] = {col: row.get(col, "") for col in _REPORT_CONTEXT_COLS}
-    except FileNotFoundError:
-        # Report CSV may not be present in all environments; context columns will be empty.
-        pass
-    return context
-
-
-def _assign_strata(annotation_by_case: dict[str, list[dict]],
-                   test_ids: set[str]) -> dict[str, list[str]]:
-    """Map group name → list of test case IDs in that group."""
-    strata: dict[str, list[str]] = defaultdict(list)
-    for case_id, rows in annotation_by_case.items():
-        if case_id not in test_ids:
-            continue
-        groups = {r["matched_group"] for r in rows if r.get("matched_group", "").strip()}
-        if not groups:
-            groups = {"__no_group__"}
-        for g in groups:
-            strata[g].append(case_id)
-    return strata
-
-
-def _taxonomy_lists(labels_csv: str) -> tuple[list[str], list[str], list[tuple[str, str, str]]]:
-    """Return (sorted unique groups, sorted unique terms, sorted (group, term, code))."""
+def _taxonomy_rows(labels_csv: str) -> list[tuple[str, str, str]]:
+    """Return the sorted unique (group, term, code) reference rows."""
     labels = load_labels_taxonomy(labels_csv)
-    groups = sorted({lbl.group for lbl in labels})
-    terms = sorted({lbl.term for lbl in labels})
-    taxonomy_rows = sorted({(lbl.group, lbl.term, lbl.code) for lbl in labels})
-    return groups, terms, taxonomy_rows
+    return sorted({(lbl.group, lbl.term, lbl.code) for lbl in labels})
 
 
 def sample(
     annotation_csv: str,
     test_cases_txt: str,
-    reports_csv: str,
     labels_csv: str,
-    out_xlsx: str,
+    out_csv: str,
+    out_instructions_md: str,
+    out_taxonomy_csv: str,
     batch_cases_out: str,
-    n_cases: int = 200,
-    dup_frac: float = 0.08,
+    n_rows: int = 200,
     seed: int = 42,
     exclude_cases: list[str] | None = None,
 ) -> None:
-    """Draw a stratified sample of cases and write the review workbook + ledger."""
+    """Draw a stratified row-level Tier-3 audit and write the review CSV + sidecars + ledger."""
     rng = random.Random(seed)
 
     test_ids = set(_load_case_ids(test_cases_txt))
-    annotation_by_case = _load_annotation(annotation_csv)
 
-    # Exclude cases already used by earlier batches.
+    # Exclusion is per case, not per row: showing a reviewer a second row of a case
+    # they already judged invites them to recall the earlier verdict rather than
+    # read the new diagnosis.
     excluded: set[str] = set()
     for path in (exclude_cases or []):
         excluded.update(_load_case_ids(path))
 
-    # Only test cases that appear in annotation.csv have a prediction to review.
-    test_ids_in_annotation = (test_ids & set(annotation_by_case.keys())) - excluded
+    pools = _load_auditable_rows(annotation_csv, test_ids - excluded)
 
-    strata = _assign_strata(annotation_by_case, test_ids_in_annotation)
-
-    # A multi-group case appears in several strata; track selections to dedupe.
-    selected: list[str] = []
-    selected_set: set[str] = set()
-
-    # Phase 1 — force ≥1 case per group (rare groups may be fully included).
-    for group, case_list in sorted(strata.items()):
-        unique = [c for c in case_list if c not in selected_set]
-        if not unique:
+    selected: list[dict] = []
+    stratum_weight: dict[str, float] = {}
+    for stratum, share in _ROW_QUOTAS.items():
+        # sorted() before shuffle: dict/set iteration order varies with
+        # PYTHONHASHSEED, which would make the seed fail to pin the sample.
+        pool = sorted(pools.get(stratum, []),
+                      key=lambda r: (r["case_id"], r.get("diagnosis_number", "")))
+        if not pool:
             continue
-        pick = rng.choice(unique)
-        selected.append(pick)
-        selected_set.add(pick)
-
-    # Phase 2 — fill up to n_cases from the remaining pool.
-    remaining = n_cases - len(selected)
-    if remaining > 0:
-        pool = [c for c in test_ids_in_annotation if c not in selected_set]
         rng.shuffle(pool)
-        extra = pool[:remaining]
-        selected.extend(extra)
-        selected_set.update(extra)
+        take = pool[:min(round(share * n_rows), len(pool))]
+        stratum_weight[stratum] = len(pool) / len(take)
+        for row in take:
+            selected.append({"_stratum": stratum, **row})
 
-    # Phase 3 — pick dup_frac duplicates (re-listed for self-consistency).
-    n_dups = max(1, round(len(selected) * dup_frac))
-    dup_sources = rng.sample(selected, min(n_dups, len(selected)))
+    order = {s: i for i, s in enumerate(_STRATUM_ORDER)}
+    selected.sort(key=lambda r: (order[r["_stratum"]], r["case_id"],
+                                 r.get("diagnosis_number", "")))
 
-    # Build (case_id, dup_pass) blocks and shuffle so duplicates are dispersed.
-    blocks = [(cid, 1) for cid in selected] + [(cid, 2) for cid in dup_sources]
-    rng.shuffle(blocks)
-
-    all_case_ids = selected_set | set(dup_sources)
-    report_context = _load_report_context(reports_csv, all_case_ids)
-
-    header = (
-        ["case_id", "diagnosis_number", "diagnosis", "dup_pass"]
-        + _CASCADE_COLS
-        + _REPORT_CONTEXT_COLS
-        + _HUMAN_COLS
-    )
-
-    def _make_rows(case_id: str, dup_pass: int) -> list[dict]:
-        ctx = report_context.get(case_id, {})
-        out = []
-        for ann_row in annotation_by_case.get(case_id, []):
-            row: dict = {
-                "case_id": case_id,
-                "diagnosis_number": ann_row.get("diagnosis_number", ""),
-                "diagnosis": ann_row.get("diagnosis", ""),
-                "dup_pass": dup_pass,
-                "cascade_matched_term": ann_row.get("matched_term", ""),
-                "cascade_matched_group": ann_row.get("matched_group", ""),
-                "cascade_matched_code": ann_row.get("matched_code", ""),
-                "cascade_method": ann_row.get("method", ""),
-            }
-            for col in _REPORT_CONTEXT_COLS:
-                row[col] = ctx.get(col, "")
-            for col in _HUMAN_COLS:
-                row[col] = ""
-            out.append(row)
-        return out
+    header = (["case_id", "diagnosis_number", "diagnosis"]
+              + _CASCADE_COLS + _SAMPLE_COLS + _HUMAN_COLS)
 
     review_rows: list[dict] = []
-    for case_id, dup_pass in blocks:
-        review_rows.extend(_make_rows(case_id, dup_pass))
+    for ann_row in selected:
+        stratum = ann_row["_stratum"]
+        row: dict = {
+            "case_id": ann_row["case_id"],
+            "diagnosis_number": ann_row.get("diagnosis_number", ""),
+            "diagnosis": ann_row.get("diagnosis", ""),
+            "cascade_matched_term": ann_row.get("matched_term", ""),
+            "cascade_matched_group": ann_row.get("matched_group", ""),
+            "cascade_matched_code": ann_row.get("matched_code", ""),
+            "cascade_method": ann_row.get("method", ""),
+            "decision_stage": ann_row.get("decision_stage", ""),
+            "sample_stratum": stratum,
+            "sample_weight": f"{stratum_weight[stratum]:.2f}",
+        }
+        for col in _HUMAN_COLS:
+            row[col] = ""
+        review_rows.append(row)
 
-    groups, terms, taxonomy_rows = _taxonomy_lists(labels_csv)
-    write_review_workbook(out_xlsx, header, review_rows, groups, terms, taxonomy_rows)
+    write_review_csv(out_csv, header, review_rows)
+    write_instructions(out_instructions_md)
+    write_taxonomy_csv(out_taxonomy_csv, _taxonomy_rows(labels_csv))
 
-    # Ledger of the unique sampled case IDs (originals only — duplicates re-use them).
+    # Ledger of the cases touched, so later batches can exclude them.
+    case_ids = sorted({r["case_id"] for r in review_rows})
     ledger = Path(batch_cases_out)
     ledger.parent.mkdir(parents=True, exist_ok=True)
-    ledger.write_text("\n".join(selected) + "\n", encoding="utf-8")
+    ledger.write_text("\n".join(case_ids) + "\n", encoding="utf-8")
 
-    print(f"Sampled {len(selected)} cases ({len(strata)} strata covered), "
-          f"{len(dup_sources)} duplicate cases, {len(review_rows)} review rows.")
+    print(f"Sampled {len(review_rows)} rows to review, across {len(case_ids)} cases. "
+          "Every row is a Tier-2/Tier-3 decision — no padding.")
+    print("\nRows per stratum (drawn / population, weight):")
+    for stratum in _STRATUM_ORDER:
+        drawn = sum(1 for r in review_rows if r["sample_stratum"] == stratum)
+        if drawn:
+            print(f"  {stratum:<22}{drawn:>4} / {len(pools.get(stratum, [])):<6}"
+                  f"weight={stratum_weight[stratum]:>7.1f}")
     if excluded:
-        print(f"Excluded {len(excluded)} cases from earlier batches.")
-    print(f"Review workbook: {out_xlsx}")
+        print(f"\nExcluded {len(excluded)} cases from earlier batches.")
+    print(f"\nReview CSV: {out_csv}")
+    print(f"Instructions: {out_instructions_md}")
+    print(f"Taxonomy reference: {out_taxonomy_csv}")
     print(f"Batch cases ledger: {batch_cases_out}")

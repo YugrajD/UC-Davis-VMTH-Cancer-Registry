@@ -32,6 +32,7 @@ ml/
 | `ICD_labels/` | Loads `labels.csv` (845 Vet-ICD-O terms, 52 groups). Hosts `behavior_keywords.py` and `subtype_keywords.py` consumed by Stage 4 (keyword correction). |
 | `model/` | `CasePresenceClassifier`, `GroupClassifier`, `LabelPresenceClassifier` module defs plus `constants.py` (PETBERT_EMB_DIM=768, DEFAULT_HIDDEN_DIM=512). |
 | `annotation/llm_pipeline/` | Three-tier diagnosis cascade (exact → fuzzy → LLM) + ensemble verification cleanup. Produces `ml/output/annotation/llm_annotation.csv`; the cleaned version is promoted to `annotation.csv` for training. |
+| `annotation/gold/` | Human-in-the-loop gold annotation: `sample` draws a review CSV, `ingest` validates it back into the gold store, `check_split` guards the train/test boundary. Entry point `run_gold_annotation.py`. |
 | `training/binary/` | CasePresenceClassifier (Stage 1) dataset build + training. |
 | `training/group/` | GroupClassifier (Stage 2) dataset build + training. |
 | `training/label_presence/` | Per-group LabelPresenceClassifier (Stage 3a) — one model per ICD group. |
@@ -40,7 +41,7 @@ ml/
 | `production/petbert_pipeline/` | 4-stage inference pipeline. `pipeline.py` orchestrates; `stages/` holds one module per stage. |
 | `evaluation/` | End-to-end (`evaluate.py`), case-based, common-labels, plus per-stage scorers for Stage 1/2/3. |
 | `analysis/annotation_stats.py` | Annotation coverage stats (cases-per-group, collisions, etc.). |
-| `scripts/` | The only Python entry points: `run_annotation.py`, `run_training.py`, `run_production.py`, `run_evaluation.py`, `run_data_analysis.py`, `sweep_lp_thresholds.py`, `sweep_tail_gate.py`. |
+| `scripts/` | The only Python entry points: `run_annotation.py`, `run_gold_annotation.py`, `run_training.py`, `run_production.py`, `run_evaluation.py`, `run_data_analysis.py`, `sweep_lp_thresholds.py`, `sweep_tail_gate.py`. |
 | `utils/` | `encoding.py` (safe filename + NPZ key helpers), `csv_io.py` (BOM stripping). |
 
 ---
@@ -110,6 +111,8 @@ All under `ml/output/` (gitignored).
 | `output/annotation/llm_annotation.csv` | Raw three-tier annotation result |
 | `output/annotation/llm_annotation_cleaned.csv` | After ensemble cleanup pass; promote to `annotation.csv` to use for training |
 | `output/annotation/llm_summary.{json,md}` | Annotation statistics |
+| `output/annotation/tier3_audit_review.csv` | Human-review surface for the row-level Tier-2/Tier-3 audit, plus its `tier3_audit_instructions.md` and `tier3_audit_taxonomy.csv` sidecars and the `tier3_audit_batch<N>_cases.txt` ledger (from `run_gold_annotation.py sample`) |
+| `output/annotation/gold_annotation.csv` | Human-confirmed gold store (from `run_gold_annotation.py ingest`). Currently row-level Tier-3 audit rows (`provenance=tier3_audit`) — **not** scoreable by `evaluate.py`, which is per-case; weight rates by `sample_weight` within each `sample_stratum`. See [annotation-redesign-plan.md](annotation-redesign-plan.md) |
 | `output/splits/train_cases.txt` / `test_cases.txt` | 80/20 stratified case-ID lists (generated once) |
 | `output/training/embedding_cache.npz` | Per-section + concat-3 + mean + label embeddings. Auto-invalidates on model change. |
 | `output/training/contrastive/contrastive_pairs.csv` | Per-section (report, label) pairs for backbone adaptation |
@@ -140,4 +143,6 @@ All under `ml/output/` (gitignored).
 | [model-training.md](model-training.md) | You want the reasoning behind the 4-stage design and concat-3 representation |
 | [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes |
 | [annotation-redesign-plan.md](annotation-redesign-plan.md) | The approved gold/silver bootstrap plan for a trustworthy annotation corpus (Phase 0 executing) |
+| [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer, or picking the work back up after a break |
+| [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) | Proposed (not implemented) Box + rclone layout for sharing data and weights across teammates' pipelines |
 | [archive/training-log/](archive/training-log/) | Historical phase logs — do not consult for current behavior |

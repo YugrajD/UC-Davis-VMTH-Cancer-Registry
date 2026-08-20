@@ -17,7 +17,6 @@ tqdm==4.67.3
 requests>=2.32.0
 python-dotenv>=1.0.0
 matplotlib>=3.10.0
-openpyxl==3.1.5   # gold-annotation review workbook (dropdowns + formatting)
 
 # TUI
 textual>=0.47.0

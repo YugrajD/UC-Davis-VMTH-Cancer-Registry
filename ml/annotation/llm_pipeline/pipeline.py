@@ -13,7 +13,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
+import shutil
+from dataclasses import dataclass, replace
 from itertools import permutations as _permutations
 
 import pandas as pd
@@ -213,10 +214,25 @@ class _MatchResult:
     keyword: str
     method: str        # "Exact" | "Fuzzy" | "LLM" | "No Match" | "Uncertain"
     confidence: float  # 1.0=Exact/LLM, 0.0–1.0=Fuzzy, 0.0=No Match/Uncertain
+    stage: str         # which cascade stage decided the row; see STAGES
 
 
-_NO_MATCH = _MatchResult(term="", group="", code="", keyword="", method="No Match", confidence=0.0)
-_UNCERTAIN_RESULT = _MatchResult(term="", group="", code="", keyword="", method="Uncertain", confidence=0.0)
+# Values of the `decision_stage` output column. `method` records only the winning
+# tier, so a "No Match" row is ambiguous: the LLM may have been asked and declined,
+# or never consulted at all. `stage` disambiguates — "tier3_llm" on a No Match row
+# means the model was called and its answer stands.
+STAGES = (
+    "tier1_exact",          # keyword index matched
+    "tier2_fuzzy",          # token-overlap matched
+    "tier3_llm",            # LLM was called: matched, uncertain, or declined
+    "tier3_no_candidates",  # cancer signal present but candidate build empty; LLM not called
+    "no_signal",            # no cancer signal; Tier 3 never reached
+)
+
+_NO_MATCH = _MatchResult(term="", group="", code="", keyword="", method="No Match",
+                         confidence=0.0, stage="no_signal")
+_UNCERTAIN_RESULT = _MatchResult(term="", group="", code="", keyword="", method="Uncertain",
+                                 confidence=0.0, stage="tier3_llm")
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +302,7 @@ def _tier1_exact(
             label = taxonomy_labels[label_idx]
             return _MatchResult(
                 term=label.term, group=label.group, code=label.code,
-                keyword=kw, method="Exact", confidence=1.0,
+                keyword=kw, method="Exact", confidence=1.0, stage="tier1_exact",
             )
     return None
 
@@ -344,6 +360,7 @@ def _tier2_fuzzy(
                     best = (score, _MatchResult(
                         term=label.term, group=label.group, code=label.code,
                         keyword=term_str, method="Fuzzy", confidence=round(score, 2),
+                        stage="tier2_fuzzy",
                     ))
         return best[1] if best else None
 
@@ -481,7 +498,7 @@ def _parse_llm_response(
         if label.term.lower() == response.lower():
             return _MatchResult(
                 term=label.term, group=label.group, code=label.code,
-                keyword=response, method=method, confidence=1.0,
+                keyword=response, method=method, confidence=1.0, stage="tier3_llm",
             )
     from difflib import get_close_matches
     term_names = [c.term for c in candidates]
@@ -490,7 +507,7 @@ def _parse_llm_response(
         label = next(c for c in candidates if c.term == close[0])
         return _MatchResult(
             term=label.term, group=label.group, code=label.code,
-            keyword=response, method=method, confidence=0.9,
+            keyword=response, method=method, confidence=0.9, stage="tier3_llm",
         )
     return None
 
@@ -505,7 +522,7 @@ def _tier3_llm(
     timeout: int,
     model: str | None,
     counters: dict,
-) -> _MatchResult | None:
+) -> _MatchResult:
     # Use masked text for group identification so "non-B cell" / negated
     # mentions don't pull the group selection toward the wrong taxonomy.
     group = _identify_group(masked_text, group_token_index)
@@ -521,22 +538,25 @@ def _tier3_llm(
         candidates = [taxonomy_labels[i] for i in sorted(indices)]
 
     if not candidates:
-        return None
+        return replace(_NO_MATCH, stage="tier3_no_candidates")
 
     candidates = candidates[:_LLM_MAX_CANDIDATES]
     prompt = _build_llm_prompt(original_text, candidates)
 
     counters["tier3_calls"] += 1
+    # A request failure and a genuine "no match" reply are both counted as
+    # tier3_no_match, so stage="tier3_llm" is an upper bound on real declines.
     try:
         response = chat(prompt, model=model, timeout=timeout)
     except (requests.RequestException, KeyError, ValueError):
         counters["tier3_no_match"] += 1
-        return None
+        return replace(_NO_MATCH, stage="tier3_llm")
 
     result = _parse_llm_response(response, candidates)
     if result is None:
         counters["tier3_no_match"] += 1
-    elif result.method == "Uncertain":
+        return replace(_NO_MATCH, stage="tier3_llm")
+    if result.method == "Uncertain":
         counters["tier3_uncertain"] += 1
     else:
         counters["tier3_matched"] += 1
@@ -572,12 +592,10 @@ def _match_diagnosis(
 
     if _has_signal(masked_text):
         counters["signal_rows"] = counters.get("signal_rows", 0) + 1
-        result = _tier3_llm(
+        return _tier3_llm(
             original_text, norm_text, masked_text, group_token_index, taxonomy_labels,
             oma_index, llm_timeout, llm_model, counters,
         )
-        if result:
-            return result
 
     return _NO_MATCH
 
@@ -712,6 +730,7 @@ def _run_matching_pass(
             "matched_keyword": match.keyword,
             "method": match.method,
             "confidence": match.confidence,
+            "decision_stage": match.stage,
         })
         results.append(entry)
 
@@ -814,3 +833,84 @@ def run_llm_scan(config: LLMConfig) -> LLMOutputs:
     )
     print(f"Method counts: {summary['method_counts']}")
     return outputs
+
+
+# ---------------------------------------------------------------------------
+# Backfill: add decision_stage to a corpus generated before the column existed
+# ---------------------------------------------------------------------------
+
+# Methods that name their own stage; only "No Match" has to be replayed.
+_METHOD_STAGE = {
+    "Exact": "tier1_exact",
+    "Fuzzy": "tier2_fuzzy",
+    "LLM": "tier3_llm",
+    "Uncertain": "tier3_llm",
+}
+
+
+def backfill_decision_stage(annotation_csv: str, labels_csv: str, summary_json: str) -> dict:
+    """Add a decision_stage column to an existing annotation CSV. Makes no LLM calls.
+
+    Every gate ahead of the LLM call is deterministic, so the stage a row reached
+    is recoverable from its diagnosis text alone.
+
+    Aborts before touching anything if the replayed Tier-3 counts disagree with the
+    ones recorded in summary_json — that would mean the taxonomy or the matching
+    regexes changed since the corpus was generated, making the replay unfaithful.
+    Returns the stage counts.
+    """
+    taxonomy_labels = load_labels_taxonomy(labels_csv)
+    oma_index = _build_oma_index(taxonomy_labels)
+    group_token_index = _build_group_token_index(taxonomy_labels)
+
+    def _stage_for(method: str, text: str) -> str:
+        known = _METHOD_STAGE.get(method)
+        if known:
+            return known
+        masked = _mask_negation(_normalize_llm(text))
+        if not _has_signal(masked):
+            return "no_signal"
+        # Mirrors the candidate build in _tier3_llm.
+        group = _identify_group(masked, group_token_index)
+        if group:
+            candidates = [l for l in taxonomy_labels if l.group == group]
+        else:
+            raw_words = _OMA_RE.findall(masked)
+            candidates = [w for w in set(raw_words) if w in oma_index]
+        return "tier3_llm" if candidates else "tier3_no_candidates"
+
+    df = pd.read_csv(annotation_csv)
+    df.columns = strip_bom_from_columns(df.columns)
+    df["decision_stage"] = [
+        _stage_for(str(m), str(t) if pd.notna(t) else "")
+        for m, t in zip(df["method"], df["diagnosis"])
+    ]
+    counts = df["decision_stage"].value_counts().to_dict()
+
+    with open(summary_json, encoding="utf-8") as f:
+        recorded = json.load(f)["tier_stats"]
+    llm_called = counts.get("tier3_llm", 0)
+    reached_tier3 = llm_called + counts.get("tier3_no_candidates", 0)
+    if llm_called != recorded["tier3_calls"] or reached_tier3 != recorded["signal_rows"]:
+        raise ValueError(
+            f"Replay disagrees with {summary_json} — refusing to write.\n"
+            f"  LLM calls:      replayed {llm_called:,} vs recorded {recorded['tier3_calls']:,}\n"
+            f"  Reached Tier 3: replayed {reached_tier3:,} vs recorded {recorded['signal_rows']:,}\n"
+            "The taxonomy or the matching rules have changed since this corpus was "
+            "generated; re-run the cascade instead of backfilling."
+        )
+
+    # annotation.csv is the sole training supervision and is gitignored, so there is
+    # no VCS safety net: keep a copy and swap the new file in atomically.
+    shutil.copy2(annotation_csv, annotation_csv + ".bak")
+    tmp_path = annotation_csv + ".tmp"
+    df.to_csv(tmp_path, index=False)
+    os.replace(tmp_path, annotation_csv)
+
+    print(f"Backed up original to {annotation_csv}.bak")
+    print(f"Wrote decision_stage for {len(df):,} rows to {annotation_csv}")
+    for stage in STAGES:
+        print(f"  {stage:<22}{counts.get(stage, 0):>8,}")
+    no_match_llm = int(((df["method"] == "No Match") & (df["decision_stage"] == "tier3_llm")).sum())
+    print(f"\n'No Match' rows the LLM actually decided: {no_match_llm:,}")
+    return counts

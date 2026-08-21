@@ -177,7 +177,12 @@ ml-*/
 # Local archive (gitignored experimental/legacy artifacts moved out of ml/)
 _archive/
 
-# Syncthing markers (used for cross-machine data sync, outside git)
+# Syncthing (used for cross-machine data sync, outside git).
+# Markers and conflict copies are machine-local state -- never commit.
+# .stignore is deliberately NOT ignored: Syncthing never syncs ignore patterns
+# itself, so every machine must hold an identical copy or the ones missing it
+# will happily pull .git and the venv. Shipping it via git is what keeps them
+# in step -- see ml/documentation/box-rclone-sync-proposal.md.
 .stfolder/
 .stversions/
-.stignore
+*.sync-conflict-*

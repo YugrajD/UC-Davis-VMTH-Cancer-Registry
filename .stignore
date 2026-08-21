@@ -1,0 +1,27 @@
+// Syncthing allowlist for the gold-annotation handoff.
+//
+// Code travels via git; only the private annotation data travels via Syncthing.
+// Syncing .git/ across machines corrupts repos, and the venv (7.7G) and
+// checkpoints (14G) are machine-specific -- so this file inverts the usual
+// default: it admits a couple of paths and ignores everything else.
+//
+// ORDERING IS LOAD-BEARING. Syncthing matches top-down, first match wins, and
+// silently expands a bare directory pattern to cover its children too: `!/ml`
+// also means `!/ml/**`. So a broad un-ignore placed too early re-admits the
+// whole tree. Each level therefore goes: admit the payload, ignore the other
+// children, THEN un-ignore the directory itself so Syncthing descends into it.
+// Verify any edit with: GET /rest/db/ignores?folder=<id> and re-check
+// localBytes on /rest/db/status -- it should stay ~50M, not 23G.
+
+// -- ml/output: admit the payload, ignore the rest, then allow the dir --
+!/ml/output/annotation
+!/ml/output/splits
+/ml/output/*
+!/ml/output
+
+// -- ml: ignore the other children (.venv, data, source), then allow the dir --
+/ml/*
+!/ml
+
+// -- everything else in the repo, .git included --
+*

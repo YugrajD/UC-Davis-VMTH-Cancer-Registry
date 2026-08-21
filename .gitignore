@@ -176,3 +176,8 @@ ml-*/
 
 # Local archive (gitignored experimental/legacy artifacts moved out of ml/)
 _archive/
+
+# Syncthing markers (used for cross-machine data sync, outside git)
+.stfolder/
+.stversions/
+.stignore

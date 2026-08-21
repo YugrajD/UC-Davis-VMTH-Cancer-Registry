@@ -14,6 +14,9 @@
 // localBytes on /rest/db/status -- it should stay ~50M, not 23G.
 
 // -- ml/output: admit the payload, ignore the rest, then allow the dir --
+// The .bak is a May-12 snapshot superseded by annotation.csv; excluding it
+// halves the transfer. Must precede the annotation un-ignore to win the match.
+/ml/output/annotation/annotation.csv.bak
 !/ml/output/annotation
 !/ml/output/splits
 /ml/output/*

@@ -56,6 +56,10 @@ export function BreedDisparitiesView() {
       .then(opts => {
         const names = [...new Set(opts.breeds.map(b => b.name))].sort();
         setBreeds(names);
+        if (names.length > 0) {
+          setSelectedBreed(current => current || names[0]);
+          setQuery(current => current || names[0]);
+        }
       })
       .catch(() => {})
       .finally(() => setLoadingBreeds(false));

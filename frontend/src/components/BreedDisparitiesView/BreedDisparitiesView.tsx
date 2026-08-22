@@ -175,6 +175,7 @@ export function BreedDisparitiesView() {
   }, [countRange]);
 
   const maxPccp = detail?.cancer_types[0]?.pccp_within_breed ?? detail?.cancer_types[0]?.count ?? 1;
+  const mappedCountyCases = detail?.county_cases.reduce((sum, county) => sum + county.count, 0) ?? 0;
 
   if (loadingBreeds) {
     return (
@@ -396,6 +397,7 @@ export function BreedDisparitiesView() {
                   </svg>
                   <p className="text-[11px] text-blue-700 leading-relaxed">
                     Rates reflect pathology-tested {detail.breed} animals only. This is not representative of the entire {detail.breed} population in each county.
+                    {' '}County map only contains cases with a ZIP code that could be mapped to a California county ({mappedCountyCases.toLocaleString()} out of {detail.total_cases.toLocaleString()} cases).
                   </p>
                 </div>
               )}

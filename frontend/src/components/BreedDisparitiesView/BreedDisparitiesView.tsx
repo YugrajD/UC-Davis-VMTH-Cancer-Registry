@@ -14,9 +14,16 @@ const MAP_PROJECTION_CONFIG = {
 
 type MapMode = 'within_breed' | 'of_all';
 
-export function BreedDisparitiesView() {
+interface BreedDisparitiesViewProps {
+  selectedBreed: string;
+  onSelectedBreedChange: (breed: string) => void;
+}
+
+export function BreedDisparitiesView({
+  selectedBreed,
+  onSelectedBreedChange,
+}: BreedDisparitiesViewProps) {
   const [breeds, setBreeds] = useState<string[]>([]);
-  const [selectedBreed, setSelectedBreed] = useState<string>('');
   const [loadedBreed, setLoadedBreed] = useState<string>('');
   const [detail, setDetail] = useState<BreedDetail | null>(null);
   const [loadingBreeds, setLoadingBreeds] = useState(true);
@@ -25,7 +32,7 @@ export function BreedDisparitiesView() {
   const loadingDetail = selectedBreed !== '' && selectedBreed !== loadedBreed;
 
   // Autocomplete state
-  const [query, setQuery] = useState<string>('');
+  const [query, setQuery] = useState<string>(selectedBreed);
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -60,6 +67,16 @@ export function BreedDisparitiesView() {
       .catch(() => {})
       .finally(() => setLoadingBreeds(false));
   }, []);
+
+  useEffect(() => {
+    if (breeds.length > 0 && !breeds.includes(selectedBreed)) {
+      onSelectedBreedChange(breeds[0]);
+    }
+  }, [breeds, onSelectedBreedChange, selectedBreed]);
+
+  useEffect(() => {
+    setQuery(selectedBreed);
+  }, [selectedBreed]);
 
   useEffect(() => {
     if (!selectedBreed) return;
@@ -101,7 +118,7 @@ export function BreedDisparitiesView() {
   }, []);
 
   const selectBreed = (breed: string) => {
-    setSelectedBreed(breed);
+    onSelectedBreedChange(breed);
     setQuery(breed);
     setIsOpen(false);
   };
@@ -156,19 +173,12 @@ export function BreedDisparitiesView() {
     return m;
   }, [detail, mapMode]);
 
-  const countRange = useMemo(() => {
-    if (!detail || detail.county_cases.length === 0) return { min: 0, max: 1 };
-    const vals = Array.from(countyValueMap.values());
-    const nonZero = vals.filter((v) => v > 0);
-    if (nonZero.length === 0) return { min: 0, max: 1 };
-    return { min: Math.min(...nonZero), max: Math.max(...nonZero) };
-  }, [detail, countyValueMap]);
-
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
-      .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
-      .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
-  }, [countRange]);
+      .domain([0, 50, 100])
+      .range(['#E6F3F5', '#6BB5BF', '#1A6B77'])
+      .clamp(true);
+  }, []);
 
   const maxPccp = detail?.cancer_types[0]?.pccp_within_breed ?? detail?.cancer_types[0]?.count ?? 1;
 
@@ -392,6 +402,7 @@ export function BreedDisparitiesView() {
                   </svg>
                   <p className="text-[11px] text-blue-700 leading-relaxed">
                     Rates reflect pathology-tested {detail.breed} animals only. This is not representative of the entire {detail.breed} population in each county.
+                    {' '}Note that a patient may have multiple case diagnoses, leading to the sum of cancer patients potentially being lower than the sum of patient cancer types in a county.
                   </p>
                 </div>
               )}
@@ -466,10 +477,10 @@ export function BreedDisparitiesView() {
                   />
                   <div className="flex justify-between mt-1">
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.min.toFixed(1)}%
+                      0%
                     </span>
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.max.toFixed(1)}%
+                      100%
                     </span>
                   </div>
                   <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">

@@ -61,13 +61,13 @@ describe('AgeDisparitiesView', () => {
     fetchAgeDetailMock.mockImplementation(async (ageGroup: string) => ageDetail(ageGroup));
   });
 
-  it('defaults to the first age group and preserves the selection across remounts', async () => {
+  it('defaults to the old age group and preserves the selection across remounts', async () => {
     const user = userEvent.setup();
     render(<Harness />);
 
     const select = await screen.findByLabelText('Select Age Group:');
-    await waitFor(() => expect(select).toHaveValue('young'));
-    await waitFor(() => expect(fetchAgeDetailMock).toHaveBeenCalledWith('young'));
+    await waitFor(() => expect(select).toHaveValue('old'));
+    await waitFor(() => expect(fetchAgeDetailMock).toHaveBeenCalledWith('old'));
 
     await user.selectOptions(select, 'adult');
     await waitFor(() => expect(fetchAgeDetailMock).toHaveBeenCalledWith('adult'));

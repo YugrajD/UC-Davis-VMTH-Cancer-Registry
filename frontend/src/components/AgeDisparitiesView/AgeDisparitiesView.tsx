@@ -15,6 +15,7 @@ const MAP_PROJECTION_CONFIG = {
 };
 
 const AGE_GROUP_DISPLAY_OPTIONS = AGE_GROUP_OPTIONS.filter(o => o.value !== 'all');
+const DEFAULT_AGE_GROUP: AgeGroup = 'old';
 
 interface AgeDisparitiesViewProps {
   selectedAgeGroup: AgeGroup | '';
@@ -53,7 +54,7 @@ export function AgeDisparitiesView({
 
   useEffect(() => {
     if (!AGE_GROUP_DISPLAY_OPTIONS.some(option => option.value === selectedAgeGroup)) {
-      onSelectedAgeGroupChange(AGE_GROUP_DISPLAY_OPTIONS[0]?.value ?? '');
+      onSelectedAgeGroupChange(DEFAULT_AGE_GROUP);
     }
   }, [onSelectedAgeGroupChange, selectedAgeGroup]);
 

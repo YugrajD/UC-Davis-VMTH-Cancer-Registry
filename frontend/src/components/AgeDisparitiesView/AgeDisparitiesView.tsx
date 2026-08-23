@@ -17,7 +17,9 @@ const MAP_PROJECTION_CONFIG = {
 const AGE_GROUP_DISPLAY_OPTIONS = AGE_GROUP_OPTIONS.filter(o => o.value !== 'all');
 
 export function AgeDisparitiesView() {
-  const [selectedAgeGroup, setSelectedAgeGroup] = useState<AgeGroup | ''>('');
+  const [selectedAgeGroup, setSelectedAgeGroup] = useState<AgeGroup | ''>(
+    AGE_GROUP_DISPLAY_OPTIONS[0]?.value ?? '',
+  );
   const [loadedAgeGroup, setLoadedAgeGroup] = useState<string>('');
   const [detail, setDetail] = useState<AgeDetail | null>(null);
 
@@ -127,7 +129,6 @@ export function AgeDisparitiesView() {
           onChange={(e) => setSelectedAgeGroup(e.target.value as AgeGroup)}
           className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent w-64"
         >
-          <option value="">— Choose an age group —</option>
           {AGE_GROUP_DISPLAY_OPTIONS.map(opt => (
             <option key={opt.value} value={opt.value}>
               {opt.label} ({opt.range})

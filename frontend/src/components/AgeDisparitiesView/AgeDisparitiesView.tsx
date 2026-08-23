@@ -275,6 +275,7 @@ export function AgeDisparitiesView() {
                   </svg>
                   <p className="text-[11px] text-blue-700 leading-relaxed">
                     Rates reflect pathology-tested {displayLabel} animals only. This is not representative of the entire {displayLabel} population in each county.
+                    {' '}Note that a patient may have multiple case diagnoses, leading to the sum of cancer patients potentially being lower than the sum of patient cancer types in a county.
                   </p>
                 </div>
               )}

@@ -16,10 +16,15 @@ const MAP_PROJECTION_CONFIG = {
 
 const AGE_GROUP_DISPLAY_OPTIONS = AGE_GROUP_OPTIONS.filter(o => o.value !== 'all');
 
-export function AgeDisparitiesView() {
-  const [selectedAgeGroup, setSelectedAgeGroup] = useState<AgeGroup | ''>(
-    AGE_GROUP_DISPLAY_OPTIONS[0]?.value ?? '',
-  );
+interface AgeDisparitiesViewProps {
+  selectedAgeGroup: AgeGroup | '';
+  onSelectedAgeGroupChange: (ageGroup: AgeGroup | '') => void;
+}
+
+export function AgeDisparitiesView({
+  selectedAgeGroup,
+  onSelectedAgeGroupChange,
+}: AgeDisparitiesViewProps) {
   const [loadedAgeGroup, setLoadedAgeGroup] = useState<string>('');
   const [detail, setDetail] = useState<AgeDetail | null>(null);
 
@@ -45,6 +50,12 @@ export function AgeDisparitiesView() {
   const cancelTooltipClose = () => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
   };
+
+  useEffect(() => {
+    if (!AGE_GROUP_DISPLAY_OPTIONS.some(option => option.value === selectedAgeGroup)) {
+      onSelectedAgeGroupChange(AGE_GROUP_DISPLAY_OPTIONS[0]?.value ?? '');
+    }
+  }, [onSelectedAgeGroupChange, selectedAgeGroup]);
 
   useEffect(() => {
     if (!selectedAgeGroup) return;
@@ -119,7 +130,7 @@ export function AgeDisparitiesView() {
         <select
           id="age-group-select"
           value={selectedAgeGroup}
-          onChange={(e) => setSelectedAgeGroup(e.target.value as AgeGroup)}
+          onChange={(e) => onSelectedAgeGroupChange(e.target.value as AgeGroup)}
           className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent w-64"
         >
           {AGE_GROUP_DISPLAY_OPTIONS.map(opt => (

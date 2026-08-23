@@ -80,19 +80,12 @@ export function AgeDisparitiesView() {
     return m;
   }, [detail, mapMode]);
 
-  const countRange = useMemo(() => {
-    if (!detail || detail.county_cases.length === 0) return { min: 0, max: 1 };
-    const vals = Array.from(countyValueMap.values());
-    const nonZero = vals.filter((v) => v > 0);
-    if (nonZero.length === 0) return { min: 0, max: 1 };
-    return { min: Math.min(...nonZero), max: Math.max(...nonZero) };
-  }, [detail, countyValueMap]);
-
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
-      .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
-      .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
-  }, [countRange]);
+      .domain([0, 50, 100])
+      .range(['#E6F3F5', '#6BB5BF', '#1A6B77'])
+      .clamp(true);
+  }, []);
 
   const maxPccp = detail?.cancer_types[0]?.pccp_within_age ?? detail?.cancer_types[0]?.count ?? 1;
 
@@ -355,10 +348,10 @@ export function AgeDisparitiesView() {
                   />
                   <div className="flex justify-between mt-1">
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.min.toFixed(1)}%
+                      0%
                     </span>
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.max.toFixed(1)}%
+                      100%
                     </span>
                   </div>
                   <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">

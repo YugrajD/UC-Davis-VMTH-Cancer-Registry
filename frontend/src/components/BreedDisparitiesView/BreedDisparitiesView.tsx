@@ -14,9 +14,16 @@ const MAP_PROJECTION_CONFIG = {
 
 type MapMode = 'within_breed' | 'of_all';
 
-export function BreedDisparitiesView() {
+interface BreedDisparitiesViewProps {
+  selectedBreed: string;
+  onSelectedBreedChange: (breed: string) => void;
+}
+
+export function BreedDisparitiesView({
+  selectedBreed,
+  onSelectedBreedChange,
+}: BreedDisparitiesViewProps) {
   const [breeds, setBreeds] = useState<string[]>([]);
-  const [selectedBreed, setSelectedBreed] = useState<string>('');
   const [loadedBreed, setLoadedBreed] = useState<string>('');
   const [detail, setDetail] = useState<BreedDetail | null>(null);
   const [loadingBreeds, setLoadingBreeds] = useState(true);
@@ -25,7 +32,7 @@ export function BreedDisparitiesView() {
   const loadingDetail = selectedBreed !== '' && selectedBreed !== loadedBreed;
 
   // Autocomplete state
-  const [query, setQuery] = useState<string>('');
+  const [query, setQuery] = useState<string>(selectedBreed);
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,14 +63,20 @@ export function BreedDisparitiesView() {
       .then(opts => {
         const names = [...new Set(opts.breeds.map(b => b.name))].sort();
         setBreeds(names);
-        if (names.length > 0) {
-          setSelectedBreed(current => current || names[0]);
-          setQuery(current => current || names[0]);
-        }
       })
       .catch(() => {})
       .finally(() => setLoadingBreeds(false));
   }, []);
+
+  useEffect(() => {
+    if (breeds.length > 0 && !breeds.includes(selectedBreed)) {
+      onSelectedBreedChange(breeds[0]);
+    }
+  }, [breeds, onSelectedBreedChange, selectedBreed]);
+
+  useEffect(() => {
+    setQuery(selectedBreed);
+  }, [selectedBreed]);
 
   useEffect(() => {
     if (!selectedBreed) return;
@@ -105,7 +118,7 @@ export function BreedDisparitiesView() {
   }, []);
 
   const selectBreed = (breed: string) => {
-    setSelectedBreed(breed);
+    onSelectedBreedChange(breed);
     setQuery(breed);
     setIsOpen(false);
   };

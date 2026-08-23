@@ -14,6 +14,7 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
+  const [breedDisparitiesSelection, setBreedDisparitiesSelection] = useState('');
   const [filters, setFilters] = useState<FilterState>({
     rateType: 'incidence',
     sex: 'all',
@@ -62,7 +63,10 @@ function AppContent() {
         ) : activeTab === 'user-management' ? (
           <UserManagement />
         ) : activeTab === 'breed-disparities' ? (
-          <BreedDisparitiesView />
+          <BreedDisparitiesView
+            selectedBreed={breedDisparitiesSelection}
+            onSelectedBreedChange={setBreedDisparitiesSelection}
+          />
         ) : activeTab === 'cancer-by-age' ? (
           <AgeDisparitiesView />
         ) : activeTab === 'analysis' ? (

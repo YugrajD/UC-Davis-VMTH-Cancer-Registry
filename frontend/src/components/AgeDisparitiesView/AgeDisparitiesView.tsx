@@ -15,9 +15,17 @@ const MAP_PROJECTION_CONFIG = {
 };
 
 const AGE_GROUP_DISPLAY_OPTIONS = AGE_GROUP_OPTIONS.filter(o => o.value !== 'all');
+const DEFAULT_AGE_GROUP: AgeGroup = 'old';
 
-export function AgeDisparitiesView() {
-  const [selectedAgeGroup, setSelectedAgeGroup] = useState<AgeGroup | ''>('');
+interface AgeDisparitiesViewProps {
+  selectedAgeGroup: AgeGroup | '';
+  onSelectedAgeGroupChange: (ageGroup: AgeGroup | '') => void;
+}
+
+export function AgeDisparitiesView({
+  selectedAgeGroup,
+  onSelectedAgeGroupChange,
+}: AgeDisparitiesViewProps) {
   const [loadedAgeGroup, setLoadedAgeGroup] = useState<string>('');
   const [detail, setDetail] = useState<AgeDetail | null>(null);
 
@@ -43,6 +51,12 @@ export function AgeDisparitiesView() {
   const cancelTooltipClose = () => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
   };
+
+  useEffect(() => {
+    if (!AGE_GROUP_DISPLAY_OPTIONS.some(option => option.value === selectedAgeGroup)) {
+      onSelectedAgeGroupChange(DEFAULT_AGE_GROUP);
+    }
+  }, [onSelectedAgeGroupChange, selectedAgeGroup]);
 
   useEffect(() => {
     if (!selectedAgeGroup) return;
@@ -78,19 +92,12 @@ export function AgeDisparitiesView() {
     return m;
   }, [detail, mapMode]);
 
-  const countRange = useMemo(() => {
-    if (!detail || detail.county_cases.length === 0) return { min: 0, max: 1 };
-    const vals = Array.from(countyValueMap.values());
-    const nonZero = vals.filter((v) => v > 0);
-    if (nonZero.length === 0) return { min: 0, max: 1 };
-    return { min: Math.min(...nonZero), max: Math.max(...nonZero) };
-  }, [detail, countyValueMap]);
-
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
-      .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
-      .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
-  }, [countRange]);
+      .domain([0, 50, 100])
+      .range(['#E6F3F5', '#6BB5BF', '#1A6B77'])
+      .clamp(true);
+  }, []);
 
   const maxPccp = detail?.cancer_types[0]?.pccp_within_age ?? detail?.cancer_types[0]?.count ?? 1;
 
@@ -124,10 +131,9 @@ export function AgeDisparitiesView() {
         <select
           id="age-group-select"
           value={selectedAgeGroup}
-          onChange={(e) => setSelectedAgeGroup(e.target.value as AgeGroup)}
+          onChange={(e) => onSelectedAgeGroupChange(e.target.value as AgeGroup)}
           className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent w-64"
         >
-          <option value="">— Choose an age group —</option>
           {AGE_GROUP_DISPLAY_OPTIONS.map(opt => (
             <option key={opt.value} value={opt.value}>
               {opt.label} ({opt.range})
@@ -281,6 +287,7 @@ export function AgeDisparitiesView() {
                   </svg>
                   <p className="text-[11px] text-blue-700 leading-relaxed">
                     Rates reflect pathology-tested {displayLabel} animals only. This is not representative of the entire {displayLabel} population in each county.
+                    {' '}Note that a patient may have multiple case diagnoses, leading to the sum of cancer patients potentially being lower than the sum of patient cancer types in a county.
                   </p>
                 </div>
               )}
@@ -354,10 +361,10 @@ export function AgeDisparitiesView() {
                   />
                   <div className="flex justify-between mt-1">
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.min.toFixed(1)}%
+                      0%
                     </span>
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.max.toFixed(1)}%
+                      100%
                     </span>
                   </div>
                   <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">

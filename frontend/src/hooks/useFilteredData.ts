@@ -52,6 +52,7 @@ export function buildCountyDataFromPCCP(response: PCCPResponse): {
     region: regionForCounty(r.county),
     count: r.pccp,
     fips: '',
+    casePatients: r.cancer_patients,
     totalPatients: r.total_patients,
   }));
   return {
@@ -379,12 +380,28 @@ export function useCountyDataMap(countyData: CountyData[]): Map<string, CountyDa
   }, [countyData]);
 }
 
-// Aggregate county counts: simple sum for raw data, weighted average for PCCP data.
-function aggregateCount(counties: CountyData[]): number {
-  if (counties.length === 0) return 0;
-  const totalPts = counties.reduce((sum, c) => sum + (c.totalPatients ?? 0), 0);
-  if (totalPts === 0) return counties.reduce((sum, c) => sum + c.count, 0);
-  return counties.reduce((sum, c) => sum + c.count * (c.totalPatients ?? 0), 0) / totalPts;
+// Aggregate a set of counties into a region-level rollup. When every county
+// carries numerator/denominator data (PCCP mode), the region's PCCP is the
+// true sum(numerator)/sum(denominator) — not an average of county PCCPs —
+// so the three displayed columns (numerator, denominator, PCCP) reconcile.
+// Falls back to a simple sum of `count` for raw incidence data, which has
+// no numerator/denominator.
+function aggregateRegion(counties: CountyData[]): {
+  count: number;
+  casePatients?: number;
+  totalPatients?: number;
+} {
+  if (counties.length === 0) return { count: 0 };
+  const hasPccpData = counties.every(
+    c => c.casePatients !== undefined && c.totalPatients !== undefined,
+  );
+  if (!hasPccpData) {
+    return { count: counties.reduce((sum, c) => sum + c.count, 0) };
+  }
+  const casePatients = counties.reduce((sum, c) => sum + (c.casePatients ?? 0), 0);
+  const totalPatients = counties.reduce((sum, c) => sum + (c.totalPatients ?? 0), 0);
+  const count = totalPatients > 0 ? (casePatients / totalPatients) * 100 : 0;
+  return { count, casePatients, totalPatients };
 }
 
 // Generate hierarchical summary for the summary table
@@ -400,20 +417,25 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
     }
   });
 
-  const totalCount = aggregateCount(countyData);
+  const total = aggregateRegion(countyData);
 
   const catchmentCounties = countyData.filter(c => isUcDavisCatchmentRegion(c.region));
-  const catchmentCount = aggregateCount(catchmentCounties);
+  const catchmentTotal = aggregateRegion(catchmentCounties);
 
   const regions: RegionSummary[] = Array.from(regionMap.entries()).map(([regionName, counties]) => {
+    const regionTotal = aggregateRegion(counties);
     return {
       name: regionName,
       type: 'region' as const,
-      count: aggregateCount(counties),
+      count: regionTotal.count,
+      casePatients: regionTotal.casePatients,
+      totalPatients: regionTotal.totalPatients,
       children: counties.map(c => ({
         name: c.county,
         type: 'county' as const,
         count: c.count,
+        casePatients: c.casePatients,
+        totalPatients: c.totalPatients,
       })),
     };
   });
@@ -421,12 +443,16 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   return {
     name: 'California',
     type: 'state',
-    count: totalCount,
+    count: total.count,
+    casePatients: total.casePatients,
+    totalPatients: total.totalPatients,
     children: [
       {
         name: 'UC Davis Catchment Area',
         type: 'catchment',
-        count: catchmentCount,
+        count: catchmentTotal.count,
+        casePatients: catchmentTotal.casePatients,
+        totalPatients: catchmentTotal.totalPatients,
         children: regions.filter(r => isUcDavisCatchmentRegion(r.name)),
       },
       ...regions.filter(r => !isUcDavisCatchmentRegion(r.name)),

@@ -104,7 +104,13 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty }:
               >
                 County <SortIcon field="county" activeField={sortField} direction={sortDirection} />
               </th>
-              <th 
+              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
+                Cancer Tested Positive
+              </th>
+              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
+                Total Tested
+              </th>
+              <th
                 className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors"
                 onClick={() => handleSort('count')}
               >
@@ -130,6 +136,12 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty }:
                     <span className="text-xs text-[var(--color-text-secondary)] ml-1.5">
                       ({county.region})
                     </span>
+                  </td>
+                  <td className="py-2 px-3 text-sm text-right tabular-nums text-[var(--color-text-secondary)]">
+                    {county.casePatients !== undefined ? county.casePatients.toLocaleString() : '—'}
+                  </td>
+                  <td className="py-2 px-3 text-sm text-right tabular-nums text-[var(--color-text-secondary)]">
+                    {county.totalPatients !== undefined ? county.totalPatients.toLocaleString() : '—'}
                   </td>
                   <td className="py-2 px-3 text-sm text-right tabular-nums font-semibold" style={countStyle}>
                     {county.count.toFixed(1)}

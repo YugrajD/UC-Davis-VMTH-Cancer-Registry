@@ -94,6 +94,12 @@ function SummaryRow({
             <span className="text-sm">{item.name}</span>
           </div>
         </td>
+        <td className="py-2 px-3 text-right text-sm tabular-nums text-[var(--color-text-secondary)]">
+          {item.casePatients !== undefined ? item.casePatients.toLocaleString() : '—'}
+        </td>
+        <td className="py-2 px-3 text-right text-sm tabular-nums text-[var(--color-text-secondary)]">
+          {item.totalPatients !== undefined ? item.totalPatients.toLocaleString() : '—'}
+        </td>
         <td
           className={`py-2 px-3 text-right text-sm tabular-nums font-medium ${hasChildren ? 'cursor-pointer select-none' : ''}`}
           onClick={hasChildren ? () => onToggleSortForItem(item.name) : undefined}
@@ -183,6 +189,12 @@ export function SummaryTable({ data }: SummaryTableProps) {
             <tr className="bg-[var(--color-teal)] text-white">
               <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider">
                 Region / County
+              </th>
+              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
+                Cancer Tested Positive
+              </th>
+              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
+                Total Tested
               </th>
               <th
                 className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors select-none"

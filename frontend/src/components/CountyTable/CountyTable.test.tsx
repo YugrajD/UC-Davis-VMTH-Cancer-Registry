@@ -24,7 +24,7 @@ describe('CountyTable', () => {
 
     expect(renderedCountyOrder()).toEqual(['Charlie', 'Alpha', 'Bravo']);
 
-    await user.click(screen.getAllByRole('columnheader')[1]);
+    await user.click(screen.getAllByRole('columnheader')[3]);
     expect(renderedCountyOrder()).toEqual(['Bravo', 'Alpha', 'Charlie']);
 
     await user.click(screen.getAllByRole('columnheader')[0]);

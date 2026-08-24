@@ -26,6 +26,9 @@ export interface CountyData {
   fips: string;
   population?: number;
   rate?: number;
+  /** Numerator — tested animals with a confirmed cancer diagnosis. */
+  casePatients?: number;
+  /** Denominator — all tested animals, regardless of diagnosis. */
   totalPatients?: number;
 }
 
@@ -40,6 +43,10 @@ export interface RegionSummary {
   count: number;
   population?: number;
   rate?: number;
+  /** Numerator — tested animals with a confirmed cancer diagnosis. */
+  casePatients?: number;
+  /** Denominator — all tested animals, regardless of diagnosis. */
+  totalPatients?: number;
   children?: RegionSummary[];
 }
 

@@ -87,7 +87,7 @@ describe('SummaryTable', () => {
       'Southern Region',
     ]);
 
-    await user.click(screen.getAllByRole('columnheader')[1]);
+    await user.click(screen.getAllByRole('columnheader')[3]);
 
     expect(visibleNames()).toEqual([
       'California',
@@ -102,7 +102,7 @@ describe('SummaryTable', () => {
     render(<SummaryTable data={summary} />);
 
     const catchmentRow = screen.getByText('UC Davis Catchment Area').closest('tr');
-    const countCell = catchmentRow?.querySelectorAll('td')[1];
+    const countCell = catchmentRow?.querySelectorAll('td')[3];
     if (!countCell) throw new Error('Catchment count cell missing');
 
     fireEvent.click(countCell);

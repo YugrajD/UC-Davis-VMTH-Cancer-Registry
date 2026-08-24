@@ -5,6 +5,7 @@ import { fetchAgeDetail } from '../../api/client';
 import type { AgeDetail } from '../../api/client';
 import { AGE_GROUP_OPTIONS } from '../../types';
 import type { AgeGroup } from '../../types';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const GEO_URL =
   'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
@@ -17,7 +18,12 @@ const MAP_PROJECTION_CONFIG = {
 const AGE_GROUP_DISPLAY_OPTIONS = AGE_GROUP_OPTIONS.filter(o => o.value !== 'all');
 
 export function AgeDisparitiesView() {
-  const [selectedAgeGroup, setSelectedAgeGroup] = useState<AgeGroup | ''>('young');
+  // Persisted so the selected age group survives switching tabs and
+  // refreshing within the session, for consistency with the breed picker.
+  const [selectedAgeGroup, setSelectedAgeGroup] = useSessionStorageState<AgeGroup | ''>(
+    'ageDisparities.selectedAgeGroup',
+    'young',
+  );
   const [loadedAgeGroup, setLoadedAgeGroup] = useState<string>('');
   const [detail, setDetail] = useState<AgeDetail | null>(null);
 

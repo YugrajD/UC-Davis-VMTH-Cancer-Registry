@@ -1989,9 +1989,21 @@ const MAP_OPTIONS: { id: MapId; label: string }[] = [
 ];
 
 export function AnalysisView() {
-  const [scatterDogCancerType, setScatterDogCancerType] = useState<string>('All Types');
-  const [scatterHumanSite, setScatterHumanSite] = useState<HumanCancerSite>('All Cancer Sites');
-  const [scatterHumanSex, setScatterHumanSex] = useState<HumanCancerSex>('Both Sexes');
+  // Persisted so the Analysis tab's configuration survives switching tabs
+  // and refreshing within the session, instead of silently resetting every
+  // time the tab is revisited.
+  const [scatterDogCancerType, setScatterDogCancerType] = useSessionStorageState<string>(
+    'analysisView.scatterDogCancerType',
+    'All Types',
+  );
+  const [scatterHumanSite, setScatterHumanSite] = useSessionStorageState<HumanCancerSite>(
+    'analysisView.scatterHumanSite',
+    'All Cancer Sites',
+  );
+  const [scatterHumanSex, setScatterHumanSex] = useSessionStorageState<HumanCancerSex>(
+    'analysisView.scatterHumanSex',
+    'Both Sexes',
+  );
 
   // VMTH data for scatter plot, filtered by dog cancer type
   const { countyData: scatterCountyData } = useFilteredData({
@@ -2015,17 +2027,38 @@ export function AnalysisView() {
     return scatterAvailableSexOptions[0].value;
   }, [scatterAvailableSexOptions, scatterHumanSex]);
 
-  const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('ces_score');
-  const [mapCount, setMapCount] = useState<MapCount>(4);
-  const [twoMapSelection, setTwoMapSelection] = useState<[MapId, MapId]>(['vmth', 'enviro']);
-  const [threeMapSelection, setThreeMapSelection] = useState<[MapId, MapId, MapId]>(['vmth', 'enviro', 'human']);
-  const [showSuperfund, setShowSuperfund] = useState(false);
-  const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
-  const [scatterXVar, setScatterXVar] = useState<ScatterVar>('pesticide_lbs');
-  const [scatterYVar, setScatterYVar] = useState<ScatterVar>('cancer_cases');
-  const [autoSync, setAutoSync] = useState(true);
-  const [pesticideClass, setPesticideClass] = useState<PesticideClass | 'all'>('all');
-  const [pesticideChemical, setPesticideChemical] = useState<string | null>(null);
+  const [selectedIndicator, setSelectedIndicator] = useSessionStorageState<CESIndicator>(
+    'analysisView.selectedIndicator',
+    'ces_score',
+  );
+  const [mapCount, setMapCount] = useSessionStorageState<MapCount>('analysisView.mapCount', 4);
+  const [twoMapSelection, setTwoMapSelection] = useSessionStorageState<[MapId, MapId]>(
+    'analysisView.twoMapSelection',
+    ['vmth', 'enviro'],
+  );
+  const [threeMapSelection, setThreeMapSelection] = useSessionStorageState<[MapId, MapId, MapId]>(
+    'analysisView.threeMapSelection',
+    ['vmth', 'enviro', 'human'],
+  );
+  const [showSuperfund, setShowSuperfund] = useSessionStorageState('analysisView.showSuperfund', false);
+  const [geoLevel, setGeoLevel] = useSessionStorageState<GeoLevel>('analysisView.geoLevel', 'county');
+  const [scatterXVar, setScatterXVar] = useSessionStorageState<ScatterVar>(
+    'analysisView.scatterXVar',
+    'pesticide_lbs',
+  );
+  const [scatterYVar, setScatterYVar] = useSessionStorageState<ScatterVar>(
+    'analysisView.scatterYVar',
+    'cancer_cases',
+  );
+  const [autoSync, setAutoSync] = useSessionStorageState('analysisView.autoSync', true);
+  const [pesticideClass, setPesticideClass] = useSessionStorageState<PesticideClass | 'all'>(
+    'analysisView.pesticideClass',
+    'all',
+  );
+  const [pesticideChemical, setPesticideChemical] = useSessionStorageState<string | null>(
+    'analysisView.pesticideChemical',
+    null,
+  );
 
   const { data: cesData } = useCalEnviroScreenData();
 

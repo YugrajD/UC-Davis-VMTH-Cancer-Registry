@@ -1452,7 +1452,7 @@ function SearchableMultiSelectDropdown({
                   </button>
                 )}
           </div>
-          <div className="overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             {filtered.length === 0 ? (
               <p className="px-3 py-2 text-xs text-[var(--color-text-secondary)]">No matches.</p>
             ) : (

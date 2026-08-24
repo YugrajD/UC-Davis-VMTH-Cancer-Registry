@@ -24,7 +24,7 @@ function renderedCountyOrder() {
 describe('CountyTable', () => {
   it('defaults to count descending, toggles count ascending, and switches county sort to descending first', async () => {
     const user = userEvent.setup();
-    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} />);
+    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} rateType="pccp" />);
 
     expect(renderedCountyOrder()).toEqual(['Charlie', 'Alpha', 'Bravo']);
 
@@ -37,7 +37,7 @@ describe('CountyTable', () => {
 
   it('notifies hover changes for county rows', () => {
     const onCountyHover = vi.fn();
-    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} onCountyHover={onCountyHover} />);
+    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} onCountyHover={onCountyHover} rateType="pccp" />);
 
     const row = screen.getByText('Alpha').closest('tr');
     if (!row) throw new Error('County row not found');
@@ -50,7 +50,7 @@ describe('CountyTable', () => {
   });
 
   it('applies selected styling to the selected county row', () => {
-    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} selectedCounty="Bravo" />);
+    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} selectedCounty="Bravo" rateType="pccp" />);
 
     const row = screen.getByText('Bravo').closest('tr');
 
@@ -59,7 +59,7 @@ describe('CountyTable', () => {
   });
 
   it('renders Cancer Tested Positive and Total Tested column headers before PCCP', () => {
-    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} />);
+    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} rateType="pccp" />);
 
     const headers = screen.getAllByRole('columnheader').map(h => h.textContent?.trim());
     expect(headers[1]).toContain('Cancer Tested Positive');
@@ -68,7 +68,7 @@ describe('CountyTable', () => {
   });
 
   it('renders numerator/denominator values for counties with PCCP data', () => {
-    render(<CountyTable data={pccpCountyData} countRange={{ min: 40, max: 40 }} />);
+    render(<CountyTable data={pccpCountyData} countRange={{ min: 40, max: 40 }} rateType="pccp" />);
 
     const row = screen.getByText('Yolo').closest('tr');
     const cells = row?.querySelectorAll('td');
@@ -77,11 +77,45 @@ describe('CountyTable', () => {
   });
 
   it('renders a dash for numerator/denominator when a county has no PCCP data', () => {
-    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} />);
+    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} rateType="pccp" />);
 
     const row = screen.getByText('Alpha').closest('tr');
     const cells = row?.querySelectorAll('td');
     expect(cells?.[1].textContent?.trim()).toBe('—');
     expect(cells?.[2].textContent?.trim()).toBe('—');
+  });
+
+  it('highlights the Cancer Tested Positive column header when rateType is numerator', () => {
+    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} rateType="numerator" />);
+
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers[1].className).toContain('border-[var(--color-primary-orange)]');
+    expect(headers[2].className).not.toContain('border-[var(--color-primary-orange)]');
+    expect(headers[3].className).not.toContain('border-[var(--color-primary-orange)]');
+  });
+
+  it('highlights the Total Tested column cells when rateType is denominator', () => {
+    render(<CountyTable data={pccpCountyData} countRange={{ min: 40, max: 40 }} rateType="denominator" />);
+
+    const row = screen.getByText('Yolo').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[2].className).toContain('bg-[var(--color-primary-orange)]/10');
+    expect(cells?.[1].className).not.toContain('bg-[var(--color-primary-orange)]/10');
+  });
+
+  it('highlights the PCCP cell with an inset border when rateType is pccp', () => {
+    render(<CountyTable data={pccpCountyData} countRange={{ min: 40, max: 40 }} rateType="pccp" />);
+
+    const row = screen.getByText('Yolo').closest('tr');
+    const pccpCell = row?.querySelectorAll('td')[3] as HTMLElement;
+    expect(pccpCell.style.boxShadow).toContain('var(--color-primary-orange)');
+  });
+
+  it('does not add a PCCP box-shadow when a different rateType is active', () => {
+    render(<CountyTable data={pccpCountyData} countRange={{ min: 40, max: 40 }} rateType="numerator" />);
+
+    const row = screen.getByText('Yolo').closest('tr');
+    const pccpCell = row?.querySelectorAll('td')[3] as HTMLElement;
+    expect(pccpCell.style.boxShadow).toBe('');
   });
 });

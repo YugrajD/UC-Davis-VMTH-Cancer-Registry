@@ -1,11 +1,30 @@
 import { useMemo, useState } from 'react';
-import type { RegionSummary } from '../../types';
+import type { RateType, RegionSummary } from '../../types';
 
 interface SummaryTableProps {
   data: RegionSummary;
+  rateType: RateType;
 }
 
 type SortDirection = 'asc' | 'desc';
+
+/** Which table column the Rate filter currently highlights. */
+type ActiveColumn = 'casePatients' | 'totalPatients' | 'pccp';
+
+function activeColumnFor(rateType: RateType): ActiveColumn {
+  switch (rateType) {
+    case 'numerator':
+      return 'casePatients';
+    case 'denominator':
+      return 'totalPatients';
+    case 'pccp':
+    default:
+      return 'pccp';
+  }
+}
+
+const ACTIVE_CELL_CLASS = 'bg-[var(--color-primary-orange)]/10';
+const ACTIVE_HEADER_CLASS = 'border-b-[3px] border-[var(--color-primary-orange)]';
 
 function SortIcon({ direction }: { direction: SortDirection }) {
   return (
@@ -34,6 +53,7 @@ interface RowProps {
   globalSortDirection: SortDirection;
   sortDirectionByName: Record<string, SortDirection | undefined>;
   onToggleSortForItem: (name: string) => void;
+  activeColumn: ActiveColumn;
 }
 
 function SummaryRow({
@@ -46,6 +66,7 @@ function SummaryRow({
   globalSortDirection,
   sortDirectionByName,
   onToggleSortForItem,
+  activeColumn,
 }: RowProps) {
   const hasChildren = item.children && item.children.length > 0;
   const indent = depth * 20;
@@ -94,14 +115,14 @@ function SummaryRow({
             <span className="text-sm">{item.name}</span>
           </div>
         </td>
-        <td className="py-2 px-3 text-right text-sm tabular-nums text-[var(--color-text-secondary)]">
+        <td className={`py-2 px-3 text-right text-sm tabular-nums text-[var(--color-text-secondary)] ${activeColumn === 'casePatients' ? ACTIVE_CELL_CLASS : ''}`}>
           {item.casePatients !== undefined ? item.casePatients.toLocaleString() : '—'}
         </td>
-        <td className="py-2 px-3 text-right text-sm tabular-nums text-[var(--color-text-secondary)]">
+        <td className={`py-2 px-3 text-right text-sm tabular-nums text-[var(--color-text-secondary)] ${activeColumn === 'totalPatients' ? ACTIVE_CELL_CLASS : ''}`}>
           {item.totalPatients !== undefined ? item.totalPatients.toLocaleString() : '—'}
         </td>
         <td
-          className={`py-2 px-3 text-right text-sm tabular-nums font-medium ${hasChildren ? 'cursor-pointer select-none' : ''}`}
+          className={`py-2 px-3 text-right text-sm tabular-nums font-medium ${hasChildren ? 'cursor-pointer select-none' : ''} ${activeColumn === 'pccp' ? ACTIVE_CELL_CLASS : ''}`}
           onClick={hasChildren ? () => onToggleSortForItem(item.name) : undefined}
           title={hasChildren ? `Sort within ${item.name} (${effectiveSortDirection === 'desc' ? 'descending' : 'ascending'})` : undefined}
         >
@@ -124,13 +145,15 @@ function SummaryRow({
           globalSortDirection={globalSortDirection}
           sortDirectionByName={sortDirectionByName}
           onToggleSortForItem={onToggleSortForItem}
+          activeColumn={activeColumn}
         />
       ))}
     </>
   );
 }
 
-export function SummaryTable({ data }: SummaryTableProps) {
+export function SummaryTable({ data, rateType }: SummaryTableProps) {
+  const activeColumn = activeColumnFor(rateType);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(
     new Set(['California', 'UC Davis Catchment Area'])
   );
@@ -190,14 +213,14 @@ export function SummaryTable({ data }: SummaryTableProps) {
               <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider">
                 Region / County
               </th>
-              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
+              <th className={`py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right ${activeColumn === 'casePatients' ? ACTIVE_HEADER_CLASS : ''}`}>
                 Cancer Tested Positive
               </th>
-              <th className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right">
+              <th className={`py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right ${activeColumn === 'totalPatients' ? ACTIVE_HEADER_CLASS : ''}`}>
                 Total Tested
               </th>
               <th
-                className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors select-none"
+                className={`py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors select-none ${activeColumn === 'pccp' ? ACTIVE_HEADER_CLASS : ''}`}
                 onClick={() => setGlobalSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'))}
                 title={globalSortDirection === 'desc' ? 'Sort ascending' : 'Sort descending'}
               >
@@ -230,6 +253,7 @@ export function SummaryTable({ data }: SummaryTableProps) {
               globalSortDirection={globalSortDirection}
               sortDirectionByName={sortDirectionByName}
               onToggleSortForItem={toggleSortForItem}
+              activeColumn={activeColumn}
             />
           </tbody>
         </table>

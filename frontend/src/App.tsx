@@ -234,12 +234,13 @@ function AppContent() {
               </div>
             ) : (
               <>
-                <SummaryTable data={regionSummary} />
+                <SummaryTable data={regionSummary} rateType={filters.rateType} />
                 <CountyTable
                   data={countyData}
                   countRange={countRange}
                   onCountyHover={setHoveredCounty}
                   selectedCounty={selectedCounty}
+                  rateType={filters.rateType}
                 />
               </>
             )}

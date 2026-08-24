@@ -5,7 +5,7 @@ export type AgeGroup = 'all' | 'young' | 'juvenile' | 'adult' | 'old' | 'senior'
 
 /**
  * What the county/tract choropleth map colors by:
- * - 'pccp' (labeled "Incidence"): Pathology-Confirmed Cancer Proportion, cases per 100 tested
+ * - 'pccp' (labeled "PCCP"): Pathology-Confirmed Cancer Proportion, cases per 100 tested
  * - 'numerator': raw count of tested animals with a confirmed cancer diagnosis
  * - 'denominator': raw count of all tested animals
  */
@@ -226,7 +226,7 @@ export const AGE_GROUP_OPTIONS: { value: AgeGroup; label: string; range: string 
 ];
 
 export const RATE_OPTIONS: { value: RateType; label: string }[] = [
-  { value: 'pccp', label: 'Incidence' },
+  { value: 'pccp', label: 'PCCP' },
   { value: 'numerator', label: 'Cancer Tested Positive' },
   { value: 'denominator', label: 'Total Tested' },
 ];

@@ -17,7 +17,7 @@ const MAP_PROJECTION_CONFIG = {
 const AGE_GROUP_DISPLAY_OPTIONS = AGE_GROUP_OPTIONS.filter(o => o.value !== 'all');
 
 export function AgeDisparitiesView() {
-  const [selectedAgeGroup, setSelectedAgeGroup] = useState<AgeGroup | ''>('');
+  const [selectedAgeGroup, setSelectedAgeGroup] = useState<AgeGroup | ''>('young');
   const [loadedAgeGroup, setLoadedAgeGroup] = useState<string>('');
   const [detail, setDetail] = useState<AgeDetail | null>(null);
 

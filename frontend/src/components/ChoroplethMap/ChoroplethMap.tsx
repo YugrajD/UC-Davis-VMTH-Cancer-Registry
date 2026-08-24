@@ -68,6 +68,20 @@ function makeZipCodeDataMap(data: ZipCodeData[]) {
   return m;
 }
 
+/** The underlying county/ZIP record for a map feature, regardless of geo level. */
+function sourceForFeature(
+  props: Record<string, unknown>,
+  geoLevel: GeoLevel,
+  countyDataMap: Map<string, CountyData>,
+  zipCodeDataMap: Map<string, ZipCodeData>,
+): CountyData | ZipCodeData | undefined {
+  if (geoLevel === 'zcta') {
+    return zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim());
+  }
+  const county = countyFromFeature(props, geoLevel);
+  return countyDataMap.get(county.toLowerCase());
+}
+
 function countForFeature(
   props: Record<string, unknown>,
   geoLevel: GeoLevel,
@@ -75,11 +89,7 @@ function countForFeature(
   zipCodeDataMap: Map<string, ZipCodeData>,
   rateType: RateType,
 ) {
-  if (geoLevel === 'zcta') {
-    return valueForRate(zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim()), rateType);
-  }
-  const county = countyFromFeature(props, geoLevel);
-  return valueForRate(countyDataMap.get(county.toLowerCase()), rateType);
+  return valueForRate(sourceForFeature(props, geoLevel, countyDataMap, zipCodeDataMap), rateType);
 }
 
 function rateLabel(rateType: RateType): string {
@@ -94,15 +104,28 @@ function rateLabel(rateType: RateType): string {
   }
 }
 
-function rateBodyText(count: number, rateType: RateType): string {
+/**
+ * Tooltip body for the selected Rate metric. PCCP mode always names itself
+ * explicitly and, when the underlying numerator/denominator are known,
+ * shows them on a second muted line — small cohorts (e.g. 5 of 6 tested)
+ * can swing PCCP to misleading extremes, so the counts travel with the
+ * percentage instead of being suppressed or hidden.
+ */
+function rateBodyText(count: number, rateType: RateType, source?: CountyData | ZipCodeData): string {
   switch (rateType) {
     case 'numerator':
       return `${count.toLocaleString()} tested positive`;
     case 'denominator':
       return `${count.toLocaleString()} tested`;
     case 'pccp':
-    default:
-      return `${count.toFixed(1)} per 100 tested`;
+    default: {
+      const pccpLine = `PCCP: ${count.toFixed(1)} per 100 tested`;
+      if (source?.casePatients !== undefined && source?.totalPatients !== undefined) {
+        const detail = `${source.casePatients.toLocaleString()} cancer tested positive out of ${source.totalPatients.toLocaleString()} total tested`;
+        return `${pccpLine}<br/><span style="color:#6b7280;font-size:11px">${detail}</span>`;
+      }
+      return pccpLine;
+    }
   }
 }
 
@@ -267,14 +290,15 @@ function ExpandedMap({ data, filters, zipCodeData, onClose }: ExpandedMapProps) 
     if (info.layer?.id === 'expanded-choropleth-counties') {
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
-      const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap, filters.rateType);
+      const source = sourceForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
+      const count = valueForRate(source, filters.rateType);
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf
         ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>`
         : '';
       const header = tooltipHeader(props, geoLevel, county);
       const body = count > 0
-        ? `${rateBodyText(count, filters.rateType)}${sfStr}`
+        ? `${rateBodyText(count, filters.rateType, source)}${sfStr}`
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -452,10 +476,11 @@ export function ChoroplethMap({
     if (info.layer?.id === 'choropleth-counties') {
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
-      const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap, filters.rateType);
+      const source = sourceForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
+      const count = valueForRate(source, filters.rateType);
       const header = tooltipHeader(props, geoLevel, county);
       const body = count > 0
-        ? rateBodyText(count, filters.rateType)
+        ? rateBodyText(count, filters.rateType, source)
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,

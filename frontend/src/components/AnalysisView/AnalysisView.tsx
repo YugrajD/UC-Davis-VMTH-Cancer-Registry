@@ -9,7 +9,7 @@ import { useYearlyTrendsData } from '../../hooks/useYearlyTrendsData';
 import { fetchFilterOptions } from '../../api/client';
 import { yearRange, countForYear, pccpForYear, OTHER_SERIES_NAME } from '../../lib/trends';
 import { MapResetButton } from '../MapResetButton/MapResetButton';
-import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState } from '../../types';
+import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState, ZipCodeData } from '../../types';
 import { CES_INDICATORS, CANCER_TYPES, BREEDS, SEX_OPTIONS } from '../../types';
 import {
   HUMAN_CANCER_RATES,
@@ -485,8 +485,8 @@ function CancerMap({
   }, [countyData]);
 
   const zipCodeDataMap = useMemo(() => {
-    const m = new Map<string, number>();
-    zipCodeData.forEach(z => m.set(z.zipCode, z.count));
+    const m = new Map<string, ZipCodeData>();
+    zipCodeData.forEach(z => m.set(z.zipCode, z));
     return m;
   }, [zipCodeData]);
 
@@ -515,7 +515,7 @@ function CancerMap({
           const key = hoverKeyFromFeature(props, geoLevel);
           if (key && key === hovered) return HOVER_COLOR;
           const count = geoLevel === 'zcta'
-            ? zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim()) ?? 0
+            ? zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim())?.count ?? 0
             : countyDataMap.get(countyFromFeature(props, geoLevel).toLowerCase())?.count ?? 0;
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
@@ -539,13 +539,17 @@ function CancerMap({
     if (info.layer?.id === 'cancer-counties') {
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
-      const count = geoLevel === 'zcta'
-        ? zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim()) ?? 0
-        : countyDataMap.get(county.toLowerCase())?.count ?? 0;
+      const source = geoLevel === 'zcta'
+        ? zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim())
+        : countyDataMap.get(county.toLowerCase());
+      const count = source?.count ?? 0;
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>` : '';
       const header = tooltipHeader(props, geoLevel, county);
-      const body = `${count.toFixed(1)} per 100 tested`;
+      const pccpLine = `PCCP: ${count.toFixed(1)} per 100 tested`;
+      const body = source?.casePatients !== undefined && source?.totalPatients !== undefined
+        ? `${pccpLine}<br/><span style="color:#6b7280;font-size:11px">${source.casePatients.toLocaleString()} cancer tested positive out of ${source.totalPatients.toLocaleString()} total tested</span>`
+        : pccpLine;
       return {
         html: `${header}<br/>${body}${sfStr}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },

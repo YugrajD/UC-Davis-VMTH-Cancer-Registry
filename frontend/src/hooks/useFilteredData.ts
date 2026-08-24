@@ -249,7 +249,7 @@ export function createFilteredZipCodeDataState(
 }
 
 export function useFilteredData(filters: FilterState): FilteredDataState {
-  const { sex, ageGroup, yearStart, yearEnd, cancerType } = filters;
+  const { sex, ageGroup, yearStart, yearEnd, cancerType, breed } = filters;
   const [countyData, setCountyData] = useState<CountyData[]>([]);
   const [overallPccp, setOverallPccp] = useState(0);
   const [overallCancerPatients, setOverallCancerPatients] = useState(0);
@@ -276,6 +276,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
             yearStart,
             yearEnd,
             cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
+            breed: breed && breed !== 'All Breeds' ? breed : undefined,
           });
           const pccpData = buildCountyDataFromPCCP(response);
           cd = pccpData.countyData;
@@ -318,7 +319,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
     loadData();
 
     return () => { cancelled = true; };
-  }, [sex, ageGroup, yearStart, yearEnd, cancerType]);
+  }, [sex, ageGroup, yearStart, yearEnd, cancerType, breed]);
 
   const regionSummary = useMemo(
     () => countyData.length > 0 ? generateRegionSummary(countyData) : EMPTY_REGION_SUMMARY,

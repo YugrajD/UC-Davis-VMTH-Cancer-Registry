@@ -250,12 +250,13 @@ async def get_pccp_by_county(
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
     year_end: Optional[int] = Query(None, ge=1900, le=2100),
     cancer_type: Optional[str] = Query(None, max_length=200),
+    breed: Optional[str] = Query(None, max_length=200),
     db: AsyncSession = Depends(get_db),
 ):
     """Per-county PCCP: cancer patients / tested patients × 100.
 
     Denominator: petbert patients with any confirmed/corrected diagnosis, county_id IS NOT NULL.
-      - Demographic filters (sex, age_group, year) apply to the denominator.
+      - Demographic filters (sex, age_group, year, breed) apply to the denominator.
       - cancer_type does NOT apply to the denominator.
     Numerator: subset with a matching cancer diagnosis.
       - All filters including cancer_type apply to the numerator.
@@ -269,6 +270,8 @@ async def get_pccp_by_county(
             stmt = stmt.where(func.extract("year", Patient.diagnosis_date) >= year_start)
         if year_end:
             stmt = stmt.where(func.extract("year", Patient.diagnosis_date) <= year_end)
+        if breed and breed not in ("All Breeds", "all"):
+            stmt = stmt.join(Breed, Patient.breed_id == Breed.id).where(Breed.name == breed)
         return stmt
 
     # Denominator: patients with any confirmed/corrected diagnosis, grouped by county.

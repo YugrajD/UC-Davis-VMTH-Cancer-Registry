@@ -411,6 +411,11 @@ export function AgeDisparitiesView() {
                                     : `+ ${tooltip.cancerTypes.length - 3} more · click county to expand`}
                                 </p>
                               )}
+                              {tooltip.cancerTypes.reduce((sum, ct) => sum + ct.count, 0) > tooltip.count && (
+                                <p className="mt-1.5 text-[10px] text-[var(--color-text-secondary)] italic leading-snug">
+                                  Dogs with more than one cancer type are counted in each, so these can add up to more than the total above.
+                                </p>
+                              )}
                             </div>
                           )}
                         </>

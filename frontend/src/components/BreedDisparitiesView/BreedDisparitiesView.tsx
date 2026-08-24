@@ -538,68 +538,6 @@ export function BreedDisparitiesView() {
         </>
       )}
 
-      {!loadingDetail && !detail && !selectedBreed && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-                Cancer Type Breakdown
-              </h3>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                Top cancer types for selected breed
-              </p>
-            </div>
-            <div className="p-6 flex items-center justify-center h-48">
-              <p className="text-sm text-[var(--color-text-secondary)]">Select a breed to view data</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-                County Distribution
-              </h3>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                Where selected breed cases are located
-              </p>
-            </div>
-            <div className="relative" style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
-              <ComposableMap
-                projection="geoMercator"
-                projectionConfig={MAP_PROJECTION_CONFIG}
-                width={400}
-                height={400}
-                style={{ width: '100%', height: '100%' }}
-              >
-                <Geographies geography={GEO_URL}>
-                  {({ geographies }) =>
-                    geographies.map((geo) => (
-                      <Geography
-                        key={geo.rsmKey}
-                        geography={geo}
-                        fill="#E5E7EB"
-                        stroke="#FFFFFF"
-                        strokeWidth={0.5}
-                        style={{
-                          default: { outline: 'none' },
-                          hover: { outline: 'none' },
-                          pressed: { outline: 'none' },
-                        }}
-                      />
-                    ))
-                  }
-                </Geographies>
-              </ComposableMap>
-              <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
-                  <span className="text-[10px] text-[var(--color-text-secondary)]">No data</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {!loadingDetail && !detail && selectedBreed && (
         <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
           <p className="text-sm text-[var(--color-text-secondary)]">

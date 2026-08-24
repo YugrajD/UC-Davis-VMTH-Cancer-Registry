@@ -1773,12 +1773,11 @@ function CancerTrendChart() {
 }
 
 function PesticideTrendChart() {
-  // Default: top 5 counties by lbs/sq mi
   const sortedCounties = useMemo(
     () => [...PESTICIDE_DATA].sort((a, b) => b.lbs_per_sq_mile - a.lbs_per_sq_mile).map(d => d.county),
     [],
   );
-  const [selectedCounties, setSelectedCounties] = useState<string[]>(() => sortedCounties.slice(0, 5));
+  const [selectedCounties, setSelectedCounties] = useState<string[]>(() => sortedCounties);
   const [hovered, setHovered] = useState<string | null>(null);
 
   const toggleCounty = (county: string) => {

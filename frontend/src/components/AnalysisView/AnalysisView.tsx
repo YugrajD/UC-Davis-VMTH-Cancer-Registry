@@ -6,6 +6,7 @@ import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import { useFilteredData, useZipCodeData } from '../../hooks/useFilteredData';
 import { useYearlyTrendsData } from '../../hooks/useYearlyTrendsData';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 import { fetchFilterOptions } from '../../api/client';
 import { yearRange, countForYear, pccpForYear } from '../../lib/trends';
 import { MapResetButton } from '../MapResetButton/MapResetButton';
@@ -1490,11 +1491,20 @@ function CancerTrendChart() {
   const allNames = useMemo(() => series.map((s) => s.name), [series]);
   // null = "use the default (show everything)". When the user toggles a line
   // we record their explicit choice as an array. This avoids syncing default
-  // state from data via an effect or a ref-during-render.
-  const [userSelection, setUserSelection] = useState<string[] | null>(null);
+  // state from data via an effect or a ref-during-render. Persisted so the
+  // selection survives switching tabs and refreshing within the session.
+  const [userSelection, setUserSelection] = useSessionStorageState<string[] | null>(
+    'analysisView.cancerTypeSelection',
+    null,
+  );
   const [hovered, setHovered] = useState<string | null>(null);
 
-  const selectedNames = userSelection ?? allNames;
+  // Filter out any persisted names no longer present in the data (e.g. a
+  // cancer type renamed/removed since the selection was saved).
+  const selectedNames = useMemo(() => {
+    const base = userSelection ?? allNames;
+    return base.filter((n) => allNames.includes(n));
+  }, [userSelection, allNames]);
 
   const margin = { top: 20, right: 140, bottom: 40, left: 60 };
   const width = 600;

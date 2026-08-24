@@ -15,7 +15,7 @@ function AppContent() {
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>({
-    rateType: 'incidence',
+    rateType: 'pccp',
     sex: 'all',
     ageGroup: 'all',
     cancerType: 'All Types',
@@ -251,7 +251,6 @@ function AppContent() {
             <ChoroplethMap
               filters={filters}
               data={countyData}
-              countRange={countRange}
               hoveredCounty={hoveredCounty}
               onCountyHover={setHoveredCounty}
               onCountyClick={handleCountyClick}

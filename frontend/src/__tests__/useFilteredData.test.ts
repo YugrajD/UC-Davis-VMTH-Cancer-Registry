@@ -10,7 +10,7 @@ import { MOCK_COUNTY_DATA } from '../data/mockData';
 import type { FilterState } from '../types';
 
 const DEFAULT_FILTERS: FilterState = {
-  rateType: 'incidence',
+  rateType: 'pccp',
   sex: 'all',
   ageGroup: 'all',
   cancerType: 'All Types',

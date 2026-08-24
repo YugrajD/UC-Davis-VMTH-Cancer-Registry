@@ -115,10 +115,11 @@ describe('SEX_OPTIONS', () => {
 // ---------------------------------------------------------------------------
 
 describe('RATE_OPTIONS', () => {
-  it('contains incidence and mortality options', () => {
+  it('contains pccp, numerator, and denominator options', () => {
     const values = RATE_OPTIONS.map(o => o.value);
-    expect(values).toContain('incidence');
-    expect(values).toContain('mortality');
+    expect(values).toContain('pccp');
+    expect(values).toContain('numerator');
+    expect(values).toContain('denominator');
   });
 
   it('every option has a non-empty label', () => {

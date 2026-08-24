@@ -3,7 +3,13 @@ export type Sex = 'all' | 'male_intact' | 'male_neutered' | 'female_intact' | 'f
 
 export type AgeGroup = 'all' | 'young' | 'juvenile' | 'adult' | 'old' | 'senior';
 
-export type RateType = 'incidence' | 'mortality';
+/**
+ * What the county/tract choropleth map colors by:
+ * - 'pccp' (labeled "Incidence"): Pathology-Confirmed Cancer Proportion, cases per 100 tested
+ * - 'numerator': raw count of tested animals with a confirmed cancer diagnosis
+ * - 'denominator': raw count of all tested animals
+ */
+export type RateType = 'pccp' | 'numerator' | 'denominator';
 
 export type TabType = 'overview' | 'breed-disparities' | 'cancer-by-age' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management' | 'settings';
 
@@ -216,6 +222,7 @@ export const AGE_GROUP_OPTIONS: { value: AgeGroup; label: string; range: string 
 ];
 
 export const RATE_OPTIONS: { value: RateType; label: string }[] = [
-  { value: 'incidence', label: 'Incidence' },
-  { value: 'mortality', label: 'Mortality' },
+  { value: 'pccp', label: 'Incidence' },
+  { value: 'numerator', label: 'Cancer Tested Positive' },
+  { value: 'denominator', label: 'Total Tested' },
 ];

@@ -452,7 +452,7 @@ function CancerMap({
   geoLevel: GeoLevel;
 }) {
   const [filters, setFilters] = useState<FilterState>({
-    rateType: 'incidence',
+    rateType: 'pccp',
     sex: 'all',
     ageGroup: 'all',
     cancerType: 'All Types',
@@ -1902,7 +1902,7 @@ export function AnalysisView() {
 
   // VMTH data for scatter plot, filtered by dog cancer type
   const { countyData: scatterCountyData } = useFilteredData({
-    rateType: 'incidence',
+    rateType: 'pccp',
     sex: 'all',
     ageGroup: 'all',
     cancerType: scatterDogCancerType,

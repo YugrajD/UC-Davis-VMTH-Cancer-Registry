@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { FilterState, CountyData, RegionSummary, ZipCodeData } from '../types';
+import type { FilterState, CountyData, RateType, RegionSummary, ZipCodeData } from '../types';
 import {
   fetchIncidence,
   fetchIncidenceByZip,
@@ -174,6 +174,30 @@ export function getCountRange(countyData: CountyData[]) {
   return {
     min: Math.min(...counts),
     max: Math.max(...counts),
+  };
+}
+
+/** The value a county contributes for the currently selected map-color metric. */
+export function valueForRate(county: CountyData | undefined, rateType: RateType): number {
+  if (!county) return 0;
+  switch (rateType) {
+    case 'numerator':
+      return county.casePatients ?? 0;
+    case 'denominator':
+      return county.totalPatients ?? 0;
+    case 'pccp':
+    default:
+      return county.count;
+  }
+}
+
+/** Min/max range for the currently selected map-color metric, for the color scale domain. */
+export function getCountRangeForRate(countyData: CountyData[], rateType: RateType) {
+  const values = countyData.map(c => valueForRate(c, rateType)).filter(n => n > 0);
+  if (values.length === 0) return { min: 0, max: 1 };
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
   };
 }
 

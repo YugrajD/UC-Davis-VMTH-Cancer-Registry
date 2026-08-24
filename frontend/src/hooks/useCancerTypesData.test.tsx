@@ -11,7 +11,7 @@ vi.mock('../api/client', () => ({
 }));
 
 const defaultFilters: FilterState = {
-  rateType: 'incidence',
+  rateType: 'pccp',
   sex: 'all',
   ageGroup: 'all',
   cancerType: 'All Types',

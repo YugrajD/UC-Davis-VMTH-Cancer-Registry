@@ -1787,8 +1787,19 @@ function PesticideTrendChart() {
     () => [...PESTICIDE_DATA].sort((a, b) => b.lbs_per_sq_mile - a.lbs_per_sq_mile).map(d => d.county),
     [],
   );
-  const [selectedCounties, setSelectedCounties] = useState<string[]>(() => sortedCounties);
+  // Persisted so the selection survives switching tabs and refreshing
+  // within the session.
+  const [rawSelectedCounties, setSelectedCounties] = useSessionStorageState<string[]>(
+    'analysisView.pesticideCountySelection',
+    sortedCounties,
+  );
   const [hovered, setHovered] = useState<string | null>(null);
+
+  // Filter out any persisted counties no longer present in the data.
+  const selectedCounties = useMemo(
+    () => rawSelectedCounties.filter((c) => sortedCounties.includes(c)),
+    [rawSelectedCounties, sortedCounties],
+  );
 
   const toggleCounty = (county: string) => {
     setSelectedCounties(prev =>

@@ -56,6 +56,10 @@ export function BreedDisparitiesView() {
       .then(opts => {
         const names = [...new Set(opts.breeds.map(b => b.name))].sort();
         setBreeds(names);
+        if (names.length > 0) {
+          setSelectedBreed(names[0]);
+          setQuery(names[0]);
+        }
       })
       .catch(() => {})
       .finally(() => setLoadingBreeds(false));
@@ -156,19 +160,14 @@ export function BreedDisparitiesView() {
     return m;
   }, [detail, mapMode]);
 
-  const countRange = useMemo(() => {
-    if (!detail || detail.county_cases.length === 0) return { min: 0, max: 1 };
-    const vals = Array.from(countyValueMap.values());
-    const nonZero = vals.filter((v) => v > 0);
-    if (nonZero.length === 0) return { min: 0, max: 1 };
-    return { min: Math.min(...nonZero), max: Math.max(...nonZero) };
-  }, [detail, countyValueMap]);
-
+  // Fixed 0-100 domain (PCCP is always a percentage) rather than scaling to
+  // each breed's min/max — keeps color contrast comparable across breeds
+  // instead of stretching a narrow range to look artificially dramatic.
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
-      .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
+      .domain([0, 50, 100])
       .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
-  }, [countRange]);
+  }, []);
 
   const maxPccp = detail?.cancer_types[0]?.pccp_within_breed ?? detail?.cancer_types[0]?.count ?? 1;
 
@@ -465,12 +464,8 @@ export function BreedDisparitiesView() {
                     }}
                   />
                   <div className="flex justify-between mt-1">
-                    <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.min.toFixed(1)}%
-                    </span>
-                    <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {countRange.max.toFixed(1)}%
-                    </span>
+                    <span className="text-[10px] text-[var(--color-text-secondary)]">0%</span>
+                    <span className="text-[10px] text-[var(--color-text-secondary)]">100%</span>
                   </div>
                   <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
                     <div className="w-3 h-3 rounded bg-[#E5E7EB]" />

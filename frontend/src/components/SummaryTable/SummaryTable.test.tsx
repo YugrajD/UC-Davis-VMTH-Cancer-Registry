@@ -115,4 +115,39 @@ describe('SummaryTable', () => {
       'Southern Region',
     ]);
   });
+
+  it('renders Cancer Tested Positive and Total Tested column headers before PCCP', () => {
+    render(<SummaryTable data={summary} />);
+
+    const headers = screen.getAllByRole('columnheader').map(h => h.textContent?.trim());
+    expect(headers[1]).toContain('Cancer Tested Positive');
+    expect(headers[2]).toContain('Total Tested');
+    expect(headers[3]).toContain('PCCP');
+  });
+
+  it('renders numerator/denominator values when present, dash otherwise', () => {
+    const withPccp: RegionSummary = {
+      name: 'California',
+      type: 'state',
+      count: 40,
+      casePatients: 40,
+      totalPatients: 100,
+      children: [],
+    };
+    render(<SummaryTable data={withPccp} />);
+
+    const row = screen.getByText('California').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[1].textContent?.trim()).toBe('40');
+    expect(cells?.[2].textContent?.trim()).toBe('100');
+  });
+
+  it('renders a dash for numerator/denominator when absent', () => {
+    render(<SummaryTable data={summary} />);
+
+    const row = screen.getByText('California').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[1].textContent?.trim()).toBe('—');
+    expect(cells?.[2].textContent?.trim()).toBe('—');
+  });
 });

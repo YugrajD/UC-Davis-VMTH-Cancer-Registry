@@ -1,13 +1,18 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  buildCountyDataFromPCCP,
   buildZipCodeDataFromIncidence,
+  buildZipCodeDataFromPCCP,
   createFilteredDataState,
   createFilteredZipCodeDataState,
+  generateRegionSummary,
+  getCountRangeForRate,
   getZipCodeCountRange,
+  valueForRate,
 } from '../hooks/useFilteredData';
 import { MOCK_COUNTY_DATA } from '../data/mockData';
-import type { FilterState } from '../types';
+import type { CountyData, FilterState } from '../types';
 
 const DEFAULT_FILTERS: FilterState = {
   rateType: 'pccp',
@@ -298,5 +303,129 @@ describe('useFilteredData — ZIP code data', () => {
 
     expect(a).toEqual(b);
     expect(a.reduce((sum, z) => sum + z.count, 0)).toBeLessThan(180);
+  });
+
+  it('builds ZIP-level PCCP data (numerator/denominator/pccp) from the real endpoint response', () => {
+    const zipCodeData = buildZipCodeDataFromPCCP({
+      data: [
+        { zip_code: '95616', cancer_patients: 40, total_patients: 100, pccp: 40 },
+        { zip_code: '95817', cancer_patients: 5, total_patients: 20, pccp: 25 },
+      ],
+      overall_cancer_patients: 45,
+      overall_total_patients: 120,
+      overall_pccp: 37.5,
+    });
+
+    expect(zipCodeData).toEqual([
+      { zipCode: '95616', count: 40, casePatients: 40, totalPatients: 100 },
+      { zipCode: '95817', count: 25, casePatients: 5, totalPatients: 20 },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildCountyDataFromPCCP / generateRegionSummary numerator+denominator
+// ---------------------------------------------------------------------------
+
+describe('useFilteredData — PCCP numerator/denominator aggregation', () => {
+  it('buildCountyDataFromPCCP carries numerator and denominator through to CountyData', () => {
+    const { countyData } = buildCountyDataFromPCCP({
+      data: [
+        { county: 'Yolo', cancer_patients: 40, total_patients: 100, pccp: 40 },
+      ],
+      overall_cancer_patients: 40,
+      overall_total_patients: 100,
+      overall_pccp: 40,
+    });
+
+    expect(countyData[0].casePatients).toBe(40);
+    expect(countyData[0].totalPatients).toBe(100);
+    expect(countyData[0].count).toBe(40); // count holds the PCCP percentage
+  });
+
+  it('region-level PCCP is sum(numerator)/sum(denominator), not an average of county PCCPs', () => {
+    // Two counties in the same region with very different cohort sizes and PCCPs.
+    // A naive average of (80% + 20%)/2 = 50% would be wrong; the correct
+    // sum-based aggregate is 90/200 = 45%.
+    const countyData: CountyData[] = [
+      { county: 'Small County', region: 'Sacramento Valley', count: 80, fips: '', casePatients: 8, totalPatients: 10 },
+      { county: 'Big County', region: 'Sacramento Valley', count: 20, fips: '', casePatients: 82, totalPatients: 190 },
+    ];
+
+    const summary = generateRegionSummary(countyData);
+    const catchment = summary.children![0];
+    const region = catchment.children!.find(r => r.name === 'Sacramento Valley')!;
+
+    expect(region.casePatients).toBe(90);
+    expect(region.totalPatients).toBe(200);
+    expect(region.count).toBeCloseTo(45, 5);
+  });
+
+  it('numerator and denominator sum correctly up to the state (California) level', () => {
+    const countyData: CountyData[] = [
+      { county: 'Yolo', region: 'Sacramento Valley', count: 40, fips: '', casePatients: 40, totalPatients: 100 },
+      { county: 'Marin', region: 'San Francisco Bay Area', count: 50, fips: '', casePatients: 10, totalPatients: 20 },
+    ];
+
+    const summary = generateRegionSummary(countyData);
+
+    expect(summary.casePatients).toBe(50);
+    expect(summary.totalPatients).toBe(120);
+    expect(summary.count).toBeCloseTo((50 / 120) * 100, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// valueForRate / getCountRangeForRate — Rate filter (PCCP/numerator/denominator)
+// ---------------------------------------------------------------------------
+
+describe('useFilteredData — valueForRate', () => {
+  const county: CountyData = {
+    county: 'Yolo', region: 'Sacramento Valley', count: 40, fips: '', casePatients: 40, totalPatients: 100,
+  };
+
+  it('pccp mode returns the count field', () => {
+    expect(valueForRate(county, 'pccp')).toBe(40);
+  });
+
+  it('numerator mode returns casePatients', () => {
+    expect(valueForRate(county, 'numerator')).toBe(40);
+  });
+
+  it('denominator mode returns totalPatients', () => {
+    expect(valueForRate(county, 'denominator')).toBe(100);
+  });
+
+  it('returns 0 for undefined source', () => {
+    expect(valueForRate(undefined, 'pccp')).toBe(0);
+  });
+
+  it('returns 0 when the requested field is missing', () => {
+    const bare: CountyData = { county: 'X', region: 'Y', count: 10, fips: '' };
+    expect(valueForRate(bare, 'numerator')).toBe(0);
+    expect(valueForRate(bare, 'denominator')).toBe(0);
+  });
+});
+
+describe('useFilteredData — getCountRangeForRate', () => {
+  const data: CountyData[] = [
+    { county: 'A', region: 'R', count: 10, fips: '', casePatients: 4, totalPatients: 40 },
+    { county: 'B', region: 'R', count: 50, fips: '', casePatients: 45, totalPatients: 90 },
+  ];
+
+  it('pccp mode ranges over the count field', () => {
+    expect(getCountRangeForRate(data, 'pccp')).toEqual({ min: 10, max: 50 });
+  });
+
+  it('numerator mode ranges over casePatients', () => {
+    expect(getCountRangeForRate(data, 'numerator')).toEqual({ min: 4, max: 45 });
+  });
+
+  it('denominator mode ranges over totalPatients', () => {
+    expect(getCountRangeForRate(data, 'denominator')).toEqual({ min: 40, max: 90 });
+  });
+
+  it('falls back to {min:0, max:1} when there is no positive data', () => {
+    expect(getCountRangeForRate([], 'pccp')).toEqual({ min: 0, max: 1 });
   });
 });

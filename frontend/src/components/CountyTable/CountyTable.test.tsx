@@ -10,6 +10,10 @@ const countyData: CountyData[] = [
   { county: 'Bravo', region: 'Central', count: 1, fips: '002' },
 ];
 
+const pccpCountyData: CountyData[] = [
+  { county: 'Yolo', region: 'Sacramento Valley', count: 40, fips: '057', casePatients: 40, totalPatients: 100 },
+];
+
 function renderedCountyOrder() {
   return screen.getAllByRole('row').slice(1).map((row) => {
     const firstCell = row.querySelector('td');
@@ -52,5 +56,32 @@ describe('CountyTable', () => {
 
     expect(row?.className).toContain('ring-2');
     expect(row?.className).toContain('ring-[var(--color-primary-orange)]');
+  });
+
+  it('renders Cancer Tested Positive and Total Tested column headers before PCCP', () => {
+    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} />);
+
+    const headers = screen.getAllByRole('columnheader').map(h => h.textContent?.trim());
+    expect(headers[1]).toContain('Cancer Tested Positive');
+    expect(headers[2]).toContain('Total Tested');
+    expect(headers[3]).toContain('PCCP');
+  });
+
+  it('renders numerator/denominator values for counties with PCCP data', () => {
+    render(<CountyTable data={pccpCountyData} countRange={{ min: 40, max: 40 }} />);
+
+    const row = screen.getByText('Yolo').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[1].textContent?.trim()).toBe('40');
+    expect(cells?.[2].textContent?.trim()).toBe('100');
+  });
+
+  it('renders a dash for numerator/denominator when a county has no PCCP data', () => {
+    render(<CountyTable data={countyData} countRange={{ min: 1, max: 10 }} />);
+
+    const row = screen.getByText('Alpha').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[1].textContent?.trim()).toBe('—');
+    expect(cells?.[2].textContent?.trim()).toBe('—');
   });
 });

@@ -3,9 +3,15 @@ export type Sex = 'all' | 'male_intact' | 'male_neutered' | 'female_intact' | 'f
 
 export type AgeGroup = 'all' | 'young' | 'juvenile' | 'adult' | 'old' | 'senior';
 
-export type RateType = 'incidence' | 'mortality';
+/**
+ * What the county/tract choropleth map colors by:
+ * - 'pccp' (labeled "PCCP"): Pathology-Confirmed Cancer Proportion, cases per 100 tested
+ * - 'numerator': raw count of tested animals with a confirmed cancer diagnosis
+ * - 'denominator': raw count of all tested animals
+ */
+export type RateType = 'pccp' | 'numerator' | 'denominator';
 
-export type TabType = 'overview' | 'breed-disparities' | 'cancer-by-age' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management';
+export type TabType = 'overview' | 'breed-disparities' | 'cancer-by-age' | 'cancer-types' | 'analysis' | 'data-upload' | 'review-queue' | 'diagnosis-review' | 'user-management' | 'settings';
 
 export interface CancerRecord {
   county: string;
@@ -26,12 +32,19 @@ export interface CountyData {
   fips: string;
   population?: number;
   rate?: number;
+  /** Numerator — tested animals with a confirmed cancer diagnosis. */
+  casePatients?: number;
+  /** Denominator — all tested animals, regardless of diagnosis. */
   totalPatients?: number;
 }
 
 export interface ZipCodeData {
   zipCode: string;
   count: number;
+  /** Numerator — tested animals with a confirmed cancer diagnosis. */
+  casePatients?: number;
+  /** Denominator — all tested animals, regardless of diagnosis. */
+  totalPatients?: number;
 }
 
 export interface RegionSummary {
@@ -40,6 +53,10 @@ export interface RegionSummary {
   count: number;
   population?: number;
   rate?: number;
+  /** Numerator — tested animals with a confirmed cancer diagnosis. */
+  casePatients?: number;
+  /** Denominator — all tested animals, regardless of diagnosis. */
+  totalPatients?: number;
   children?: RegionSummary[];
 }
 
@@ -69,6 +86,7 @@ export const TABS: Tab[] = [
   { id: 'review-queue', label: 'Review Queue' },
   { id: 'diagnosis-review', label: 'Diagnosis Review' },
   { id: 'user-management', label: 'User Management' },
+  { id: 'settings', label: 'Settings' },
 ] as const;
 
 export interface CalEnviroScreenData {
@@ -208,6 +226,7 @@ export const AGE_GROUP_OPTIONS: { value: AgeGroup; label: string; range: string 
 ];
 
 export const RATE_OPTIONS: { value: RateType; label: string }[] = [
-  { value: 'incidence', label: 'Incidence' },
-  { value: 'mortality', label: 'Mortality' },
+  { value: 'pccp', label: 'PCCP' },
+  { value: 'numerator', label: 'Cancer Tested Positive' },
+  { value: 'denominator', label: 'Total Tested' },
 ];

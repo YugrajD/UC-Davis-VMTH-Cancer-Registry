@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal, Settings } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
-import type { TabType, FilterState, AgeGroup } from './types';
+import type { TabType, FilterState } from './types';
 import {
   VET_ICD_O_CATEGORIES,
   classifyCancerType,
@@ -14,17 +14,15 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
-  const [ageDisparitiesSelection, setAgeDisparitiesSelection] = useState<AgeGroup | ''>('');
-  const [breedDisparitiesSelection, setBreedDisparitiesSelection] = useState('');
   const [filters, setFilters] = useState<FilterState>({
-    rateType: 'incidence',
+    rateType: 'pccp',
     sex: 'all',
     ageGroup: 'all',
     cancerType: 'All Types',
     breed: 'All Breeds',
   });
 
-  const { countyData, regionSummary, countRange, loading, error, overallPccp, overallCancerPatients, overallTotalPatients } = useFilteredData(filters);
+  const { countyData, regionSummary, loading, error, overallPccp, overallCancerPatients, overallTotalPatients } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);
   const { passwordRecovery } = useAuth();
   const [cancerCategory, setCancerCategory] = useState<VetIcdOCategoryId | 'all'>('all');
@@ -63,16 +61,12 @@ function AppContent() {
           <DiagnosisReview />
         ) : activeTab === 'user-management' ? (
           <UserManagement />
+        ) : activeTab === 'settings' ? (
+          <Settings />
         ) : activeTab === 'breed-disparities' ? (
-          <BreedDisparitiesView
-            selectedBreed={breedDisparitiesSelection}
-            onSelectedBreedChange={setBreedDisparitiesSelection}
-          />
+          <BreedDisparitiesView />
         ) : activeTab === 'cancer-by-age' ? (
-          <AgeDisparitiesView
-            selectedAgeGroup={ageDisparitiesSelection}
-            onSelectedAgeGroupChange={setAgeDisparitiesSelection}
-          />
+          <AgeDisparitiesView />
         ) : activeTab === 'analysis' ? (
           <AnalysisView />
         ) : activeTab === 'cancer-types' ? (
@@ -160,7 +154,12 @@ function AppContent() {
                   No cancer types in this category for the selected filters.
                 </p>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-4">
+                    <span className="w-48 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Cancer Type</span>
+                    <span className="flex-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right pr-1">PCCP</span>
+                    <span className="w-20 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right">Numerator</span>
+                  </div>
                   {(() => {
                     const sorted = filteredCancerTypes.slice().sort((a, b) => b.count - a.count).slice(0, 10);
                     const maxCount = sorted[0]?.count || 1;
@@ -168,7 +167,7 @@ function AppContent() {
                       const width = Math.max(5, (record.count / maxCount) * 100);
                       return (
                         <div key={record.cancer_type} className="flex items-center gap-4">
-                          <span className="w-48 text-sm text-[var(--color-text-primary)]">
+                          <span className="w-48 text-sm text-[var(--color-text-primary)] truncate" title={record.cancer_type}>
                             {record.cancer_type}
                           </span>
                           <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
@@ -177,10 +176,13 @@ function AppContent() {
                               style={{ width: `${width}%` }}
                             >
                               <span className="text-xs font-semibold text-white">
-                                {(record.pccp ?? record.count).toFixed(1)}
+                                {record.pccp != null ? `${record.pccp.toFixed(1)}%` : record.count.toLocaleString()}
                               </span>
                             </div>
                           </div>
+                          <span className="w-20 text-xs text-[var(--color-text-secondary)] text-right tabular-nums">
+                            {record.count.toLocaleString()}
+                          </span>
                         </div>
                       );
                     });
@@ -200,6 +202,18 @@ function AppContent() {
             regions. Use the filters on the right to explore data by cancer type, breed, and sex.
         </p>
       </div>
+
+        {/* PCCP disclaimer */}
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3">
+          <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          <p className="text-xs text-amber-800 leading-relaxed">
+            <span className="font-semibold">PCCP (Pathology-Confirmed Cancer Proportion)</span> — percentage of pathology-tested animals with a confirmed cancer diagnosis, per county.
+            The numerator is tested animals in that county with a confirmed cancer diagnosis; the denominator is all tested animals in that county regardless of diagnosis.
+            Figures for small cohorts (fewer than 10 tested animals) may be statistically unstable and should be interpreted with caution.
+          </p>
+        </div>
 
         {/* Error banner */}
         {error && (
@@ -228,12 +242,12 @@ function AppContent() {
               </div>
             ) : (
               <>
-                <SummaryTable data={regionSummary} />
+                <SummaryTable data={regionSummary} rateType={filters.rateType} />
                 <CountyTable
                   data={countyData}
-                  countRange={countRange}
                   onCountyHover={setHoveredCounty}
                   selectedCounty={selectedCounty}
+                  rateType={filters.rateType}
                 />
               </>
             )}
@@ -245,7 +259,6 @@ function AppContent() {
             <ChoroplethMap
               filters={filters}
               data={countyData}
-              countRange={countRange}
               hoveredCounty={hoveredCounty}
               onCountyHover={setHoveredCounty}
               onCountyClick={handleCountyClick}

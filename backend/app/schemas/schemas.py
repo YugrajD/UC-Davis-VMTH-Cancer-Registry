@@ -95,6 +95,20 @@ class PCCPResponse(BaseModel):
     overall_pccp: float
 
 
+class PCCPZipRecord(BaseModel):
+    zip_code: str
+    cancer_patients: int
+    total_patients: int
+    pccp: float
+
+
+class PCCPZipResponse(BaseModel):
+    data: List[PCCPZipRecord]
+    overall_cancer_patients: int
+    overall_total_patients: int
+    overall_pccp: float
+
+
 # --- GeoJSON ---
 
 class GeoJSONFeatureProperties(BaseModel):

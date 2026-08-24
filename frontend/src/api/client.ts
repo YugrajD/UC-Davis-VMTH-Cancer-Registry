@@ -59,6 +59,20 @@ export interface PCCPResponse {
   overall_pccp: number;
 }
 
+export interface PCCPZipRecord {
+  zip_code: string;
+  cancer_patients: number;
+  total_patients: number;
+  pccp: number;
+}
+
+export interface PCCPZipResponse {
+  data: PCCPZipRecord[];
+  overall_cancer_patients: number;
+  overall_total_patients: number;
+  overall_pccp: number;
+}
+
 export interface GeoJSONFeatureProperties {
   name: string;
   fips_code: string;
@@ -184,14 +198,27 @@ export async function fetchIncidenceByZip(filters: FilterParams = {}): Promise<I
   return fetchJson(url);
 }
 
-export async function fetchPCCPByCounty(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> & { cancerType?: string } = {}): Promise<PCCPResponse> {
+export async function fetchPCCPByCounty(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> & { cancerType?: string; breed?: string } = {}): Promise<PCCPResponse> {
   const params = new URLSearchParams();
   if (filters.sex && filters.sex !== 'all') params.append('sex', filters.sex);
   if (filters.ageGroup && filters.ageGroup !== 'all') params.append('age_group', filters.ageGroup);
   if (filters.yearStart) params.append('year_start', String(filters.yearStart));
   if (filters.yearEnd) params.append('year_end', String(filters.yearEnd));
   if (filters.cancerType && filters.cancerType !== 'All Types') params.append('cancer_type', filters.cancerType);
+  if (filters.breed && filters.breed !== 'All Breeds') params.append('breed', filters.breed);
   const url = params.toString() ? `/api/v1/incidence/pccp?${params}` : '/api/v1/incidence/pccp';
+  return fetchJson(url);
+}
+
+export async function fetchPCCPByZip(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> & { cancerType?: string; breed?: string } = {}): Promise<PCCPZipResponse> {
+  const params = new URLSearchParams();
+  if (filters.sex && filters.sex !== 'all') params.append('sex', filters.sex);
+  if (filters.ageGroup && filters.ageGroup !== 'all') params.append('age_group', filters.ageGroup);
+  if (filters.yearStart) params.append('year_start', String(filters.yearStart));
+  if (filters.yearEnd) params.append('year_end', String(filters.yearEnd));
+  if (filters.cancerType && filters.cancerType !== 'All Types') params.append('cancer_type', filters.cancerType);
+  if (filters.breed && filters.breed !== 'All Breeds') params.append('breed', filters.breed);
+  const url = params.toString() ? `/api/v1/incidence/pccp-by-zip?${params}` : '/api/v1/incidence/pccp-by-zip';
   return fetchJson(url);
 }
 
@@ -290,6 +317,20 @@ export interface MeResponse {
 
 export async function fetchMe(token: string): Promise<MeResponse> {
   return fetchJsonAuth('/api/v1/auth/me', token);
+}
+
+/** Permanently delete the current user's own account. Irreversible. */
+export async function deleteAccount(token: string): Promise<void> {
+  const response = await fetch(apiUrl('/api/v1/auth/me'), {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    const raw = err.detail;
+    const msg = typeof raw === 'string' ? raw : `Delete failed: ${response.status}`;
+    throw new ApiError(response.status, msg);
+  }
 }
 
 // --- User-role admin panel ---

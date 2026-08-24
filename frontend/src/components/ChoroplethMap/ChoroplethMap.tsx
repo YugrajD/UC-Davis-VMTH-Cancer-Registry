@@ -3,8 +3,8 @@ import DeckGL from '@deck.gl/react';
 import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { MapViewState, PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
-import type { CountyData, FilterState, ZipCodeData } from '../../types';
-import { useZipCodeData } from '../../hooks/useFilteredData';
+import type { CountyData, FilterState, RateType, ZipCodeData } from '../../types';
+import { useZipCodeData, valueForRate, getCountRangeForRate } from '../../hooks/useFilteredData';
 import {
   MOCK_SUPERFUND_SITES,
   SUPERFUND_BY_COUNTY,
@@ -63,22 +63,70 @@ function makeCountyDataMap(data: CountyData[]) {
 }
 
 function makeZipCodeDataMap(data: ZipCodeData[]) {
-  const m = new Map<string, number>();
-  data.forEach(z => m.set(z.zipCode, z.count));
+  const m = new Map<string, ZipCodeData>();
+  data.forEach(z => m.set(z.zipCode, z));
   return m;
+}
+
+/** The underlying county/ZIP record for a map feature, regardless of geo level. */
+function sourceForFeature(
+  props: Record<string, unknown>,
+  geoLevel: GeoLevel,
+  countyDataMap: Map<string, CountyData>,
+  zipCodeDataMap: Map<string, ZipCodeData>,
+): CountyData | ZipCodeData | undefined {
+  if (geoLevel === 'zcta') {
+    return zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim());
+  }
+  const county = countyFromFeature(props, geoLevel);
+  return countyDataMap.get(county.toLowerCase());
 }
 
 function countForFeature(
   props: Record<string, unknown>,
   geoLevel: GeoLevel,
   countyDataMap: Map<string, CountyData>,
-  zipCodeDataMap: Map<string, number>,
+  zipCodeDataMap: Map<string, ZipCodeData>,
+  rateType: RateType,
 ) {
-  if (geoLevel === 'zcta') {
-    return zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim()) ?? 0;
+  return valueForRate(sourceForFeature(props, geoLevel, countyDataMap, zipCodeDataMap), rateType);
+}
+
+function rateLabel(rateType: RateType): string {
+  switch (rateType) {
+    case 'numerator':
+      return 'Cancer Tested Positive';
+    case 'denominator':
+      return 'Total Tested';
+    case 'pccp':
+    default:
+      return 'PCCP per 100';
   }
-  const county = countyFromFeature(props, geoLevel);
-  return countyDataMap.get(county.toLowerCase())?.count ?? 0;
+}
+
+/**
+ * Tooltip body for the selected Rate metric. PCCP mode always names itself
+ * explicitly and, when the underlying numerator/denominator are known,
+ * shows them on a second muted line — small cohorts (e.g. 5 of 6 tested)
+ * can swing PCCP to misleading extremes, so the counts travel with the
+ * percentage instead of being suppressed or hidden.
+ */
+function rateBodyText(count: number, rateType: RateType, source?: CountyData | ZipCodeData): string {
+  switch (rateType) {
+    case 'numerator':
+      return `${count.toLocaleString()} tested positive`;
+    case 'denominator':
+      return `${count.toLocaleString()} tested`;
+    case 'pccp':
+    default: {
+      const pccpLine = `PCCP: ${count.toFixed(1)} per 100 tested`;
+      if (source?.casePatients !== undefined && source?.totalPatients !== undefined) {
+        const detail = `${source.casePatients.toLocaleString()} cancer tested positive out of ${source.totalPatients.toLocaleString()} total tested`;
+        return `${pccpLine}<br/><span style="color:#6b7280;font-size:11px">${detail}</span>`;
+      }
+      return pccpLine;
+    }
+  }
 }
 
 function tooltipHeader(props: Record<string, unknown>, geoLevel: GeoLevel, county: string): string {
@@ -153,13 +201,12 @@ function MapLegend({
 
 interface ExpandedMapProps {
   data: CountyData[];
-  countRange: { min: number; max: number };
+  filters: FilterState;
   zipCodeData: ZipCodeData[];
-  zipCodeCountRange: { min: number; max: number };
   onClose: () => void;
 }
 
-function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose }: ExpandedMapProps) {
+function ExpandedMap({ data, filters, zipCodeData, onClose }: ExpandedMapProps) {
   const [showSuperfund, setShowSuperfund] = useState(false);
   const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
   const [localHovered, setLocalHovered] = useState<string | null>(null);
@@ -168,7 +215,11 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const zipCodeDataMap = useMemo(() => makeZipCodeDataMap(zipCodeData), [zipCodeData]);
-  const activeCountRange = geoLevel === 'zcta' ? zipCodeCountRange : countRange;
+  const activeData = geoLevel === 'zcta' ? zipCodeData : data;
+  const activeCountRange = useMemo(
+    () => getCountRangeForRate(activeData, filters.rateType),
+    [activeData, filters.rateType],
+  );
   const colorScale = useMemo(() => makeColorScale(activeCountRange), [activeCountRange]);
 
   // DeckGL canvas may not size itself correctly when mounted inside a modal
@@ -190,7 +241,7 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
           const props = feature.properties as Record<string, unknown>;
           const key = hoverKeyFromFeature(props, geoLevel);
           if (key && key === localHovered) return HOVER_COLOR;
-          const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
+          const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap, filters.rateType);
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
         getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
@@ -200,11 +251,11 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
           setLocalHovered(props ? hoverKeyFromFeature(props, geoLevel) : null);
         },
         updateTriggers: {
-          getFillColor: [countyDataMap, zipCodeDataMap, colorScale, localHovered, geoLevel],
+          getFillColor: [countyDataMap, zipCodeDataMap, colorScale, localHovered, geoLevel, filters.rateType],
           data: [geoLevel],
         },
       }),
-    [countyDataMap, zipCodeDataMap, colorScale, localHovered, geoLevel],
+    [countyDataMap, zipCodeDataMap, colorScale, localHovered, geoLevel, filters.rateType],
   );
 
   const superfundLayer = useMemo(() => {
@@ -239,16 +290,15 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
     if (info.layer?.id === 'expanded-choropleth-counties') {
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
-      const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
+      const source = sourceForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
+      const count = valueForRate(source, filters.rateType);
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf
         ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>`
         : '';
       const header = tooltipHeader(props, geoLevel, county);
       const body = count > 0
-        ? geoLevel === 'zcta'
-          ? `${count.toLocaleString()} cases${sfStr}`
-          : `${count.toFixed(1)} per 100 tested${sfStr}`
+        ? `${rateBodyText(count, filters.rateType, source)}${sfStr}`
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -275,11 +325,11 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
     return null;
   };
 
-  const subtitleText = geoLevel === 'county'
-    ? 'Cancer proportion per 100 tested (expanded view)'
+  const subtitleText = geoLevel === 'zcta'
+    ? `${rateLabel(filters.rateType)} by ZIP/ZCTA`
     : geoLevel === 'tract'
-      ? 'Cancer PCCP by county · census tract boundaries'
-      : 'Case count by ZIP/ZCTA';
+      ? `${rateLabel(filters.rateType)} by county · census tract boundaries`
+      : `${rateLabel(filters.rateType)} by county (expanded view)`;
 
   return (
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
@@ -330,7 +380,7 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
           <MapLegend
             countRange={activeCountRange}
             showSuperfund={showSuperfund}
-            label={geoLevel === 'zcta' ? 'Cases' : 'PCCP per 100'}
+            label={rateLabel(filters.rateType)}
           />
           <MapResetButton
             onClick={() => setExpandedViewState(INITIAL_VIEW_STATE)}
@@ -349,7 +399,6 @@ function ExpandedMap({ data, countRange, zipCodeData, zipCodeCountRange, onClose
 interface ChoroplethMapProps {
   filters: FilterState;
   data: CountyData[];
-  countRange: { min: number; max: number };
   hoveredCounty?: string | null;
   onCountyHover?: (county: string | null) => void;
   onCountyClick?: (county: string) => void;
@@ -358,7 +407,6 @@ interface ChoroplethMapProps {
 export function ChoroplethMap({
   filters,
   data,
-  countRange,
   hoveredCounty,
   onCountyHover,
   onCountyClick,
@@ -368,11 +416,15 @@ export function ChoroplethMap({
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const [viewState, setViewState] =
     useState<MapViewState>(INITIAL_VIEW_STATE);
-  const { zipCodeData, countRange: zipCodeCountRange } = useZipCodeData(filters);
+  const { zipCodeData } = useZipCodeData(filters);
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const zipCodeDataMap = useMemo(() => makeZipCodeDataMap(zipCodeData), [zipCodeData]);
-  const activeCountRange = geoLevel === 'zcta' ? zipCodeCountRange : countRange;
+  const activeData = geoLevel === 'zcta' ? zipCodeData : data;
+  const activeCountRange = useMemo(
+    () => getCountRangeForRate(activeData, filters.rateType),
+    [activeData, filters.rateType],
+  );
   const colorScale = useMemo(() => makeColorScale(activeCountRange), [activeCountRange]);
 
   const geoLayer = useMemo(
@@ -391,7 +443,7 @@ export function ChoroplethMap({
             (key && key === localHovered) ||
             (geoLevel !== 'zcta' && hoveredCounty != null && county.toLowerCase() === hoveredCounty.toLowerCase());
           if (isHovered) return HOVER_COLOR;
-          const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
+          const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap, filters.rateType);
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
         getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
@@ -409,11 +461,11 @@ export function ChoroplethMap({
           if (county) onCountyClick?.(county);
         },
         updateTriggers: {
-          getFillColor: [countyDataMap, zipCodeDataMap, colorScale, localHovered, hoveredCounty, geoLevel],
+          getFillColor: [countyDataMap, zipCodeDataMap, colorScale, localHovered, hoveredCounty, geoLevel, filters.rateType],
           data: [geoLevel],
         },
       }),
-    [countyDataMap, zipCodeDataMap, colorScale, localHovered, hoveredCounty, geoLevel, onCountyHover, onCountyClick],
+    [countyDataMap, zipCodeDataMap, colorScale, localHovered, hoveredCounty, geoLevel, onCountyHover, onCountyClick, filters.rateType],
   );
 
   const layers = useMemo(() => [geoLayer], [geoLayer]);
@@ -424,12 +476,11 @@ export function ChoroplethMap({
     if (info.layer?.id === 'choropleth-counties') {
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
-      const count = countForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
+      const source = sourceForFeature(props, geoLevel, countyDataMap, zipCodeDataMap);
+      const count = valueForRate(source, filters.rateType);
       const header = tooltipHeader(props, geoLevel, county);
       const body = count > 0
-        ? geoLevel === 'zcta'
-          ? `${count.toLocaleString()} cases`
-          : `${count.toFixed(1)} per 100 tested`
+        ? rateBodyText(count, filters.rateType, source)
         : `<span style="color:#6b7280">No data</span>`;
       return {
         html: `${header}<br/>${body}`,
@@ -444,11 +495,11 @@ export function ChoroplethMap({
     return null;
   };
 
-  const subtitleText = geoLevel === 'county'
-    ? 'Cancer proportion per 100 tested'
+  const subtitleText = geoLevel === 'zcta'
+    ? `${rateLabel(filters.rateType)} by ZIP/ZCTA`
     : geoLevel === 'tract'
-      ? 'Cancer PCCP by county · census tract boundaries'
-      : 'Case count by ZIP/ZCTA';
+      ? `${rateLabel(filters.rateType)} by county · census tract boundaries`
+      : `${rateLabel(filters.rateType)} by county`;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative">
@@ -480,7 +531,7 @@ export function ChoroplethMap({
         <MapLegend
           countRange={activeCountRange}
           showSuperfund={false}
-          label={geoLevel === 'zcta' ? 'Cases' : 'PCCP per 100'}
+          label={rateLabel(filters.rateType)}
         />
         <div className="absolute top-4 right-4 z-10 group">
           <button
@@ -510,9 +561,8 @@ export function ChoroplethMap({
       {isExpanded && (
         <ExpandedMap
           data={data}
-          countRange={countRange}
+          filters={filters}
           zipCodeData={zipCodeData}
-          zipCodeCountRange={zipCodeCountRange}
           onClose={() => setIsExpanded(false)}
         />
       )}

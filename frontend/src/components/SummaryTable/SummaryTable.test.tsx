@@ -53,7 +53,7 @@ function visibleNames() {
 
 describe('SummaryTable', () => {
   it('initially expands California and UC Davis Catchment Area', () => {
-    render(<SummaryTable data={summary} />);
+    render(<SummaryTable data={summary} rateType="pccp" />);
 
     expect(screen.getByText('California')).toBeInTheDocument();
     expect(screen.getByText('UC Davis Catchment Area')).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe('SummaryTable', () => {
 
   it('expands and collapses rows when toggle buttons are clicked', async () => {
     const user = userEvent.setup();
-    render(<SummaryTable data={summary} />);
+    render(<SummaryTable data={summary} rateType="pccp" />);
 
     await user.click(screen.getAllByRole('button')[0]);
     expect(screen.queryByText('UC Davis Catchment Area')).not.toBeInTheDocument();
@@ -77,7 +77,7 @@ describe('SummaryTable', () => {
 
   it('toggles global count sort ordering', async () => {
     const user = userEvent.setup();
-    render(<SummaryTable data={summary} />);
+    render(<SummaryTable data={summary} rateType="pccp" />);
 
     expect(visibleNames()).toEqual([
       'California',
@@ -87,7 +87,7 @@ describe('SummaryTable', () => {
       'Southern Region',
     ]);
 
-    await user.click(screen.getAllByRole('columnheader')[1]);
+    await user.click(screen.getAllByRole('columnheader')[3]);
 
     expect(visibleNames()).toEqual([
       'California',
@@ -99,10 +99,10 @@ describe('SummaryTable', () => {
   });
 
   it('allows per-row count sorting to override global sort for that subtree', () => {
-    render(<SummaryTable data={summary} />);
+    render(<SummaryTable data={summary} rateType="pccp" />);
 
     const catchmentRow = screen.getByText('UC Davis Catchment Area').closest('tr');
-    const countCell = catchmentRow?.querySelectorAll('td')[1];
+    const countCell = catchmentRow?.querySelectorAll('td')[3];
     if (!countCell) throw new Error('Catchment count cell missing');
 
     fireEvent.click(countCell);
@@ -114,5 +114,64 @@ describe('SummaryTable', () => {
       'Northern Region',
       'Southern Region',
     ]);
+  });
+
+  it('renders Cancer Tested Positive and Total Tested column headers before PCCP', () => {
+    render(<SummaryTable data={summary} rateType="pccp" />);
+
+    const headers = screen.getAllByRole('columnheader').map(h => h.textContent?.trim());
+    expect(headers[1]).toContain('Cancer Tested Positive');
+    expect(headers[2]).toContain('Total Tested');
+    expect(headers[3]).toContain('PCCP');
+  });
+
+  it('renders numerator/denominator values when present, dash otherwise', () => {
+    const withPccp: RegionSummary = {
+      name: 'California',
+      type: 'state',
+      count: 40,
+      casePatients: 40,
+      totalPatients: 100,
+      children: [],
+    };
+    render(<SummaryTable data={withPccp} rateType="pccp" />);
+
+    const row = screen.getByText('California').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[1].textContent?.trim()).toBe('40');
+    expect(cells?.[2].textContent?.trim()).toBe('100');
+  });
+
+  it('renders a dash for numerator/denominator when absent', () => {
+    render(<SummaryTable data={summary} rateType="pccp" />);
+
+    const row = screen.getByText('California').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[1].textContent?.trim()).toBe('—');
+    expect(cells?.[2].textContent?.trim()).toBe('—');
+  });
+
+  it('highlights the Cancer Tested Positive column when rateType is numerator', () => {
+    render(<SummaryTable data={summary} rateType="numerator" />);
+
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers[1].className).toContain('border-[var(--color-primary-orange)]');
+    expect(headers[2].className).not.toContain('border-[var(--color-primary-orange)]');
+    expect(headers[3].className).not.toContain('border-[var(--color-primary-orange)]');
+
+    const row = screen.getByText('California').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[1].className).toContain('bg-[var(--color-primary-orange)]/10');
+  });
+
+  it('highlights the PCCP column by default', () => {
+    render(<SummaryTable data={summary} rateType="pccp" />);
+
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers[3].className).toContain('border-[var(--color-primary-orange)]');
+
+    const row = screen.getByText('California').closest('tr');
+    const cells = row?.querySelectorAll('td');
+    expect(cells?.[3].className).toContain('bg-[var(--color-primary-orange)]/10');
   });
 });

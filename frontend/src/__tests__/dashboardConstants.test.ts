@@ -115,10 +115,11 @@ describe('SEX_OPTIONS', () => {
 // ---------------------------------------------------------------------------
 
 describe('RATE_OPTIONS', () => {
-  it('contains incidence and mortality options', () => {
+  it('contains pccp, numerator, and denominator options', () => {
     const values = RATE_OPTIONS.map(o => o.value);
-    expect(values).toContain('incidence');
-    expect(values).toContain('mortality');
+    expect(values).toContain('pccp');
+    expect(values).toContain('numerator');
+    expect(values).toContain('denominator');
   });
 
   it('every option has a non-empty label', () => {
@@ -202,8 +203,13 @@ describe('TABS', () => {
     expect(ids).toContain('user-management');
   });
 
-  it('contains exactly 9 tabs', () => {
-    expect(TABS.length).toBe(9);
+  it('contains the settings tab', () => {
+    const ids = TABS.map(t => t.id);
+    expect(ids).toContain('settings');
+  });
+
+  it('contains exactly 10 tabs', () => {
+    expect(TABS.length).toBe(10);
   });
 
   it('every tab has a non-empty label', () => {

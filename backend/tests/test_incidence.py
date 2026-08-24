@@ -314,6 +314,207 @@ async def test_breed_detail_schema():
 
 
 # ---------------------------------------------------------------------------
+# /incidence/pccp
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pccp_by_county_returns_200():
+    mock_db = AsyncMock()
+    # Two DB calls: (1) denominator rows, (2) numerator rows. No county_ids
+    # means the third (county name lookup) call never happens.
+    mock_db.execute.side_effect = [
+        all_result([]),
+        all_result([]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_county_schema():
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(county_id=1, n=100)]),          # denominator
+        all_result([row(county_id=1, n=40)]),            # numerator
+        all_result([row(id=1, name="Yolo")]),             # county name lookup
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        data = (await client.get("/api/v1/incidence/pccp")).json()
+
+    app.dependency_overrides.clear()
+
+    assert len(data["data"]) == 1
+    record = data["data"][0]
+    assert record["county"] == "Yolo"
+    assert record["cancer_patients"] == 40
+    assert record["total_patients"] == 100
+    assert record["pccp"] == 40.0
+    assert data["overall_cancer_patients"] == 40
+    assert data["overall_total_patients"] == 100
+    assert data["overall_pccp"] == 40.0
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_county_accepts_breed_param():
+    """breed is a real, optional query param — passing it must not 422 or crash."""
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(county_id=1, n=20)]),
+        all_result([row(county_id=1, n=5)]),
+        all_result([row(id=1, name="Yolo")]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp?breed=Golden+Retriever")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data"][0]["pccp"] == 25.0  # 5/20 * 100
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_county_all_breeds_sentinel_is_noop():
+    """The frontend's 'All Breeds' sentinel must not be treated as a real breed name."""
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([]),
+        all_result([]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp?breed=All+Breeds")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# /incidence/pccp-by-zip
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pccp_by_zip_returns_200():
+    mock_db = AsyncMock()
+    # Two DB calls: (1) denominator rows, (2) numerator rows — no separate
+    # name-lookup call, unlike /pccp, since the zip code is its own label.
+    mock_db.execute.side_effect = [
+        all_result([]),
+        all_result([]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp-by-zip")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_zip_schema():
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(zip_code="95616", n=100)]),   # denominator
+        all_result([row(zip_code="95616", n=40)]),     # numerator
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        data = (await client.get("/api/v1/incidence/pccp-by-zip")).json()
+
+    app.dependency_overrides.clear()
+
+    assert len(data["data"]) == 1
+    record = data["data"][0]
+    assert record["zip_code"] == "95616"
+    assert record["cancer_patients"] == 40
+    assert record["total_patients"] == 100
+    assert record["pccp"] == 40.0
+    assert data["overall_cancer_patients"] == 40
+    assert data["overall_total_patients"] == 100
+    assert data["overall_pccp"] == 40.0
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_zip_multiple_zips_aggregate_correctly():
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(zip_code="95616", n=100), row(zip_code="95618", n=50)]),
+        all_result([row(zip_code="95616", n=40), row(zip_code="95618", n=10)]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        data = (await client.get("/api/v1/incidence/pccp-by-zip")).json()
+
+    app.dependency_overrides.clear()
+
+    assert data["overall_cancer_patients"] == 50    # 40 + 10
+    assert data["overall_total_patients"] == 150     # 100 + 50
+    assert data["overall_pccp"] == round(50 / 150 * 100, 2)
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_zip_accepts_breed_param():
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(zip_code="95616", n=20)]),
+        all_result([row(zip_code="95616", n=5)]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp-by-zip?breed=Golden+Retriever")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data"][0]["pccp"] == 25.0  # 5/20 * 100
+
+
+# ---------------------------------------------------------------------------
 # SEX_MAP unit tests (no DB required)
 # ---------------------------------------------------------------------------
 

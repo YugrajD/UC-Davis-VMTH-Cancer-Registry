@@ -11,6 +11,7 @@ services:
       ML_WORKER_URL: ${ML_WORKER_URL:-http://ml-worker:8001}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
       SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       UPLOAD_DIR: /app/uploads
       # GCP Batch (optional)

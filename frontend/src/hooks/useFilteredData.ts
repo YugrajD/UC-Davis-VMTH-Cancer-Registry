@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { FilterState, CountyData, RegionSummary, ZipCodeData } from '../types';
+import type { FilterState, CountyData, RateType, RegionSummary, ZipCodeData } from '../types';
 import {
   fetchIncidence,
   fetchIncidenceByZip,
   fetchPCCPByCounty,
+  fetchPCCPByZip,
   type IncidenceRecord,
   type PCCPResponse,
+  type PCCPZipResponse,
 } from '../api/client';
 import { isUcDavisCatchmentRegion, regionForCounty } from '../data/californiaRegions';
 
@@ -52,6 +54,7 @@ export function buildCountyDataFromPCCP(response: PCCPResponse): {
     region: regionForCounty(r.county),
     count: r.pccp,
     fips: '',
+    casePatients: r.cancer_patients,
     totalPatients: r.total_patients,
   }));
   return {
@@ -74,6 +77,15 @@ function seededRandom(seed: string) {
     h = (h ^ (h >>> 16)) >>> 0;
     return (h % 100) / 100;
   };
+}
+
+export function buildZipCodeDataFromPCCP(response: PCCPZipResponse): ZipCodeData[] {
+  return response.data.map(r => ({
+    zipCode: r.zip_code,
+    count: r.pccp,
+    casePatients: r.cancer_patients,
+    totalPatients: r.total_patients,
+  }));
 }
 
 export function buildZipCodeDataFromIncidence(records: IncidenceRecord[]): ZipCodeData[] {
@@ -176,6 +188,37 @@ export function getCountRange(countyData: CountyData[]) {
   };
 }
 
+/** Shape shared by CountyData and ZipCodeData — anything with a PCCP-mode count plus numerator/denominator. */
+interface RateSource {
+  count: number;
+  casePatients?: number;
+  totalPatients?: number;
+}
+
+/** The value a county/ZIP contributes for the currently selected map-color metric. */
+export function valueForRate(source: RateSource | undefined, rateType: RateType): number {
+  if (!source) return 0;
+  switch (rateType) {
+    case 'numerator':
+      return source.casePatients ?? 0;
+    case 'denominator':
+      return source.totalPatients ?? 0;
+    case 'pccp':
+    default:
+      return source.count;
+  }
+}
+
+/** Min/max range for the currently selected map-color metric, for the color scale domain. */
+export function getCountRangeForRate(data: RateSource[], rateType: RateType) {
+  const values = data.map(c => valueForRate(c, rateType)).filter(n => n > 0);
+  if (values.length === 0) return { min: 0, max: 1 };
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
+
 export function getZipCodeCountRange(zipCodeData: ZipCodeData[]) {
   const counts = zipCodeData.map(z => z.count).filter(n => n > 0);
   if (counts.length === 0) return { min: 0, max: 1 };
@@ -224,7 +267,7 @@ export function createFilteredZipCodeDataState(
 }
 
 export function useFilteredData(filters: FilterState): FilteredDataState {
-  const { sex, ageGroup, yearStart, yearEnd, cancerType } = filters;
+  const { sex, ageGroup, yearStart, yearEnd, cancerType, breed } = filters;
   const [countyData, setCountyData] = useState<CountyData[]>([]);
   const [overallPccp, setOverallPccp] = useState(0);
   const [overallCancerPatients, setOverallCancerPatients] = useState(0);
@@ -251,6 +294,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
             yearStart,
             yearEnd,
             cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
+            breed: breed && breed !== 'All Breeds' ? breed : undefined,
           });
           const pccpData = buildCountyDataFromPCCP(response);
           cd = pccpData.countyData;
@@ -293,7 +337,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
     loadData();
 
     return () => { cancelled = true; };
-  }, [sex, ageGroup, yearStart, yearEnd, cancerType]);
+  }, [sex, ageGroup, yearStart, yearEnd, cancerType, breed]);
 
   const regionSummary = useMemo(
     () => countyData.length > 0 ? generateRegionSummary(countyData) : EMPTY_REGION_SUMMARY,
@@ -317,7 +361,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
 }
 
 export function useZipCodeData(filters: FilterState): FilteredZipCodeDataState {
-  const { cancerType, sex, ageGroup, yearStart, yearEnd } = filters;
+  const { cancerType, sex, ageGroup, yearStart, yearEnd, breed } = filters;
   const [zipCodeData, setZipCodeData] = useState<ZipCodeData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -329,16 +373,34 @@ export function useZipCodeData(filters: FilterState): FilteredZipCodeDataState {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetchIncidenceByZip({
-          cancerTypes: cancerTypeFilterValue(cancerType),
-          sex: sexFilterValue(sex),
-          ageGroup: ageGroupFilterValue(ageGroup),
-          yearStart,
-          yearEnd,
-        });
+        let zd: ZipCodeData[];
+
+        try {
+          const response = await fetchPCCPByZip({
+            sex: sex && sex !== 'all' ? sex : undefined,
+            ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
+            yearStart,
+            yearEnd,
+            cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
+            breed: breed && breed !== 'All Breeds' ? breed : undefined,
+          });
+          zd = buildZipCodeDataFromPCCP(response);
+        } catch {
+          // Older local backends do not expose /incidence/pccp-by-zip yet. Fall
+          // back to raw incidence counts so the map stays usable during branch
+          // tests. This fallback does not support the breed filter.
+          const response = await fetchIncidenceByZip({
+            cancerTypes: cancerTypeFilterValue(cancerType),
+            sex: sexFilterValue(sex),
+            ageGroup: ageGroupFilterValue(ageGroup),
+            yearStart,
+            yearEnd,
+          });
+          zd = buildZipCodeDataFromIncidence(response.data);
+        }
         if (cancelled) return;
 
-        setZipCodeData(buildZipCodeDataFromIncidence(response.data));
+        setZipCodeData(zd);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Unable to load ZIP code data');
@@ -355,15 +417,13 @@ export function useZipCodeData(filters: FilterState): FilteredZipCodeDataState {
     return () => {
       cancelled = true;
     };
-  }, [cancerType, sex, ageGroup, yearStart, yearEnd]);
+  }, [cancerType, sex, ageGroup, yearStart, yearEnd, breed]);
 
-  const derivedState = useMemo(
-    () => createFilteredZipCodeDataState(zipCodeData, filters, { applyServerSideFilters: false }),
-    [zipCodeData, filters],
-  );
+  const countRange = useMemo(() => getZipCodeCountRange(zipCodeData), [zipCodeData]);
 
   return {
-    ...derivedState,
+    zipCodeData,
+    countRange,
     loading,
     error,
   };
@@ -379,12 +439,28 @@ export function useCountyDataMap(countyData: CountyData[]): Map<string, CountyDa
   }, [countyData]);
 }
 
-// Aggregate county counts: simple sum for raw data, weighted average for PCCP data.
-function aggregateCount(counties: CountyData[]): number {
-  if (counties.length === 0) return 0;
-  const totalPts = counties.reduce((sum, c) => sum + (c.totalPatients ?? 0), 0);
-  if (totalPts === 0) return counties.reduce((sum, c) => sum + c.count, 0);
-  return counties.reduce((sum, c) => sum + c.count * (c.totalPatients ?? 0), 0) / totalPts;
+// Aggregate a set of counties into a region-level rollup. When every county
+// carries numerator/denominator data (PCCP mode), the region's PCCP is the
+// true sum(numerator)/sum(denominator) — not an average of county PCCPs —
+// so the three displayed columns (numerator, denominator, PCCP) reconcile.
+// Falls back to a simple sum of `count` for raw incidence data, which has
+// no numerator/denominator.
+function aggregateRegion(counties: CountyData[]): {
+  count: number;
+  casePatients?: number;
+  totalPatients?: number;
+} {
+  if (counties.length === 0) return { count: 0 };
+  const hasPccpData = counties.every(
+    c => c.casePatients !== undefined && c.totalPatients !== undefined,
+  );
+  if (!hasPccpData) {
+    return { count: counties.reduce((sum, c) => sum + c.count, 0) };
+  }
+  const casePatients = counties.reduce((sum, c) => sum + (c.casePatients ?? 0), 0);
+  const totalPatients = counties.reduce((sum, c) => sum + (c.totalPatients ?? 0), 0);
+  const count = totalPatients > 0 ? (casePatients / totalPatients) * 100 : 0;
+  return { count, casePatients, totalPatients };
 }
 
 // Generate hierarchical summary for the summary table
@@ -400,20 +476,25 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
     }
   });
 
-  const totalCount = aggregateCount(countyData);
+  const total = aggregateRegion(countyData);
 
   const catchmentCounties = countyData.filter(c => isUcDavisCatchmentRegion(c.region));
-  const catchmentCount = aggregateCount(catchmentCounties);
+  const catchmentTotal = aggregateRegion(catchmentCounties);
 
   const regions: RegionSummary[] = Array.from(regionMap.entries()).map(([regionName, counties]) => {
+    const regionTotal = aggregateRegion(counties);
     return {
       name: regionName,
       type: 'region' as const,
-      count: aggregateCount(counties),
+      count: regionTotal.count,
+      casePatients: regionTotal.casePatients,
+      totalPatients: regionTotal.totalPatients,
       children: counties.map(c => ({
         name: c.county,
         type: 'county' as const,
         count: c.count,
+        casePatients: c.casePatients,
+        totalPatients: c.totalPatients,
       })),
     };
   });
@@ -421,12 +502,16 @@ export function generateRegionSummary(countyData: CountyData[]): RegionSummary {
   return {
     name: 'California',
     type: 'state',
-    count: totalCount,
+    count: total.count,
+    casePatients: total.casePatients,
+    totalPatients: total.totalPatients,
     children: [
       {
         name: 'UC Davis Catchment Area',
         type: 'catchment',
-        count: catchmentCount,
+        count: catchmentTotal.count,
+        casePatients: catchmentTotal.casePatients,
+        totalPatients: catchmentTotal.totalPatients,
         children: regions.filter(r => isUcDavisCatchmentRegion(r.name)),
       },
       ...regions.filter(r => !isUcDavisCatchmentRegion(r.name)),

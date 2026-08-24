@@ -5,6 +5,7 @@ import { fetchAgeDetail } from '../../api/client';
 import type { AgeDetail } from '../../api/client';
 import { AGE_GROUP_OPTIONS } from '../../types';
 import type { AgeGroup } from '../../types';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const GEO_URL =
   'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
@@ -15,17 +16,14 @@ const MAP_PROJECTION_CONFIG = {
 };
 
 const AGE_GROUP_DISPLAY_OPTIONS = AGE_GROUP_OPTIONS.filter(o => o.value !== 'all');
-const DEFAULT_AGE_GROUP: AgeGroup = 'old';
 
-interface AgeDisparitiesViewProps {
-  selectedAgeGroup: AgeGroup | '';
-  onSelectedAgeGroupChange: (ageGroup: AgeGroup | '') => void;
-}
-
-export function AgeDisparitiesView({
-  selectedAgeGroup,
-  onSelectedAgeGroupChange,
-}: AgeDisparitiesViewProps) {
+export function AgeDisparitiesView() {
+  // Persisted so the selected age group survives switching tabs and
+  // refreshing within the session, for consistency with the breed picker.
+  const [selectedAgeGroup, setSelectedAgeGroup] = useSessionStorageState<AgeGroup | ''>(
+    'ageDisparities.selectedAgeGroup',
+    'young',
+  );
   const [loadedAgeGroup, setLoadedAgeGroup] = useState<string>('');
   const [detail, setDetail] = useState<AgeDetail | null>(null);
 
@@ -51,12 +49,6 @@ export function AgeDisparitiesView({
   const cancelTooltipClose = () => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
   };
-
-  useEffect(() => {
-    if (!AGE_GROUP_DISPLAY_OPTIONS.some(option => option.value === selectedAgeGroup)) {
-      onSelectedAgeGroupChange(DEFAULT_AGE_GROUP);
-    }
-  }, [onSelectedAgeGroupChange, selectedAgeGroup]);
 
   useEffect(() => {
     if (!selectedAgeGroup) return;
@@ -92,12 +84,19 @@ export function AgeDisparitiesView({
     return m;
   }, [detail, mapMode]);
 
+  const countRange = useMemo(() => {
+    if (!detail || detail.county_cases.length === 0) return { min: 0, max: 1 };
+    const vals = Array.from(countyValueMap.values());
+    const nonZero = vals.filter((v) => v > 0);
+    if (nonZero.length === 0) return { min: 0, max: 1 };
+    return { min: Math.min(...nonZero), max: Math.max(...nonZero) };
+  }, [detail, countyValueMap]);
+
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
-      .domain([0, 50, 100])
-      .range(['#E6F3F5', '#6BB5BF', '#1A6B77'])
-      .clamp(true);
-  }, []);
+      .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
+      .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
+  }, [countRange]);
 
   const maxPccp = detail?.cancer_types[0]?.pccp_within_age ?? detail?.cancer_types[0]?.count ?? 1;
 
@@ -131,7 +130,7 @@ export function AgeDisparitiesView({
         <select
           id="age-group-select"
           value={selectedAgeGroup}
-          onChange={(e) => onSelectedAgeGroupChange(e.target.value as AgeGroup)}
+          onChange={(e) => setSelectedAgeGroup(e.target.value as AgeGroup)}
           className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent w-64"
         >
           {AGE_GROUP_DISPLAY_OPTIONS.map(opt => (
@@ -287,7 +286,6 @@ export function AgeDisparitiesView({
                   </svg>
                   <p className="text-[11px] text-blue-700 leading-relaxed">
                     Rates reflect pathology-tested {displayLabel} animals only. This is not representative of the entire {displayLabel} population in each county.
-                    {' '}Note that a patient may have multiple case diagnoses, leading to the sum of cancer patients potentially being lower than the sum of patient cancer types in a county.
                   </p>
                 </div>
               )}
@@ -361,10 +359,10 @@ export function AgeDisparitiesView({
                   />
                   <div className="flex justify-between mt-1">
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      0%
+                      {countRange.min.toFixed(1)}%
                     </span>
                     <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      100%
+                      {countRange.max.toFixed(1)}%
                     </span>
                   </div>
                   <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
@@ -418,6 +416,11 @@ export function AgeDisparitiesView({
                                     : `+ ${tooltip.cancerTypes.length - 3} more · click county to expand`}
                                 </p>
                               )}
+                              {tooltip.cancerTypes.reduce((sum, ct) => sum + ct.count, 0) > tooltip.count && (
+                                <p className="mt-1.5 text-[10px] text-[var(--color-text-secondary)] italic leading-snug">
+                                  Dogs with more than one cancer type are counted in each, so these can add up to more than the total above.
+                                </p>
+                              )}
                             </div>
                           )}
                         </>
@@ -431,68 +434,6 @@ export function AgeDisparitiesView({
             </div>
           </div>
         </>
-      )}
-
-      {!loadingDetail && !detail && !selectedAgeGroup && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-                Cancer Type Breakdown
-              </h3>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                Top cancer types for selected age group
-              </p>
-            </div>
-            <div className="p-6 flex items-center justify-center h-48">
-              <p className="text-sm text-[var(--color-text-secondary)]">Select an age group to view data</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-                County Distribution
-              </h3>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                Where selected age group cases are located
-              </p>
-            </div>
-            <div className="relative" style={{ minHeight: '400px', backgroundColor: '#f8fafc' }}>
-              <ComposableMap
-                projection="geoMercator"
-                projectionConfig={MAP_PROJECTION_CONFIG}
-                width={400}
-                height={400}
-                style={{ width: '100%', height: '100%' }}
-              >
-                <Geographies geography={GEO_URL}>
-                  {({ geographies }) =>
-                    geographies.map((geo) => (
-                      <Geography
-                        key={geo.rsmKey}
-                        geography={geo}
-                        fill="#E5E7EB"
-                        stroke="#FFFFFF"
-                        strokeWidth={0.5}
-                        style={{
-                          default: { outline: 'none' },
-                          hover: { outline: 'none' },
-                          pressed: { outline: 'none' },
-                        }}
-                      />
-                    ))
-                  }
-                </Geographies>
-              </ComposableMap>
-              <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
-                  <span className="text-[10px] text-[var(--color-text-secondary)]">No data</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       )}
 
       {!loadingDetail && !detail && selectedAgeGroup && (

@@ -150,8 +150,8 @@ function TermCombobox({
 
   const filtered = useMemo(() => {
     const q = value.trim().toLowerCase();
-    if (!q) return ICD_LABELS.slice(0, 10);
-    return ICD_LABELS.filter(l => l.term.toLowerCase().includes(q)).slice(0, 10);
+    if (!q) return ICD_LABELS;
+    return ICD_LABELS.filter(l => l.term.toLowerCase().includes(q));
   }, [value]);
 
   useEffect(() => {
@@ -176,7 +176,7 @@ function TermCombobox({
         autoComplete="off"
       />
       {open && filtered.length > 0 && (
-        <ul className="absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-gray-200 rounded shadow-lg max-h-52 overflow-y-auto">
+        <ul className="absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-gray-200 rounded shadow-lg max-h-80 overflow-y-auto">
           {filtered.map((l, i) => (
             <li
               key={i}

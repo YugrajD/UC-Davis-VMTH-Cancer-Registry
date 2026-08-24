@@ -6,6 +6,8 @@ import {
   fetchJobs,
   fetchJson,
   fetchMe,
+  fetchPCCPByCounty,
+  fetchPCCPByZip,
   filtersToParams,
   reviewJob,
   uploadCSV,
@@ -133,5 +135,45 @@ describe('api client', () => {
       method: 'POST',
       headers: { Authorization: 'Bearer token' },
     });
+  });
+
+  it('fetchPCCPByCounty includes breed in the query string when set', async () => {
+    fetchMock().mockResolvedValue(jsonResponse({
+      data: [], overall_cancer_patients: 0, overall_total_patients: 0, overall_pccp: 0,
+    }));
+
+    await fetchPCCPByCounty({ breed: 'Golden Retriever' });
+
+    expect(fetchMock()).toHaveBeenCalledWith('/api/v1/incidence/pccp?breed=Golden+Retriever');
+  });
+
+  it('fetchPCCPByCounty omits breed for the "All Breeds" sentinel', async () => {
+    fetchMock().mockResolvedValue(jsonResponse({
+      data: [], overall_cancer_patients: 0, overall_total_patients: 0, overall_pccp: 0,
+    }));
+
+    await fetchPCCPByCounty({ breed: 'All Breeds' });
+
+    expect(fetchMock()).toHaveBeenCalledWith('/api/v1/incidence/pccp');
+  });
+
+  it('fetchPCCPByZip includes breed in the query string when set', async () => {
+    fetchMock().mockResolvedValue(jsonResponse({
+      data: [], overall_cancer_patients: 0, overall_total_patients: 0, overall_pccp: 0,
+    }));
+
+    await fetchPCCPByZip({ breed: 'Golden Retriever', sex: 'male_intact' });
+
+    expect(fetchMock()).toHaveBeenCalledWith('/api/v1/incidence/pccp-by-zip?sex=male_intact&breed=Golden+Retriever');
+  });
+
+  it('fetchPCCPByZip omits the query string when no filters are set', async () => {
+    fetchMock().mockResolvedValue(jsonResponse({
+      data: [], overall_cancer_patients: 0, overall_total_patients: 0, overall_pccp: 0,
+    }));
+
+    await fetchPCCPByZip({});
+
+    expect(fetchMock()).toHaveBeenCalledWith('/api/v1/incidence/pccp-by-zip');
   });
 });

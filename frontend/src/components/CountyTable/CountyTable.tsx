@@ -1,36 +1,42 @@
 import { useState, useMemo } from 'react';
 import type { CountyData, RateType } from '../../types';
+import { getCountRangeForRate, valueForRate } from '../../hooks/useFilteredData';
 import { scaleLinear } from 'd3-scale';
 
 interface CountyTableProps {
   data: CountyData[];
-  countRange: { min: number; max: number };
   onCountyHover?: (county: string | null) => void;
   selectedCounty?: string | null;
   rateType: RateType;
 }
 
-type SortField = 'county' | 'count';
+type SortField = 'county' | 'value';
 type SortDirection = 'asc' | 'desc';
 
-/** Which table column the Rate filter currently highlights. */
-type ActiveColumn = 'casePatients' | 'totalPatients' | 'pccp';
-
-function activeColumnFor(rateType: RateType): ActiveColumn {
+/** Header label and formatted cell text for whichever metric the Rate filter selects. */
+function columnLabel(rateType: RateType): string {
   switch (rateType) {
     case 'numerator':
-      return 'casePatients';
+      return 'Cancer Tested Positive';
     case 'denominator':
-      return 'totalPatients';
+      return 'Total Tested';
     case 'pccp':
     default:
-      return 'pccp';
+      return 'PCCP';
   }
 }
 
-const ACTIVE_CELL_CLASS = 'bg-[var(--color-primary-orange)]/10';
-const ACTIVE_HEADER_CLASS = 'border-b-[3px] border-[var(--color-primary-orange)]';
-const ACTIVE_PCCP_BOX_SHADOW = 'inset 0 0 0 2px var(--color-primary-orange)';
+function cellText(county: CountyData, rateType: RateType): string {
+  switch (rateType) {
+    case 'numerator':
+      return county.casePatients !== undefined ? county.casePatients.toLocaleString() : '—';
+    case 'denominator':
+      return county.totalPatients !== undefined ? county.totalPatients.toLocaleString() : '—';
+    case 'pccp':
+    default:
+      return county.count.toFixed(1);
+  }
+}
 
 interface SortIconProps {
   field: SortField;
@@ -58,10 +64,11 @@ function SortIcon({ field, activeField, direction }: SortIconProps) {
   );
 }
 
-export function CountyTable({ data, countRange, onCountyHover, selectedCounty, rateType }: CountyTableProps) {
-  const [sortField, setSortField] = useState<SortField>('count');
+export function CountyTable({ data, onCountyHover, selectedCounty, rateType }: CountyTableProps) {
+  const [sortField, setSortField] = useState<SortField>('value');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const activeColumn = activeColumnFor(rateType);
+
+  const countRange = useMemo(() => getCountRangeForRate(data, rateType), [data, rateType]);
 
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
@@ -76,13 +83,13 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty, r
         case 'county':
           comparison = a.county.localeCompare(b.county);
           break;
-        case 'count':
-          comparison = a.count - b.count;
+        case 'value':
+          comparison = valueForRate(a, rateType) - valueForRate(b, rateType);
           break;
       }
       return sortDirection === 'asc' ? comparison : -comparison;
     });
-  }, [data, sortField, sortDirection]);
+  }, [data, sortField, sortDirection, rateType]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -93,20 +100,18 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty, r
     }
   };
 
-  const getCellColor = (count: number, isActive: boolean) => {
-    const bg = colorScale(count);
+  const getCellColor = (value: number) => {
+    const bg = colorScale(value);
     const hex = bg.replace('#', '');
     const r = parseInt(hex.substr(0, 2), 16);
     const g = parseInt(hex.substr(2, 2), 16);
     const b = parseInt(hex.substr(4, 2), 16);
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     const textColor = luminance > 0.5 ? '#333333' : '#FFFFFF';
-    return {
-      backgroundColor: bg,
-      color: textColor,
-      ...(isActive ? { boxShadow: ACTIVE_PCCP_BOX_SHADOW } : {}),
-    };
+    return { backgroundColor: bg, color: textColor };
   };
+
+  const label = columnLabel(rateType);
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
@@ -118,34 +123,29 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty, r
           Click column headers to sort • Hover rows to highlight on map
         </p>
       </div>
-      
+
       <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
         <table className="w-full text-left">
           <thead className="sticky top-0 z-10">
             <tr className="bg-[var(--color-teal)] text-white">
-              <th 
+              <th
                 className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors"
                 onClick={() => handleSort('county')}
               >
                 County <SortIcon field="county" activeField={sortField} direction={sortDirection} />
               </th>
-              <th className={`py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right ${activeColumn === 'casePatients' ? ACTIVE_HEADER_CLASS : ''}`}>
-                Cancer Tested Positive
-              </th>
-              <th className={`py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right ${activeColumn === 'totalPatients' ? ACTIVE_HEADER_CLASS : ''}`}>
-                Total Tested
-              </th>
               <th
-                className={`py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors ${activeColumn === 'pccp' ? ACTIVE_HEADER_CLASS : ''}`}
-                onClick={() => handleSort('count')}
+                className="py-2.5 px-3 text-xs font-semibold uppercase tracking-wider text-right cursor-pointer hover:bg-[var(--color-teal-dark)] transition-colors"
+                onClick={() => handleSort('value')}
               >
-                PCCP <SortIcon field="count" activeField={sortField} direction={sortDirection} />
+                {label} <SortIcon field="value" activeField={sortField} direction={sortDirection} />
               </th>
             </tr>
           </thead>
           <tbody>
             {sortedData.map((county) => {
-              const countStyle = getCellColor(county.count, activeColumn === 'pccp');
+              const value = valueForRate(county, rateType);
+              const countStyle = getCellColor(value);
               const isSelected = selectedCounty === county.county;
               return (
                 <tr
@@ -162,14 +162,8 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty, r
                       ({county.region})
                     </span>
                   </td>
-                  <td className={`py-2 px-3 text-sm text-right tabular-nums text-[var(--color-text-secondary)] ${activeColumn === 'casePatients' ? ACTIVE_CELL_CLASS : ''}`}>
-                    {county.casePatients !== undefined ? county.casePatients.toLocaleString() : '—'}
-                  </td>
-                  <td className={`py-2 px-3 text-sm text-right tabular-nums text-[var(--color-text-secondary)] ${activeColumn === 'totalPatients' ? ACTIVE_CELL_CLASS : ''}`}>
-                    {county.totalPatients !== undefined ? county.totalPatients.toLocaleString() : '—'}
-                  </td>
                   <td className="py-2 px-3 text-sm text-right tabular-nums font-semibold" style={countStyle}>
-                    {county.count.toFixed(1)}
+                    {cellText(county, rateType)}
                   </td>
                 </tr>
               );
@@ -177,14 +171,14 @@ export function CountyTable({ data, countRange, onCountyHover, selectedCounty, r
           </tbody>
         </table>
       </div>
-      
+
       {/* Summary footer */}
       <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex justify-between items-center">
         <span className="text-xs text-[var(--color-text-secondary)]">
           Showing {data.length} counties
         </span>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-[var(--color-text-secondary)]">PCCP:</span>
+          <span className="text-xs text-[var(--color-text-secondary)]">{label}:</span>
           <div className="flex items-center">
             <div className="w-20 h-3 rounded" style={{ background: 'linear-gradient(to right, #E6F3F5, #1A6B77)' }} />
           </div>

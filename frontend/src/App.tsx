@@ -22,7 +22,7 @@ function AppContent() {
     breed: 'All Breeds',
   });
 
-  const { countyData, regionSummary, countRange, loading, error, overallPccp, overallCancerPatients, overallTotalPatients } = useFilteredData(filters);
+  const { countyData, regionSummary, loading, error, overallPccp, overallCancerPatients, overallTotalPatients } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);
   const { passwordRecovery } = useAuth();
   const [cancerCategory, setCancerCategory] = useState<VetIcdOCategoryId | 'all'>('all');
@@ -237,7 +237,6 @@ function AppContent() {
                 <SummaryTable data={regionSummary} rateType={filters.rateType} />
                 <CountyTable
                   data={countyData}
-                  countRange={countRange}
                   onCountyHover={setHoveredCounty}
                   selectedCounty={selectedCounty}
                   rateType={filters.rateType}

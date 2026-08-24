@@ -154,7 +154,12 @@ function AppContent() {
                   No cancer types in this category for the selected filters.
                 </p>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-4">
+                    <span className="w-48 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Cancer Type</span>
+                    <span className="flex-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right pr-1">PCCP</span>
+                    <span className="w-20 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right">Numerator</span>
+                  </div>
                   {(() => {
                     const sorted = filteredCancerTypes.slice().sort((a, b) => b.count - a.count).slice(0, 10);
                     const maxCount = sorted[0]?.count || 1;
@@ -162,7 +167,7 @@ function AppContent() {
                       const width = Math.max(5, (record.count / maxCount) * 100);
                       return (
                         <div key={record.cancer_type} className="flex items-center gap-4">
-                          <span className="w-48 text-sm text-[var(--color-text-primary)]">
+                          <span className="w-48 text-sm text-[var(--color-text-primary)] truncate" title={record.cancer_type}>
                             {record.cancer_type}
                           </span>
                           <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
@@ -171,10 +176,13 @@ function AppContent() {
                               style={{ width: `${width}%` }}
                             >
                               <span className="text-xs font-semibold text-white">
-                                {(record.pccp ?? record.count).toFixed(1)}
+                                {record.pccp != null ? `${record.pccp.toFixed(1)}%` : record.count.toLocaleString()}
                               </span>
                             </div>
                           </div>
+                          <span className="w-20 text-xs text-[var(--color-text-secondary)] text-right tabular-nums">
+                            {record.count.toLocaleString()}
+                          </span>
                         </div>
                       );
                     });

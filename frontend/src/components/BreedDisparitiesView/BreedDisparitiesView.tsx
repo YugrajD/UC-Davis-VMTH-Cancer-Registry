@@ -3,6 +3,7 @@ import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
 import { fetchFilterOptions, fetchBreedDetail } from '../../api/client';
 import type { BreedDetail } from '../../api/client';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const GEO_URL =
   'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
@@ -16,13 +17,21 @@ type MapMode = 'within_breed' | 'of_all';
 
 export function BreedDisparitiesView() {
   const [breeds, setBreeds] = useState<string[]>([]);
-  const [selectedBreed, setSelectedBreed] = useState<string>('');
+  // Persisted so the selected breed survives switching tabs and refreshing
+  // within the session, instead of silently resetting to the first breed.
+  const [selectedBreed, setSelectedBreed] = useSessionStorageState<string>(
+    'breedDisparities.selectedBreed',
+    '',
+  );
   const [loadedBreed, setLoadedBreed] = useState<string>('');
   const [detail, setDetail] = useState<BreedDetail | null>(null);
   const [loadingBreeds, setLoadingBreeds] = useState(true);
   const [mapMode, setMapMode] = useState<MapMode>('within_breed');
 
   const loadingDetail = selectedBreed !== '' && selectedBreed !== loadedBreed;
+  // Snapshot of the persisted breed at mount, read once by the breed-list
+  // fetch effect below without needing selectedBreed in its dependencies.
+  const initialSelectedBreedRef = useRef(selectedBreed);
 
   // Autocomplete state
   const [query, setQuery] = useState<string>('');
@@ -57,13 +66,17 @@ export function BreedDisparitiesView() {
         const names = [...new Set(opts.breeds.map(b => b.name))].sort();
         setBreeds(names);
         if (names.length > 0) {
-          setSelectedBreed(names[0]);
-          setQuery(names[0]);
+          // Keep the persisted breed if it's still valid; otherwise fall
+          // back to the first breed alphabetically.
+          const persisted = initialSelectedBreedRef.current;
+          const initial = names.includes(persisted) ? persisted : names[0];
+          setSelectedBreed(initial);
+          setQuery(initial);
         }
       })
       .catch(() => {})
       .finally(() => setLoadingBreeds(false));
-  }, []);
+  }, [setSelectedBreed]);
 
   useEffect(() => {
     if (!selectedBreed) return;

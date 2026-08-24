@@ -7,7 +7,7 @@ import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
 import { useFilteredData, useZipCodeData } from '../../hooks/useFilteredData';
 import { useYearlyTrendsData } from '../../hooks/useYearlyTrendsData';
 import { fetchFilterOptions } from '../../api/client';
-import { yearRange, countForYear, pccpForYear, OTHER_SERIES_NAME } from '../../lib/trends';
+import { yearRange, countForYear, pccpForYear } from '../../lib/trends';
 import { MapResetButton } from '../MapResetButton/MapResetButton';
 import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState, ZipCodeData } from '../../types';
 import { CES_INDICATORS, CANCER_TYPES, BREEDS, SEX_OPTIONS } from '../../types';
@@ -1285,12 +1285,16 @@ function CorrelationScatterPlot({
 
   const xScale = useMemo(() => {
     if (points.length === 0) return scaleLinear().domain([0, 1]).range([0, innerW]);
-    return scaleLinear().domain([0, Math.max(...points.map(p => p.x)) * 1.05]).range([0, innerW]).nice();
+    const xMin = Math.min(0, ...points.map(p => p.x));
+    const xMax = Math.max(...points.map(p => p.x));
+    return scaleLinear().domain([xMin < 0 ? xMin * 1.05 : xMin, xMax * 1.05]).range([0, innerW]).nice();
   }, [points, innerW]);
 
   const yScale = useMemo(() => {
     if (points.length === 0) return scaleLinear().domain([0, 1]).range([innerH, 0]);
-    return scaleLinear().domain([0, Math.max(...points.map(p => p.y)) * 1.1]).range([innerH, 0]).nice();
+    const yMin = Math.min(0, ...points.map(p => p.y));
+    const yMax = Math.max(...points.map(p => p.y));
+    return scaleLinear().domain([yMin < 0 ? yMin * 1.1 : yMin, yMax * 1.1]).range([innerH, 0]).nice();
   }, [points, innerH]);
 
   const trendLine = useMemo(() => {
@@ -1368,11 +1372,116 @@ const TREND_YEARS = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023];
 const TREND_COLORS = ['#1A6B77', '#E87722', '#9C27B0', '#EF4444', '#2563EB', '#059669', '#D97706', '#6366F1'];
 
 // ---------------------------------------------------------------------------
+// Searchable multi-select dropdown shared by the cancer-type trend chart and
+// the pesticide-county trend chart: a checkbox list filtered by a search box,
+// with an optional "Uncheck all" action.
+// ---------------------------------------------------------------------------
+
+interface SearchableDropdownOption {
+  value: string;
+  label: string;
+  meta?: string;
+}
+
+function SearchableMultiSelectDropdown({
+  buttonLabel,
+  options,
+  selected,
+  onToggle,
+  onClearAll,
+  onSelectAll,
+  disabled,
+  widthClass = 'w-56',
+}: {
+  buttonLabel: string;
+  options: SearchableDropdownOption[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  onClearAll?: () => void;
+  onSelectAll?: () => void;
+  disabled?: boolean;
+  widthClass?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.label.toLowerCase().includes(q));
+  }, [options, search]);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        className="text-xs border border-gray-300 rounded-md px-3 py-1.5 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {buttonLabel} ({selected.length})
+        <svg className="inline-block w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className={`absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 ${widthClass} max-h-80 flex flex-col`}>
+          <div className="px-2 pb-1.5 pt-1 border-b border-gray-100 flex items-center gap-1.5 flex-shrink-0">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              autoFocus
+              className="flex-1 min-w-0 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-teal)]"
+            />
+            {selected.length === 0
+              ? onSelectAll && (
+                  <button
+                    onClick={onSelectAll}
+                    className="text-[10px] font-medium text-[var(--color-teal)] hover:underline whitespace-nowrap"
+                  >
+                    Check all
+                  </button>
+                )
+              : onClearAll && (
+                  <button
+                    onClick={onClearAll}
+                    className="text-[10px] font-medium text-[var(--color-teal)] hover:underline whitespace-nowrap"
+                  >
+                    Uncheck all
+                  </button>
+                )}
+          </div>
+          <div className="overflow-y-auto">
+            {filtered.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-[var(--color-text-secondary)]">No matches.</p>
+            ) : (
+              filtered.map((o) => (
+                <label key={o.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(o.value)}
+                    onChange={() => onToggle(o.value)}
+                    className="rounded border-gray-300 text-[var(--color-teal)] focus:ring-[var(--color-teal)]"
+                  />
+                  <span className="text-[var(--color-text-primary)]">{o.label}</span>
+                  {o.meta && <span className="text-[var(--color-text-secondary)] ml-auto">{o.meta}</span>}
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Yearly cancer trend chart (US-11 / US-NTH-2)
 //
-// One line per top-5 cancer type plus an aggregated "Other" line; a
-// dropdown lets the user toggle individual lines on/off via the legend.
-// Hand-built SVG to match the visual style of the surrounding charts.
+// One line per cancer type; a searchable dropdown lets the user toggle
+// individual lines on/off, or clear the selection entirely. Hand-built SVG
+// to match the visual style of the surrounding charts.
 // ---------------------------------------------------------------------------
 
 function CancerTrendChart() {
@@ -1384,7 +1493,6 @@ function CancerTrendChart() {
   // state from data via an effect or a ref-during-render.
   const [userSelection, setUserSelection] = useState<string[] | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const selectedNames = userSelection ?? allNames;
 
@@ -1459,45 +1567,18 @@ function CancerTrendChart() {
             Cancer PCCP by Year
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Top 5 cancer types plus "Other" · PCCP per 100 tested per year
+            All cancer types · PCCP per 100 tested per year (numerator shown on hover)
           </p>
         </div>
-        <div className="relative">
-          <button
-            onClick={() => setDropdownOpen((v) => !v)}
-            disabled={loading || allNames.length === 0}
-            className="text-xs border border-gray-300 rounded-md px-3 py-1.5 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Cancer types ({selectedNames.length})
-            <svg className="inline-block w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-          {dropdownOpen && (
-            <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-56 max-h-72 overflow-y-auto">
-              {allNames.map((name) => (
-                <label
-                  key={name}
-                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedNames.includes(name)}
-                    onChange={() => toggleName(name)}
-                    className="rounded border-gray-300 text-[var(--color-teal)] focus:ring-[var(--color-teal)]"
-                  />
-                  <span
-                    className={`text-[var(--color-text-primary)] ${
-                      name === OTHER_SERIES_NAME ? 'italic' : ''
-                    }`}
-                  >
-                    {name}
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <SearchableMultiSelectDropdown
+          buttonLabel="Cancer types"
+          options={allNames.map((name) => ({ value: name, label: name }))}
+          selected={selectedNames}
+          onToggle={toggleName}
+          onClearAll={() => setUserSelection([])}
+          onSelectAll={() => setUserSelection(allNames)}
+          disabled={loading || allNames.length === 0}
+        />
       </div>
       <div className="p-4">
         {loading ? (
@@ -1563,6 +1644,12 @@ function CancerTrendChart() {
                     .join(' ');
                   const lastYear = years[years.length - 1];
                   const lastCount = displayValue(lastYear);
+                  const lastPccp = pccpForYear(s, lastYear);
+                  const lastNumerator = countForYear(s, lastYear);
+                  const tooltipText =
+                    lastPccp != null
+                      ? `${s.name}: ${lastPccp.toFixed(1)}% (n=${lastNumerator})`
+                      : `${s.name}: ${lastNumerator} cases`;
                   return (
                     <g
                       key={s.name}
@@ -1575,7 +1662,6 @@ function CancerTrendChart() {
                         fill="none"
                         stroke={color}
                         strokeWidth={isHov ? 3 : 1.5}
-                        strokeDasharray={s.name === OTHER_SERIES_NAME ? '4 3' : undefined}
                         opacity={hovered && !isHov ? 0.3 : 1}
                       />
                       {years.map((yr) => (
@@ -1593,7 +1679,7 @@ function CancerTrendChart() {
                           <rect
                             x={xScale(lastYear) + 8}
                             y={yScale(lastCount) - 18}
-                            width={140}
+                            width={tooltipText.length * 5.2 + 16}
                             height={24}
                             rx={4}
                             fill="white"
@@ -1608,7 +1694,7 @@ function CancerTrendChart() {
                             fontWeight="600"
                             fill="#1F2937"
                           >
-                            {s.name}: {lastCount.toFixed(1)}
+                            {tooltipText}
                           </text>
                         </g>
                       )}
@@ -1665,14 +1751,12 @@ function CancerTrendChart() {
                         y2={0}
                         stroke={TREND_COLORS[colorIndex % TREND_COLORS.length]}
                         strokeWidth={2}
-                        strokeDasharray={s.name === OTHER_SERIES_NAME ? '3 2' : undefined}
                       />
                       <text
                         x={18}
                         dominantBaseline="middle"
                         fontSize={9}
                         fill="#374151"
-                        fontStyle={s.name === OTHER_SERIES_NAME ? 'italic' : undefined}
                       >
                         {s.name}
                       </text>
@@ -1696,7 +1780,6 @@ function PesticideTrendChart() {
   );
   const [selectedCounties, setSelectedCounties] = useState<string[]>(() => sortedCounties.slice(0, 5));
   const [hovered, setHovered] = useState<string | null>(null);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const toggleCounty = (county: string) => {
     setSelectedCounties(prev =>
@@ -1747,31 +1830,19 @@ function PesticideTrendChart() {
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Annual lbs/sq mi</p>
         </div>
-        <div className="relative">
-          <button
-            onClick={() => setDropdownOpen(v => !v)}
-            className="text-xs border border-gray-300 rounded-md px-3 py-1.5 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-          >
-            Counties ({selectedCounties.length})
-            <svg className="inline-block w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-          </button>
-          {dropdownOpen && (
-            <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-48 max-h-60 overflow-y-auto">
-              {sortedCounties.map(county => (
-                <label key={county} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs">
-                  <input
-                    type="checkbox"
-                    checked={selectedCounties.includes(county)}
-                    onChange={() => toggleCounty(county)}
-                    className="rounded border-gray-300 text-[var(--color-teal)] focus:ring-[var(--color-teal)]"
-                  />
-                  <span className="text-[var(--color-text-primary)]">{county}</span>
-                  <span className="text-[var(--color-text-secondary)] ml-auto">{PESTICIDE_BY_COUNTY[county].lbs_per_sq_mile}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <SearchableMultiSelectDropdown
+          buttonLabel="Counties"
+          options={sortedCounties.map((county) => ({
+            value: county,
+            label: county,
+            meta: String(PESTICIDE_BY_COUNTY[county].lbs_per_sq_mile),
+          }))}
+          selected={selectedCounties}
+          onToggle={toggleCounty}
+          onClearAll={() => setSelectedCounties([])}
+          onSelectAll={() => setSelectedCounties(sortedCounties)}
+          widthClass="w-48"
+        />
       </div>
       <div className="p-4">
         {selectedData.length === 0 ? (
@@ -2057,7 +2128,7 @@ export function AnalysisView() {
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Environmental Correlation</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Social &amp; Environmental Correlation</h3>
             <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Pair-wise comparison by county</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">

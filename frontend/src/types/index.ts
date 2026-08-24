@@ -41,6 +41,10 @@ export interface CountyData {
 export interface ZipCodeData {
   zipCode: string;
   count: number;
+  /** Numerator — tested animals with a confirmed cancer diagnosis. */
+  casePatients?: number;
+  /** Denominator — all tested animals, regardless of diagnosis. */
+  totalPatients?: number;
 }
 
 export interface RegionSummary {

@@ -4,8 +4,10 @@ import {
   fetchIncidence,
   fetchIncidenceByZip,
   fetchPCCPByCounty,
+  fetchPCCPByZip,
   type IncidenceRecord,
   type PCCPResponse,
+  type PCCPZipResponse,
 } from '../api/client';
 import { isUcDavisCatchmentRegion, regionForCounty } from '../data/californiaRegions';
 
@@ -75,6 +77,15 @@ function seededRandom(seed: string) {
     h = (h ^ (h >>> 16)) >>> 0;
     return (h % 100) / 100;
   };
+}
+
+export function buildZipCodeDataFromPCCP(response: PCCPZipResponse): ZipCodeData[] {
+  return response.data.map(r => ({
+    zipCode: r.zip_code,
+    count: r.pccp,
+    casePatients: r.cancer_patients,
+    totalPatients: r.total_patients,
+  }));
 }
 
 export function buildZipCodeDataFromIncidence(records: IncidenceRecord[]): ZipCodeData[] {
@@ -177,23 +188,30 @@ export function getCountRange(countyData: CountyData[]) {
   };
 }
 
-/** The value a county contributes for the currently selected map-color metric. */
-export function valueForRate(county: CountyData | undefined, rateType: RateType): number {
-  if (!county) return 0;
+/** Shape shared by CountyData and ZipCodeData — anything with a PCCP-mode count plus numerator/denominator. */
+interface RateSource {
+  count: number;
+  casePatients?: number;
+  totalPatients?: number;
+}
+
+/** The value a county/ZIP contributes for the currently selected map-color metric. */
+export function valueForRate(source: RateSource | undefined, rateType: RateType): number {
+  if (!source) return 0;
   switch (rateType) {
     case 'numerator':
-      return county.casePatients ?? 0;
+      return source.casePatients ?? 0;
     case 'denominator':
-      return county.totalPatients ?? 0;
+      return source.totalPatients ?? 0;
     case 'pccp':
     default:
-      return county.count;
+      return source.count;
   }
 }
 
 /** Min/max range for the currently selected map-color metric, for the color scale domain. */
-export function getCountRangeForRate(countyData: CountyData[], rateType: RateType) {
-  const values = countyData.map(c => valueForRate(c, rateType)).filter(n => n > 0);
+export function getCountRangeForRate(data: RateSource[], rateType: RateType) {
+  const values = data.map(c => valueForRate(c, rateType)).filter(n => n > 0);
   if (values.length === 0) return { min: 0, max: 1 };
   return {
     min: Math.min(...values),
@@ -343,7 +361,7 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
 }
 
 export function useZipCodeData(filters: FilterState): FilteredZipCodeDataState {
-  const { cancerType, sex, ageGroup, yearStart, yearEnd } = filters;
+  const { cancerType, sex, ageGroup, yearStart, yearEnd, breed } = filters;
   const [zipCodeData, setZipCodeData] = useState<ZipCodeData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -355,16 +373,34 @@ export function useZipCodeData(filters: FilterState): FilteredZipCodeDataState {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetchIncidenceByZip({
-          cancerTypes: cancerTypeFilterValue(cancerType),
-          sex: sexFilterValue(sex),
-          ageGroup: ageGroupFilterValue(ageGroup),
-          yearStart,
-          yearEnd,
-        });
+        let zd: ZipCodeData[];
+
+        try {
+          const response = await fetchPCCPByZip({
+            sex: sex && sex !== 'all' ? sex : undefined,
+            ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
+            yearStart,
+            yearEnd,
+            cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
+            breed: breed && breed !== 'All Breeds' ? breed : undefined,
+          });
+          zd = buildZipCodeDataFromPCCP(response);
+        } catch {
+          // Older local backends do not expose /incidence/pccp-by-zip yet. Fall
+          // back to raw incidence counts so the map stays usable during branch
+          // tests. This fallback does not support the breed filter.
+          const response = await fetchIncidenceByZip({
+            cancerTypes: cancerTypeFilterValue(cancerType),
+            sex: sexFilterValue(sex),
+            ageGroup: ageGroupFilterValue(ageGroup),
+            yearStart,
+            yearEnd,
+          });
+          zd = buildZipCodeDataFromIncidence(response.data);
+        }
         if (cancelled) return;
 
-        setZipCodeData(buildZipCodeDataFromIncidence(response.data));
+        setZipCodeData(zd);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Unable to load ZIP code data');
@@ -381,15 +417,13 @@ export function useZipCodeData(filters: FilterState): FilteredZipCodeDataState {
     return () => {
       cancelled = true;
     };
-  }, [cancerType, sex, ageGroup, yearStart, yearEnd]);
+  }, [cancerType, sex, ageGroup, yearStart, yearEnd, breed]);
 
-  const derivedState = useMemo(
-    () => createFilteredZipCodeDataState(zipCodeData, filters, { applyServerSideFilters: false }),
-    [zipCodeData, filters],
-  );
+  const countRange = useMemo(() => getZipCodeCountRange(zipCodeData), [zipCodeData]);
 
   return {
-    ...derivedState,
+    zipCodeData,
+    countRange,
     loading,
     error,
   };

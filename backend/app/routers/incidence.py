@@ -14,6 +14,7 @@ from app.models.views import mv_county_cancer
 from app.schemas.schemas import (
     IncidenceRecord, IncidenceResponse,
     PCCPCountyRecord, PCCPResponse,
+    PCCPZipRecord, PCCPZipResponse,
     CountyCancerCount,
     BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount,
     AgeDetailOut, AgeCancerTypeCount, AgeCountyCount, AgeSexCount,
@@ -330,6 +331,102 @@ async def get_pccp_by_county(
     overall_pccp = round(overall_cancer / overall_total * 100, 2) if overall_total > 0 else 0.0
 
     return PCCPResponse(
+        data=sorted(data, key=lambda r: r.pccp, reverse=True),
+        overall_cancer_patients=overall_cancer,
+        overall_total_patients=overall_total,
+        overall_pccp=overall_pccp,
+    )
+
+
+@router.get("/pccp-by-zip", response_model=PCCPZipResponse)
+@limiter.limit("60/minute")
+@cached_response("incidence_pccp_by_zip", ttl=settings.CACHE_TTL_INCIDENCE)
+async def get_pccp_by_zip(
+    request: Request,
+    sex: Optional[str] = Query(None, max_length=50),
+    age_group: Optional[str] = Query(None, max_length=20),
+    year_start: Optional[int] = Query(None, ge=1900, le=2100),
+    year_end: Optional[int] = Query(None, ge=1900, le=2100),
+    cancer_type: Optional[str] = Query(None, max_length=200),
+    breed: Optional[str] = Query(None, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-ZIP PCCP: cancer patients / tested patients × 100.
+
+    Same semantics as /incidence/pccp, grouped by 5-digit ZIP instead of
+    county. Denominator: petbert patients with any confirmed/corrected
+    diagnosis and a resolvable California county (proxy for a usable ZIP).
+      - Demographic filters (sex, age_group, year, breed) apply to the denominator.
+      - cancer_type does NOT apply to the denominator.
+    Numerator: subset with a matching cancer diagnosis.
+      - All filters including cancer_type apply to the numerator.
+    """
+    def _add_demo(stmt):
+        if sex and sex not in ("All", "all"):
+            stmt = stmt.where(Patient.sex == SEX_MAP.get(sex, sex))
+        if age_group and age_group in AGE_GROUPS:
+            stmt = stmt.where(_age_group_case(Patient.diagnosis_date, Patient.birth_date) == age_group)
+        if year_start:
+            stmt = stmt.where(func.extract("year", Patient.diagnosis_date) >= year_start)
+        if year_end:
+            stmt = stmt.where(func.extract("year", Patient.diagnosis_date) <= year_end)
+        if breed and breed not in ("All Breeds", "all"):
+            stmt = stmt.join(Breed, Patient.breed_id == Breed.id).where(Breed.name == breed)
+        return stmt
+
+    zip_expr = func.substring(func.trim(Patient.zip_code), 1, 5).label("zip_code")
+
+    # Denominator: patients with any confirmed/corrected diagnosis, grouped by zip.
+    # cancer_type intentionally excluded — denominator is always all tested animals.
+    denom_stmt = apply_review_filter(
+        _add_demo(
+            select(zip_expr, func.count(distinct(Patient.id)).label("n"))
+            .select_from(Patient)
+            .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+            .where(Patient.data_source == "petbert")
+            .where(Patient.zip_code.is_not(None))
+            .where(Patient.county_id.is_not(None))
+            .where(func.length(func.trim(Patient.zip_code)) >= 5)
+            .group_by(zip_expr)
+        )
+    )
+    denom_rows = {r.zip_code: r.n for r in (await db.execute(denom_stmt)).all()}
+
+    # Numerator: patients with a matching cancer diagnosis, grouped by zip.
+    # cancer_type narrows the numerator when provided.
+    num_base = (
+        select(zip_expr, func.count(distinct(Patient.id)).label("n"))
+        .select_from(Patient)
+        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+        .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+        .where(Patient.data_source == "petbert")
+        .where(Patient.zip_code.is_not(None))
+        .where(Patient.county_id.is_not(None))
+        .where(func.length(func.trim(Patient.zip_code)) >= 5)
+        .where(CancerType.name != NON_CANCER_TYPE_NAME)
+        .group_by(zip_expr)
+    )
+    if cancer_type and cancer_type not in ("All Types", "all"):
+        num_base = num_base.where(CancerType.name == cancer_type)
+    num_stmt = apply_review_filter(_add_demo(num_base))
+    num_rows = {r.zip_code: r.n for r in (await db.execute(num_stmt)).all()}
+
+    data = []
+    for zip_code, total in denom_rows.items():
+        cancer = num_rows.get(zip_code, 0)
+        pccp = round(cancer / total * 100, 2) if total > 0 else 0.0
+        data.append(PCCPZipRecord(
+            zip_code=zip_code,
+            cancer_patients=cancer,
+            total_patients=total,
+            pccp=pccp,
+        ))
+
+    overall_total = sum(denom_rows.values())
+    overall_cancer = sum(r.cancer_patients for r in data)
+    overall_pccp = round(overall_cancer / overall_total * 100, 2) if overall_total > 0 else 0.0
+
+    return PCCPZipResponse(
         data=sorted(data, key=lambda r: r.pccp, reverse=True),
         overall_cancer_patients=overall_cancer,
         overall_total_patients=overall_total,

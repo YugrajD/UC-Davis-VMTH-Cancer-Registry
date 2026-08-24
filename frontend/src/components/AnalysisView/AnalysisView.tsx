@@ -545,9 +545,7 @@ function CancerMap({
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>` : '';
       const header = tooltipHeader(props, geoLevel, county);
-      const body = geoLevel === 'zcta'
-        ? `${count.toLocaleString()} cases`
-        : `${count.toFixed(1)} per 100 tested`;
+      const body = `${count.toFixed(1)} per 100 tested`;
       return {
         html: `${header}<br/>${body}${sfStr}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
@@ -567,7 +565,7 @@ function CancerMap({
     ? 'Cancer PCCP by county'
     : geoLevel === 'tract'
       ? 'Cancer PCCP by county · census tract boundaries'
-      : 'Case count by ZIP/ZCTA';
+      : 'Cancer PCCP by ZIP/ZCTA';
 
   return (
     <DeckMap
@@ -648,7 +646,7 @@ function CancerMap({
       }
       legend={
         <GradientLegend
-          label={geoLevel === 'zcta' ? 'Cases' : 'PCCP per 100'}
+          label="PCCP per 100"
           gradient="linear-gradient(to right, #E6F3F5, #6BB5BF, #1A6B77)"
           min={String(activeCountRange.min)}
           max={String(activeCountRange.max)}

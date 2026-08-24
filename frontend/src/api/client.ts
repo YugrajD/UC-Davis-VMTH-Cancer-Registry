@@ -59,6 +59,20 @@ export interface PCCPResponse {
   overall_pccp: number;
 }
 
+export interface PCCPZipRecord {
+  zip_code: string;
+  cancer_patients: number;
+  total_patients: number;
+  pccp: number;
+}
+
+export interface PCCPZipResponse {
+  data: PCCPZipRecord[];
+  overall_cancer_patients: number;
+  overall_total_patients: number;
+  overall_pccp: number;
+}
+
 export interface GeoJSONFeatureProperties {
   name: string;
   fips_code: string;
@@ -193,6 +207,18 @@ export async function fetchPCCPByCounty(filters: Pick<FilterParams, 'sex' | 'age
   if (filters.cancerType && filters.cancerType !== 'All Types') params.append('cancer_type', filters.cancerType);
   if (filters.breed && filters.breed !== 'All Breeds') params.append('breed', filters.breed);
   const url = params.toString() ? `/api/v1/incidence/pccp?${params}` : '/api/v1/incidence/pccp';
+  return fetchJson(url);
+}
+
+export async function fetchPCCPByZip(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> & { cancerType?: string; breed?: string } = {}): Promise<PCCPZipResponse> {
+  const params = new URLSearchParams();
+  if (filters.sex && filters.sex !== 'all') params.append('sex', filters.sex);
+  if (filters.ageGroup && filters.ageGroup !== 'all') params.append('age_group', filters.ageGroup);
+  if (filters.yearStart) params.append('year_start', String(filters.yearStart));
+  if (filters.yearEnd) params.append('year_end', String(filters.yearEnd));
+  if (filters.cancerType && filters.cancerType !== 'All Types') params.append('cancer_type', filters.cancerType);
+  if (filters.breed && filters.breed !== 'All Breeds') params.append('breed', filters.breed);
+  const url = params.toString() ? `/api/v1/incidence/pccp-by-zip?${params}` : '/api/v1/incidence/pccp-by-zip';
   return fetchJson(url);
 }
 

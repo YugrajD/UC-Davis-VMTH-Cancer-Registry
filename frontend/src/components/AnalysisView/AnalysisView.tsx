@@ -1580,7 +1580,7 @@ function CancerTrendChart() {
           disabled={loading || allNames.length === 0}
         />
       </div>
-      <div className="p-4">
+      <div className="p-4 min-h-[340px]">
         {loading ? (
           <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">
             Loading trend data…
@@ -1844,7 +1844,7 @@ function PesticideTrendChart() {
           widthClass="w-48"
         />
       </div>
-      <div className="p-4">
+      <div className="p-4 min-h-[340px]">
         {selectedData.length === 0 ? (
           <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">Select counties to view trends.</div>
         ) : (

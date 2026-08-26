@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal, Settings } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
-import type { TabType, FilterState } from './types';
+import type { TabType, FilterState, AgeGroup } from './types';
 import {
   VET_ICD_O_CATEGORIES,
   classifyCancerType,
@@ -14,6 +14,8 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
+  const [ageDisparitiesSelection, setAgeDisparitiesSelection] = useState<AgeGroup | ''>('');
+  const [breedDisparitiesSelection, setBreedDisparitiesSelection] = useState('');
   const [filters, setFilters] = useState<FilterState>({
     rateType: 'pccp',
     sex: 'all',
@@ -64,9 +66,15 @@ function AppContent() {
         ) : activeTab === 'settings' ? (
           <Settings />
         ) : activeTab === 'breed-disparities' ? (
-          <BreedDisparitiesView />
+          <BreedDisparitiesView
+            selectedBreed={breedDisparitiesSelection}
+            onSelectedBreedChange={setBreedDisparitiesSelection}
+          />
         ) : activeTab === 'cancer-by-age' ? (
-          <AgeDisparitiesView />
+          <AgeDisparitiesView
+            selectedAgeGroup={ageDisparitiesSelection}
+            onSelectedAgeGroupChange={setAgeDisparitiesSelection}
+          />
         ) : activeTab === 'analysis' ? (
           <AnalysisView />
         ) : activeTab === 'cancer-types' ? (

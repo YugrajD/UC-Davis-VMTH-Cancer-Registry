@@ -3,7 +3,6 @@ import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
 import { fetchFilterOptions, fetchBreedDetail } from '../../api/client';
 import type { BreedDetail } from '../../api/client';
-import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const GEO_URL =
   'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson';
@@ -15,26 +14,25 @@ const MAP_PROJECTION_CONFIG = {
 
 type MapMode = 'within_breed' | 'of_all';
 
-export function BreedDisparitiesView() {
+interface BreedDisparitiesViewProps {
+  selectedBreed: string;
+  onSelectedBreedChange: (breed: string) => void;
+}
+
+export function BreedDisparitiesView({
+  selectedBreed,
+  onSelectedBreedChange,
+}: BreedDisparitiesViewProps) {
   const [breeds, setBreeds] = useState<string[]>([]);
-  // Persisted so the selected breed survives switching tabs and refreshing
-  // within the session, instead of silently resetting to the first breed.
-  const [selectedBreed, setSelectedBreed] = useSessionStorageState<string>(
-    'breedDisparities.selectedBreed',
-    '',
-  );
   const [loadedBreed, setLoadedBreed] = useState<string>('');
   const [detail, setDetail] = useState<BreedDetail | null>(null);
   const [loadingBreeds, setLoadingBreeds] = useState(true);
   const [mapMode, setMapMode] = useState<MapMode>('within_breed');
 
   const loadingDetail = selectedBreed !== '' && selectedBreed !== loadedBreed;
-  // Snapshot of the persisted breed at mount, read once by the breed-list
-  // fetch effect below without needing selectedBreed in its dependencies.
-  const initialSelectedBreedRef = useRef(selectedBreed);
 
   // Autocomplete state
-  const [query, setQuery] = useState<string>('');
+  const [query, setQuery] = useState<string>(selectedBreed);
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -65,18 +63,20 @@ export function BreedDisparitiesView() {
       .then(opts => {
         const names = [...new Set(opts.breeds.map(b => b.name))].sort();
         setBreeds(names);
-        if (names.length > 0) {
-          // Keep the persisted breed if it's still valid; otherwise fall
-          // back to the first breed alphabetically.
-          const persisted = initialSelectedBreedRef.current;
-          const initial = names.includes(persisted) ? persisted : names[0];
-          setSelectedBreed(initial);
-          setQuery(initial);
-        }
       })
       .catch(() => {})
       .finally(() => setLoadingBreeds(false));
-  }, [setSelectedBreed]);
+  }, []);
+
+  useEffect(() => {
+    if (breeds.length > 0 && !breeds.includes(selectedBreed)) {
+      onSelectedBreedChange(breeds[0]);
+    }
+  }, [breeds, onSelectedBreedChange, selectedBreed]);
+
+  useEffect(() => {
+    setQuery(selectedBreed);
+  }, [selectedBreed]);
 
   useEffect(() => {
     if (!selectedBreed) return;
@@ -118,7 +118,7 @@ export function BreedDisparitiesView() {
   }, []);
 
   const selectBreed = (breed: string) => {
-    setSelectedBreed(breed);
+    onSelectedBreedChange(breed);
     setQuery(breed);
     setIsOpen(false);
   };
@@ -173,13 +173,11 @@ export function BreedDisparitiesView() {
     return m;
   }, [detail, mapMode]);
 
-  // Fixed 0-100 domain (PCCP is always a percentage) rather than scaling to
-  // each breed's min/max — keeps color contrast comparable across breeds
-  // instead of stretching a narrow range to look artificially dramatic.
   const colorScale = useMemo(() => {
     return scaleLinear<string>()
       .domain([0, 50, 100])
-      .range(['#E6F3F5', '#6BB5BF', '#1A6B77']);
+      .range(['#E6F3F5', '#6BB5BF', '#1A6B77'])
+      .clamp(true);
   }, []);
 
   const maxPccp = detail?.cancer_types[0]?.pccp_within_breed ?? detail?.cancer_types[0]?.count ?? 1;
@@ -404,6 +402,7 @@ export function BreedDisparitiesView() {
                   </svg>
                   <p className="text-[11px] text-blue-700 leading-relaxed">
                     Rates reflect pathology-tested {detail.breed} animals only. This is not representative of the entire {detail.breed} population in each county.
+                    {' '}Note that a patient may have multiple case diagnoses, leading to the sum of cancer patients potentially being lower than the sum of patient cancer types in a county.
                   </p>
                 </div>
               )}
@@ -477,8 +476,12 @@ export function BreedDisparitiesView() {
                     }}
                   />
                   <div className="flex justify-between mt-1">
-                    <span className="text-[10px] text-[var(--color-text-secondary)]">0%</span>
-                    <span className="text-[10px] text-[var(--color-text-secondary)]">100%</span>
+                    <span className="text-[10px] text-[var(--color-text-secondary)]">
+                      0%
+                    </span>
+                    <span className="text-[10px] text-[var(--color-text-secondary)]">
+                      100%
+                    </span>
                   </div>
                   <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
                     <div className="w-3 h-3 rounded bg-[#E5E7EB]" />
@@ -529,11 +532,6 @@ export function BreedDisparitiesView() {
                                   {tooltip.expanded
                                     ? 'Click county to collapse'
                                     : `+ ${tooltip.cancerTypes.length - 3} more · click county to expand`}
-                                </p>
-                              )}
-                              {tooltip.cancerTypes.reduce((sum, ct) => sum + ct.count, 0) > tooltip.count && (
-                                <p className="mt-1.5 text-[10px] text-[var(--color-text-secondary)] italic leading-snug">
-                                  Dogs with more than one cancer type are counted in each, so these can add up to more than the total above.
                                 </p>
                               )}
                             </div>

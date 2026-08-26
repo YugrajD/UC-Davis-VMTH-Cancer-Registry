@@ -7,7 +7,9 @@ import {
   getCountRange,
   useCountyDataMap,
   useFilteredData,
+  useZipCodeData,
 } from './useFilteredData';
+import { fetchPCCPByZip } from '../api/client';
 
 vi.mock('../api/client', () => ({
   fetchPCCPByCounty: vi.fn().mockResolvedValue({
@@ -21,6 +23,7 @@ vi.mock('../api/client', () => ({
     overall_total_patients: MOCK_COUNTY_DATA.reduce((s, c) => s + c.count * 10, 0),
     overall_pccp: 10,
   }),
+  fetchPCCPByZip: vi.fn(),
 }));
 
 const defaultFilters: FilterState = {
@@ -71,5 +74,36 @@ describe('useFilteredData', () => {
 
     expect(result.current.get('Sacramento')).toEqual(MOCK_COUNTY_DATA[0]);
     expect(result.current.get('Yolo')?.county).toBe('Yolo');
+  });
+});
+
+describe('useZipCodeData', () => {
+  it('surfaces an error and clears zipCodeData when fetchPCCPByZip fails, instead of falling back to raw incidence counts', async () => {
+    vi.mocked(fetchPCCPByZip).mockRejectedValueOnce(new Error('pccp-by-zip unavailable'));
+
+    const { result } = renderHook(() => useZipCodeData(defaultFilters));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.error).toBe('pccp-by-zip unavailable');
+    expect(result.current.zipCodeData).toEqual([]);
+  });
+
+  it('builds ZIP PCCP data from a successful fetchPCCPByZip response', async () => {
+    vi.mocked(fetchPCCPByZip).mockResolvedValueOnce({
+      data: [{ zip_code: '95616', cancer_patients: 40, total_patients: 100, pccp: 40 }],
+      overall_cancer_patients: 40,
+      overall_total_patients: 100,
+      overall_pccp: 40,
+    });
+
+    const { result } = renderHook(() => useZipCodeData(defaultFilters));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.zipCodeData).toEqual([
+      { zipCode: '95616', count: 40, casePatients: 40, totalPatients: 100 },
+    ]);
   });
 });

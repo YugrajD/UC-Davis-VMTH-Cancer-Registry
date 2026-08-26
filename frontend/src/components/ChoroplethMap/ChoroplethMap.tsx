@@ -416,7 +416,7 @@ export function ChoroplethMap({
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const [viewState, setViewState] =
     useState<MapViewState>(INITIAL_VIEW_STATE);
-  const { zipCodeData } = useZipCodeData(filters);
+  const { zipCodeData, error: zipCodeError } = useZipCodeData(filters);
 
   const countyDataMap = useMemo(() => makeCountyDataMap(data), [data]);
   const zipCodeDataMap = useMemo(() => makeZipCodeDataMap(zipCodeData), [zipCodeData]);
@@ -515,6 +515,12 @@ export function ChoroplethMap({
         </div>
         <GeoLevelSelector value={geoLevel} onChange={setGeoLevel} />
       </div>
+
+      {geoLevel === 'zcta' && zipCodeError && (
+        <div className="px-4 py-2 bg-red-50 border-b border-red-200">
+          <p className="text-xs text-red-700">Unable to load ZIP/ZCTA data: {zipCodeError}</p>
+        </div>
+      )}
 
       {/* Normal map — always mounted so it renders immediately */}
       <div className="relative" style={{ height: 450, backgroundColor: MAP_BG_CSS }}>

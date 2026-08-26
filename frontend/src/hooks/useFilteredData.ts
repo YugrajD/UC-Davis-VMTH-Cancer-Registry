@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FilterState, CountyData, RateType, RegionSummary, ZipCodeData } from '../types';
 import {
-  fetchIncidence,
-  fetchIncidenceByZip,
   fetchPCCPByCounty,
   fetchPCCPByZip,
   type IncidenceRecord,
@@ -116,18 +114,6 @@ export function buildCountyDataFromIncidence(records: IncidenceRecord[]): County
       fips: '',
     }))
     .sort((a, b) => b.count - a.count);
-}
-
-function sexFilterValue(sex: FilterState['sex']) {
-  return sex && sex !== 'all' ? sex : undefined;
-}
-
-function ageGroupFilterValue(ageGroup: FilterState['ageGroup']) {
-  return ageGroup && ageGroup !== 'all' ? ageGroup : undefined;
-}
-
-function cancerTypeFilterValue(cancerType: string) {
-  return cancerType && cancerType !== 'All Types' ? [cancerType] : undefined;
 }
 
 export function applyCountyDemoFilters(base: CountyData[], filters: FilterState): CountyData[] {
@@ -282,46 +268,21 @@ export function useFilteredData(filters: FilterState): FilteredDataState {
       setLoading(true);
       setError(null);
       try {
-        let cd: CountyData[];
-        let oc = 0;
-        let ot = 0;
-        let op = 0;
-
-        try {
-          const response = await fetchPCCPByCounty({
-            sex: sex && sex !== 'all' ? sex : undefined,
-            ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
-            yearStart,
-            yearEnd,
-            cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
-            breed: breed && breed !== 'All Breeds' ? breed : undefined,
-          });
-          const pccpData = buildCountyDataFromPCCP(response);
-          cd = pccpData.countyData;
-          oc = pccpData.overallCancerPatients;
-          ot = pccpData.overallTotalPatients;
-          op = pccpData.overallPccp;
-        } catch {
-          // Older local backends do not expose /incidence/pccp yet. Fall back
-          // to raw incidence counts so the map stays usable during branch tests.
-          const response = await fetchIncidence({
-            cancerTypes: cancerTypeFilterValue(cancerType),
-            sex: sexFilterValue(sex),
-            ageGroup: ageGroupFilterValue(ageGroup),
-            yearStart,
-            yearEnd,
-          });
-          cd = buildCountyDataFromIncidence(response.data);
-          oc = response.total;
-          ot = response.total;
-          op = response.total;
-        }
+        const response = await fetchPCCPByCounty({
+          sex: sex && sex !== 'all' ? sex : undefined,
+          ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
+          yearStart,
+          yearEnd,
+          cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
+          breed: breed && breed !== 'All Breeds' ? breed : undefined,
+        });
+        const pccpData = buildCountyDataFromPCCP(response);
         if (cancelled) return;
 
-        setCountyData(cd);
-        setOverallCancerPatients(oc);
-        setOverallTotalPatients(ot);
-        setOverallPccp(op);
+        setCountyData(pccpData.countyData);
+        setOverallCancerPatients(pccpData.overallCancerPatients);
+        setOverallTotalPatients(pccpData.overallTotalPatients);
+        setOverallPccp(pccpData.overallPccp);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Unable to load dashboard data');
@@ -373,31 +334,15 @@ export function useZipCodeData(filters: FilterState): FilteredZipCodeDataState {
       setLoading(true);
       setError(null);
       try {
-        let zd: ZipCodeData[];
-
-        try {
-          const response = await fetchPCCPByZip({
-            sex: sex && sex !== 'all' ? sex : undefined,
-            ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
-            yearStart,
-            yearEnd,
-            cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
-            breed: breed && breed !== 'All Breeds' ? breed : undefined,
-          });
-          zd = buildZipCodeDataFromPCCP(response);
-        } catch {
-          // Older local backends do not expose /incidence/pccp-by-zip yet. Fall
-          // back to raw incidence counts so the map stays usable during branch
-          // tests. This fallback does not support the breed filter.
-          const response = await fetchIncidenceByZip({
-            cancerTypes: cancerTypeFilterValue(cancerType),
-            sex: sexFilterValue(sex),
-            ageGroup: ageGroupFilterValue(ageGroup),
-            yearStart,
-            yearEnd,
-          });
-          zd = buildZipCodeDataFromIncidence(response.data);
-        }
+        const response = await fetchPCCPByZip({
+          sex: sex && sex !== 'all' ? sex : undefined,
+          ageGroup: ageGroup && ageGroup !== 'all' ? ageGroup : undefined,
+          yearStart,
+          yearEnd,
+          cancerType: cancerType && cancerType !== 'All Types' ? cancerType : undefined,
+          breed: breed && breed !== 'All Breeds' ? breed : undefined,
+        });
+        const zd = buildZipCodeDataFromPCCP(response);
         if (cancelled) return;
 
         setZipCodeData(zd);

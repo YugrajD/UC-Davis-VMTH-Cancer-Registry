@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal, Settings } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
+import { useSessionStorageState } from './hooks/useSessionStorageState';
 import type { TabType, FilterState, AgeGroup } from './types';
 import {
   VET_ICD_O_CATEGORIES,
@@ -14,8 +15,16 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
-  const [ageDisparitiesSelection, setAgeDisparitiesSelection] = useState<AgeGroup | ''>('');
-  const [breedDisparitiesSelection, setBreedDisparitiesSelection] = useState('');
+  // Persisted so the selection survives switching tabs and refreshing
+  // within the session, not just remaining mounted while switching tabs.
+  const [ageDisparitiesSelection, setAgeDisparitiesSelection] = useSessionStorageState<AgeGroup | ''>(
+    'ageDisparities.selectedAgeGroup',
+    '',
+  );
+  const [breedDisparitiesSelection, setBreedDisparitiesSelection] = useSessionStorageState(
+    'breedDisparities.selectedBreed',
+    '',
+  );
   const [filters, setFilters] = useState<FilterState>({
     rateType: 'pccp',
     sex: 'all',

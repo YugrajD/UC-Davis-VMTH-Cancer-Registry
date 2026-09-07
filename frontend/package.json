@@ -16,7 +16,7 @@
         "@deck.gl/core": "^9.4.0",
         "@deck.gl/layers": "^9.4.0",
         "@deck.gl/react": "^9.4.0",
-        "@supabase/supabase-js": "^2.112.4",
+        "@supabase/supabase-js": "^2.115.0",
         "@types/d3-array": "^3.2.2",
         "@types/d3-scale": "^4.0.9",
         "d3-array": "^3.2.4",

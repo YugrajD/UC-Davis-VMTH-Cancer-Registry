@@ -1,19 +1,21 @@
-"""Read/write the CSV review surface for gold annotation.
+"""Read/write the review surface for gold annotation.
 
-``sample`` emits three plain-text files side by side:
-  - the review CSV     one row per diagnosis.  The cascade suggestion is
-                       prefilled; the reviewer fills verdict / confirmed_term /
-                       confirmed_group / notes.  Diagnosis text only — see
-                       ``sample`` for why no report sections are included.
-  - instructions .md   how to fill it in.
-  - taxonomy CSV       the full (Group, Term, Code) reference to pick from.
+The reviewer's sheet is deliberately **three working columns**: the clinical
+diagnosis, what the pipeline predicted, and — only when the prediction is wrong —
+what the diagnosis actually is. Everything else the audit needs (case_id, stratum,
+sampling weight, decision stage, the cascade's group/code) lives in a separate
+**key CSV** that stays with us and is joined back on `row_id` at ingest.
 
-A CSV has no dropdowns, so typo-catching moves downstream: ``ingest`` validates
-every confirmed term/group against the taxonomy and refuses to write the gold
-store if any row is unresolvable.
+That separation is the point. A reviewer reading eleven columns of pipeline
+internals is being asked to audit the pipeline; a reviewer reading two is being
+asked a clinical question, which is the only thing they are actually expert in.
 
-``read_review_rows`` returns the review CSV as a list of dicts keyed by column
-header, with every value a string.
+Corrections are **exact taxonomy terms**, copied from the taxonomy sidecar. Free
+text was measured and rejected: on Tier-2/Tier-3 rows the diagnosis wording contains
+a taxonomy term ~0% of the time (25% on `tier1_exact`), so free text would not
+self-resolve and every correction would need a second round-trip with the clinician.
+There are no dropdowns in a CSV, so `ingest` validates every term against the
+taxonomy and refuses to write the gold store if any row is unresolvable.
 """
 
 from __future__ import annotations
@@ -25,71 +27,48 @@ from pathlib import Path
 _ENCODING = "utf-8-sig"
 
 _INSTRUCTIONS = """\
-# Tier-3 audit review — instructions
+# Diagnosis review — instructions
 
-Open `tier3_audit_review.csv` in Excel, LibreOffice, or any spreadsheet tool.
-Each row is one diagnosis, and **every row here is one the pipeline found hard** —
-there is no filler to skim past. Rows are independent; you can stop anywhere.
+__PREAMBLE__Open `__REVIEW_CSV__` in Excel, LibreOffice, or any spreadsheet tool.
 
-Every column except the four you fill in is **read-only context**.
+Each row is one clinical diagnosis line that our pipeline found hard to classify.
+There is no filler here — every row is one it struggled with.
 
-## What you are being asked
+| column | what it is |
+| --- | --- |
+| `row_id` | our reference. Please ignore it, and don't sort or delete rows. |
+| `Clinical Diagnosis` | the diagnosis text — this is **all** the pipeline was given |
+| `Predicted Match` | what the pipeline concluded. `(none)` = it found no cancer |
+| `Actual Diagnosis` | **the only column you fill in** |
 
-`cascade_matched_term` / `_group` / `_code` are the label the pipeline settled on
-(blank means it settled on "no cancer"). `decision_stage` and `cascade_method`
-tell you how it got there — and that changes the question you're answering:
+## What to do
 
-| decision_stage | cascade_method | what happened | your question |
-| --- | --- | --- | --- |
-| `tier3_llm` | `LLM` | the model picked this term from a shortlist | is the term right? |
-| `tier3_llm` | `No Match` | the model was asked and **refused to label it** | **is there a cancer here it missed?** |
-| `tier3_llm` | `Uncertain` | the model judged the wording too hedged | is it genuinely unclassifiable? |
-| `tier3_no_candidates` | `No Match` | cancer wording present, but the pipeline built no shortlist, so **the model was never asked** | **is there a cancer here it missed?** |
-| `tier2_fuzzy` | `Fuzzy` | matched on partial word overlap, not an exact term | is this really the same disease? |
+Read the `Clinical Diagnosis`, then look at the `Predicted Match`.
 
-The `No Match` rows are the point of this batch. The pipeline currently drops
-those diagnoses silently as non-cancer, and nobody has ever checked whether that
-is right. If one of them *is* a reportable neoplasm, mark it `wrong` and give the
-correct label — that single row is worth more than a hundred easy confirmations.
+- **Prediction is right** — including when it says `(none)` and you agree there is no
+  reportable cancer — **leave `Actual Diagnosis` empty.**
+- **Prediction is wrong** — put the correct diagnosis in `Actual Diagnosis`. This
+  includes a `(none)` row that you think *does* describe a cancer; those rows are the
+  whole point of this batch.
+- **Can't tell from this line** — write `unclear`. That is a real finding about the
+  pipeline's input, not a failure on your part.
 
-`sample_stratum` and `sample_weight` are bookkeeping for the statistics. Ignore them.
+## Filling in `Actual Diagnosis`
 
-## Filling it in
+Copy the term **exactly** from the `Term` column of `tier3_audit_taxonomy.csv`.
+Spelling matters — there are no dropdowns to catch a typo, so anything we can't find
+in the list stops the whole import with a report of which rows to fix. You don't need
+the group or the code: both are looked up automatically from the term.
 
-**Judge each row on the `diagnosis` text alone.** That single line is the only
-thing the annotation pipeline is given, so the question is always "is this the
-right label *for this wording*" — not "is this the right label for the patient".
-Do not consult the wider report, the case history, or other rows of the same
-case, even if you have them to hand. Negation ("no evidence of neoplasia") and
-hedging ("suspected", "consistent with") count only when they appear in the
-diagnosis line itself.
+## The one rule that matters
 
-For every row, fill in the **verdict** column with exactly one of:
+**Judge each row on the `Clinical Diagnosis` text alone.** That single line is all the
+pipeline is given, so the question is always "is this the right label *for this
+wording*" — not "is this the right label for the patient". Please don't consult the
+wider report or the case history, even if you have them to hand. Negation ("no
+evidence of neoplasia") and hedging ("suspected", "consistent with") count only when
+they appear in that line.
 
-| verdict | meaning | also fill in |
-| --- | --- | --- |
-| `correct` | the pipeline got it right — including when it correctly labelled nothing | nothing |
-| `wrong` | a cancer label applies, but the pipeline's answer isn't it | `confirmed_group` **and** `confirmed_term` |
-| `no_cancer` | this diagnosis is not a reportable neoplasm | nothing |
-| `uncertain` | hedged, or cannot be determined from the diagnosis text | nothing |
-
-On a blank `No Match` row, `correct` and `no_cancer` mean nearly the same thing —
-prefer `no_cancer`, and reserve `correct` for rows where the pipeline proposed a
-term you agree with.
-
-If the diagnosis line is too thin to place confidently, that is `uncertain` —
-it is a real finding about the pipeline's input, not a failure on your part.
-
-`confirmed_group` and `confirmed_term` must be copied exactly from
-`tier3_audit_taxonomy.csv` — spelling matters, because there are no dropdowns to
-catch a typo. Ingestion fails with a per-row report if a term is not found.
-The ICD-O code is derived automatically from your group + term, so there is no
-code column to fill in.
-
-The `notes` column is free text and is not parsed — use it for anything the
-verdict can't express.
-
-**Do not leave a verdict blank**, and do not reorder, rename, or delete columns.
 Save as CSV (not .xlsx) when you are done.
 """
 
@@ -104,15 +83,26 @@ def write_review_csv(path: str, header: list[str], rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def write_instructions(path: str) -> None:
+def write_instructions(
+    path: str,
+    review_filename: str = "tier3_audit_review.csv",
+    preamble: str = "",
+) -> None:
     """Write the reviewer-facing instructions sidecar."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(_INSTRUCTIONS, encoding="utf-8")
+    text = (_INSTRUCTIONS
+            .replace("__PREAMBLE__", f"{preamble}\n\n" if preamble else "")
+            .replace("__REVIEW_CSV__", review_filename))
+    out.write_text(text, encoding="utf-8")
 
 
 def write_taxonomy_csv(path: str, taxonomy_rows: list[tuple[str, str, str]]) -> None:
-    """Write the (Group, Term, Code) reference the reviewer picks corrections from."""
+    """Write the (Group, Term, Code) reference.
+
+    No longer part of the reviewer handoff — corrections are free text now. Kept for
+    our own reconciliation of what the reviewer wrote.
+    """
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", newline="", encoding=_ENCODING) as f:
@@ -128,3 +118,27 @@ def read_review_rows(path: str) -> list[dict]:
             {k: ("" if v is None else str(v)) for k, v in row.items()}
             for row in csv.DictReader(f)
         ]
+
+
+def write_key_csv(path: str, header: list[str], rows: list[dict]) -> None:
+    """Write the internal key CSV that joins `row_id` back to the corpus.
+
+    Never sent to the reviewer: this is every column the audit needs and they do not —
+    case identity, the cascade's full answer, and the sampling bookkeeping.
+    """
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", newline="", encoding=_ENCODING) as f:
+        writer = csv.DictWriter(f, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def read_key_rows(path: str) -> dict[str, dict]:
+    """Return the key CSV indexed by `row_id`."""
+    with open(path, encoding=_ENCODING) as f:
+        rows = [
+            {k: ("" if v is None else str(v)) for k, v in row.items()}
+            for row in csv.DictReader(f)
+        ]
+    return {r["row_id"]: r for r in rows}

@@ -32,9 +32,20 @@ GOLD_ANNOTATION_CSV = f"{ANNOTATION_DIR}/gold_annotation.csv"
 # Human-review surface produced by `run_gold_annotation.py sample` and filled in by the
 # professional. Row-level Tier-2/Tier-3 audit — not a per-case set, so not scoreable by evaluate.py.
 TIER3_AUDIT_REVIEW_CSV = f"{ANNOTATION_DIR}/tier3_audit_review.csv"
+# Internal join key for the review CSV: row_id -> case identity, the cascade's full answer,
+# and the sampling bookkeeping. Never sent to the reviewer; `ingest` joins on it.
+TIER3_AUDIT_KEY_CSV = f"{ANNOTATION_DIR}/tier3_audit_key.csv"
 # Sidecars written alongside the review CSV: how to fill it in, and the valid (Group, Term, Code) list.
 TIER3_AUDIT_INSTRUCTIONS_MD = f"{ANNOTATION_DIR}/tier3_audit_instructions.md"
 TIER3_AUDIT_TAXONOMY_CSV = f"{ANNOTATION_DIR}/tier3_audit_taxonomy.csv"
+# `pilot` splits a review CSV into a short comprehension check and the rest. The pilot is
+# filled in and ingested first, so a misread instruction is caught after ~30 rows instead
+# of contaminating the whole batch. Together the two files are exactly the review CSV.
+TIER3_AUDIT_PILOT_CSV = f"{ANNOTATION_DIR}/tier3_audit_pilot_review.csv"
+TIER3_AUDIT_REMAINDER_CSV = f"{ANNOTATION_DIR}/tier3_audit_remainder_review.csv"
+# The shared instructions name the full review CSV, which is not what the reviewer is sent
+# for a pilot; `pilot` writes its own copy naming the pilot file.
+TIER3_AUDIT_PILOT_INSTRUCTIONS_MD = f"{ANNOTATION_DIR}/tier3_audit_pilot_instructions.md"
 
 # ---------------------------------------------------------------------------
 # Training intermediates

@@ -1,6 +1,6 @@
 # Annotation Pipeline Redesign — Gold/Silver Bootstrap Plan
 
-**Status:** Approved 2026-06-17. **Phase 0 tooling delivered & verified** (2026-06-17); revised to 200-case batches, then revised again on 2026-08-05 to a **plain-CSV review surface** (the Excel workbook and the self-consistency duplicates were both dropped — see "Review surface" below), then re-cut on 2026-08-12 as a **row-level Tier-3 audit** now that `decision_stage` exists (see "Row-level Tier-3 audit" below). Batch 1 is ready: `ml/output/annotation/tier3_audit_review.csv` (200 rows across 198 cases, 100% Tier-2/Tier-3 decisions, zero padding) + the `tier3_audit_instructions.md` and `tier3_audit_taxonomy.csv` sidecars + ledger `tier3_audit_batch1_cases.txt`. Next real-world step: a veterinary professional fills in the CSV, then `ingest` → `check-split`, and the per-stratum rates say where the Tier-3 cascade is actually broken. **This batch is a diagnostic, not the accuracy number** — the per-case gold-eval batch that feeds `run_evaluation.py` comes after the problems it surfaces are fixed. Phases 1–3 to be re-brainstormed after that.
+**Status:** Approved 2026-06-17. **Phase 0 tooling delivered & verified** (2026-06-17); revised to 200-case batches, then revised again on 2026-08-05 to a **plain-CSV review surface** (the Excel workbook and the self-consistency duplicates were both dropped — see "Review surface" below), then re-cut on 2026-08-12 as a **row-level Tier-3 audit** now that `decision_stage` exists (see "Row-level Tier-3 audit" below). Batch 1 is ready: `ml/output/annotation/tier3_audit_review.csv` (200 rows across 198 cases, 100% Tier-2/Tier-3 decisions, zero padding) + the `tier3_audit_instructions.md` and `tier3_audit_taxonomy.csv` sidecars + ledger `tier3_audit_batch1_cases.txt`. The handoff path was **round-trip verified on 2026-08-26** against a 200-row mock fill (see "Handoff verification" below), which surfaced and fixed three defects in `ingest` and added the missing `rates` step. Batch 1 is now split into a **30-row pilot** (`tier3_audit_pilot_review.csv`) and a 170-row remainder (see Step 1b). Next real-world step: a veterinary professional fills in the pilot, `ingest` → `check-split`, we read it together, then they take the remainder and `rates` says where the Tier-3 cascade is actually broken. **This batch is a diagnostic, not the accuracy number** — the per-case gold-eval batch that feeds `run_evaluation.py` comes after the problems it surfaces are fixed. Phases 1–3 to be re-brainstormed after that.
 
 ## Motivation
 
@@ -79,6 +79,12 @@ A new file `gold_annotation.csv` — the existing 9 annotation columns **plus**:
 - `verified_by` — annotator identity.
 - `verified_date` — confirmation date.
 - `provenance` / `round` — which suggester + active-learning round produced the suggestion.
+- `verdict` / `notes` — the reviewer's raw judgement, kept verbatim. Added 2026-08-26: it is
+  **not** recoverable from `matched_term`, because `no_cancer`, `uncertain`, and `correct`-on-a-
+  blank-suggestion all resolve to empty `matched_*` fields. Without it, three of the five
+  strata questions below are unanswerable.
+- `decision_stage` / `sample_stratum` / `sample_weight` — carried from the review CSV so rates
+  computed off the store can be weighted back to the Tier-3 population.
 
 `annotation.csv` stays the production silver corpus, untouched, until we explicitly promote.
 Two gold pools, kept disjoint:
@@ -209,6 +215,88 @@ are not Tier-3 population rates. Each row carries `sample_stratum` and `sample_w
 (N_h/n_h); compute per-stratum rates and weight them. Verified: Σ(weight × rows) reconstructs
 every stratum population exactly (849 / 722 / 274 / 151 / 87).
 
+### Reviewer surface simplified to three questions (2026-08-26)
+
+The review CSV carried 14 columns — case identity, three `cascade_matched_*` fields,
+`cascade_method`, `decision_stage`, `sample_stratum`, `sample_weight`, and four fill-ins.
+That asks a veterinary professional to audit the pipeline's internals, when the clinical
+question is the only part they are expert in. The surface is now split in two.
+
+**Reviewer CSV** (`tier3_audit_review.csv`) — the only file sent out:
+
+| column | |
+|---|---|
+| `row_id` | join key; reviewer ignores it |
+| `Clinical Diagnosis` | the diagnosis text |
+| `Predicted Match` | the cascade's term, or `(none)` when it found no cancer |
+| `Actual Diagnosis` | the only fill-in column |
+
+**Key CSV** (`tier3_audit_key.csv`) — never sent. `row_id` plus `case_id`,
+`diagnosis_number`, `diagnosis`, the full `cascade_matched_*` answer, `cascade_method`,
+`decision_stage`, `sample_stratum`, `sample_weight`. `ingest` and `pilot` join on it.
+`row_id` is assigned over the sorted batch, so one key file serves both halves of a split.
+
+**The verdict is now derived, not stated**, since there is one fill-in column:
+
+| `Actual Diagnosis` | `Predicted Match` | verdict |
+|---|---|---|
+| blank | a term | `correct` |
+| blank | `(none)` | `no_cancer` |
+| `unclear` | either | `uncertain` |
+| a taxonomy term | either | `wrong` |
+| anything else | either | **abort**, per-row report |
+
+**Corrections stay exact taxonomy terms.** Free text was considered and rejected on
+measurement: over `annotation.csv`, diagnosis wording contains a taxonomy term ~0% of the
+time on Tier-2/Tier-3 rows (25% on `tier1_exact`), so free text would not self-resolve and
+every correction would need a second round-trip with the clinician. The reviewer supplies
+the term only — group and code are looked up automatically, since 844 of 845 terms are
+unambiguous by term alone (`Papillary adenocarcinoma` is the sole exception and surfaces
+as a per-row error).
+
+**Known tradeoff — blank means agree.** With one fill-in column, a skipped row is
+indistinguishable from an agreed one: if the reviewer stops at row 15, rows 16–30 read as
+confirmations. Accepted for the 30-row pilot, which is short enough to confirm how far
+they actually got. **Revisit before the 170-row remainder**, where a silently half-finished
+batch would be expensive.
+
+### Handoff verification (2026-08-26)
+
+Before handing batch 1 to the professional, the whole return path was round-tripped on a
+200-row **mock** fill (no real labels involved; nothing was written to
+`ml/output/annotation/`). `sample` is deterministic — re-running it reproduces the committed
+`tier3_audit_review.csv` byte-for-byte — so the batch on disk is safe to hand over unchanged.
+
+Confirmed working: 200 rows in → 200 out; `provenance=tier3_audit`, `tier=gold`;
+Σ(weight) reconstructs 849 / 722 / 274 / 151 / 87 exactly; `check-split` PASS on all 198
+cases; every `wrong` row resolved to a code via both the `(group, term)` and the term-only
+backfill path; verdicts accepted case-insensitively and with stray whitespace; and the
+validation abort catches a blank verdict, an invented verdict, `wrong` with no term, a
+misspelled term, and an ambiguous term under the wrong group — writing nothing on abort.
+
+**Three defects found and fixed**, each of which would have silently damaged or wasted the
+reviewer's work:
+
+1. **The verdict was never persisted.** `no_cancer`, `uncertain`, and `correct`-on-a-blank-
+   suggestion all collapsed to the same empty `matched_*` signature — 102 of the 200 mock
+   rows were mutually indistinguishable in the store. Three of the five strata questions
+   (LLM precision, is-hedged-wording-unclassifiable, and the false-negative reservoir) could
+   not have been answered at all. `verdict` and `notes` are now columns in the gold store.
+2. **`ingest` clobbered the store.** It opened the output in `"w"` mode with no merge, so
+   ingesting batch 2 destroyed all of batch 1 — silently, with exit code 0. Demonstrated:
+   200 gold rows → 4. The store is now cumulative (see Step 2).
+3. **The reviewer's casing was written verbatim.** A row confirmed as
+   `papillary adenocarcinoma` was stored with that spelling while the taxonomy says
+   `Papillary adenocarcinoma`; `evaluate.py:47` compares terms with exact string membership
+   (`predicted_term in matched_terms`, no `.lower()` anywhere in the file), so that gold row
+   would have scored as a miss forever. `ingest` now canonicalises group and term to the
+   taxonomy's spelling.
+
+Two smaller changes came with it: `annotation/__init__.py` now resolves `llm_main` lazily
+(it eagerly imported the LLM cascade, so `dotenv` being absent made the pure-stdlib gold
+tooling unrunnable — the gold path now runs on a bare Python 3.12+ with no venv and no
+`ml/data/`), and the missing Step 4 shipped as the `rates` subcommand.
+
 
 **Step 1 — Generate batch 1** (before the professional sits down):
 ```bash
@@ -223,13 +311,45 @@ Hand all three reviewer files to the professional. They set `verdict` (correct /
 no_cancer / uncertain) per row and, for `wrong`, copy `confirmed_group` + `confirmed_term`
 from the taxonomy sidecar. Spelling matters — there are no dropdowns.
 
+**Step 1b — Cut a pilot before the full sitting** (added 2026-08-26):
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_gold_annotation.py pilot --n-rows 30
+# Writes: ml/output/annotation/tier3_audit_pilot_review.csv       (30 rows, hand over first)
+#         ml/output/annotation/tier3_audit_remainder_review.csv   (the other 170)
+```
+Once the tooling is verified, every remaining failure mode is a **human** one, and none
+survive discovery after the fact: if the reviewer reads a question differently than
+intended, all 200 rows are contaminated identically and nothing in the store reveals it.
+The pilot is the guard — 30 rows filled in, ingested, and read together before the
+professional spends a sitting on the other 170.
+
+The split is **stratified**, not the literal first N rows: the review CSV is written
+grouped by stratum, so a naive head-30 would hand over one stratum and exercise one of
+the five questions. Allocation is proportional with largest-remainder rounding and a
+per-stratum floor — at `--n-rows 30` that is 7 / 7 / 8 / 4 / 4. `pilot + remainder` is
+exactly the review CSV, no row duplicated or lost, and both ingest into the same store.
+`pilot` refuses to split a CSV that already carries verdicts.
+
+**Do not read `rates` off the pilot alone.** `sample_weight` is fixed at sample time as
+N_h/n_h for the *whole* batch, so on a 30-row slice every "represents" figure is
+proportionally short. `rates` prints a PARTIAL-batch warning when it detects this. The
+pilot is a comprehension check; the measurement comes from the complete batch.
+
 **Step 2 — Ingest into the gold store**:
 ```bash
 ml/.venv/Scripts/python.exe ml/scripts/run_gold_annotation.py ingest --verified-by "Dr. Smith"
-# Reads the filled .csv; derives matched_code from group+term via labels.csv.
+# Reads the filled .csv; derives matched_code from group+term via labels.csv, and
+# rewrites the confirmed group/term to the taxonomy's own spelling (evaluate.py
+# compares terms by exact string membership, so a reviewer's casing would otherwise
+# make a correct gold row score as a miss forever).
 # Aborts with a per-row report if any verdict is blank/unknown or any confirmed term
 # is not in the taxonomy. Writes: ml/output/annotation/gold_annotation.csv
 ```
+
+The store is **cumulative**, keyed on `(case_id, diagnosis_number)`: batch 2 merges into
+batch 1, and re-ingesting a row replaces it (so a reviewer typo is fixed by editing the
+review CSV and re-running). `--replace-store` starts over from empty and **discards every
+earlier batch's human review** — it exists only for a deliberate reset.
 
 **Step 3 — Guard the split**:
 ```bash
@@ -237,11 +357,19 @@ ml/.venv/Scripts/python.exe ml/scripts/run_gold_annotation.py check-split
 # PASS if all gold case IDs are in test_cases.txt and none are in train_cases.txt.
 ```
 
-**Step 4 — Read the per-stratum rates.** There is deliberately no `run_evaluation.py` step
+**Step 4 — Read the per-stratum rates**:
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/run_gold_annotation.py rates
+# Per stratum: sample rate and weighted rate, plus the combined false-negative reservoir.
+```
+
+There is deliberately no `run_evaluation.py` step
 here: this batch is row-level, and `evaluate.py` scores per case (predicted terms vs the
 case's *whole* term set), so the un-sampled rows of a partially-covered case would read as
-false positives. Compute the rate within each `sample_stratum` and weight by `sample_weight`
-to reach the Tier-3 population. The questions this answers:
+false positives. `rates` computes the rate within each `sample_stratum` and weights by
+`sample_weight` to reach the Tier-3 population — the population it reports is the
+**test-split** Tier-3 rows the batch was drawn from, not the whole corpus. The questions this
+answers:
 
 - `tier3_llm_no_match` + `tier3_no_candidates` → **how many of the 7,975 silently-dropped
   corpus rows are real cancers?** This is the false-negative reservoir.

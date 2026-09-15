@@ -47,22 +47,32 @@ from pathlib import Path
 
 from ICD_labels.taxonomy import load_labels_taxonomy
 
-from .csv_io import write_instructions, write_review_csv, write_taxonomy_csv
+from .csv_io import (write_instructions, write_key_csv, write_review_csv,
+                     write_taxonomy_csv)
 
-# Blank human-input columns (ICD-O code is derived from group+term at ingest).
-_HUMAN_COLS = ["verdict", "confirmed_term", "confirmed_group", "notes"]
+# What the reviewer sees, and nothing else. `row_id` joins back to the key CSV;
+# `Actual Diagnosis` is the only column they fill in.
+REVIEW_COLS = ["row_id", "Clinical Diagnosis", "Predicted Match", "Actual Diagnosis"]
 
-# Cascade prediction columns joined from annotation.csv.
-_CASCADE_COLS = [
+# Shown in `Predicted Match` when the cascade concluded there was no cancer. An empty
+# cell there would read as missing data rather than as a definite negative prediction.
+NO_PREDICTION = "(none)"
+
+# Everything the audit needs and the reviewer does not: case identity, the cascade's
+# full answer, and the sampling bookkeeping. Stays with us; joined on `row_id`.
+KEY_COLS = [
+    "row_id",
+    "case_id",
+    "diagnosis_number",
+    "diagnosis",
     "cascade_matched_term",
     "cascade_matched_group",
     "cascade_matched_code",
     "cascade_method",
     "decision_stage",
+    "sample_stratum",
+    "sample_weight",
 ]
-
-# Sampling-provenance columns, needed to weight per-stratum rates back to the pool.
-_SAMPLE_COLS = ["sample_stratum", "sample_weight"]
 
 # Share of the row budget per stratum. The two biggest suspected error reservoirs
 # — declines and the candidate-build hole — get the largest slices.
@@ -131,6 +141,7 @@ def sample(
     test_cases_txt: str,
     labels_csv: str,
     out_csv: str,
+    out_key_csv: str,
     out_instructions_md: str,
     out_taxonomy_csv: str,
     batch_cases_out: str,
@@ -138,7 +149,12 @@ def sample(
     seed: int = 42,
     exclude_cases: list[str] | None = None,
 ) -> None:
-    """Draw a stratified row-level Tier-3 audit and write the review CSV + sidecars + ledger."""
+    """Draw a stratified row-level Tier-3 audit.
+
+    Writes the 4-column reviewer CSV, the internal key CSV it joins to, the two reviewer
+    sidecars, and the batch ledger. Only the reviewer CSV, the instructions, and the
+    taxonomy are ever sent out.
+    """
     rng = random.Random(seed)
 
     test_ids = set(_load_case_ids(test_cases_txt))
@@ -171,13 +187,22 @@ def sample(
     selected.sort(key=lambda r: (order[r["_stratum"]], r["case_id"],
                                  r.get("diagnosis_number", "")))
 
-    header = (["case_id", "diagnosis_number", "diagnosis"]
-              + _CASCADE_COLS + _SAMPLE_COLS + _HUMAN_COLS)
-
+    # row_id is assigned over the sorted batch, so it is stable across regenerations
+    # and `pilot` can split the reviewer CSV while one key file serves both halves.
     review_rows: list[dict] = []
-    for ann_row in selected:
+    key_rows: list[dict] = []
+    for idx, ann_row in enumerate(selected, start=1):
         stratum = ann_row["_stratum"]
-        row: dict = {
+        row_id = str(idx)
+        predicted = ann_row.get("matched_term", "") or NO_PREDICTION
+        review_rows.append({
+            "row_id": row_id,
+            "Clinical Diagnosis": ann_row.get("diagnosis", ""),
+            "Predicted Match": predicted,
+            "Actual Diagnosis": "",
+        })
+        key_rows.append({
+            "row_id": row_id,
             "case_id": ann_row["case_id"],
             "diagnosis_number": ann_row.get("diagnosis_number", ""),
             "diagnosis": ann_row.get("diagnosis", ""),
@@ -188,17 +213,15 @@ def sample(
             "decision_stage": ann_row.get("decision_stage", ""),
             "sample_stratum": stratum,
             "sample_weight": f"{stratum_weight[stratum]:.2f}",
-        }
-        for col in _HUMAN_COLS:
-            row[col] = ""
-        review_rows.append(row)
+        })
 
-    write_review_csv(out_csv, header, review_rows)
+    write_review_csv(out_csv, REVIEW_COLS, review_rows)
+    write_key_csv(out_key_csv, KEY_COLS, key_rows)
     write_instructions(out_instructions_md)
     write_taxonomy_csv(out_taxonomy_csv, _taxonomy_rows(labels_csv))
 
     # Ledger of the cases touched, so later batches can exclude them.
-    case_ids = sorted({r["case_id"] for r in review_rows})
+    case_ids = sorted({r["case_id"] for r in key_rows})
     ledger = Path(batch_cases_out)
     ledger.parent.mkdir(parents=True, exist_ok=True)
     ledger.write_text("\n".join(case_ids) + "\n", encoding="utf-8")
@@ -207,13 +230,14 @@ def sample(
           "Every row is a Tier-2/Tier-3 decision — no padding.")
     print("\nRows per stratum (drawn / population, weight):")
     for stratum in _STRATUM_ORDER:
-        drawn = sum(1 for r in review_rows if r["sample_stratum"] == stratum)
+        drawn = sum(1 for r in key_rows if r["sample_stratum"] == stratum)
         if drawn:
             print(f"  {stratum:<22}{drawn:>4} / {len(pools.get(stratum, [])):<6}"
                   f"weight={stratum_weight[stratum]:>7.1f}")
     if excluded:
         print(f"\nExcluded {len(excluded)} cases from earlier batches.")
-    print(f"\nReview CSV: {out_csv}")
+    print(f"\nReview CSV: {out_csv}   <- send this")
+    print(f"Key CSV: {out_key_csv}   <- internal, do NOT send")
     print(f"Instructions: {out_instructions_md}")
     print(f"Taxonomy reference: {out_taxonomy_csv}")
     print(f"Batch cases ledger: {batch_cases_out}")

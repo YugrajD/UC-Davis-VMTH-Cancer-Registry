@@ -1,7 +1,7 @@
-// Syncthing allowlist for the private ml/output/ tree.
+// Syncthing allowlist for the private ml/output/ tree and the gitignored CLAUDE.md.
 //
 // Code travels via git; only the private outputs (annotation, splits,
-// checkpoints, production, training, evaluation) travel via Syncthing.
+// checkpoints, production, training, evaluation) and CLAUDE.md travel via Syncthing.
 // Syncing .git/ across machines corrupts repos, and the venv (7.7G) is
 // machine-specific -- so this file inverts the usual default: it admits
 // ml/output/ and ignores everything else.
@@ -13,6 +13,9 @@
 // children, THEN un-ignore the directory itself so Syncthing descends into it.
 // Verify any edit with: GET /rest/db/ignores?folder=<id> and re-check
 // localBytes on /rest/db/status -- it should be ~3.2G (all of ml/output/).
+
+// -- root CLAUDE.md: gitignored, so Syncthing is the only way it travels --
+!/CLAUDE.md
 
 // -- ml: admit ml/output, ignore the other children (.venv, data, source), then allow the dir --
 !/ml/output

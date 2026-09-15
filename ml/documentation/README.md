@@ -142,6 +142,7 @@ All under `ml/output/` (gitignored).
 | [label-annotation.md](label-annotation.md) | You're running or debugging `run_annotation.py` |
 | [model-training.md](model-training.md) | You want the reasoning behind the 4-stage design and concat-3 representation |
 | [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes |
+| [icd-mapping-strategy.md](icd-mapping-strategy.md) | Project-level strategy: how manual audit (gold), diagnosis-based mapping (silver), and report-based mapping (bronze) combine to code every case, including future uploads |
 | [annotation-redesign-plan.md](annotation-redesign-plan.md) | The approved gold/silver bootstrap plan for a trustworthy annotation corpus (Phase 0 executing) |
 | [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer, or picking the work back up after a break |
 | [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) | Proposed (not implemented) Box + rclone layout for sharing data and weights across teammates' pipelines |

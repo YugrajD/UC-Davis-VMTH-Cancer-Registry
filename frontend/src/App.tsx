@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import { AuthProvider } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal, Settings } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, Settings } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import { useSessionStorageState } from './hooks/useSessionStorageState';

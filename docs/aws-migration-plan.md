@@ -12,13 +12,13 @@
 | Frontend hosting | Vercel | **AWS Amplify Hosting** |
 | Auth | Supabase Auth | **Amazon Cognito** |
 | Database | Supabase Postgres 16 + PostGIS 3.4 | **RDS for PostgreSQL 16 + PostGIS** |
-| Backend compute | Cloud Run | **App Runner** |
+| Backend compute | Cloud Run | **ECS Fargate + ALB** |
 | ML inference | GCP Batch + GCS | **AWS Batch + S3** |
 | File/report storage | GCS | **S3** |
 | Container images | Artifact Registry | **ECR** |
 | Admin data browsing | Supabase Table Editor | pgAdmin / RDS Query Editor (new) |
 
-App Runner is preferred over ECS Fargate for the backend: it's the closest analog to Cloud Run (fully managed, scale-to-zero-ish, deploy-from-image, no cluster/VPC networking to hand-manage for a single service). If autoscaling/concurrency limits or the sidecar-free constraint become a problem, fall back to ECS Fargate + ALB — flag this as an open decision in Phase 0.
+**ECS Fargate + ALB** is the target for backend compute, not App Runner. App Runner was the initial pick as the closest Cloud Run analog (fully managed, deploy-from-image, no cluster/VPC networking to hand-manage), but Fargate gives more control over request timeouts, per-instance concurrency, and networking — worth the extra setup (task definition, service, ALB, target group) for a service we'll be running long-term. No cluster capacity to manage (Fargate is serverless compute for ECS), so the operational overhead vs. App Runner is mostly in the one-time IaC/config, not ongoing ops.
 
 ## Key design decision: RLS stays a no-op
 
@@ -38,7 +38,7 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
    - **S3 bucket**: for pathology report text / uploads (replaces GCS `uploads/`, `reports/`, `models/` prefixes).
    - **Amplify Hosting app**: connect the frontend's GitHub repo, configure the build (Vite build settings), and set up the custom domain and managed SSL cert ahead of DNS cutover.
    - **ECR repository** for the backend image and the PetBERT batch image (replaces Artifact Registry).
-   - **App Runner service** (or ECS Fargate — decide here) pointed at the ECR image, sized to match `backend/service.yaml`'s current resource limits (0.5–1 vCPU, 256–512Mi).
+   - **ECS Fargate service** (cluster, task definition, service, ALB + target group) pointed at the ECR image, sized to match `backend/service.yaml`'s current resource limits (0.5–1 vCPU, 256–512Mi).
    - **AWS Batch compute environment + job queue + job definition** for PetBERT inference (replaces GCP Batch). Job definition mirrors the 3-runnable structure in `gcp_batch_service.py`: pull model/CSV from S3, run PetBERT container, push predictions back to S3 — but AWS Batch typically does this with one container plus S3-mounted volumes or explicit `aws s3 cp` steps in the entrypoint rather than GCP Batch's runnable list, so the ml-worker entrypoint script needs rework, not just a job-spec swap.
 2. Build the full cutover checklist by inventorying every touchpoint:
    - **Vercel**: no `vercel.json` in the repo — build settings, env vars, and domain are configured entirely via the Vercel dashboard. Nothing to port from-repo; must be manually replicated into Amplify Hosting's build settings and env var config.
@@ -76,20 +76,21 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
 ## Phase 3 — Storage & ML batch migration (GCS + GCP Batch → S3 + AWS Batch)
 
 1. **Storage (`backend/app/services/gcp_batch_service.py`)**: rewrite as an S3-backed service using `boto3`. Map GCS prefixes 1:1 — `uploads/{job_id}/` (CSV uploads), `reports/{job_id}/{anon_id}.txt` (pathology report text), `models/` (PetBERT model bundles). Rename `gcs_path` column on `pathology_reports` (`backend/app/models/models.py:165`) to a generic `storage_path` or `s3_key` and add a migration; update all readers/writers (`ingestion_service.py`, `job_processor.py`, `ingest.py`).
-   - **Local dev — MinIO**: mirror the `cognito-local` pattern already in `docker-compose.yml` (see Phase 2's local Cognito emulator) by adding a `minio` service exposing an S3-compatible API. `boto3`'s client takes an `endpoint_url` override — point it at MinIO in dev (e.g. `AWS_S3_ENDPOINT_URL=http://minio:9000`) and leave it unset in prod so `boto3` talks to real AWS S3. A one-time `mc mb`/bucket-create step (via a short-lived sidecar container, same shape as the existing `cognito-seed`/`geo-seed` one-shot services) creates the bucket on first run. This covers the storage half of Phase 3 only — MinIO doesn't emulate AWS Batch, so local ML inference keeps running the `ml-worker` container directly (as it does today) rather than through a Batch emulator.
+   - **Local dev — S3 via Floci**: local dev now provisions RDS + Cognito through Floci (see `docs/floci-local-dev-migration.md`), which also emulates S3 behind the same `:4566` endpoint — no separate MinIO container needed. `boto3`'s client takes an `endpoint_url` override — point it at Floci in dev (`AWS_S3_ENDPOINT_URL=http://floci:4566`) and leave it unset in prod so `boto3` talks to real AWS S3. Bucket creation can fold into `floci-init.sh`'s existing one-shot provisioning step. This covers the storage half of Phase 3 only — S3 emulation doesn't cover AWS Batch, so local ML inference keeps running the `ml-worker` container directly (as it does today) rather than through a Batch emulator, unless Floci's Batch support (also mentioned as in-scope) is verified and wired in later.
 2. **Batch job image**: rebuild `ml-worker/Dockerfile.batch` for AWS Batch — model weights still fetched from S3 at runtime rather than baked into the image (~12 GB). AWS Batch job definitions don't support GCP Batch's multi-runnable (setup/main/upload) pattern natively; either use a single container whose entrypoint script does `aws s3 cp` before/after the PetBERT run, or split into a multi-container job definition if AWS Batch's version supports it — needs a decision during Phase 0 provisioning.
 3. **Config (`backend/app/config.py:32-42`)**: replace `USE_GCP_BATCH`/`GCP_PROJECT_ID`/`GCP_REGION`/`GCS_BUCKET`/`GCP_BATCH_*` with `USE_AWS_BATCH`, `AWS_REGION`, `S3_BUCKET`, `AWS_BATCH_JOB_QUEUE`, `AWS_BATCH_JOB_DEFINITION`, `AWS_BATCH_POLL_INTERVAL`, `AWS_BATCH_TIMEOUT_HOURS`. Update `.env.example` and `docker-compose.yml` accordingly (currently pass `GCS_BUCKET`/`GOOGLE_APPLICATION_CREDENTIALS`).
 4. **Packages**: `backend/requirements.txt` — drop `google-cloud-batch`, `google-cloud-storage`; add `boto3`.
 5. **Orchestration (`backend/app/services/job_processor.py`)**: swap `submit_batch_job`/`get_batch_job_status`/`cancel_batch_job` calls for AWS Batch's `submit_job`/`describe_jobs`/`terminate_job` equivalents; map AWS Batch job states (`SUBMITTED`/`RUNNABLE`/`STARTING`/`RUNNING`/`SUCCEEDED`/`FAILED`) to the existing `processing_stage` values.
 6. Retire `docs/GCP_BATCH_SETUP.md`, write `docs/AWS_BATCH_SETUP.md` covering: IAM role for the Batch job (S3 read/write, ECR pull), compute environment sizing (equivalent to `n1-standard-4`), and the ECR push flow for the batch image.
 
-## Phase 4 — Backend compute migration (Cloud Run → App Runner)
+## Phase 4 — Backend compute migration (Cloud Run → ECS Fargate)
 
-1. Replace `backend/service.yaml` (Knative/Cloud Run spec) with an App Runner service config: source = ECR image, port 8000, CPU/memory matching current limits (0.5–1 vCPU / 256–512Mi), auto-scaling min/max matching `autoscaling.knative.dev/{min,max}Scale` (0–10).
-2. Replace `backend/cloudbuild.yaml` (Cloud Build → Artifact Registry) with a CI step that builds the image and pushes to ECR (`docker build` + `aws ecr get-login-password` + `docker push`), tagging both `:<git-sha>` and `:latest` as the current file does.
-3. Secrets: move `DATABASE_URL`, `SUPABASE_JWT_SECRET`→Cognito equivalents, etc. from Google Secret Manager references (`service.yaml`'s `secretKeyRef` blocks) to AWS Secrets Manager or SSM Parameter Store, referenced in the App Runner service's environment secrets config.
-4. `FORWARDED_ALLOW_IPS` currently trusts GFE (Google Front End) IPs for correct client-IP resolution behind Cloud Run's proxy — verify App Runner's equivalent proxy behavior (it terminates TLS and forwards `X-Forwarded-For`; confirm trusted-proxy config in the rate-limiting/IP-tracking code in `backend/app/main.py` or wherever `slowapi`/brute-force tracking reads client IP).
-5. Re-evaluate `timeoutSeconds: 300` / `containerConcurrency: 80` against App Runner's request-timeout and concurrency-per-instance settings — App Runner's defaults and tuning knobs differ from Knative's.
+1. Replace `backend/service.yaml` (Knative/Cloud Run spec) with ECS artifacts: a task definition (container = ECR image, port 8000, CPU/memory matching current limits — 0.5–1 vCPU / 256–512Mi), a Fargate service, an ALB + target group in front of it, and a service auto-scaling policy (target tracking on CPU or request count) matching `autoscaling.knative.dev/{min,max}Scale` (0–10). Note ECS/Fargate has no true scale-to-zero like Cloud Run — minimum task count will be 1+ unless idle-shutdown is scripted separately.
+2. Replace `backend/cloudbuild.yaml` (Cloud Build → Artifact Registry) with a CI step that builds the image and pushes to ECR (`docker build` + `aws ecr get-login-password` + `docker push`), tagging both `:<git-sha>` and `:latest` as the current file does, then updates the ECS service (`aws ecs update-service --force-new-deployment` or a task-def revision).
+3. Secrets: move `DATABASE_URL`, `SUPABASE_JWT_SECRET`→Cognito equivalents, etc. from Google Secret Manager references (`service.yaml`'s `secretKeyRef` blocks) to AWS Secrets Manager or SSM Parameter Store, referenced in the ECS task definition's `secrets` block.
+4. `FORWARDED_ALLOW_IPS` currently trusts GFE (Google Front End) IPs for correct client-IP resolution behind Cloud Run's proxy — with an ALB in front of Fargate, `X-Forwarded-For` is appended by the ALB itself; update the trusted-proxy config in `backend/app/main.py`/the rate-limiting/IP-tracking code to trust the ALB instead of GFE IPs.
+5. Re-evaluate `timeoutSeconds: 300` / `containerConcurrency: 80` against ALB idle-timeout and target-group settings — these map more directly from Knative than App Runner's would (ALB has an explicit idle timeout setting; per-task concurrency is just however many connections the container can handle, not a platform-enforced knob).
+6. VPC networking: unlike App Runner, Fargate tasks need an explicit VPC/subnet/security-group setup (reuse the RDS VPC from Phase 1) and the ALB needs public subnets — this is net-new infra work that App Runner would have avoided.
 
 ## Phase 5 — Frontend hosting migration (Vercel → Amplify Hosting)
 
@@ -118,9 +119,13 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
 
 ## Open items requiring a decision before/during execution
 
-- **App Runner vs. ECS Fargate** for backend compute — App Runner is the closer Cloud Run analog (less to manage) but has less control over networking/concurrency tuning; confirm App Runner meets the `timeoutSeconds`/`containerConcurrency` needs before committing.
 - **PostGIS version parity** on RDS — confirm exact version match to avoid `ST_*` function behavior drift.
 - **Password migration approach** — decide between forced mass password-reset vs. a Cognito migration Lambda trigger; affects Phase 2 timeline and user communications.
 - **AWS Batch job definition shape** — single container with entrypoint-script S3 transfers, vs. multi-container, to replace GCP Batch's 3-runnable (setup/main/upload) structure.
 - **CI service containers** — confirm whether GitHub Actions tests use a real ephemeral Postgres or a mocked Supabase client, and update fixtures accordingly.
 - **Cognito password-reset flow** — verify it preserves the anti-email-prefetch property that Supabase's PKCE `verifyOtp(token_hash)` flow provides (see `docs/handoff/HANDOFF.md`).
+
+## Cleanup opportunities while touching this code (not blocking, but cheap to fold in)
+
+- **`backend/app/auth.py:46-96`** — a hand-rolled, per-process in-memory brute-force limiter (`_failed_attempts`) duplicates `slowapi`, which is already wired up elsewhere in the app (`app/rate_limit.py`, `app/main.py`). Worth consolidating onto `slowapi` while Phase 2 is already touching `auth.py` — avoids maintaining two rate-limiting mechanisms and fixes the noted single-worker limitation.
+- **AWS Batch job polling (Phase 3)** — the GCP-era `job_processor.py` poll loop (`_process_via_gcp_batch`, fixed-interval `while True: sleep; poll`, no backoff/jitter) and `gcp_batch_service.py`'s GCP API calls (no retry on transient errors) should not be ported as-is to the AWS Batch replacement. Add `tenacity` (not currently in `requirements.txt`) for both the job-status polling and the AWS API calls when writing the new AWS Batch orchestration code in Phase 3.

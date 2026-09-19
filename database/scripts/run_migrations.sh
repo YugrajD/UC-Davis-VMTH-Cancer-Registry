@@ -7,6 +7,13 @@
 # in isolation. Tracking applied filenames avoids ever re-running them.
 set -e
 
+# THROWAWAY (see docs/floci-local-dev-migration.md): dev-only override of
+# DATABASE_URL_SYNC with the RDS endpoint floci-init.sh discovered, since
+# Floci assigns it at instance-creation time. Absent in prod.
+if [ -f /shared/floci-outputs.env ]; then
+    . /shared/floci-outputs.env
+fi
+
 psql "$DATABASE_URL_SYNC" -v ON_ERROR_STOP=1 -c \
   "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"
 

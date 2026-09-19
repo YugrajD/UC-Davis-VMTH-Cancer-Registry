@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     ML_WORKER_URL: str = "http://localhost:8001"
     # Base URL of the Cognito IdP-compatible token issuer used for JWKS
     # lookups — e.g. https://cognito-idp.{region}.amazonaws.com in production,
-    # or the local cognito-local endpoint in dev.
+    # or the local Floci endpoint in dev.
     COGNITO_ISSUER_URL: str = "https://cognito-idp.us-east-1.amazonaws.com"
     # Comma-separated email lists. Admins implicitly hold uploader and
     # reviewer privileges, so these env vars only need users who don't

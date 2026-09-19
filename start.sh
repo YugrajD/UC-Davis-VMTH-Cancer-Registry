@@ -12,12 +12,13 @@ if ! docker info > /dev/null 2>&1; then
   exit 1
 fi
 
-echo "Starting postgres and running migrations..."
-docker compose up -d postgres
-docker compose run --rm migrate
+echo "Starting Floci (AWS emulator) and provisioning RDS + Cognito..."
+docker compose up -d floci
+docker compose run --rm floci-init
+docker compose run --rm floci-postgis-init
 
-echo "Starting auth server..."
-docker compose up -d cognito-local
+echo "Running migrations..."
+docker compose run --rm migrate
 
 echo "Starting backend, frontend, and ML worker..."
 docker compose up --build backend frontend ml-worker

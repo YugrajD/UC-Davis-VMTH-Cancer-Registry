@@ -1,20 +1,53 @@
 services:
-  postgres:
-    image: postgis/postgis:16-3.4
-    container_name: vmth_cancer_postgres
+  # Emulates RDS (Postgres) + Cognito behind one AWS API endpoint. See
+  # docs/floci-local-dev-migration.md. Needs the docker socket because its
+  # RDS emulation spins up a real Postgres container under the hood.
+  floci:
+    image: floci/floci:latest
+    container_name: vmth_cancer_floci
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: postgres
-    ports:
-      - "5432:5432"
+      FLOCI_STORAGE_MODE: hybrid
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      - /var/run/docker.sock:/var/run/docker.sock
+      - floci_data:/app/data
+    ports:
+      - "4566:4566"
+
+  # THROWAWAY (see docs/floci-local-dev-migration.md): one-shot aws-cli
+  # provisioning of the RDS instance + Cognito pool/client, writing the
+  # discovered connection info to the floci_outputs volume for other
+  # services to source. Replace with CDK-driven provisioning later.
+  floci-init:
+    image: amazon/aws-cli:2.17.62
+    container_name: vmth_cancer_floci_init
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://floci:4566
+    entrypoint: ["sh", "/floci-init.sh"]
+    volumes:
+      - ./database/docker/floci/floci-init.sh:/floci-init.sh:ro
+      - floci_outputs:/shared
+    depends_on:
+      floci:
+        condition: service_started
+
+  # THROWAWAY (see docs/floci-local-dev-migration.md): Floci's RDS emulation
+  # runs a plain postgres:18-alpine container (engine-version 18, set in
+  # floci-init.sh — see its comment for why) with no PostGIS pre-installed.
+  # This apk-installs it into that actual container before migrations run.
+  floci-postgis-init:
+    image: docker:26-cli
+    container_name: vmth_cancer_floci_postgis_init
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./database/docker/floci/install-postgis.sh:/install-postgis.sh:ro
+      - floci_outputs:/shared:ro
+    entrypoint: ["sh", "/install-postgis.sh"]
+    depends_on:
+      floci-init:
+        condition: service_completed_successfully
 
   migrate:
     image: postgis/postgis:16-3.4
@@ -24,40 +57,10 @@ services:
     volumes:
       - ./database/migrations:/database/migrations:ro
       - ./database/scripts/run_migrations.sh:/run_migrations.sh:ro
+      - floci_outputs:/shared:ro
     entrypoint: ["sh", "/run_migrations.sh"]
     depends_on:
-      postgres:
-        condition: service_healthy
-
-  # Seeds the cognito-local named volume with a fixed User Pool + App Client
-  # (database/docker/cognito-local/seed/) on first run only, so the pool/
-  # client IDs are stable across `docker compose down -v` cycles instead of
-  # cognito-local generating new random IDs every time.
-  cognito-seed:
-    image: busybox:1.36
-    container_name: vmth_cancer_cognito_seed
-    volumes:
-      - ./database/docker/cognito-local/seed:/seed:ro
-      - cognito_local_data:/data
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        if [ ! -f /data/local_vmthdev.json ]; then
-          cp /seed/*.json /data/
-          echo "Seeded cognito-local with fixed pool local_vmthdev"
-        else
-          echo "cognito-local data already present, skipping seed"
-        fi
-
-  cognito-local:
-    image: jagregory/cognito-local:latest
-    container_name: vmth_cancer_cognito_local
-    volumes:
-      - cognito_local_data:/app/.cognito/db
-    ports:
-      - "9229:9229"
-    depends_on:
-      cognito-seed:
+      floci-postgis-init:
         condition: service_completed_successfully
 
   backend:
@@ -72,7 +75,7 @@ services:
       ML_WORKER_URL: ${ML_WORKER_URL:-http://ml-worker:8001}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-local_vmthdev}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-vmthcancerregistryweb}
-      COGNITO_ISSUER_URL: ${COGNITO_ISSUER_URL:-http://cognito-local:9229}
+      COGNITO_ISSUER_URL: ${COGNITO_ISSUER_URL:-http://floci:4566}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       UPLOAD_DIR: /app/uploads
       # GCP Batch (optional)
@@ -92,11 +95,12 @@ services:
       - ./backend:/app
       - ./ml:/ml
       - ./secrets:/app/secrets:ro
+      - floci_outputs:/shared:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
-      cognito-local:
-        condition: service_started
+      floci-init:
+        condition: service_completed_successfully
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -113,18 +117,26 @@ services:
       DEV_PROXY_TARGET: http://backend:8000
       VITE_COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-local_vmthdev}
       VITE_COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-vmthcancerregistryweb}
-      # Browser-facing endpoint — must be reachable from the host (not the
-      # docker network hostname), so cognito-local's published port is used.
-      VITE_COGNITO_ENDPOINT: ${VITE_COGNITO_ENDPOINT:-http://localhost:9229}
+      # Relative path, proxied by Vite (see vite.config.ts's '/cognito' rule)
+      # to Floci over the docker network — Floci doesn't support CORS on
+      # this endpoint, so calling it directly cross-origin from the browser
+      # fails; going through Vite's dev server keeps it same-origin instead.
+      VITE_COGNITO_ENDPOINT: ${VITE_COGNITO_ENDPOINT:-/cognito}
+      DEV_COGNITO_PROXY_TARGET: http://floci:4566
       VITE_COGNITO_GOOGLE_OAUTH_DOMAIN: ${VITE_COGNITO_GOOGLE_OAUTH_DOMAIN:-}
     ports:
       - "5173:5173"
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
+      - floci_outputs:/shared:ro
     depends_on:
-      - backend
-    command: sh -c "npm install && npx vite --host 0.0.0.0"
+      floci-init:
+        condition: service_completed_successfully
+    # THROWAWAY: sources floci-init.sh's discovered VITE_COGNITO_* values
+    # (see docs/floci-local-dev-migration.md) before starting vite, since
+    # Vite reads import.meta.env from process env at server startup.
+    command: sh -c ". /shared/floci-outputs.env 2>/dev/null; npm install && npx vite --host 0.0.0.0"
 
   seed:
     build:
@@ -139,6 +151,7 @@ services:
       - ./backend:/app
       - ./geo:/geo
       - ./ml:/ml
+      - floci_outputs:/shared:ro
     command: python /database/seed/seed_mock_data.py
     depends_on:
       migrate:
@@ -159,6 +172,7 @@ services:
       - ./database:/database
       - ./backend:/app
       - ./geo:/geo
+      - floci_outputs:/shared:ro
     command: python /database/seed/ingest_petbert.py
     depends_on:
       migrate:
@@ -177,6 +191,7 @@ services:
     volumes:
       - ./database:/database
       - ./geo:/geo
+      - floci_outputs:/shared:ro
     command: python /database/seed/county_boundaries.py
     depends_on:
       migrate:
@@ -204,5 +219,5 @@ services:
 
 volumes:
   frontend_node_modules:
-  postgres_data:
-  cognito_local_data:
+  floci_data:
+  floci_outputs:

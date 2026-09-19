@@ -14,4 +14,13 @@ if [ -d /app/uploads ]; then
     chown -R app:app /app/uploads || true
 fi
 
+# THROWAWAY (see docs/floci-local-dev-migration.md): dev-only override of
+# DATABASE_URL/COGNITO_* with values discovered by floci-init.sh, since
+# Floci assigns the RDS endpoint and Cognito pool/client IDs at creation
+# time rather than us pinning them in .env. Absent in prod, where this
+# file is never mounted.
+if [ -f /shared/floci-outputs.env ]; then
+    . /shared/floci-outputs.env
+fi
+
 exec gosu app "$@"

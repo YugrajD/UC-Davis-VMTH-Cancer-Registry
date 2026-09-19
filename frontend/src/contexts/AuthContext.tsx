@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   CognitoUser,
+  CognitoUserAttribute,
   AuthenticationDetails,
   CognitoUserSession,
 } from 'amazon-cognito-identity-js';
@@ -102,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (code) {
       history.replaceState(null, '', window.location.pathname);
       // Hosted-UI code exchange happens server-side via the token endpoint;
-      // not implemented for local dev since cognito-local has no Hosted UI.
+      // not implemented for local dev since Floci's Cognito emulation has no Hosted UI.
       setLoading(false);
       return;
     }
@@ -133,7 +134,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = (email: string, password: string) =>
     new Promise<void>((resolve, reject) => {
-      userPool.signUp(email, password, [{ Name: 'email', Value: email }], [], (err) => {
+      const emailAttribute = new CognitoUserAttribute({ Name: 'email', Value: email });
+      userPool.signUp(email, password, [emailAttribute], [], (err) => {
         if (err) reject(err);
         else resolve();
       });

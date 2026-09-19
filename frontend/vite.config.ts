@@ -32,6 +32,16 @@ export default defineConfig({
           'http://localhost:8000',
         changeOrigin: true,
       },
+      // Floci's Cognito emulation returns 405 with no CORS headers on the
+      // browser's OPTIONS preflight (real Cognito supports CORS; Floci
+      // doesn't), so calling it cross-origin from the browser fails outright.
+      // Proxying through Vite's own dev server keeps the request same-origin
+      // (no preflight at all) — see docs/floci-local-dev-migration.md.
+      '/cognito': {
+        target: process.env.DEV_COGNITO_PROXY_TARGET || 'http://localhost:4566',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/cognito/, ''),
+      },
     },
   },
 })

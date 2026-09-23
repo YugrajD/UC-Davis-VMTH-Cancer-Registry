@@ -3,6 +3,8 @@ import { ICD_LABELS, type IcdLabel } from '../../data/icdLabels';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   ApiError,
+  downloadAllDiagnosesCsv,
+  downloadAuditedDiagnosesCsv,
   fetchAllDiagnoses,
   fetchDiagnosesCount,
   fetchDiagnosisDetail,
@@ -20,6 +22,17 @@ function friendlyError(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback;
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 type StatusFilter = 'pending' | 'confirmed' | 'corrected' | 'rejected' | 'all';
 const STATUS_FILTERS: StatusFilter[] = ['pending', 'confirmed', 'corrected', 'rejected', 'all'];
 
@@ -31,7 +44,7 @@ const CANCER_GROUP_FILTERS: { value: CancerGroupFilter; label: string }[] = [
   { value: 'unidentified', label: 'Unidentified' },
 ];
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 15;
 
 function ConfidenceBar({ value }: { value: number | null }) {
   if (value === null) return <span className="text-xs text-gray-400">—</span>;
@@ -573,6 +586,38 @@ export function DiagnosisReview() {
     setDetail(null);
   }, []);
 
+  const [exportingAudited, setExportingAudited] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleExportAudited = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setExportingAudited(true);
+    setExportError(null);
+    try {
+      downloadBlob(await downloadAuditedDiagnosesCsv(token), 'audited_diagnoses.csv');
+    } catch (e) {
+      setExportError(friendlyError(e, 'Export failed'));
+    } finally {
+      setExportingAudited(false);
+    }
+  }, [getAccessToken]);
+
+  const handleExportAll = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setExportingAll(true);
+    setExportError(null);
+    try {
+      downloadBlob(await downloadAllDiagnosesCsv(token), 'all_diagnoses.csv');
+    } catch (e) {
+      setExportError(friendlyError(e, 'Export failed'));
+    } finally {
+      setExportingAll(false);
+    }
+  }, [getAccessToken]);
+
   // Group diagnoses by ingestion_job_id, preserving server sort order within
   // each group.  The key is the job id (or -1 for legacy/unlinked rows).
   const grouped = useMemo(() => {
@@ -690,6 +735,27 @@ export function DiagnosisReview() {
                 ))}
               </div>
             </div>
+            {isAdmin && (
+              <div className="ml-auto flex flex-wrap gap-2 items-center">
+                <button
+                  type="button"
+                  onClick={handleExportAudited}
+                  disabled={exportingAudited}
+                  className="px-2.5 py-1.5 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {exportingAudited ? 'Exporting…' : 'Export audited diagnoses CSV'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportAll}
+                  disabled={exportingAll}
+                  className="px-2.5 py-1.5 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {exportingAll ? 'Exporting…' : 'Export all diagnoses CSV'}
+                </button>
+                {exportError && <span className="text-xs text-red-600">{exportError}</span>}
+              </div>
+            )}
           </div>
         )}
       </div>

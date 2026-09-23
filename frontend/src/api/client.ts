@@ -699,6 +699,32 @@ export async function reviewDiagnosis(
   return response.json();
 }
 
+// case_id, diagnosis_index, clinical_diagnosis, cancer_type, icd_o_code — trimmed to
+// what a retraining pipeline needs. "Audited" is manually confirmed/corrected/rejected
+// diagnoses only; "all" is every finalized (confirmed/corrected) diagnosis, which
+// includes the audited subset.
+export async function downloadAuditedDiagnosesCsv(token: string): Promise<Blob> {
+  const response = await fetch(apiUrl('/api/v1/diagnoses/export/audited.csv'), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Export failed: ${response.status}`);
+  }
+  return response.blob();
+}
+
+export async function downloadAllDiagnosesCsv(token: string): Promise<Blob> {
+  const response = await fetch(apiUrl('/api/v1/diagnoses/export/all.csv'), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Export failed: ${response.status}`);
+  }
+  return response.blob();
+}
+
 
 // --- Role Requests ---
 

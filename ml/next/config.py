@@ -116,6 +116,14 @@ SILVER_EVAL_HISTORY_CSV = EVAL_DIR / "silver_eval_history.csv"
 HANDOFF_DIR = OUTPUT_DIR / "handoff"
 HANDOFF_INBOX_DIR = HANDOFF_DIR / "inbox"
 HANDOFF_OUTBOX_DIR = HANDOFF_DIR / "outbox"
+# Cumulative landing table merged from every pending_diagnoses_<export>.csv
+# import (handoff/imports.py) — case_id-keyed, a later export's case replaces
+# its earlier rows. Raw per-export copies + sidecars stay in HANDOFF_INBOX_DIR
+# under their own export-stamped filename.
+HANDOFF_PENDING_DIAGNOSES_CSV = HANDOFF_INBOX_DIR / "pending_diagnoses.csv"
+# Bundle tarballs (handoff/exports.py export_bundle) — kept out of
+# HANDOFF_OUTBOX_DIR's flat file list since a bundle is large and binary.
+HANDOFF_BUNDLES_DIR = HANDOFF_OUTBOX_DIR / "bundles"
 
 # ---------------------------------------------------------------------------
 # Archive — written only by generations/ (promote.py); nothing loads from it.

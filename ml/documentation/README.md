@@ -3,6 +3,32 @@
 A machine learning system that maps free-text veterinary pathology reports to standardized Vet-ICD-O-canine-1 cancer labels (term, group, ICD code). Production inference runs `ml/scripts/run_production.py`, which loads a per-section contrastive PetBERT backbone, embeds each report as a 2304-dim concat-3 vector, and runs a 4-stage classifier pipeline (case-presence gate → group classifier → per-group label-presence head → keyword correction).
 
 Current production baseline: **G+S 62.1% on the held-out eval-half** (Good 46.1, Slight 16.0, CO 14.7, FP 2.3, FN 20.8).
+That figure is superseded: re-running the current checkpoints gives **61.8% on 4,456 eval-half rows** (frozen in
+`ml/output/parity_reference/`); see [ml-rewrite-plan.md](ml-rewrite-plan.md) Findings.
+
+---
+
+## Rewrite in progress: `ml/next/`
+
+A clean-slate rewrite of `ml/` and `ml-worker/`, organised by method (gold / silver / bronze), is being built
+beside the old tree in `ml/next/`. It replaces the old tree in one cutover commit once parity L1–L3 pass. The
+contract, parity runbook, status and next steps are in [ml-rewrite-plan.md](ml-rewrite-plan.md). Until the
+cutover, everything else in this README describes the old tree, which is still production.
+
+```
+ml/next/                 Import root (tests: ml/next/tests, run with pytest from the repo root)
+├── config.py            Every path, including LEGACY_* (old tree, removed at cutover) and ARCHIVE_ROOT
+├── taxonomy/            Vet-ICD-O-canine table (labels.csv), behaviour and subtype keywords
+├── generations/         Manifests, splits (three-way-v1 = train / calibration / test), leakage guards
+├── diagnosis_mapping/   Silver: keyword tiers → local LLM tier → optional cleanup
+├── manual_audit/        Gold: Tier-3 audit, eval batches, gold store, cause pass
+├── coding/              Adoption rule (gold > silver > bronze), corrected annotations, review queue
+├── report_mapping/      Bronze: sections, model (backbone, heads, generation), inference, training
+├── evaluation/          Verdicts, intervals, silver-eval, gold-eval, audit rates
+├── parity/              Old-vs-new comparison (L1–L4) against the frozen reference pack
+└── scripts/             Thin entry points: map_diagnoses, audit, code_cases, train, calibrate, predict,
+                         evaluate, split, generations, parity
+```
 
 ---
 
@@ -142,6 +168,7 @@ All under `ml/output/` (gitignored).
 | [label-annotation.md](label-annotation.md) | You're running or debugging `run_annotation.py` |
 | [model-training.md](model-training.md) | You want the reasoning behind the 4-stage design and concat-3 representation |
 | [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes |
+| [ml-rewrite-plan.md](ml-rewrite-plan.md) | You're working on the `ml/next/` rewrite: contract, work packages, parity runbook, status and next steps |
 | [icd-mapping-strategy.md](icd-mapping-strategy.md) | Project-level strategy: how manual audit (gold), diagnosis-based mapping (silver), and report-based mapping (bronze) combine to code every case, including future uploads |
 | [annotation-redesign-plan.md](annotation-redesign-plan.md) | The approved gold/silver bootstrap plan for a trustworthy annotation corpus (Phase 0 executing) |
 | [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer, or picking the work back up after a break |

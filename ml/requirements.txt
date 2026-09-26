@@ -21,6 +21,9 @@ matplotlib>=3.10.0
 # TUI
 textual>=0.47.0
 
+# Testing
+pytest>=8.0.0
+
 # Install torch from the CUDA 12.8 index for NVIDIA GPU support (Blackwell / sm_120, e.g. RTX 5070 Ti):
 # pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
 #

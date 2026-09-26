@@ -123,6 +123,9 @@ def test_import_legacy_cache_reads_read_only_and_writes_new_format(tmp_path, mon
     np.savez(legacy_npz, **arrays)
     original_bytes = legacy_npz.read_bytes()
     monkeypatch.setattr(config, "LEGACY_EMBEDDING_CACHE_NPZ", legacy_npz)
+    report_csv = tmp_path / "report.csv"  # the cache key hashes report bytes; never read the real data
+    report_csv.write_text("case_id\nCASE-0001\nCASE-0002\n", encoding="latin-1")
+    monkeypatch.setattr(config, "REPORT_CSV", report_csv)
 
     key = ec.import_legacy_cache(report_mapping_bundle)
 

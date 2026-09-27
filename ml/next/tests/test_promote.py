@@ -1,4 +1,5 @@
-"""generations/promote.py + triggers.py + scripts/promote.py on synthetic generations, gold and predictions.
+"""generations/promote.py + triggers.py + scripts/{promote,generations,retrain_cycle}.py on synthetic
+generations, gold and predictions.
 
 No model runs: predictions CSVs are written directly; generations are the tiny
 fixture bundle with rewritten manifests.
@@ -9,6 +10,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -19,8 +22,10 @@ import pytest
 import config
 import io_utils
 from generations import promote, triggers
-from generations.manifest import read_manifest, write_manifest
+from generations.manifest import read_manifest, verify_manifest, write_manifest
 from manual_audit import eval_batch, gold
+from report_mapping.inference import embedding_cache
+from report_mapping.model.generation import compute_embedding_fingerprint, generation_paths
 
 from . import fixtures as fx
 
@@ -119,10 +124,37 @@ def test_equal_challenger_with_new_silver_is_promoted_and_applied(env):
 
     outcome = promote.apply(result, "test", today=date(2026, 9, 26))
     archive = config.ARCHIVE_ROOT / "2026-09-26_test"
-    assert outcome == {"action": "promoted", "generation_id": "gen-B", "archive": archive}
+    assert outcome == {"action": "promoted", "generation_id": "gen-B", "archive": archive, "archived_caches": 0}
     assert read_manifest(archive)["generation_id"] == "gen-A"
-    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+    assert read_manifest(archive)["status"] == "archived"
+    current = read_manifest(config.REPORT_MAPPING_CURRENT_DIR)
+    assert current["generation_id"] == "gen-B" and current["status"] == "current"
+    verify_manifest(config.REPORT_MAPPING_CURRENT_DIR)  # a status change leaves the file hashes valid
     assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+
+
+def test_apply_archives_only_the_cache_entries_the_new_current_cannot_use(env):
+    _eval_batch_gold()
+    config.REPORT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    config.REPORT_CSV.write_bytes(b"case_id\nC1\n")
+    paths = generation_paths(config.REPORT_MAPPING_CANDIDATE_DIR)
+    keep = embedding_cache.content_key(config.REPORT_CSV, paths.labels_csv,
+                                       compute_embedding_fingerprint(paths.petbert_dir))
+    config.EMBEDDING_CACHE_DIR.mkdir(parents=True)
+    for key in (keep, "stale-key"):
+        (config.EMBEDDING_CACHE_DIR / f"{key}.npz").write_bytes(b"x")
+
+    outcome = promote.apply(_recommend(env), "test", today=date(2026, 9, 26))
+    assert outcome["archived_caches"] == 1
+    assert [p.name for p in config.EMBEDDING_CACHE_DIR.iterdir()] == [f"{keep}.npz"]
+    assert (outcome["archive"] / "embedding_cache" / "stale-key.npz").is_file()
+
+
+def test_trigger_status_runs_before_any_candidate_and_without_gold_eval(env):
+    fired = promote.trigger_status("silver-B", env / "never-read.csv", split_id=SPLIT)
+    assert [(t.name, t.met) for t in fired] == [
+        ("new_silver_lineage", True), ("random_slice_drop", False), ("gold_train_growth", False)]
+    assert not any(t.met for t in promote.trigger_status("silver-A", env / "never-read.csv", split_id=SPLIT))
 
 
 def test_no_trigger_means_no_promotion(env, tiny_bert_dir):
@@ -224,3 +256,81 @@ def test_script_prints_recommendation(env, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Recommendation: PROMOTE" in out
     assert config.REPORT_MAPPING_CANDIDATE_DIR.exists()  # recommend-only: nothing moved
+
+
+def test_generations_status_script_reports_triggers(env, monkeypatch, capsys):
+    path = Path(__file__).resolve().parents[1] / "scripts" / "generations.py"
+    spec = importlib.util.spec_from_file_location("ml_next_scripts_generations", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    monkeypatch.setattr(sys, "argv", ["generations.py", "status", "--silver", "silver-B", "--split", SPLIT])
+    assert script.main() == 0
+    out = capsys.readouterr().out
+    assert "current: gen-A" in out and "candidate: gen-B" in out
+    assert "trigger new_silver_lineage   MET" in out and "Retrain: yes" in out
+
+
+def _load_cycle_script():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "retrain_cycle.py"
+    spec = importlib.util.spec_from_file_location("ml_next_scripts_retrain_cycle", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    return script
+
+
+@pytest.fixture
+def cycle(env, monkeypatch, tiny_bert_dir):
+    """retrain_cycle.py with every step stubbed: records each script it runs; train.py leaves a
+    candidate (gen-C) behind, as the real one would."""
+    script = _load_cycle_script()
+    shutil.rmtree(config.REPORT_MAPPING_CANDIDATE_DIR)
+    _predictions(config.PREDICTIONS_DIR / "gen-A_predictions.csv", "gen-A")
+    ran, real_run = [], subprocess.run
+
+    def fake_run(command, **kwargs):
+        if command[0] != sys.executable:  # e.g. the manifest writer's git rev-parse
+            return real_run(command, **kwargs)
+        ran.append([Path(command[1]).name, *command[2:]])
+        if ran[-1][0] == "train.py" and not config.REPORT_MAPPING_CANDIDATE_DIR.exists():
+            _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_bert_dir, "gen-C", "silver-B")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(script.subprocess, "run", fake_run)
+
+    def main(*argv):
+        monkeypatch.setattr(sys, "argv", ["retrain_cycle.py", "--split", SPLIT, *argv])
+        return script.main()
+
+    return main, ran
+
+
+def test_cycle_stops_without_gold_eval(cycle, capsys):
+    main, ran = cycle
+    assert main("--silver", "silver-B") == 0 and ran == []
+    assert "no gold-eval" in capsys.readouterr().out
+
+
+def test_cycle_stops_when_no_trigger_is_met(cycle, capsys):
+    main, ran = cycle
+    _eval_batch_gold()
+    assert main("--silver", "silver-A") == 0 and ran == []
+    assert "STOP: no retraining trigger met" in capsys.readouterr().out
+
+
+def test_cycle_trains_calibrates_predicts_and_recommends_in_order(cycle):
+    main, ran = cycle
+    _eval_batch_gold()
+    assert main("--silver", "silver-B", "--device", "cuda") == 0
+    assert [step[0] for step in ran] == ["code_cases.py", "train.py", "calibrate.py", "predict.py", "promote.py"]
+    assert ran[1][1:3] == ["--stage", "heads"] and "--apply" not in ran[-1]
+    assert str(config.PREDICTIONS_DIR / "gen-C_predictions.csv") in ran[3]
+
+
+def test_cycle_backbone_flag_and_refusal_when_a_candidate_exists(cycle, capsys):
+    main, ran = cycle
+    _eval_batch_gold()
+    assert main("--silver", "silver-A", "--force", "--backbone") == 0
+    assert [step[:2] for step in ran if step[0] == "train.py"] == [["train.py", "--stage"]] * 2
+    assert [step[2] for step in ran if step[0] == "train.py"] == ["backbone", "heads"]
+    assert main("--silver", "silver-B") == 1  # candidate/ now exists
+    assert "REFUSED" in capsys.readouterr().err

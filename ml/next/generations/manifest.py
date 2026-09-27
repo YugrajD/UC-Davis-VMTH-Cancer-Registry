@@ -1,6 +1,6 @@
 """manifest.json for every generation directory (splits, silver, report-mapping, ...).
 
-A manifest is the caller's ``fields`` plus ``created_at`` (ISO UTC), ``git_sha``
+A manifest (``write_manifest``; ``update_manifest`` changes fields only) is the caller's ``fields`` plus ``created_at`` (ISO UTC), ``git_sha``
 (the code's HEAD, or ``"unknown"`` outside git) and ``files`` — a sha256 for
 every file under the directory, keyed by its path relative to the directory.
 ``verify_manifest`` refuses a directory whose listed files are missing or changed,
@@ -64,6 +64,15 @@ def write_manifest(directory: str | Path, fields: dict) -> dict:
         "files": files,
     }
     (directory / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return manifest
+
+
+def update_manifest(directory: str | Path, fields: dict) -> dict:
+    """Change top-level fields in place. Files, ``created_at`` and ``git_sha`` keep what the
+    generation was written with, so a status change doesn't restamp the training code version."""
+    manifest = {**read_manifest(directory), **fields}
+    (Path(directory) / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8",
+                                                  newline="\n")
     return manifest
 
 

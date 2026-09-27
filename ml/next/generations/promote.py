@@ -10,18 +10,21 @@ with its own generation's uncommon groups. Promote only if
 (b) the lower 95% bound of the paired (challenger − incumbent) good share, from
     a stratified case-cluster paired bootstrap, is ≥ ``MARGIN`` (−2.0 pp).
 
-``recommend`` computes this and changes nothing. ``apply`` carries it out: a
-winning candidate is swapped in after the incumbent is archived; a losing one
-is deleted.
+``recommend`` computes this and changes nothing; ``trigger_status`` computes (a)
+alone, before any challenger exists. ``apply`` carries it out: a winning
+candidate is swapped in after the incumbent is archived; a losing one is
+deleted.
 
 **Swap safety.** The candidate is re-verified (manifest, embedding fingerprint,
 ``calibration.status == "calibrated"``) and the incumbent's manifest verified
 immediately before anything moves. Both moves are same-filesystem
 ``os.rename`` calls: ``current → ARCHIVE_ROOT/YYYY-MM-DD_<desc>/`` then
 ``candidate → current``. If the second fails, the first is undone, so
-``current/`` is never left half-moved or empty. The content-hash embedding
-cache is not archived (its key includes the backbone fingerprint, so it cannot
-load against the wrong generation).
+``current/`` is never left half-moved or empty. Only then are the manifest
+statuses set (``archived`` / ``current``) and the embedding-cache entries the new
+``current/`` cannot use moved into the archive. Their key includes the backbone
+fingerprint, so a stale entry could never load against the wrong generation;
+it is archived because CLAUDE.md archives a generation's embeddings with it.
 """
 
 from __future__ import annotations
@@ -38,9 +41,10 @@ import config
 import io_utils
 from evaluation import gold_eval, intervals, silver_eval, verdicts
 from generations import guards, triggers
-from generations.manifest import read_manifest, verify_manifest
+from generations.manifest import read_manifest, update_manifest, verify_manifest
 from manual_audit import eval_batch, gold
-from report_mapping.model.generation import verify_fingerprint
+from report_mapping.inference import embedding_cache
+from report_mapping.model.generation import compute_embedding_fingerprint, generation_paths, verify_fingerprint
 
 MARGIN = -0.02
 
@@ -85,6 +89,34 @@ def decide(comparison: dict, fired: list[triggers.Trigger]) -> bool:
     return bool(comparison["good_lo"] >= MARGIN and any(t.met for t in fired))
 
 
+def _score(generation: str, predictions_csv: str | Path, gold_rows: pd.DataFrame, cases: pd.DataFrame) -> pd.DataFrame:
+    """One generation's gold-eval verdict table, with its own uncommon groups."""
+    predictions = silver_eval.read_predictions(predictions_csv)
+    _, uncommon = silver_eval.generation_uncommon_groups(generation, predictions)
+    unpredicted = sorted(set(cases.index) - set(predictions["case_id"]))
+    if unpredicted:
+        raise PromotionError(f"{generation} predictions miss {len(unpredicted)} gold-eval case(s): {unpredicted[:5]}")
+    return gold_eval.score_bronze(gold_rows, predictions, uncommon, cases)
+
+
+def trigger_status(silver_id: str | None, incumbent_predictions_csv: str | Path, *, split_id: str | None = None,
+                   n_boot: int = 1000, seed: int = 0) -> list[triggers.Trigger]:
+    """The three triggers for a challenger trained on ``silver_id`` against ``current/``. Needs no
+    challenger, so it can run before training. Without gold-eval the random slice cannot fire, and
+    the incumbent predictions are not read."""
+    split_id = split_id if split_id is not None else config.DEFAULT_SPLIT_ID
+    incumbent_manifest = read_manifest(config.REPORT_MAPPING_CURRENT_DIR)
+    gold_rows = gold.gold_eval(split_id=split_id)
+    if gold_rows.empty:
+        slice_drop = triggers.Trigger("random_slice_drop", False, {"slice_cases": 0})
+    else:
+        cases = gold_eval.case_weights(gold_rows, _ledger(), split_id)
+        table = _score("current", incumbent_predictions_csv, gold_rows, cases)
+        slice_drop = triggers.random_slice_drop(table, cases, gold_rows, n_boot, seed)
+    return [triggers.new_silver_lineage(incumbent_manifest, silver_id), slice_drop,
+            triggers.gold_train_growth(incumbent_manifest, split_id)]
+
+
 def recommend(challenger_predictions_csv: str | Path, incumbent_predictions_csv: str | Path, *,
               split_id: str | None = None, n_boot: int = 1000, seed: int = 0) -> dict:
     """Guards, candidate checks, both generations scored on gold-eval, triggers, the rule. Writes nothing."""
@@ -103,22 +135,10 @@ def recommend(challenger_predictions_csv: str | Path, incumbent_predictions_csv:
                              "promotion needs gold-eval (ingest an eval batch or a random slice first)")
     cases = gold_eval.case_weights(gold_rows, _ledger(), split_id)
 
-    tables = {}
-    for generation, csv in (("candidate", challenger_predictions_csv), ("current", incumbent_predictions_csv)):
-        predictions = silver_eval.read_predictions(csv)
-        _, uncommon = silver_eval.generation_uncommon_groups(generation, predictions)
-        unpredicted = sorted(set(cases.index) - set(predictions["case_id"]))
-        if unpredicted:
-            raise PromotionError(f"{generation} predictions miss {len(unpredicted)} gold-eval case(s): "
-                                 f"{unpredicted[:5]}")
-        tables[generation] = gold_eval.score_bronze(gold_rows, predictions, uncommon, cases)
-
-    comparison = compare(tables["candidate"], tables["current"], cases, n_boot, seed)
-    fired = [
-        triggers.new_silver_lineage(incumbent_manifest, (challenger_manifest.get("parents") or {}).get("silver_id")),
-        triggers.random_slice_drop(tables["current"], cases, gold_rows, n_boot, seed),
-        triggers.gold_train_growth(incumbent_manifest, split_id),
-    ]
+    comparison = compare(_score("candidate", challenger_predictions_csv, gold_rows, cases),
+                         _score("current", incumbent_predictions_csv, gold_rows, cases), cases, n_boot, seed)
+    fired = trigger_status((challenger_manifest.get("parents") or {}).get("silver_id"), incumbent_predictions_csv,
+                           split_id=split_id, n_boot=n_boot, seed=seed)
     return {
         "split_id": split_id,
         "challenger_id": challenger_manifest["generation_id"],
@@ -154,4 +174,28 @@ def apply(result: dict, description: str | None = None, today: date | None = Non
     except OSError:
         os.rename(archive, current)
         raise
-    return {"action": "promoted", "generation_id": result["challenger_id"], "archive": archive}
+    update_manifest(archive, {"status": "archived"})
+    update_manifest(current, {"status": "current"})
+    archived_caches = _archive_stale_caches(archive)
+    return {"action": "promoted", "generation_id": result["challenger_id"], "archive": archive,
+            "archived_caches": archived_caches}
+
+
+def _archive_stale_caches(archive: Path) -> int:
+    """Move every embedding-cache entry the new current/ cannot use into ``archive``.
+
+    CLAUDE.md archives a generation's embeddings with it. The cache is keyed by content, so the
+    entry to keep is the one for the new current's backbone and today's report.csv. A heads-only
+    promotion shares the incumbent's backbone, so its entry stays."""
+    cached = sorted(config.EMBEDDING_CACHE_DIR.glob("*.npz"))
+    if not cached:
+        return 0
+    paths = generation_paths(config.REPORT_MAPPING_CURRENT_DIR)
+    keep = embedding_cache.content_key(config.REPORT_CSV, paths.labels_csv,
+                                       compute_embedding_fingerprint(paths.petbert_dir))
+    stale = [path for path in cached if path.stem != keep]
+    if stale:
+        (archive / "embedding_cache").mkdir()
+    for path in stale:
+        os.rename(path, archive / "embedding_cache" / path.name)
+    return len(stale)

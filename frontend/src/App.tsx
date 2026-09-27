@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal, Settings } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, AuditWorklist, UserManagement, ResetPasswordModal, Settings } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import { useSessionStorageState } from './hooks/useSessionStorageState';
@@ -13,6 +13,11 @@ import {
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
+  // Sub-tab within "Diagnosis Review": the per-diagnosis correction queue, or
+  // the audit-list worklist (case-level gold review) — same page, same
+  // Diagnosis Review nav entry, since they're two views onto the same
+  // reviewer's work rather than separate features.
+  const [reviewSubTab, setReviewSubTab] = useState<'queue' | 'audit-worklist'>('queue');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
   // Persisted so the selection survives switching tabs and refreshing
@@ -69,7 +74,28 @@ function AppContent() {
         ) : activeTab === 'review-queue' ? (
           <AdminQueue />
         ) : activeTab === 'diagnosis-review' ? (
-          <DiagnosisReview />
+          <div className="space-y-4">
+            <div className="flex gap-1">
+              {([
+                { id: 'queue', label: 'Review Queue' },
+                { id: 'audit-worklist', label: 'Audit Worklist' },
+              ] as const).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setReviewSubTab(t.id)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+                    reviewSubTab === t.id
+                      ? 'border-blue-600 text-blue-700'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {reviewSubTab === 'queue' ? <DiagnosisReview /> : <AuditWorklist />}
+          </div>
         ) : activeTab === 'user-management' ? (
           <UserManagement />
         ) : activeTab === 'settings' ? (

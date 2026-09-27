@@ -921,3 +921,178 @@ export async function downloadExportCsv(token: string, filters?: ExportFilters):
 
   return response.blob();
 }
+
+// --- Audit Review: the dashboard review worklist (audit list) + gold export.
+// See ml/documentation/audit-list-change-request.md and
+// backend/app/routers/audit_review.py.
+
+export interface AuditListImportSummary {
+  list_id: string;
+  case_count: number;
+  replaced_list_id: string | null;
+  not_found: string[];
+}
+
+export async function importAuditList(
+  token: string,
+  listFile: File,
+  manifestFile: File,
+): Promise<AuditListImportSummary> {
+  const formData = new FormData();
+  formData.append('list_file', listFile);
+  formData.append('manifest_file', manifestFile);
+  const response = await fetch(apiUrl('/api/v1/audit-review/lists/import'), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Import failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export interface WorklistCase {
+  case_id: string;
+  position: number;
+  patient_found: boolean;
+  review_status: 'unreviewed' | 'reviewed' | 'locked';
+  no_cancer: boolean | null;
+  code_count: number;
+  reviewed_by_email: string | null;
+  reviewed_at: string | null;
+}
+
+export interface WorklistResponse {
+  list_id: string | null;
+  imported_at: string | null;
+  case_count: number;
+  cases: WorklistCase[];
+}
+
+export async function fetchAuditWorklist(token: string): Promise<WorklistResponse> {
+  return fetchJsonAuth('/api/v1/audit-review/worklist', token);
+}
+
+export interface TaxonomyTermOut {
+  vet_icd_o_code: string | null;
+  taxonomy_group: string;
+  taxonomy_term: string;
+}
+
+export async function fetchTaxonomyTerms(token: string): Promise<TaxonomyTermOut[]> {
+  return fetchJsonAuth('/api/v1/audit-review/taxonomy-terms', token);
+}
+
+export interface PredictedCode {
+  diagnosis_index: number | null;
+  cancer_type_name: string;
+  icd_o_code: string | null;
+  predicted_term: string | null;
+  confidence: number | null;
+  prediction_method: string | null;
+}
+
+export interface ExistingReviewCode {
+  taxonomy_group: string;
+  taxonomy_term: string;
+}
+
+export interface AuditCaseDetail {
+  case_id: string;
+  patient_found: boolean;
+  patient_anon_id: string | null;
+  source_diagnosis: string | null;
+  report_text: string | null;
+  predicted_codes: PredictedCode[];
+  review_exists: boolean;
+  review_no_cancer: boolean | null;
+  review_codes: ExistingReviewCode[];
+  review_locked: boolean | null;
+  reviewed_by_email: string | null;
+  reviewed_at: string | null;
+}
+
+export async function fetchAuditCaseDetail(token: string, caseId: string): Promise<AuditCaseDetail> {
+  return fetchJsonAuth(`/api/v1/audit-review/cases/${encodeURIComponent(caseId)}`, token);
+}
+
+export interface ReviewSaveRequestPayload {
+  no_cancer: boolean;
+  codes: { taxonomy_group: string; taxonomy_term: string }[];
+}
+
+export interface ReviewSaveResult {
+  case_id: string;
+  no_cancer: boolean;
+  code_count: number;
+  reviewed_by_email: string;
+  reviewed_at: string;
+  locked: boolean;
+}
+
+export async function saveCaseReview(
+  token: string,
+  caseId: string,
+  payload: ReviewSaveRequestPayload,
+): Promise<ReviewSaveResult> {
+  const response = await fetch(apiUrl(`/api/v1/audit-review/cases/${encodeURIComponent(caseId)}/review`), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Save failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function reopenCaseReview(token: string, caseId: string): Promise<{ case_id: string; locked: boolean }> {
+  const response = await fetch(apiUrl(`/api/v1/audit-review/cases/${encodeURIComponent(caseId)}/reopen`), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Reopen failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export interface GoldExportSummary {
+  export_id: string;
+  reviewer_email: string;
+  case_count: number;
+}
+
+export async function createGoldExport(token: string, reviewerEmail: string): Promise<GoldExportSummary> {
+  const response = await fetch(apiUrl('/api/v1/audit-review/gold-exports'), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ reviewer_email: reviewerEmail }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Export failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function downloadGoldExport(token: string, exportId: string): Promise<Blob> {
+  const response = await fetch(apiUrl(`/api/v1/audit-review/gold-exports/${encodeURIComponent(exportId)}`), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Download failed: ${response.status}`);
+  }
+  return response.blob();
+}

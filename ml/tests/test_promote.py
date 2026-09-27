@@ -327,6 +327,9 @@ def test_cycle_trains_calibrates_predicts_and_recommends_in_order(cycle):
     assert main("--silver", "silver-B", "--device", "cuda") == 0
     assert [step[0] for step in ran] == ["code_cases.py", "train.py", "calibrate.py", "predict.py", "promote.py"]
     assert ran[1][1:3] == ["--stage", "heads"] and "--apply" not in ran[-1]
+    # Heads train on the corrected table (train only); calibration is labelled by silver.
+    assert ran[1][ran[1].index("--labels") + 1] == str(config.CORRECTED_ANNOTATIONS_CSV)
+    assert ran[2][ran[2].index("--labels") + 1] == "silver-B"
     assert str(config.PREDICTIONS_DIR / "gen-C_predictions.csv") in ran[3]
 
 

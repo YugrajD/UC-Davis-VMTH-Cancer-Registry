@@ -316,6 +316,11 @@ def calibrate(generation_dir, *, labels: str, split_id: str, partition: str = CA
     table = load_labels_table(labels)
     expectations = table.assign(case_id=table["case_id"].astype(str).str.strip())
     expectations = expectations[expectations["case_id"].isin(partition_ids)]
+    if expectations.empty:
+        # e.g. a corrected-annotations table, which covers the train partition only: every grid point
+        # would score 0 and the first one would be written as if fitted.
+        raise ValueError(f"labels {labels!r} have no rows on the {partition!r} partition of {split_id!r}; "
+                         "calibrate against a silver generation")
     inp = _load_partition_inputs(gen, partition_ids)
 
     used_ids = set(inp.ids) | set(expectations["case_id"])

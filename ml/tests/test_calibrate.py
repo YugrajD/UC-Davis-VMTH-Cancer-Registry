@@ -69,6 +69,16 @@ def test_refuses_non_calibration_partition(setup):
         cal.calibrate(generation_dir, labels=labels, split_id=SPLIT_ID, partition="test")
 
 
+def test_refuses_labels_with_no_row_on_the_calibration_partition(setup, tmp_path):
+    # A corrected-annotations table covers train only; fitting on it would silently pick the first grid point.
+    generation_dir, labels = setup
+    train_only = tmp_path / "train_only.csv"
+    pd.DataFrame({"case_id": ["NOT-IN-CALIBRATION"], "matched_term": [""], "matched_group": [""],
+                  "matched_code": [""]}).to_csv(train_only, index=False)
+    with pytest.raises(ValueError, match="no rows on the 'calibration' partition"):
+        cal.calibrate(generation_dir, labels=str(train_only), split_id=SPLIT_ID)
+
+
 def test_refuses_calibration_cases_the_generation_trained_on(setup):
     generation_dir, labels = setup
     fx.make_three_way_split_generation("trained-on", ["CASE-0001"], [], fx.CASE_IDS[1:])

@@ -88,11 +88,12 @@ def main() -> int:
         return 0
 
     _run("code_cases.py", "corrected", "--silver", args.silver, "--split", split_id)
-    common = ["--labels", str(config.CORRECTED_ANNOTATIONS_CSV), "--split", split_id]
     local = ["--local-only"] if args.local_only else []
     for stage in (["backbone"] if args.backbone else []) + ["heads"]:
-        _run("train.py", "--stage", stage, *common, "--device", args.device, "--out", "candidate", *local)
-    _run("calibrate.py", "--generation", "candidate", *common,
+        _run("train.py", "--stage", stage, "--labels", str(config.CORRECTED_ANNOTATIONS_CSV), "--split", split_id,
+             "--device", args.device, "--out", "candidate", *local)
+    # The corrected table covers the train partition only; the calibration partition is labelled by silver.
+    _run("calibrate.py", "--generation", "candidate", "--labels", args.silver, "--split", split_id,
          "--device", "cpu" if args.device == "auto" else args.device)
     candidate_predictions = _predictions_path(candidate)
     _run("predict.py", "--generation", "candidate", "--device", args.device, "--out", str(candidate_predictions))

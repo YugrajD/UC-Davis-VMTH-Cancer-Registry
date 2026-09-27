@@ -73,8 +73,13 @@ class Patient(Base):
     anon_id = Column(String(100), nullable=True, unique=True, index=True)
     zip_code = Column(String(10), nullable=True)
     data_source = Column(String(20), nullable=True, default="mock")
+    birth_date = Column(Date, nullable=True)
     diagnosis_date = Column(Date, nullable=True)
     outcome = Column(String(20), nullable=True)
+    # Set via admin CSV upload — see database/migrations/031_spot_check_flag.sql
+    needs_spot_check = Column(Boolean, nullable=False, server_default="false")
+    spot_check_flagged_by_email = Column(String(255), nullable=True)
+    spot_check_flagged_at = Column(DateTime(timezone=True), nullable=True)
 
     species = relationship("Species", back_populates="patients")
     breed = relationship("Breed", back_populates="patients")
@@ -94,7 +99,7 @@ class CaseDiagnosis(Base):
     predicted_term = Column(Text, nullable=True)
     pathology_report_id = Column(Integer, ForeignKey("pathology_reports.id"), nullable=True)
     confidence = Column(Numeric(4, 2), nullable=True)
-    prediction_method = Column(String(20), nullable=True)
+    prediction_method = Column(String(50), nullable=True)
     source_row_index = Column(Integer, nullable=True)
     diagnosis_index = Column(Integer, nullable=True)
 
@@ -163,6 +168,7 @@ class PathologyReport(Base):
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
     gcs_path = Column(String(1000), nullable=True)
     report_date = Column(Date, nullable=True)
+    source_diagnosis = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     patient = relationship("Patient", back_populates="reports")
@@ -235,6 +241,8 @@ class IngestionJob(Base):
     processing_stage = Column(String(50), nullable=True)
     result_summary = Column(JSONB, nullable=True)
     model_folder = Column(String(255), nullable=True)
+    clinic_name = Column(String(255), nullable=True)
+    upload_duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
 

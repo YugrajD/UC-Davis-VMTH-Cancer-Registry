@@ -30,15 +30,15 @@ _COLUMN_RENAMES = {
     "diagnoses (labels)": "Clinical Diagnoses",
     "diagnoses": "Clinical Diagnoses",
     "clinical diagnoses": "Clinical Diagnoses",
-    "text (pathology report)": "Text",
-    "text": "Text",
+    "text (pathology report)": "Pathology Text",
+    "text": "Pathology Text",
 }
 
 # At least one must be non-NA for a row to be treated as a patient header.
 _HEADER_SENTINEL_COLS = ("Date of Birth", "Sex", "Species", "Breed")
 
 # Columns concatenated from continuation rows into the preceding header.
-_CONTINUATION_COLS = ("Text", "Clinical Diagnoses")
+_CONTINUATION_COLS = ("Pathology Text", "Clinical Diagnoses")
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 

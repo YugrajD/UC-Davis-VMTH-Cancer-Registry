@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     ML_WORKER_URL: str = "http://localhost:8001"
     SUPABASE_URL: str = ""
+    # Service-role key — grants full admin access to the Supabase project.
+    # Used only for the account-deletion Admin API call. Never exposed to
+    # the frontend; back end only.
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
     # Comma-separated email lists. Admins implicitly hold uploader and
     # reviewer privileges, so these env vars only need users who don't
     # also appear in ADMIN_EMAILS.
@@ -39,6 +43,12 @@ class Settings(BaseSettings):
     GCP_BATCH_POLL_INTERVAL: int = 60
     GCP_BATCH_TIMEOUT_HOURS: int = 12
     GCP_BATCH_SERVICE_ACCOUNT: str = ""
+    GCP_BATCH_CLEANUP_JOB_FILES: bool = False
+
+    # PetBERT runtime thresholds. Case presence is Stage 1: rows below this
+    # become method=low_confidence / Uncategorized before review thresholds run.
+    CASE_PRESENCE_THRESHOLD: float = 0.5
+    GROUP_CLASSIFIER_THRESHOLD: float = 0.3
 
     # SMTP — email notifications for role requests (all default to empty = disabled)
     SMTP_HOST: str = ""

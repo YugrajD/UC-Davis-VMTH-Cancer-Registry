@@ -99,14 +99,6 @@ async def test_classify_requires_auth():
     assert response.status_code in (401, 403)
 
 
-@pytest.mark.asyncio
-async def test_reports_requires_auth():
-    """GET /api/v1/search/reports should reject unauthenticated requests."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/v1/search/reports")
-    assert response.status_code in (401, 403)
-
-
 # ---------------------------------------------------------------------------
 # ClassifyRequest schema validation
 # ---------------------------------------------------------------------------

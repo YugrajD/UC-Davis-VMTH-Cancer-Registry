@@ -4,12 +4,13 @@ import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { MapViewState, PickingInfo } from '@deck.gl/core';
 import { scaleLinear } from 'd3-scale';
 import { useCalEnviroScreenData } from '../../hooks/useCalEnviroScreenData';
-import { useFilteredData } from '../../hooks/useFilteredData';
+import { useFilteredData, useZipCodeData } from '../../hooks/useFilteredData';
 import { useYearlyTrendsData } from '../../hooks/useYearlyTrendsData';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 import { fetchFilterOptions } from '../../api/client';
-import { yearRange, countForYear, OTHER_SERIES_NAME } from '../../lib/trends';
+import { yearRange, countForYear, pccpForYear } from '../../lib/trends';
 import { MapResetButton } from '../MapResetButton/MapResetButton';
-import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState } from '../../types';
+import type { CountyData, CESIndicator, CalEnviroScreenData, FilterState, ZipCodeData } from '../../types';
 import { CES_INDICATORS, CANCER_TYPES, BREEDS, SEX_OPTIONS } from '../../types';
 import {
   HUMAN_CANCER_RATES,
@@ -25,9 +26,11 @@ import {
   type SuperfundSite,
 } from '../../data/superfundData';
 import {
-  MOCK_PESTICIDE_DATA,
+  PESTICIDE_DATA,
   PESTICIDE_BY_COUNTY,
+  PESTICIDE_BY_CHEMICAL,
   PESTICIDE_CLASSES,
+  TRACKING_CA_PESTICIDES,
   type PesticideClass,
   type CountyPesticideData,
 } from '../../data/pesticideData';
@@ -65,12 +68,12 @@ interface ScatterVarOption {
 
 const SCATTER_VAR_OPTIONS: ScatterVarOption[] = [
   // VMTH
-  { value: 'cancer_cases', label: 'Cancer Cases', unit: 'cases', group: 'VMTH' },
+  { value: 'cancer_cases', label: 'Cancer PCCP', unit: 'per 100', group: 'VMTH' },
   // CDPR
   { value: 'pesticide_lbs', label: 'Pesticide Use (CDPR)', unit: 'lbs/sq mi', group: 'CDPR' },
-  { value: 'pesticide_2015', label: 'Pesticide Use 2015', unit: 'lbs/sq mi', group: 'CDPR' },
-  { value: 'pesticide_2019', label: 'Pesticide Use 2019', unit: 'lbs/sq mi', group: 'CDPR' },
-  { value: 'pesticide_change', label: 'Pesticide Change 2015\u201319', unit: '%', group: 'CDPR' },
+  { value: 'pesticide_2015', label: 'Pesticide Use 2016', unit: 'lbs/sq mi', group: 'CDPR' },
+  { value: 'pesticide_2019', label: 'Pesticide Use 2023', unit: 'lbs/sq mi', group: 'CDPR' },
+  { value: 'pesticide_change', label: 'Pesticide Change 2016\u201323', unit: '%', group: 'CDPR' },
   // EPA
   { value: 'superfund_sites', label: 'Superfund Sites', unit: 'sites', group: 'EPA' },
   // CCR
@@ -95,6 +98,7 @@ function getVarValue(
   v: ScatterVar,
   countyDataMap: Map<string, CountyData>,
   cesMap: Map<string, CalEnviroScreenData>,
+  humanRateMap?: ReturnType<typeof getHumanCancerRateMap>,
 ): number | null {
   switch (v) {
     case 'cancer_cases':
@@ -102,21 +106,21 @@ function getVarValue(
     case 'pesticide_lbs':
       return PESTICIDE_BY_COUNTY[county]?.lbs_per_sq_mile ?? null;
     case 'pesticide_2015':
-      return PESTICIDE_BY_COUNTY[county]?.by_year[2015] ?? null;
+      return PESTICIDE_BY_COUNTY[county]?.by_year[2016]?.total ?? null;
     case 'pesticide_2019':
-      return PESTICIDE_BY_COUNTY[county]?.by_year[2019] ?? null;
+      return PESTICIDE_BY_COUNTY[county]?.by_year[2023]?.total ?? null;
     case 'pesticide_change': {
       const d = PESTICIDE_BY_COUNTY[county];
       if (!d) return null;
-      const v15 = d.by_year[2015];
-      const v19 = d.by_year[2019];
-      if (!v15 || !v19) return null;
-      return Math.round(((v19 - v15) / v15) * 100);
+      const v16 = d.by_year[2016]?.total;
+      const v23 = d.by_year[2023]?.total;
+      if (!v16 || !v23) return null;
+      return Math.round(((v23 - v16) / v16) * 100);
     }
     case 'superfund_sites':
       return SUPERFUND_BY_COUNTY[county]?.total ?? 0;
     case 'human_cancer_rate': {
-      const hrMap = getHumanCancerRateMap('All Cancer Sites', 'Both Sexes');
+      const hrMap = humanRateMap ?? getHumanCancerRateMap('All Cancer Sites', 'Both Sexes');
       return hrMap.get(county.toLowerCase())?.rate ?? null;
     }
     default:
@@ -151,7 +155,7 @@ function tooltipHeader(props: Record<string, unknown>, geoLevel: GeoLevel, count
 // Filter popover button — small icon button that toggles a dropdown panel
 // ---------------------------------------------------------------------------
 
-function MapFilterButton({ children, label }: { children: React.ReactNode; label?: string }) {
+function MapFilterButton({ children, label = 'Filters' }: { children: React.ReactNode; label?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -165,18 +169,25 @@ function MapFilterButton({ children, label }: { children: React.ReactNode; label
   }, [open]);
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative group" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium border transition-colors ${open ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]' : 'border-gray-300 text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
-        title={label ?? 'Filters'}
+        aria-label={label}
+        className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent ${open ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]' : 'bg-white border-gray-200 shadow-sm text-[var(--color-text-secondary)] hover:bg-gray-50'}`}
       >
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
         </svg>
-        <span className="hidden sm:inline">Filters</span>
       </button>
+      {!open && (
+        <div
+          role="tooltip"
+          className="absolute top-full right-0 mt-1.5 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-md z-20"
+        >
+          {label}
+        </div>
+      )}
       {open && (
         <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[200px] space-y-2">
           {children}
@@ -199,11 +210,39 @@ interface DeckMapProps {
   legend: React.ReactNode;
 }
 
-function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
-  // Controlled view state so the "Reset view" button can snap back to
-  // INITIAL_VIEW_STATE (CA-wide framing).  Each map manages its own camera.
+interface ExpandedDeckMapProps {
+  layers: (GeoJsonLayer | ScatterplotLayer)[];
+  getTooltip: (info: PickingInfo) => { html: string; style?: Record<string, string | undefined> } | null;
+  title: string;
+  subtitle?: React.ReactNode;
+  headerRight?: React.ReactNode;
+  legend: React.ReactNode;
+  onClose: () => void;
+}
+
+function ExpandedDeckMap({ layers, getTooltip, title, subtitle, headerRight, legend, onClose }: ExpandedDeckMapProps) {
   const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
-  const resetView = () => setViewState(INITIAL_VIEW_STATE);
+
+  // Clone layers (same IDs, fresh instances) so the expanded DeckGL context
+  // owns its own WebGL state and doesn't conflict with the normal map.
+  const expandedLayers = useMemo(
+    () => layers.map(l => l.clone({})),
+    [layers],
+  );
+
+  // DeckGL doesn't measure its container size until the DOM has settled after
+  // a modal opens — dispatching resize on the next animation frame fixes this.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const isDefaultView =
     viewState.longitude === INITIAL_VIEW_STATE.longitude &&
     viewState.latitude === INITIAL_VIEW_STATE.latitude &&
@@ -212,7 +251,65 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
     viewState.bearing === INITIAL_VIEW_STATE.bearing;
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+    <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow-xl border border-gray-200 max-w-5xl w-full mx-4 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+              {title}
+            </h3>
+            {subtitle && (
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{subtitle}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {headerRight}
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+            >
+              <span className="sr-only">Close</span>
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className="relative" style={{ height: 560, backgroundColor: '#f1f5f9' }}>
+          <DeckGL
+            viewState={viewState}
+            onViewStateChange={({ viewState: nextViewState }) =>
+              setViewState(nextViewState as MapViewState)
+            }
+            controller
+            layers={expandedLayers}
+            getTooltip={getTooltip}
+            style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: '#f1f5f9' }}
+          />
+          <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
+            {legend}
+          </div>
+          <MapResetButton onClick={() => setViewState(INITIAL_VIEW_STATE)} disabled={isDefaultView} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: DeckMapProps) {
+  const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const isDefaultView =
+    viewState.longitude === INITIAL_VIEW_STATE.longitude &&
+    viewState.latitude === INITIAL_VIEW_STATE.latitude &&
+    viewState.zoom === INITIAL_VIEW_STATE.zoom &&
+    viewState.pitch === INITIAL_VIEW_STATE.pitch &&
+    viewState.bearing === INITIAL_VIEW_STATE.bearing;
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden relative flex flex-col">
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
@@ -224,7 +321,7 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
         </div>
         {headerRight}
       </div>
-      <div className="relative" style={{ height: '400px', backgroundColor: '#f1f5f9' }}>
+      <div className="relative flex-1" style={{ minHeight: '400px', backgroundColor: '#f1f5f9' }}>
         <DeckGL
           viewState={viewState}
           onViewStateChange={({ viewState: nextViewState }) =>
@@ -233,14 +330,43 @@ function DeckMap({ layers, getTooltip, title, subtitle, headerRight, legend }: D
           controller
           layers={layers}
           getTooltip={getTooltip}
-          style={{ position: 'absolute', inset: '0', background: '#f1f5f9' }}
+          style={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '0', background: '#f1f5f9' }}
         />
-        {/* Legend */}
         <div className="absolute bottom-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg p-3 border border-gray-200 shadow-sm pointer-events-none">
           {legend}
         </div>
-        <MapResetButton onClick={resetView} disabled={isDefaultView} />
+        <div className="absolute top-4 right-4 z-10 group">
+          <button
+            type="button"
+            onClick={() => setIsExpanded(true)}
+            aria-label="Expand map"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" />
+            </svg>
+          </button>
+          <div
+            role="tooltip"
+            className="absolute top-full right-0 mt-1.5 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-md"
+          >
+            Expand map
+          </div>
+        </div>
+        <MapResetButton onClick={() => setViewState(INITIAL_VIEW_STATE)} disabled={isDefaultView} />
       </div>
+
+      {isExpanded && (
+        <ExpandedDeckMap
+          layers={layers}
+          getTooltip={getTooltip}
+          title={title}
+          subtitle={subtitle}
+          headerRight={headerRight}
+          legend={legend}
+          onClose={() => setIsExpanded(false)}
+        />
+      )}
     </div>
   );
 }
@@ -311,8 +437,8 @@ function useSuperfundLayer(enabled: boolean) {
 
 const GEO_LEVEL_OPTIONS: { value: GeoLevel; label: string }[] = [
   { value: 'county', label: 'County' },
-  { value: 'tract', label: 'Tract' },
   { value: 'zcta', label: 'ZCTA' },
+  { value: 'tract', label: 'Tract' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -327,8 +453,9 @@ function CancerMap({
   geoLevel: GeoLevel;
 }) {
   const [filters, setFilters] = useState<FilterState>({
-    rateType: 'incidence',
+    rateType: 'pccp',
     sex: 'all',
+    ageGroup: 'all',
     cancerType: 'All Types',
     breed: 'All Breeds',
   });
@@ -349,7 +476,8 @@ function CancerMap({
     setFilters(f => ({ ...f, [key]: value ? Number(value) : undefined }));
   };
 
-  const { countyData, countRange } = useFilteredData(filters);
+  const { countyData, countRange, excludedCases, totalCases } = useFilteredData(filters);
+  const { zipCodeData, countRange: zipCodeCountRange } = useZipCodeData(filters);
 
   const countyDataMap = useMemo(() => {
     const m = new Map<string, CountyData>();
@@ -357,12 +485,20 @@ function CancerMap({
     return m;
   }, [countyData]);
 
+  const zipCodeDataMap = useMemo(() => {
+    const m = new Map<string, ZipCodeData>();
+    zipCodeData.forEach(z => m.set(z.zipCode, z));
+    return m;
+  }, [zipCodeData]);
+
+  const activeCountRange = geoLevel === 'zcta' ? zipCodeCountRange : countRange;
+
   const colorScale = useMemo(
     () =>
       scaleLinear<string>()
-        .domain([countRange.min, (countRange.min + countRange.max) / 2, countRange.max])
+        .domain([0, activeCountRange.max / 2, activeCountRange.max])
         .range(['#E6F3F5', '#6BB5BF', '#1A6B77']),
-    [countRange],
+    [activeCountRange],
   );
 
   const [hovered, setHovered] = useState<string | null>(null);
@@ -376,20 +512,21 @@ function CancerMap({
         stroked: true,
         filled: true,
         getFillColor: (feature) => {
-          const key = hoverKeyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
+          const props = feature.properties as Record<string, unknown>;
+          const key = hoverKeyFromFeature(props, geoLevel);
           if (key && key === hovered) return HOVER_COLOR;
-          const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
-          const info = countyDataMap.get(county.toLowerCase());
-          const count = info?.count ?? 0;
+          const count = geoLevel === 'zcta'
+            ? zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim())?.count ?? 0
+            : countyDataMap.get(countyFromFeature(props, geoLevel).toLowerCase())?.count ?? 0;
           return count > 0 ? hexToRgba(colorScale(count)) : NO_DATA_COLOR;
         },
         getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) =>
           setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, geoLevel) : null),
-        updateTriggers: { getFillColor: [countyDataMap, colorScale, hovered, geoLevel], data: [geoLevel] },
+        updateTriggers: { getFillColor: [countyDataMap, zipCodeDataMap, colorScale, hovered, geoLevel], data: [geoLevel] },
       }),
-    [countyDataMap, colorScale, hovered, geoLevel],
+    [countyDataMap, zipCodeDataMap, colorScale, hovered, geoLevel],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -403,12 +540,19 @@ function CancerMap({
     if (info.layer?.id === 'cancer-counties') {
       const props = info.object.properties as Record<string, unknown>;
       const county = countyFromFeature(props, geoLevel);
-      const count = countyDataMap.get(county.toLowerCase())?.count ?? 0;
+      const source = geoLevel === 'zcta'
+        ? zipCodeDataMap.get(String(props.ZCTA5CE20 ?? '').trim())
+        : countyDataMap.get(county.toLowerCase());
+      const count = source?.count ?? 0;
       const sf = SUPERFUND_BY_COUNTY[county];
       const sfStr = sf ? `<br/><span style="color:#6b7280">${sf.total} Superfund site${sf.total !== 1 ? 's' : ''}</span>` : '';
       const header = tooltipHeader(props, geoLevel, county);
+      const pccpLine = `PCCP: ${count.toFixed(1)} per 100 tested`;
+      const body = source?.casePatients !== undefined && source?.totalPatients !== undefined
+        ? `${pccpLine}<br/><span style="color:#6b7280;font-size:11px">${source.casePatients.toLocaleString()} cancer tested positive out of ${source.totalPatients.toLocaleString()} total tested</span>`
+        : pccpLine;
       return {
-        html: `${header}<br/>${count.toLocaleString()} cases${sfStr}`,
+        html: `${header}<br/>${body}${sfStr}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -423,10 +567,10 @@ function CancerMap({
   };
 
   const subtitle = geoLevel === 'county'
-    ? 'Case count by county'
+    ? 'Cancer PCCP by county'
     : geoLevel === 'tract'
-      ? 'Case count by county · census tract boundaries'
-      : 'Case count by county · ZCTA boundaries';
+      ? 'Cancer PCCP by county · census tract boundaries'
+      : 'Cancer PCCP by ZIP/ZCTA';
 
   return (
     <DeckMap
@@ -435,51 +579,82 @@ function CancerMap({
       title="Cancer Incidence"
       subtitle={subtitle}
       headerRight={
-        <MapFilterButton>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Type</span>
-            <select value={filters.cancerType} onChange={e => setFilters(f => ({ ...f, cancerType: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-              {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Breed</span>
-            <select value={filters.breed} onChange={e => setFilters(f => ({ ...f, breed: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-              {BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
-            <select value={filters.sex} onChange={e => setFilters(f => ({ ...f, sex: e.target.value as FilterState['sex'] }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-              {SEX_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </label>
-          {yearOptions.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {filters.cancerType !== 'All Types' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
+              {filters.cancerType}
+            </span>
+          )}
+          {filters.breed !== 'All Breeds' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
+              {filters.breed}
+            </span>
+          )}
+          {filters.sex !== 'all' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
+              {SEX_OPTIONS.find(s => s.value === filters.sex)?.label}
+            </span>
+          )}
+          {(filters.yearStart || filters.yearEnd) && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
+              {filters.yearStart && filters.yearEnd ? `${filters.yearStart}–${filters.yearEnd}` :
+               filters.yearStart ? `≥${filters.yearStart}` : `≤${filters.yearEnd}`}
+            </span>
+          )}
+          {excludedCases > 0 && totalCases > 0 && (
+            <span
+              title={`${excludedCases.toLocaleString()} of ${totalCases.toLocaleString()} cases have no California county and are excluded from the map`}
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 cursor-help"
+            >
+              {((excludedCases / totalCases) * 100).toFixed(1)}% excluded
+            </span>
+          )}
+          <MapFilterButton>
             <label className="block">
-              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year Start</span>
-              <select value={filters.yearStart ?? ''} onChange={e => handleYearChange('yearStart', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-                <option value="">All Years</option>
-                {yearOptions.filter(y => !filters.yearEnd || y <= filters.yearEnd).map(y => <option key={y} value={y}>{y}</option>)}
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Type</span>
+              <select value={filters.cancerType} onChange={e => setFilters(f => ({ ...f, cancerType: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
               </select>
             </label>
-          )}
-          {yearOptions.length > 0 && (
             <label className="block">
-              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year End</span>
-              <select value={filters.yearEnd ?? ''} onChange={e => handleYearChange('yearEnd', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
-                <option value="">All Years</option>
-                {yearOptions.filter(y => !filters.yearStart || y >= filters.yearStart).map(y => <option key={y} value={y}>{y}</option>)}
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Breed</span>
+              <select value={filters.breed} onChange={e => setFilters(f => ({ ...f, breed: e.target.value }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                {BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
             </label>
-          )}
-        </MapFilterButton>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
+              <select value={filters.sex} onChange={e => setFilters(f => ({ ...f, sex: e.target.value as FilterState['sex'] }))} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                {SEX_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </label>
+            {yearOptions.length > 0 && (
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year Start</span>
+                <select value={filters.yearStart ?? ''} onChange={e => handleYearChange('yearStart', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                  <option value="">All Years</option>
+                  {yearOptions.filter(y => !filters.yearEnd || y <= filters.yearEnd).map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </label>
+            )}
+            {yearOptions.length > 0 && (
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Year End</span>
+                <select value={filters.yearEnd ?? ''} onChange={e => handleYearChange('yearEnd', e.target.value)} className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]">
+                  <option value="">All Years</option>
+                  {yearOptions.filter(y => !filters.yearStart || y >= filters.yearStart).map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </label>
+            )}
+          </MapFilterButton>
+        </div>
       }
       legend={
         <GradientLegend
-          label="Cases"
+          label="PCCP per 100"
           gradient="linear-gradient(to right, #E6F3F5, #6BB5BF, #1A6B77)"
-          min={String(countRange.min)}
-          max={String(countRange.max)}
+          min={String(activeCountRange.min)}
+          max={String(activeCountRange.max)}
           extra={
             showSuperfund ? (
               <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
@@ -597,20 +772,25 @@ function EnviroScreenMap({
       title="CalEnviroScreen 4.0"
       subtitle="Environmental health percentile"
       headerRight={
-        <MapFilterButton>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Indicator</span>
-            <select
-              value={indicator}
-              onChange={(e) => onIndicatorChange(e.target.value as CESIndicator)}
-              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-            >
-              {CES_INDICATORS.map((ind) => (
-                <option key={ind.value} value={ind.value}>{ind.label}</option>
-              ))}
-            </select>
-          </label>
-        </MapFilterButton>
+        <div className="flex items-center gap-1.5">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[140px] truncate">
+            {indicatorLabel}
+          </span>
+          <MapFilterButton>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Indicator</span>
+              <select
+                value={indicator}
+                onChange={(e) => onIndicatorChange(e.target.value as CESIndicator)}
+                className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+              >
+                {CES_INDICATORS.map((ind) => (
+                  <option key={ind.value} value={ind.value}>{ind.label}</option>
+                ))}
+              </select>
+            </label>
+          </MapFilterButton>
+        </div>
       }
       legend={
         <GradientLegend
@@ -734,32 +914,44 @@ function HumanCancerMap({ showSuperfund, geoLevel }: { showSuperfund: boolean; g
         </>
       }
       headerRight={
-        <MapFilterButton>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Site</span>
-            <select
-              value={selectedSite}
-              onChange={e => setSelectedSite(e.target.value as HumanCancerSite)}
-              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-            >
-              {HUMAN_CANCER_SITES.map(s => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
-            <select
-              value={effectiveSex}
-              onChange={e => setSelectedSex(e.target.value as HumanCancerSex)}
-              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-            >
-              {availableSexOptions.map(s => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-          </label>
-        </MapFilterButton>
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {selectedSite !== 'All Cancer Sites' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
+              {selectedSite}
+            </span>
+          )}
+          {effectiveSex !== 'Both Sexes' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
+              {effectiveSex}
+            </span>
+          )}
+          <MapFilterButton>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Cancer Site</span>
+              <select
+                value={selectedSite}
+                onChange={e => setSelectedSite(e.target.value as HumanCancerSite)}
+                className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+              >
+                {HUMAN_CANCER_SITES.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Sex</span>
+              <select
+                value={effectiveSex}
+                onChange={e => setSelectedSex(e.target.value as HumanCancerSex)}
+                className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+              >
+                {availableSexOptions.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </label>
+          </MapFilterButton>
+        </div>
       }
       legend={
         <GradientLegend
@@ -775,10 +967,15 @@ function HumanCancerMap({ showSuperfund, geoLevel }: { showSuperfund: boolean; g
 }
 
 // ---------------------------------------------------------------------------
-// Pesticide Use map (with class dropdown)
+// Pesticide Use map (with class and individual pesticide filters)
 // ---------------------------------------------------------------------------
 
-function getPesticideValue(data: CountyPesticideData, cls: PesticideClass | 'all'): number {
+function getPesticideValue(
+  data: CountyPesticideData,
+  cls: PesticideClass | 'all',
+  chemical?: string | null,
+): number {
+  if (chemical) return PESTICIDE_BY_CHEMICAL[chemical]?.[data.county] ?? 0;
   if (cls === 'all') return data.lbs_per_sq_mile;
   return data.by_class[cls];
 }
@@ -789,21 +986,39 @@ function formatLbs(n: number): string {
   return String(n);
 }
 
+const ALL_CHEMICAL_NAMES = Object.keys(PESTICIDE_BY_CHEMICAL).sort();
+
 function PesticideMap({
   showSuperfund,
   geoLevel,
   selectedClass,
   onClassChange,
+  selectedChemical,
+  onChemicalChange,
 }: {
   showSuperfund: boolean;
   geoLevel: GeoLevel;
   selectedClass: PesticideClass | 'all';
   onClassChange: (cls: PesticideClass | 'all') => void;
+  selectedChemical: string | null;
+  onChemicalChange: (chem: string | null) => void;
 }) {
+  const [filterMode, setFilterMode] = useState<'class' | 'chemical'>(
+    selectedChemical ? 'chemical' : 'class',
+  );
+  const [chemSearch, setChemSearch] = useState('');
+
+  const activeChemical = filterMode === 'chemical' ? selectedChemical : null;
+
   const valueRange = useMemo(() => {
-    const vals = MOCK_PESTICIDE_DATA.map(d => getPesticideValue(d, selectedClass));
+    if (activeChemical) {
+      const vals = Object.values(PESTICIDE_BY_CHEMICAL[activeChemical] ?? {});
+      if (vals.length === 0) return { min: 0, max: 1 };
+      return { min: 0, max: Math.max(...vals) };
+    }
+    const vals = PESTICIDE_DATA.map(d => getPesticideValue(d, selectedClass));
     return { min: Math.min(...vals), max: Math.max(...vals) };
-  }, [selectedClass]);
+  }, [selectedClass, activeChemical]);
 
   const colorScale = useMemo(
     () =>
@@ -815,9 +1030,17 @@ function PesticideMap({
 
   const [hovered, setHovered] = useState<string | null>(null);
 
-  const classLabel = selectedClass === 'all'
-    ? 'All Classes'
-    : PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass;
+  const filterLabel = activeChemical
+    ?? (selectedClass !== 'all' ? (PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass) : null);
+
+  const tooltipFilterLabel = activeChemical
+    ?? (selectedClass === 'all' ? 'All Categories' : (PESTICIDE_CLASSES.find(c => c.value === selectedClass)?.label ?? selectedClass));
+
+  const searchResults = useMemo(() => {
+    if (!chemSearch.trim()) return [];
+    const q = chemSearch.toLowerCase();
+    return ALL_CHEMICAL_NAMES.filter(c => c.toLowerCase().includes(q)).slice(0, 8);
+  }, [chemSearch]);
 
   const geoLayer = useMemo(
     () =>
@@ -832,15 +1055,15 @@ function PesticideMap({
           if (key && key === hovered) return [96, 165, 250, 220] as [number, number, number, number];
           const county = countyFromFeature(feature.properties as Record<string, unknown>, geoLevel);
           const data = PESTICIDE_BY_COUNTY[county];
-          return data ? hexToRgba(colorScale(getPesticideValue(data, selectedClass))) : NO_DATA_COLOR;
+          return data ? hexToRgba(colorScale(getPesticideValue(data, selectedClass, activeChemical))) : NO_DATA_COLOR;
         },
         getLineColor: geoLevel !== 'county' ? [255, 255, 255, 100] : [255, 255, 255, 255],
         lineWidthMinPixels: geoLevel !== 'county' ? 0.3 : 0.5,
         onHover: ({ object }) =>
           setHovered(object ? hoverKeyFromFeature(object.properties as Record<string, unknown>, geoLevel) : null),
-        updateTriggers: { getFillColor: [colorScale, hovered, geoLevel, selectedClass], data: [geoLevel] },
+        updateTriggers: { getFillColor: [colorScale, hovered, geoLevel, selectedClass, activeChemical], data: [geoLevel] },
       }),
-    [colorScale, hovered, geoLevel, selectedClass],
+    [colorScale, hovered, geoLevel, selectedClass, activeChemical],
   );
 
   const superfundLayer = useSuperfundLayer(showSuperfund);
@@ -862,14 +1085,15 @@ function PesticideMap({
           style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
         };
       }
-      const val = getPesticideValue(data, selectedClass);
-      // Top 3 active ingredients
-      const ingredientsHtml = data.top_ingredients
-        .slice(0, 3)
-        .map(ing => `<br/><span style="color:#6b7280">${ing.name}: ${formatLbs(ing.lbs_applied)} lbs</span>`)
-        .join('');
+      const val = getPesticideValue(data, selectedClass, activeChemical);
+      const ingredientsHtml = activeChemical
+        ? ''
+        : data.top_ingredients
+            .slice(0, 3)
+            .map(ing => `<br/><span style="color:#6b7280">${ing.name}: ${formatLbs(ing.lbs_applied)} lbs</span>`)
+            .join('');
       return {
-        html: `${header}<br/>${val.toLocaleString()} lbs/sq mi · ${classLabel}${ingredientsHtml}`,
+        html: `${header}<br/>${val.toLocaleString()} lbs/sq mi · ${tooltipFilterLabel}${ingredientsHtml}`,
         style: { backgroundColor: 'white', color: '#1f2937', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' },
       };
     }
@@ -883,6 +1107,13 @@ function PesticideMap({
     return null;
   };
 
+  const tabCls = (active: boolean) =>
+    `flex-1 text-[10px] font-medium py-0.5 rounded transition-colors ${
+      active
+        ? 'bg-[var(--color-teal)] text-white'
+        : 'text-[var(--color-text-secondary)] hover:bg-gray-100'
+    }`;
+
   return (
     <DeckMap
       layers={layers}
@@ -890,26 +1121,94 @@ function PesticideMap({
       title="Pesticide Use"
       subtitle={
         <>
-          Avg annual lbs active ingredient / sq mi (2015–2019) &middot;{' '}
+          Avg annual lbs active ingredient / sq mi (2016–2023) &middot;{' '}
           <a href="https://trackingcalifornia.org/data-and-tools/pesticide-mapping-tool" target="_blank" rel="noopener noreferrer" className="text-[var(--color-teal)] underline hover:text-[var(--color-teal-dark)]">Source</a>
         </>
       }
       headerRight={
-        <MapFilterButton>
-          <label className="block">
-            <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Pesticide Class</span>
-            <select
-              value={selectedClass}
-              onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
-              className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
-            >
-              <option value="all">All Classes</option>
-              {PESTICIDE_CLASSES.map(cls => (
-                <option key={cls.value} value={cls.value}>{cls.label}</option>
-              ))}
-            </select>
-          </label>
-        </MapFilterButton>
+        <div className="flex items-center gap-1.5">
+          {filterLabel && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[120px] truncate">
+              {filterLabel}
+            </span>
+          )}
+          <MapFilterButton>
+            {/* Mode toggle */}
+            <div className="flex gap-0.5 mb-2 p-0.5 bg-gray-100 rounded">
+              <button className={tabCls(filterMode === 'class')} onClick={() => { setFilterMode('class'); onChemicalChange(null); setChemSearch(''); }}>
+                By Category
+              </button>
+              <button className={tabCls(filterMode === 'chemical')} onClick={() => setFilterMode('chemical')}>
+                By Pesticide
+              </button>
+            </div>
+
+            {filterMode === 'class' && (
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Health Category</span>
+                <select
+                  value={selectedClass}
+                  onChange={(e) => onClassChange(e.target.value as PesticideClass | 'all')}
+                  className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                >
+                  <option value="all">All Categories</option>
+                  {PESTICIDE_CLASSES.map(cls => (
+                    <option key={cls.value} value={cls.value}>{cls.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {filterMode === 'chemical' && (
+              <div className="space-y-2">
+                <div>
+                  <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Search</span>
+                  <input
+                    type="text"
+                    value={chemSearch}
+                    onChange={(e) => setChemSearch(e.target.value)}
+                    placeholder="Search all pesticides…"
+                    className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                  />
+                  {chemSearch && searchResults.length > 0 && (
+                    <div className="mt-1 border border-gray-200 rounded-md overflow-hidden">
+                      {searchResults.map(c => (
+                        <button
+                          key={c}
+                          onClick={() => { onChemicalChange(c); setChemSearch(''); }}
+                          className="w-full text-left px-2 py-1 text-xs hover:bg-teal-50 hover:text-teal-700 transition-colors border-b border-gray-100 last:border-b-0"
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {chemSearch && searchResults.length === 0 && (
+                    <p className="mt-1 text-[10px] text-gray-400">No matches</p>
+                  )}
+                </div>
+                <div>
+                  <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Featured</span>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {TRACKING_CA_PESTICIDES.map(p => (
+                      <button
+                        key={p}
+                        onClick={() => { onChemicalChange(selectedChemical === p ? null : p); setChemSearch(''); }}
+                        className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                          selectedChemical === p
+                            ? 'bg-[var(--color-teal)] text-white border-[var(--color-teal)]'
+                            : 'bg-white text-[var(--color-text-secondary)] border-gray-300 hover:border-[var(--color-teal)] hover:text-[var(--color-teal)]'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </MapFilterButton>
+        </div>
       }
       legend={
         <GradientLegend
@@ -932,11 +1231,15 @@ function CorrelationScatterPlot({
   cesData,
   xVar,
   yVar,
+  humanCancerSite = 'All Cancer Sites',
+  humanCancerSex = 'Both Sexes',
 }: {
   countyData: CountyData[];
   cesData: CalEnviroScreenData[];
   xVar: ScatterVar;
   yVar: ScatterVar;
+  humanCancerSite?: HumanCancerSite;
+  humanCancerSex?: HumanCancerSex;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -951,24 +1254,29 @@ function CorrelationScatterPlot({
     [cesData],
   );
 
+  const humanRateMap = useMemo(
+    () => getHumanCancerRateMap(humanCancerSite, humanCancerSex),
+    [humanCancerSite, humanCancerSex],
+  );
+
   // Build a set of all county names across data sources
   const allCounties = useMemo(() => {
     const names = new Set<string>();
     countyData.forEach(c => names.add(c.county));
     cesData.forEach(d => names.add(d.county_name));
-    MOCK_PESTICIDE_DATA.forEach(d => names.add(d.county));
+    PESTICIDE_DATA.forEach(d => names.add(d.county));
     HUMAN_CANCER_RATES.forEach(d => names.add(d.county));
     return Array.from(names);
   }, [countyData, cesData]);
 
   const points = useMemo(() => {
     return allCounties.flatMap(county => {
-      const x = getVarValue(county, xVar, countyDataMap, cesMap);
-      const y = getVarValue(county, yVar, countyDataMap, cesMap);
+      const x = getVarValue(county, xVar, countyDataMap, cesMap, humanRateMap);
+      const y = getVarValue(county, yVar, countyDataMap, cesMap, humanRateMap);
       if (x === null || y === null) return [];
       return [{ county, x, y }];
     });
-  }, [allCounties, xVar, yVar, countyDataMap, cesMap]);
+  }, [allCounties, xVar, yVar, countyDataMap, cesMap, humanRateMap]);
 
   const margin = { top: 20, right: 20, bottom: 50, left: 60 };
   const width = 520;
@@ -978,12 +1286,16 @@ function CorrelationScatterPlot({
 
   const xScale = useMemo(() => {
     if (points.length === 0) return scaleLinear().domain([0, 1]).range([0, innerW]);
-    return scaleLinear().domain([0, Math.max(...points.map(p => p.x)) * 1.05]).range([0, innerW]).nice();
+    const xMin = Math.min(0, ...points.map(p => p.x));
+    const xMax = Math.max(...points.map(p => p.x));
+    return scaleLinear().domain([xMin < 0 ? xMin * 1.05 : xMin, xMax * 1.05]).range([0, innerW]).nice();
   }, [points, innerW]);
 
   const yScale = useMemo(() => {
     if (points.length === 0) return scaleLinear().domain([0, 1]).range([innerH, 0]);
-    return scaleLinear().domain([0, Math.max(...points.map(p => p.y)) * 1.1]).range([innerH, 0]).nice();
+    const yMin = Math.min(0, ...points.map(p => p.y));
+    const yMax = Math.max(...points.map(p => p.y));
+    return scaleLinear().domain([yMin < 0 ? yMin * 1.1 : yMin, yMax * 1.1]).range([innerH, 0]).nice();
   }, [points, innerH]);
 
   const trendLine = useMemo(() => {
@@ -1057,15 +1369,120 @@ function CorrelationScatterPlot({
 // Pesticide Trend Line Chart (2015–2019)
 // ---------------------------------------------------------------------------
 
-const TREND_YEARS = [2015, 2016, 2017, 2018, 2019];
+const TREND_YEARS = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023];
 const TREND_COLORS = ['#1A6B77', '#E87722', '#9C27B0', '#EF4444', '#2563EB', '#059669', '#D97706', '#6366F1'];
+
+// ---------------------------------------------------------------------------
+// Searchable multi-select dropdown shared by the cancer-type trend chart and
+// the pesticide-county trend chart: a checkbox list filtered by a search box,
+// with an optional "Uncheck all" action.
+// ---------------------------------------------------------------------------
+
+interface SearchableDropdownOption {
+  value: string;
+  label: string;
+  meta?: string;
+}
+
+function SearchableMultiSelectDropdown({
+  buttonLabel,
+  options,
+  selected,
+  onToggle,
+  onClearAll,
+  onSelectAll,
+  disabled,
+  widthClass = 'w-56',
+}: {
+  buttonLabel: string;
+  options: SearchableDropdownOption[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  onClearAll?: () => void;
+  onSelectAll?: () => void;
+  disabled?: boolean;
+  widthClass?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.label.toLowerCase().includes(q));
+  }, [options, search]);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        className="text-xs border border-gray-300 rounded-md px-3 py-1.5 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {buttonLabel} ({selected.length})
+        <svg className="inline-block w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className={`absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 ${widthClass} max-h-80 flex flex-col`}>
+          <div className="px-2 pb-1.5 pt-1 border-b border-gray-100 flex items-center gap-1.5 flex-shrink-0">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              autoFocus
+              className="flex-1 min-w-0 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-teal)]"
+            />
+            {selected.length === 0
+              ? onSelectAll && (
+                  <button
+                    onClick={onSelectAll}
+                    className="text-[10px] font-medium text-[var(--color-teal)] hover:underline whitespace-nowrap"
+                  >
+                    Check all
+                  </button>
+                )
+              : onClearAll && (
+                  <button
+                    onClick={onClearAll}
+                    className="text-[10px] font-medium text-[var(--color-teal)] hover:underline whitespace-nowrap"
+                  >
+                    Uncheck all
+                  </button>
+                )}
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-[var(--color-text-secondary)]">No matches.</p>
+            ) : (
+              filtered.map((o) => (
+                <label key={o.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(o.value)}
+                    onChange={() => onToggle(o.value)}
+                    className="rounded border-gray-300 text-[var(--color-teal)] focus:ring-[var(--color-teal)]"
+                  />
+                  <span className="text-[var(--color-text-primary)]">{o.label}</span>
+                  {o.meta && <span className="text-[var(--color-text-secondary)] ml-auto">{o.meta}</span>}
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Yearly cancer trend chart (US-11 / US-NTH-2)
 //
-// One line per top-5 cancer type plus an aggregated "Other" line; a
-// dropdown lets the user toggle individual lines on/off via the legend.
-// Hand-built SVG to match the visual style of the surrounding charts.
+// One line per cancer type; a searchable dropdown lets the user toggle
+// individual lines on/off, or clear the selection entirely. Hand-built SVG
+// to match the visual style of the surrounding charts.
 // ---------------------------------------------------------------------------
 
 function CancerTrendChart() {
@@ -1074,12 +1491,20 @@ function CancerTrendChart() {
   const allNames = useMemo(() => series.map((s) => s.name), [series]);
   // null = "use the default (show everything)". When the user toggles a line
   // we record their explicit choice as an array. This avoids syncing default
-  // state from data via an effect or a ref-during-render.
-  const [userSelection, setUserSelection] = useState<string[] | null>(null);
+  // state from data via an effect or a ref-during-render. Persisted so the
+  // selection survives switching tabs and refreshing within the session.
+  const [userSelection, setUserSelection] = useSessionStorageState<string[] | null>(
+    'analysisView.cancerTypeSelection',
+    null,
+  );
   const [hovered, setHovered] = useState<string | null>(null);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
 
-  const selectedNames = userSelection ?? allNames;
+  // Filter out any persisted names no longer present in the data (e.g. a
+  // cancer type renamed/removed since the selection was saved).
+  const selectedNames = useMemo(() => {
+    const base = userSelection ?? allNames;
+    return base.filter((n) => allNames.includes(n));
+  }, [userSelection, allNames]);
 
   const margin = { top: 20, right: 140, bottom: 40, left: 60 };
   const width = 600;
@@ -1092,13 +1517,14 @@ function CancerTrendChart() {
     [series, selectedNames],
   );
 
-  const years = useMemo(() => yearRange(series), [series]);
+  const years = useMemo(() => yearRange(visible), [visible]);
 
   const yMax = useMemo(() => {
     let max = 0;
     for (const s of visible) {
       for (const p of s.data) {
-        if (p.count > max) max = p.count;
+        const v = p.pccp ?? p.count;
+        if (v > max) max = v;
       }
     }
     return max || 1;
@@ -1148,50 +1574,23 @@ function CancerTrendChart() {
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-            Cancer Cases by Year
+            Cancer PCCP by Year
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Top 5 cancer types plus "Other" · annual case counts
+            All cancer types · PCCP per 100 tested per year (numerator shown on hover)
           </p>
         </div>
-        <div className="relative">
-          <button
-            onClick={() => setDropdownOpen((v) => !v)}
-            disabled={loading || allNames.length === 0}
-            className="text-xs border border-gray-300 rounded-md px-3 py-1.5 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Cancer types ({selectedNames.length})
-            <svg className="inline-block w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-          {dropdownOpen && (
-            <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-56 max-h-72 overflow-y-auto">
-              {allNames.map((name) => (
-                <label
-                  key={name}
-                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedNames.includes(name)}
-                    onChange={() => toggleName(name)}
-                    className="rounded border-gray-300 text-[var(--color-teal)] focus:ring-[var(--color-teal)]"
-                  />
-                  <span
-                    className={`text-[var(--color-text-primary)] ${
-                      name === OTHER_SERIES_NAME ? 'italic' : ''
-                    }`}
-                  >
-                    {name}
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <SearchableMultiSelectDropdown
+          buttonLabel="Cancer types"
+          options={allNames.map((name) => ({ value: name, label: name }))}
+          selected={selectedNames}
+          onToggle={toggleName}
+          onClearAll={() => setUserSelection([])}
+          onSelectAll={() => setUserSelection(allNames)}
+          disabled={loading || allNames.length === 0}
+        />
       </div>
-      <div className="p-4">
+      <div className="p-4 min-h-[340px]">
         {loading ? (
           <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">
             Loading trend data…
@@ -1245,15 +1644,22 @@ function CancerTrendChart() {
                   const colorIndex = allNames.indexOf(s.name);
                   const color = TREND_COLORS[colorIndex % TREND_COLORS.length];
                   const isHov = hovered === s.name;
+                  const displayValue = (yr: number) => pccpForYear(s, yr) ?? countForYear(s, yr);
                   const pathD = years
                     .map((yr, j) => {
                       const x = xScale(yr);
-                      const y = yScale(countForYear(s, yr));
+                      const y = yScale(displayValue(yr));
                       return `${j === 0 ? 'M' : 'L'}${x},${y}`;
                     })
                     .join(' ');
                   const lastYear = years[years.length - 1];
-                  const lastCount = countForYear(s, lastYear);
+                  const lastCount = displayValue(lastYear);
+                  const lastPccp = pccpForYear(s, lastYear);
+                  const lastNumerator = countForYear(s, lastYear);
+                  const tooltipText =
+                    lastPccp != null
+                      ? `${s.name}: ${lastPccp.toFixed(1)}% (n=${lastNumerator})`
+                      : `${s.name}: ${lastNumerator} cases`;
                   return (
                     <g
                       key={s.name}
@@ -1266,14 +1672,13 @@ function CancerTrendChart() {
                         fill="none"
                         stroke={color}
                         strokeWidth={isHov ? 3 : 1.5}
-                        strokeDasharray={s.name === OTHER_SERIES_NAME ? '4 3' : undefined}
                         opacity={hovered && !isHov ? 0.3 : 1}
                       />
                       {years.map((yr) => (
                         <circle
                           key={yr}
                           cx={xScale(yr)}
-                          cy={yScale(countForYear(s, yr))}
+                          cy={yScale(displayValue(yr))}
                           r={isHov ? 5 : 3}
                           fill={color}
                           opacity={hovered && !isHov ? 0.3 : 1}
@@ -1284,7 +1689,7 @@ function CancerTrendChart() {
                           <rect
                             x={xScale(lastYear) + 8}
                             y={yScale(lastCount) - 18}
-                            width={140}
+                            width={tooltipText.length * 5.2 + 16}
                             height={24}
                             rx={4}
                             fill="white"
@@ -1299,7 +1704,7 @@ function CancerTrendChart() {
                             fontWeight="600"
                             fill="#1F2937"
                           >
-                            {s.name}: {lastCount}
+                            {tooltipText}
                           </text>
                         </g>
                       )}
@@ -1338,7 +1743,7 @@ function CancerTrendChart() {
                   fontSize={10}
                   fill="#374151"
                 >
-                  Cases
+                  PCCP per 100
                 </text>
 
                 {/* Legend on the right */}
@@ -1356,14 +1761,12 @@ function CancerTrendChart() {
                         y2={0}
                         stroke={TREND_COLORS[colorIndex % TREND_COLORS.length]}
                         strokeWidth={2}
-                        strokeDasharray={s.name === OTHER_SERIES_NAME ? '3 2' : undefined}
                       />
                       <text
                         x={18}
                         dominantBaseline="middle"
                         fontSize={9}
                         fill="#374151"
-                        fontStyle={s.name === OTHER_SERIES_NAME ? 'italic' : undefined}
                       >
                         {s.name}
                       </text>
@@ -1380,14 +1783,23 @@ function CancerTrendChart() {
 }
 
 function PesticideTrendChart() {
-  // Default: top 5 counties by lbs/sq mi
   const sortedCounties = useMemo(
-    () => [...MOCK_PESTICIDE_DATA].sort((a, b) => b.lbs_per_sq_mile - a.lbs_per_sq_mile).map(d => d.county),
+    () => [...PESTICIDE_DATA].sort((a, b) => b.lbs_per_sq_mile - a.lbs_per_sq_mile).map(d => d.county),
     [],
   );
-  const [selectedCounties, setSelectedCounties] = useState<string[]>(() => sortedCounties.slice(0, 5));
+  // Persisted so the selection survives switching tabs and refreshing
+  // within the session.
+  const [rawSelectedCounties, setSelectedCounties] = useSessionStorageState<string[]>(
+    'analysisView.pesticideCountySelection',
+    sortedCounties,
+  );
   const [hovered, setHovered] = useState<string | null>(null);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // Filter out any persisted counties no longer present in the data.
+  const selectedCounties = useMemo(
+    () => rawSelectedCounties.filter((c) => sortedCounties.includes(c)),
+    [rawSelectedCounties, sortedCounties],
+  );
 
   const toggleCounty = (county: string) => {
     setSelectedCounties(prev =>
@@ -1402,7 +1814,7 @@ function PesticideTrendChart() {
   const innerH = height - margin.top - margin.bottom;
 
   const selectedData = useMemo(
-    () => MOCK_PESTICIDE_DATA.filter(d => selectedCounties.includes(d.county)),
+    () => PESTICIDE_DATA.filter(d => selectedCounties.includes(d.county)),
     [selectedCounties],
   );
 
@@ -1410,7 +1822,7 @@ function PesticideTrendChart() {
     let max = 0;
     for (const d of selectedData) {
       for (const yr of TREND_YEARS) {
-        const v = d.by_year[yr];
+        const v = d.by_year[yr]?.total ?? 0;
         if (v > max) max = v;
       }
     }
@@ -1418,7 +1830,7 @@ function PesticideTrendChart() {
   }, [selectedData]);
 
   const xScale = useMemo(
-    () => scaleLinear().domain([2015, 2019]).range([0, innerW]),
+    () => scaleLinear().domain([2016, 2023]).range([0, innerW]),
     [innerW],
   );
 
@@ -1434,37 +1846,25 @@ function PesticideTrendChart() {
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-            Pesticide Use Trends (2015–2019)
+            Pesticide Use Trends (2016–2023)
           </h3>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Annual lbs/sq mi</p>
         </div>
-        <div className="relative">
-          <button
-            onClick={() => setDropdownOpen(v => !v)}
-            className="text-xs border border-gray-300 rounded-md px-3 py-1.5 bg-white text-[var(--color-text-primary)] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
-          >
-            Counties ({selectedCounties.length})
-            <svg className="inline-block w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-          </button>
-          {dropdownOpen && (
-            <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-48 max-h-60 overflow-y-auto">
-              {sortedCounties.map(county => (
-                <label key={county} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs">
-                  <input
-                    type="checkbox"
-                    checked={selectedCounties.includes(county)}
-                    onChange={() => toggleCounty(county)}
-                    className="rounded border-gray-300 text-[var(--color-teal)] focus:ring-[var(--color-teal)]"
-                  />
-                  <span className="text-[var(--color-text-primary)]">{county}</span>
-                  <span className="text-[var(--color-text-secondary)] ml-auto">{PESTICIDE_BY_COUNTY[county].lbs_per_sq_mile}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <SearchableMultiSelectDropdown
+          buttonLabel="Counties"
+          options={sortedCounties.map((county) => ({
+            value: county,
+            label: county,
+            meta: String(PESTICIDE_BY_COUNTY[county].lbs_per_sq_mile),
+          }))}
+          selected={selectedCounties}
+          onToggle={toggleCounty}
+          onClearAll={() => setSelectedCounties([])}
+          onSelectAll={() => setSelectedCounties(sortedCounties)}
+          widthClass="w-48"
+        />
       </div>
-      <div className="p-4">
+      <div className="p-4 min-h-[340px]">
         {selectedData.length === 0 ? (
           <div className="flex items-center justify-center h-40 text-sm text-[var(--color-text-secondary)]">Select counties to view trends.</div>
         ) : (
@@ -1481,20 +1881,20 @@ function PesticideTrendChart() {
                   const isHov = hovered === d.county;
                   const pathD = TREND_YEARS.map((yr, j) => {
                     const x = xScale(yr);
-                    const y = yScale(d.by_year[yr]);
+                    const y = yScale(d.by_year[yr]?.total ?? 0);
                     return `${j === 0 ? 'M' : 'L'}${x},${y}`;
                   }).join(' ');
                   return (
                     <g key={d.county} onMouseEnter={() => setHovered(d.county)} onMouseLeave={() => setHovered(null)} style={{ cursor: 'pointer' }}>
                       <path d={pathD} fill="none" stroke={color} strokeWidth={isHov ? 3 : 1.5} opacity={hovered && !isHov ? 0.3 : 1} />
                       {TREND_YEARS.map(yr => (
-                        <circle key={yr} cx={xScale(yr)} cy={yScale(d.by_year[yr])} r={isHov ? 5 : 3} fill={color} opacity={hovered && !isHov ? 0.3 : 1} />
+                        <circle key={yr} cx={xScale(yr)} cy={yScale(d.by_year[yr]?.total ?? 0)} r={isHov ? 5 : 3} fill={color} opacity={hovered && !isHov ? 0.3 : 1} />
                       ))}
-                      {/* Hover tooltip at 2019 point */}
+                      {/* Hover tooltip at 2023 point */}
                       {isHov && (
                         <g>
-                          <rect x={xScale(2019) + 8} y={yScale(d.by_year[2019]) - 18} width={100} height={24} rx={4} fill="white" stroke="#E5E7EB" strokeWidth={1} filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))" />
-                          <text x={xScale(2019) + 14} y={yScale(d.by_year[2019]) - 2} fontSize={10} fontWeight="600" fill="#1F2937">{d.county}: {d.by_year[2019]}</text>
+                          <rect x={xScale(2023) + 8} y={yScale(d.by_year[2023]?.total ?? 0) - 18} width={100} height={24} rx={4} fill="white" stroke="#E5E7EB" strokeWidth={1} filter="drop-shadow(0 1px 3px rgba(0,0,0,0.15))" />
+                          <text x={xScale(2023) + 14} y={yScale(d.by_year[2023]?.total ?? 0) - 2} fontSize={10} fontWeight="600" fill="#1F2937">{d.county}: {d.by_year[2023]?.total}</text>
                         </g>
                       )}
                     </g>
@@ -1589,24 +1989,76 @@ const MAP_OPTIONS: { id: MapId; label: string }[] = [
 ];
 
 export function AnalysisView() {
-  // Unfiltered VMTH data for scatter plot (CancerMap owns its own filters now)
-  const { countyData: unfilteredCountyData } = useFilteredData({
-    rateType: 'incidence',
+  // Persisted so the Analysis tab's configuration survives switching tabs
+  // and refreshing within the session, instead of silently resetting every
+  // time the tab is revisited.
+  const [scatterDogCancerType, setScatterDogCancerType] = useSessionStorageState<string>(
+    'analysisView.scatterDogCancerType',
+    'All Types',
+  );
+  const [scatterHumanSite, setScatterHumanSite] = useSessionStorageState<HumanCancerSite>(
+    'analysisView.scatterHumanSite',
+    'All Cancer Sites',
+  );
+  const [scatterHumanSex, setScatterHumanSex] = useSessionStorageState<HumanCancerSex>(
+    'analysisView.scatterHumanSex',
+    'Both Sexes',
+  );
+
+  // VMTH data for scatter plot, filtered by dog cancer type
+  const { countyData: scatterCountyData } = useFilteredData({
+    rateType: 'pccp',
     sex: 'all',
-    cancerType: 'All Types',
+    ageGroup: 'all',
+    cancerType: scatterDogCancerType,
     breed: 'All Breeds',
   });
 
-  const [selectedIndicator, setSelectedIndicator] = useState<CESIndicator>('pesticides');
-  const [mapCount, setMapCount] = useState<MapCount>(4);
-  const [twoMapSelection, setTwoMapSelection] = useState<[MapId, MapId]>(['vmth', 'enviro']);
-  const [threeMapSelection, setThreeMapSelection] = useState<[MapId, MapId, MapId]>(['vmth', 'enviro', 'human']);
-  const [showSuperfund, setShowSuperfund] = useState(false);
-  const [geoLevel, setGeoLevel] = useState<GeoLevel>('county');
-  const [scatterXVar, setScatterXVar] = useState<ScatterVar>('pesticides');
-  const [scatterYVar, setScatterYVar] = useState<ScatterVar>('cancer_cases');
-  const [autoSync, setAutoSync] = useState(true);
-  const [pesticideClass, setPesticideClass] = useState<PesticideClass | 'all'>('all');
+  // Auto-correct human sex when site changes to sex-specific cancer
+  const scatterAvailableSexOptions = useMemo(() => {
+    if (scatterHumanSite === 'Prostate') return HUMAN_CANCER_SEX_OPTIONS.filter(o => o.value === 'Male');
+    if (['Breast (Female)', 'Cervix', 'Ovary', 'Uterus (Corpus & Uterus, NOS)'].includes(scatterHumanSite))
+      return HUMAN_CANCER_SEX_OPTIONS.filter(o => o.value === 'Female');
+    return HUMAN_CANCER_SEX_OPTIONS;
+  }, [scatterHumanSite]);
+
+  const scatterEffectiveSex = useMemo<HumanCancerSex>(() => {
+    if (scatterAvailableSexOptions.some(o => o.value === scatterHumanSex)) return scatterHumanSex;
+    return scatterAvailableSexOptions[0].value;
+  }, [scatterAvailableSexOptions, scatterHumanSex]);
+
+  const [selectedIndicator, setSelectedIndicator] = useSessionStorageState<CESIndicator>(
+    'analysisView.selectedIndicator',
+    'ces_score',
+  );
+  const [mapCount, setMapCount] = useSessionStorageState<MapCount>('analysisView.mapCount', 4);
+  const [twoMapSelection, setTwoMapSelection] = useSessionStorageState<[MapId, MapId]>(
+    'analysisView.twoMapSelection',
+    ['vmth', 'enviro'],
+  );
+  const [threeMapSelection, setThreeMapSelection] = useSessionStorageState<[MapId, MapId, MapId]>(
+    'analysisView.threeMapSelection',
+    ['vmth', 'enviro', 'human'],
+  );
+  const [showSuperfund, setShowSuperfund] = useSessionStorageState('analysisView.showSuperfund', false);
+  const [geoLevel, setGeoLevel] = useSessionStorageState<GeoLevel>('analysisView.geoLevel', 'county');
+  const [scatterXVar, setScatterXVar] = useSessionStorageState<ScatterVar>(
+    'analysisView.scatterXVar',
+    'pesticide_lbs',
+  );
+  const [scatterYVar, setScatterYVar] = useSessionStorageState<ScatterVar>(
+    'analysisView.scatterYVar',
+    'cancer_cases',
+  );
+  const [autoSync, setAutoSync] = useSessionStorageState('analysisView.autoSync', true);
+  const [pesticideClass, setPesticideClass] = useSessionStorageState<PesticideClass | 'all'>(
+    'analysisView.pesticideClass',
+    'all',
+  );
+  const [pesticideChemical, setPesticideChemical] = useSessionStorageState<string | null>(
+    'analysisView.pesticideChemical',
+    null,
+  );
 
   const { data: cesData } = useCalEnviroScreenData();
 
@@ -1643,7 +2095,7 @@ export function AnalysisView() {
       case 'vmth':    return <CancerMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
       case 'enviro':  return <EnviroScreenMap key={id} data={cesData} indicator={selectedIndicator} showSuperfund={showSuperfund} geoLevel={geoLevel} onIndicatorChange={handleIndicatorChange} />;
       case 'human':   return <HumanCancerMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} />;
-      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} selectedClass={pesticideClass} onClassChange={setPesticideClass} />;
+      case 'pesticide': return <PesticideMap key={id} showSuperfund={showSuperfund} geoLevel={geoLevel} selectedClass={pesticideClass} onClassChange={setPesticideClass} selectedChemical={pesticideChemical} onChemicalChange={setPesticideChemical} />;
     }
   };
 
@@ -1729,7 +2181,7 @@ export function AnalysisView() {
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Environmental Correlation</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">Social &amp; Environmental Correlation</h3>
             <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Pair-wise comparison by county</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -1743,10 +2195,65 @@ export function AnalysisView() {
               <span className={`w-2 h-2 rounded-full ${autoSync ? 'bg-teal-500' : 'bg-gray-400'}`} />
               Sync
             </button>
+            {/* Active filter chips */}
+            {scatterDogCancerType !== 'All Types' && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 max-w-[140px] truncate" title={scatterDogCancerType}>
+                Dog: {scatterDogCancerType}
+              </span>
+            )}
+            {scatterHumanSite !== 'All Cancer Sites' && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 max-w-[140px] truncate" title={scatterHumanSite}>
+                Human: {scatterHumanSite}
+              </span>
+            )}
+            {scatterEffectiveSex !== 'Both Sexes' && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200">
+                {scatterEffectiveSex}
+              </span>
+            )}
+            <MapFilterButton label="Cancer Type Filters">
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Dog Cancer Type</span>
+                <select
+                  value={scatterDogCancerType}
+                  onChange={e => setScatterDogCancerType(e.target.value)}
+                  className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                >
+                  {CANCER_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Human Cancer Site</span>
+                <select
+                  value={scatterHumanSite}
+                  onChange={e => setScatterHumanSite(e.target.value as HumanCancerSite)}
+                  className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                >
+                  {HUMAN_CANCER_SITES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Human Sex</span>
+                <select
+                  value={scatterEffectiveSex}
+                  onChange={e => setScatterHumanSex(e.target.value as HumanCancerSex)}
+                  className="mt-0.5 w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]"
+                >
+                  {scatterAvailableSexOptions.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </label>
+            </MapFilterButton>
           </div>
         </div>
         <div className="p-4">
-          <CorrelationScatterPlot countyData={unfilteredCountyData} cesData={cesData} xVar={scatterXVar} yVar={scatterYVar} />
+          <CorrelationScatterPlot
+            countyData={scatterCountyData}
+            cesData={cesData}
+            xVar={scatterXVar}
+            yVar={scatterYVar}
+            humanCancerSite={scatterHumanSite}
+            humanCancerSex={scatterEffectiveSex}
+          />
           <p className="text-xs text-[var(--color-text-secondary)] mt-3 text-center">
             Dashed line shows linear trend · Each dot is one county · Hover for details
           </p>

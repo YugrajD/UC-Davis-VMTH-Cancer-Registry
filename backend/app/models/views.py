@@ -14,6 +14,7 @@ mv_county_cancer = Table(
     Column("species_name", String),
     Column("sex", String),
     Column("year", Integer),
+    Column("age_group", String),
     Column("case_count", Integer),
 )
 
@@ -27,6 +28,7 @@ mv_yearly_trends = Table(
     Column("county_id", Integer),
     Column("county_name", String),
     Column("sex", String),
+    Column("age_group", String),
     Column("case_count", Integer),
     Column("deceased_count", Integer),
     Column("alive_count", Integer),

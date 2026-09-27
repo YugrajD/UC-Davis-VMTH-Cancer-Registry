@@ -1,19 +1,51 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ICD_LABELS, type IcdLabel } from '../../data/icdLabels';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  ApiError,
+  downloadAllDiagnosesCsv,
+  downloadAuditedDiagnosesCsv,
   fetchAllDiagnoses,
+  fetchDiagnosesCount,
   fetchDiagnosisDetail,
+  fetchDiagnosisUploaders,
+  fetchPendingCount,
   fetchPendingDiagnoses,
+  importSpotCheckCases,
   reviewDiagnosis,
   type DiagnosisDetail,
   type PendingDiagnosis,
   type ReviewActionKind,
 } from '../../api/client';
 
+function friendlyError(e: unknown, fallback: string): string {
+  if (e instanceof ApiError && e.status === 429) return 'Too many requests — please try again in a moment.';
+  return e instanceof Error ? e.message : fallback;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 type StatusFilter = 'pending' | 'confirmed' | 'corrected' | 'rejected' | 'all';
 const STATUS_FILTERS: StatusFilter[] = ['pending', 'confirmed', 'corrected', 'rejected', 'all'];
 
-const PAGE_SIZE = 50;
+type CancerGroupFilter = 'all' | 'cancer' | 'non_cancer' | 'unidentified';
+const CANCER_GROUP_FILTERS: { value: CancerGroupFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'cancer', label: 'Cancer' },
+  { value: 'non_cancer', label: 'Non-Cancer' },
+  { value: 'unidentified', label: 'Unidentified' },
+];
+
+const PAGE_SIZE = 15;
 
 function ConfidenceBar({ value }: { value: number | null }) {
   if (value === null) return <span className="text-xs text-gray-400">—</span>;
@@ -118,6 +150,67 @@ function DetailPanel({ detail, loading, onAction, busy }: DetailPanelProps) {
   return <DetailPanelBody key={detail.id} detail={detail} onAction={onAction} busy={busy} />;
 }
 
+function TermCombobox({
+  value,
+  onInput,
+  onSelect,
+}: {
+  value: string;
+  onInput: (term: string) => void;
+  onSelect: (label: IcdLabel) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q) return ICD_LABELS;
+    return ICD_LABELS.filter(l => l.term.toLowerCase().includes(q));
+  }, [value]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={value}
+        onChange={e => { onInput(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+        placeholder="Type to search ICD-O terms…"
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-gray-200 rounded shadow-lg max-h-80 overflow-y-auto">
+          {filtered.map((l, i) => (
+            <li
+              key={i}
+              onMouseDown={e => {
+                e.preventDefault();
+                onSelect(l);
+                setOpen(false);
+              }}
+              className="flex items-baseline justify-between gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-teal-50"
+            >
+              <span className="truncate">{l.term}</span>
+              <span className="shrink-0 text-xs text-gray-400 font-mono">{l.code}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface DetailPanelBodyProps {
   detail: DiagnosisDetail;
   onAction: DetailPanelProps['onAction'];
@@ -125,7 +218,7 @@ interface DetailPanelBodyProps {
 }
 
 function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
-  const [correctName, setCorrectName] = useState(detail.cancer_type_name);
+  const [correctName, setCorrectName] = useState(detail.predicted_term ?? detail.cancer_type_name);
   const [correctIcd, setCorrectIcd] = useState(detail.icd_o_code ?? '');
   const [notes, setNotes] = useState('');
 
@@ -137,10 +230,36 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
             {detail.cancer_type_name || 'Unknown'}
           </h3>
           <StatusPill status={detail.review_status} />
+          {detail.needs_spot_check && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-amber-100 text-amber-800 border-amber-200">
+              Flagged for spot check
+            </span>
+          )}
         </div>
         <p className="text-xs text-gray-500">
-          Patient {detail.patient_anon_id ?? '—'} · diagnosis #{detail.diagnosis_index ?? '?'} · ICD-O {detail.icd_o_code ?? '—'}
+          Patient {detail.patient_anon_id ?? '—'} · diagnosis #{detail.diagnosis_index ?? '?'} · Vet-ICD-O {detail.icd_o_code ?? '—'}
         </p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs bg-gray-50 border border-gray-100 rounded p-3">
+        <div>
+          <p className="text-gray-500 mb-0.5">Test request date</p>
+          <p className="font-medium tabular-nums">{detail.test_request_date ?? '—'}</p>
+        </div>
+        <div>
+          <p className="text-gray-500 mb-0.5">Sex</p>
+          <p className="font-medium">{detail.patient_sex ?? '—'}</p>
+        </div>
+        <div>
+          <p className="text-gray-500 mb-0.5">Age</p>
+          <p className="font-medium tabular-nums">
+            {detail.patient_age !== null ? `${detail.patient_age} yr` : '—'}
+          </p>
+        </div>
+        <div>
+          <p className="text-gray-500 mb-0.5">Breed</p>
+          <p className="font-medium break-words">{detail.patient_breed ?? '—'}</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4 text-xs">
@@ -162,10 +281,27 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
 
       <SourceText text={detail.original_text} />
 
-      {detail.predicted_term && (
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Predicted term</p>
-          <p className="text-sm">{detail.predicted_term}</p>
+      <div>
+        <p className="text-xs text-gray-500 mb-1">Diagnosis</p>
+        <p className="text-sm text-[var(--color-text-primary)] break-words">
+          {detail.source_diagnosis?.trim() || '—'}
+        </p>
+      </div>
+
+      {(detail.predicted_term || detail.icd_o_code) && (
+        <div className="grid grid-cols-2 gap-4 text-xs">
+          {detail.predicted_term && (
+            <div>
+              <p className="text-gray-500 mb-1">Predicted cancer type</p>
+              <p className="text-sm">{detail.predicted_term}</p>
+            </div>
+          )}
+          {detail.icd_o_code && (
+            <div>
+              <p className="text-gray-500 mb-1">Predicted Vet-ICD-O code</p>
+              <p className="text-sm font-mono">{detail.icd_o_code}</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -173,7 +309,7 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
         <div className="bg-gray-50 border border-gray-200 rounded p-3">
           <p className="text-xs text-gray-500 mb-1">Original PetBERT prediction (before correction)</p>
           <p className="text-sm">
-            {detail.original_predicted_term} · ICD-O {detail.original_icd_o_code ?? '—'}
+            {detail.original_predicted_term} · Vet-ICD-O {detail.original_icd_o_code ?? '—'}
           </p>
         </div>
       )}
@@ -185,21 +321,23 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
           </h4>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-gray-600">
-              Cancer type (for correction)
-              <input
-                type="text"
+              Confirmed cancer type
+              <TermCombobox
                 value={correctName}
-                onChange={(e) => setCorrectName(e.target.value)}
-                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+                onInput={term => setCorrectName(term)}
+                onSelect={label => {
+                  setCorrectName(label.term);
+                  setCorrectIcd(label.code);
+                }}
               />
             </label>
             <label className="text-xs text-gray-600">
-              ICD-O code
+              Confirmed Vet-ICD-O code
               <input
                 type="text"
                 value={correctIcd}
                 onChange={(e) => setCorrectIcd(e.target.value)}
-                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded font-mono"
               />
             </label>
           </div>
@@ -232,14 +370,14 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
               disabled={busy || !correctName.trim() || correctName === detail.cancer_type_name}
               className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              Correct
+              Edit
             </button>
             <button
-              onClick={() => onAction('reject', { notes: notes || undefined })}
-              disabled={busy}
-              className="px-3 py-1.5 text-sm font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+              onClick={() => onAction('correct', { cancer_type_name: 'Non-Cancer', notes: notes || undefined })}
+              disabled={busy || detail.cancer_type_name === 'Non-Cancer'}
+              className="px-3 py-1.5 text-sm font-medium bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50"
             >
-              Reject
+              Non-Cancer
             </button>
           </div>
         </div>
@@ -278,6 +416,16 @@ export function DiagnosisReview() {
   const { getAccessToken, isUploader, isAdmin } = useAuth();
   const canAudit = isUploader || isAdmin;
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
+  const [cancerGroupFilter, setCancerGroupFilter] = useState<CancerGroupFilter>('all');
+  const [needsSpotCheckFilter, setNeedsSpotCheckFilter] = useState(false);
+  // yearInput is the live input value; yearFilter is debounced (triggers load).
+  const [yearInput, setYearInput] = useState('');
+  const [yearFilter, setYearFilter] = useState<number | undefined>(undefined);
+  // patientIdInput is the live input value; patientIdFilter is debounced (triggers load).
+  const [patientIdInput, setPatientIdInput] = useState('');
+  const [patientIdFilter, setPatientIdFilter] = useState('');
+  const [clinicFilter, setClinicFilter] = useState('');
+  const [uploaders, setUploaders] = useState<string[]>([]);
   const [pending, setPending] = useState<PendingDiagnosis[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -286,6 +434,9 @@ export function DiagnosisReview() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState(0);
+  const [pageInput, setPageInput] = useState('1');
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [allCount, setAllCount] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const token = await getAccessToken();
@@ -294,26 +445,92 @@ export function DiagnosisReview() {
     setError(null);
     try {
       let rows: PendingDiagnosis[];
+      const sharedParams = {
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+        year: yearFilter,
+        patient_id: patientIdFilter || undefined,
+        clinic: clinicFilter || undefined,
+        cancer_group: cancerGroupFilter === 'all' ? undefined : cancerGroupFilter,
+        needs_spot_check: needsSpotCheckFilter || undefined,
+      };
       if (canAudit && statusFilter !== 'pending') {
         rows = await fetchAllDiagnoses(token, {
           status: statusFilter === 'all' ? undefined : statusFilter,
-          limit: PAGE_SIZE,
-          offset: page * PAGE_SIZE,
+          ...sharedParams,
         });
       } else {
-        rows = await fetchPendingDiagnoses(token, { limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+        rows = await fetchPendingDiagnoses(token, sharedParams);
       }
       setPending(rows);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
+      setError(friendlyError(e, 'Failed to load'));
     } finally {
       setLoadingList(false);
     }
-  }, [getAccessToken, page, canAudit, statusFilter]);
+  }, [getAccessToken, page, canAudit, statusFilter, cancerGroupFilter, needsSpotCheckFilter, yearFilter, patientIdFilter, clinicFilter]);
 
   useEffect(() => {
-    load(); // eslint-disable-line react-hooks/set-state-in-effect
+    setPageInput(String(page + 1));
+  }, [page]);
+
+  useEffect(() => {
+    load();
   }, [load]);
+
+  useEffect(() => {
+    getAccessToken().then((token) => {
+      if (token) fetchPendingCount(token).then((r) => setPendingCount(r.count)).catch(() => {});
+    });
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    if (!canAudit || statusFilter === 'pending') return;
+    getAccessToken().then((token) => {
+      if (!token) return;
+      fetchDiagnosesCount(token, {
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        year: yearFilter,
+        patient_id: patientIdFilter || undefined,
+        clinic: clinicFilter || undefined,
+        cancer_group: cancerGroupFilter === 'all' ? undefined : cancerGroupFilter,
+        needs_spot_check: needsSpotCheckFilter || undefined,
+      }).then((r) => setAllCount(r.count)).catch(() => {});
+    });
+  }, [getAccessToken, canAudit, statusFilter, yearFilter, patientIdFilter, clinicFilter, cancerGroupFilter, needsSpotCheckFilter]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    getAccessToken().then((token) => {
+      if (token) fetchDiagnosisUploaders(token).then(setUploaders).catch(() => {});
+    });
+  }, [getAccessToken, isAdmin]);
+
+  // Debounce year: parse and validate after 400ms; partial values (e.g. "2", "202")
+  // resolve to undefined so no year filter is applied while the user is still typing.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const n = yearInput ? Number(yearInput) : undefined;
+      const valid = n === undefined || (Number.isInteger(n) && n >= 1900 && n <= 2100);
+      setYearFilter(valid ? n : undefined);
+      setPage(0);
+      setSelectedId(null);
+      setDetail(null);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [yearInput]);
+
+  // Debounce patient ID: only update the filter (and trigger a load) 400ms after
+  // the user stops typing so we don't fire a request on every keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setPatientIdFilter(patientIdInput);
+      setPage(0);
+      setSelectedId(null);
+      setDetail(null);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [patientIdInput]);
 
   const loadDetail = useCallback(
     async (id: number) => {
@@ -324,7 +541,7 @@ export function DiagnosisReview() {
         const d = await fetchDiagnosisDetail(token, id);
         setDetail(d);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load detail');
+        setError(friendlyError(e, 'Failed to load detail'));
       } finally {
         setLoadingDetail(false);
       }
@@ -333,7 +550,7 @@ export function DiagnosisReview() {
   );
 
   useEffect(() => {
-    if (selectedId !== null) loadDetail(selectedId); // eslint-disable-line react-hooks/set-state-in-effect
+    if (selectedId !== null) loadDetail(selectedId);
     else setDetail(null);
   }, [selectedId, loadDetail]);
 
@@ -351,10 +568,11 @@ export function DiagnosisReview() {
         await reviewDiagnosis(token, selectedId, { action, ...fields });
         // Remove from queue and clear selection so the user sees they made progress.
         setPending((rows) => rows.filter((r) => r.id !== selectedId));
+        setPendingCount((prev) => (prev !== null && prev > 0 ? prev - 1 : prev));
         setSelectedId(null);
         setDetail(null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Action failed');
+        setError(friendlyError(e, 'Action failed'));
       } finally {
         setBusy(false);
       }
@@ -364,12 +582,78 @@ export function DiagnosisReview() {
 
   const handleFilterChange = useCallback((f: StatusFilter) => {
     setStatusFilter(f);
+    setCancerGroupFilter('all');
     setPage(0);
     setSelectedId(null);
     setDetail(null);
   }, []);
 
-  const headerCount = useMemo(() => pending.length, [pending]);
+  const handleClinicChange = useCallback((v: string) => {
+    setClinicFilter(v);
+    setPage(0);
+    setSelectedId(null);
+    setDetail(null);
+  }, []);
+
+  const [exportingAudited, setExportingAudited] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleExportAudited = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setExportingAudited(true);
+    setExportError(null);
+    try {
+      downloadBlob(await downloadAuditedDiagnosesCsv(token), 'audited_diagnoses.csv');
+    } catch (e) {
+      setExportError(friendlyError(e, 'Export failed'));
+    } finally {
+      setExportingAudited(false);
+    }
+  }, [getAccessToken]);
+
+  const handleExportAll = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setExportingAll(true);
+    setExportError(null);
+    try {
+      downloadBlob(await downloadAllDiagnosesCsv(token), 'all_diagnoses.csv');
+    } catch (e) {
+      setExportError(friendlyError(e, 'Export failed'));
+    } finally {
+      setExportingAll(false);
+    }
+  }, [getAccessToken]);
+
+  const [showAdminTools, setShowAdminTools] = useState(false);
+  const [importingSpotCheck, setImportingSpotCheck] = useState(false);
+  const [spotCheckSummary, setSpotCheckSummary] = useState<string | null>(null);
+  const [spotCheckError, setSpotCheckError] = useState<string | null>(null);
+  const spotCheckFileRef = useRef<HTMLInputElement>(null);
+
+  const handleImportSpotCheck = useCallback(async (file: File) => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setImportingSpotCheck(true);
+    setSpotCheckSummary(null);
+    setSpotCheckError(null);
+    try {
+      const summary = await importSpotCheckCases(token, file);
+      let msg = `Flagged ${summary.flagged} of ${summary.total_rows} case(s) for spot check.`;
+      if (summary.not_found.length > 0) {
+        msg += ` ${summary.not_found.length} not found: ${summary.not_found.slice(0, 10).join(', ')}${summary.not_found.length > 10 ? '…' : ''}`;
+      }
+      setSpotCheckSummary(msg);
+      await load();
+    } catch (e) {
+      setSpotCheckError(friendlyError(e, 'Upload failed'));
+    } finally {
+      setImportingSpotCheck(false);
+      if (spotCheckFileRef.current) spotCheckFileRef.current.value = '';
+    }
+  }, [getAccessToken, load]);
 
   // Group diagnoses by ingestion_job_id, preserving server sort order within
   // each group.  The key is the job id (or -1 for legacy/unlinked rows).
@@ -397,8 +681,9 @@ export function DiagnosisReview() {
             </h2>
             <p className="text-sm text-[var(--color-text-secondary)] mt-1">
               Triage low-confidence and ambiguous predictions before they enter
-              public dashboard stats. Confirm to accept, Correct to assign a
-              different cancer type, or Reject to drop the prediction.
+              public dashboard stats. Confirm to accept the predicted terms, Edit to assign a
+              different cancer type, or Non-Cancer to mark the prediction as a
+              non-malignant diagnosis.
             </p>
           </div>
           {canAudit && (
@@ -419,6 +704,139 @@ export function DiagnosisReview() {
             </div>
           )}
         </div>
+        {canAudit && (
+          <div className="mt-3 flex flex-wrap gap-3 items-end border-t border-gray-100 pt-3">
+            <label className="flex flex-col gap-1 text-xs text-gray-600">
+              Year
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="e.g. 2024"
+                value={yearInput}
+                onChange={(e) => setYearInput(e.target.value)}
+                className="w-24 px-2 py-1.5 border border-gray-300 rounded text-sm"
+              />
+              {(() => {
+                const n = yearInput.trim() ? Number(yearInput) : NaN;
+                return !isNaN(n) && (n < 1900 || n > 2100)
+                  ? <span className="text-amber-600 text-xs">Outside available data range.</span>
+                  : null;
+              })()}
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-gray-600">
+              Patient ID
+              <input
+                type="text"
+                placeholder="Search…"
+                value={patientIdInput}
+                onChange={(e) => setPatientIdInput(e.target.value)}
+                className="w-40 px-2 py-1.5 border border-gray-300 rounded text-sm"
+              />
+            </label>
+            {isAdmin && uploaders.length > 0 && (
+              <label className="flex flex-col gap-1 text-xs text-gray-600">
+                Clinic
+                <select
+                  value={clinicFilter}
+                  onChange={(e) => handleClinicChange(e.target.value)}
+                  className="w-52 px-2 py-1.5 border border-gray-300 rounded text-sm"
+                >
+                  <option value="">All clinics</option>
+                  {uploaders.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-gray-600">Type</span>
+              <div className="flex gap-1">
+                {CANCER_GROUP_FILTERS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => {
+                      setCancerGroupFilter(value);
+                      setPage(0);
+                      setSelectedId(null);
+                      setDetail(null);
+                    }}
+                    className={`px-2 py-1 text-xs rounded border transition-colors ${
+                      cancerGroupFilter === value
+                        ? 'bg-teal-600 text-white border-teal-600'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNeedsSpotCheckFilter((v) => !v);
+                    setPage(0);
+                    setSelectedId(null);
+                    setDetail(null);
+                  }}
+                  className={`px-2 py-1 text-xs rounded border transition-colors ${
+                    needsSpotCheckFilter
+                      ? 'bg-amber-500 text-white border-amber-500'
+                      : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  Spot Check
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {isAdmin && (
+          <div className="mt-3 border-t border-gray-100 pt-3">
+            <button
+              type="button"
+              onClick={() => setShowAdminTools((v) => !v)}
+              className="text-xs font-medium text-blue-600 hover:text-blue-800"
+            >
+              {showAdminTools ? '− Hide admin tools' : '+ Admin tools'}
+            </button>
+            {showAdminTools && (
+              <div className="mt-2 space-y-2">
+                <label className="text-xs text-gray-600 flex items-center gap-1.5">
+                  Flag spot-check CSV
+                  <input
+                    ref={spotCheckFileRef}
+                    type="file"
+                    accept=".csv"
+                    disabled={importingSpotCheck}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportSpotCheck(f); }}
+                    className="text-xs w-32"
+                  />
+                </label>
+                <div className="flex gap-2 items-center">
+                  <button
+                    type="button"
+                    onClick={handleExportAudited}
+                    disabled={exportingAudited}
+                    className="px-2.5 py-1.5 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {exportingAudited ? 'Exporting…' : 'Export audited diagnoses CSV'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportAll}
+                    disabled={exportingAll}
+                    className="px-2.5 py-1.5 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {exportingAll ? 'Exporting…' : 'Export all diagnoses CSV'}
+                  </button>
+                  {exportError && <span className="text-xs text-red-600">{exportError}</span>}
+                  {spotCheckError && <span className="text-xs text-red-600">{spotCheckError}</span>}
+                </div>
+                {spotCheckSummary && <p className="text-xs text-emerald-700">{spotCheckSummary}</p>}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {error && (
@@ -431,18 +849,61 @@ export function DiagnosisReview() {
         <div className="col-span-7 bg-white rounded-lg border border-gray-200">
           <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
             <span className="text-sm font-medium">
-              Pending {headerCount > 0 && <span className="text-gray-500">({headerCount})</span>}
+              {statusFilter === 'all' ? 'All' : statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)}
+              {statusFilter === 'pending' && pendingCount !== null && pendingCount > 0 && (
+                <span className="text-gray-500"> ({pendingCount})</span>
+              )}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <button
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                onClick={() => {
+                  setPage((p) => Math.max(0, p - 1));
+                  setSelectedId(null);
+                  setDetail(null);
+                }}
                 disabled={page === 0 || loadingList}
                 className="px-2 py-1 text-xs text-gray-600 disabled:opacity-40"
               >
                 Prev
               </button>
+              <span className="text-xs text-gray-500">Page</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value)}
+                onBlur={() => {
+                  const n = parseInt(pageInput, 10);
+                  if (!isNaN(n) && n >= 1) {
+                    const target = n - 1;
+                    if (target !== page) {
+                      setPage(target);
+                      setSelectedId(null);
+                      setDetail(null);
+                    }
+                  }
+                  setPageInput(String(page + 1));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                className="w-12 px-1.5 py-0.5 text-xs text-center border border-gray-300 rounded"
+              />
+              <span className="text-xs text-gray-500">
+                {statusFilter === 'pending' && pendingCount !== null
+                  ? `of ${Math.ceil(pendingCount / PAGE_SIZE) || 1}`
+                  : allCount !== null
+                    ? `of ${Math.ceil(allCount / PAGE_SIZE) || 1}`
+                    : !loadingList && pending.length < PAGE_SIZE
+                      ? `of ${page + 1}`
+                      : `of ?`}
+              </span>
               <button
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => {
+                  setPage((p) => p + 1);
+                  setSelectedId(null);
+                  setDetail(null);
+                }}
                 disabled={pending.length < PAGE_SIZE || loadingList}
                 className="px-2 py-1 text-xs text-gray-600 disabled:opacity-40"
               >
@@ -454,9 +915,13 @@ export function DiagnosisReview() {
             <div className="p-6 text-sm text-gray-500">Loading...</div>
           ) : pending.length === 0 ? (
             <div className="p-6 text-sm text-gray-500">
-              {page === 0
-                ? 'No diagnoses awaiting review.'
-                : 'No more rows on this page.'}
+              {page > 0
+                ? 'No more rows on this page.'
+                : patientIdFilter
+                  ? `No patient found matching "${patientIdFilter}".`
+                  : yearFilter
+                    ? `No diagnoses found for ${yearFilter}.`
+                    : 'No diagnoses awaiting review.'}
             </div>
           ) : (
             <div>
@@ -495,8 +960,16 @@ export function DiagnosisReview() {
                         >
                           <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-gray-900 truncate">
+                              <p className="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
                                 {d.cancer_type_name}
+                                {d.needs_spot_check && (
+                                  <span
+                                    title="Flagged for spot check"
+                                    className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-amber-100 text-amber-800 border-amber-200"
+                                  >
+                                    Spot check
+                                  </span>
+                                )}
                               </p>
                               <p className="text-xs text-gray-500 truncate">
                                 {d.patient_anon_id ?? '—'} · {d.predicted_term ?? d.icd_o_code ?? '—'}

@@ -77,6 +77,7 @@ export function useCancerTypesData(filters: FilterState): CancerTypesState {
               ? [filters.cancerType]
               : undefined,
           sex: filters.sex && filters.sex !== 'all' ? filters.sex : undefined,
+          ageGroup: filters.ageGroup && filters.ageGroup !== 'all' ? filters.ageGroup : undefined,
         });
         if (!cancelled) {
           setApiData(response.data);
@@ -98,7 +99,7 @@ export function useCancerTypesData(filters: FilterState): CancerTypesState {
     return () => {
       cancelled = true;
     };
-  }, [filters.cancerType, filters.sex]);
+  }, [filters.cancerType, filters.sex, filters.ageGroup]);
 
   const data = useMemo(() => {
     return applyCancerTypeDemoFilters(apiData, filters, { applyServerSideFilters: false });

@@ -27,6 +27,9 @@ GENERATION = load_generation(BUNDLE_ROOT)
 
 app = FastAPI(title="VMTH PetBERT ML Worker")
 
+DEFAULT_CASE_PRESENCE_THRESHOLD = 0.5
+DEFAULT_GROUP_CLASSIFIER_THRESHOLD = 0.3
+
 
 @app.get("/health")
 async def health():

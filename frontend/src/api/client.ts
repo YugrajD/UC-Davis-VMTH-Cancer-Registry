@@ -1,5 +1,14 @@
 // API client for the VMTH Cancer Registry backend
 
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 function apiUrl(path: string): string {
@@ -21,16 +30,47 @@ export interface DashboardSummary {
 export interface IncidenceRecord {
   cancer_type: string;
   county?: string;
+  zip_code?: string;
   species?: string;
   breed?: string;
   year?: number;
   count: number;
+  pccp?: number;
+  total_patients?: number;
 }
 
 export interface IncidenceResponse {
   data: IncidenceRecord[];
   total: number;
   filters_applied: Record<string, unknown>;
+}
+
+export interface PCCPCountyRecord {
+  county: string;
+  cancer_patients: number;
+  total_patients: number;
+  pccp: number;
+}
+
+export interface PCCPResponse {
+  data: PCCPCountyRecord[];
+  overall_cancer_patients: number;
+  overall_total_patients: number;
+  overall_pccp: number;
+}
+
+export interface PCCPZipRecord {
+  zip_code: string;
+  cancer_patients: number;
+  total_patients: number;
+  pccp: number;
+}
+
+export interface PCCPZipResponse {
+  data: PCCPZipRecord[];
+  overall_cancer_patients: number;
+  overall_total_patients: number;
+  overall_pccp: number;
 }
 
 export interface GeoJSONFeatureProperties {
@@ -62,11 +102,12 @@ interface FilterParams {
   cancerTypes?: string[];
   counties?: string[];
   sex?: string;
+  ageGroup?: string;
   yearStart?: number;
   yearEnd?: number;
 }
 
-function filtersToParams(filters: FilterParams): URLSearchParams {
+export function filtersToParams(filters: FilterParams): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.species?.length) {
     filters.species.forEach(s => params.append('species', s));
@@ -80,6 +121,9 @@ function filtersToParams(filters: FilterParams): URLSearchParams {
   if (filters.sex && filters.sex !== 'all') {
     params.append('sex', filters.sex);
   }
+  if (filters.ageGroup && filters.ageGroup !== 'all') {
+    params.append('age_group', filters.ageGroup);
+  }
   if (filters.yearStart) {
     params.append('year_start', String(filters.yearStart));
   }
@@ -89,10 +133,10 @@ function filtersToParams(filters: FilterParams): URLSearchParams {
   return params;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+export async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(apiUrl(url));
   if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+    throw new ApiError(response.status, `API error: ${response.status}`);
   }
   return response.json();
 }
@@ -103,7 +147,15 @@ async function fetchJsonAuth<T>(url: string, token: string): Promise<T> {
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
-    throw new Error(err.detail || `API error: ${response.status}`);
+    // FastAPI returns `detail` as a string for HTTPException but as an array of
+    // validation-error objects for 422 Unprocessable Entity.  Normalise to string.
+    const raw = err.detail;
+    const msg = typeof raw === 'string'
+      ? raw
+      : Array.isArray(raw)
+        ? raw.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join('; ')
+        : `API error: ${response.status}`;
+    throw new ApiError(response.status, msg);
   }
   return response.json();
 }
@@ -140,6 +192,36 @@ export async function fetchIncidenceByBreed(filters: FilterParams = {}): Promise
   return fetchJson(url);
 }
 
+export async function fetchIncidenceByZip(filters: FilterParams = {}): Promise<IncidenceResponse> {
+  const params = filtersToParams(filters);
+  const url = params.toString() ? `/api/v1/incidence/by-zip?${params}` : '/api/v1/incidence/by-zip';
+  return fetchJson(url);
+}
+
+export async function fetchPCCPByCounty(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> & { cancerType?: string; breed?: string } = {}): Promise<PCCPResponse> {
+  const params = new URLSearchParams();
+  if (filters.sex && filters.sex !== 'all') params.append('sex', filters.sex);
+  if (filters.ageGroup && filters.ageGroup !== 'all') params.append('age_group', filters.ageGroup);
+  if (filters.yearStart) params.append('year_start', String(filters.yearStart));
+  if (filters.yearEnd) params.append('year_end', String(filters.yearEnd));
+  if (filters.cancerType && filters.cancerType !== 'All Types') params.append('cancer_type', filters.cancerType);
+  if (filters.breed && filters.breed !== 'All Breeds') params.append('breed', filters.breed);
+  const url = params.toString() ? `/api/v1/incidence/pccp?${params}` : '/api/v1/incidence/pccp';
+  return fetchJson(url);
+}
+
+export async function fetchPCCPByZip(filters: Pick<FilterParams, 'sex' | 'ageGroup' | 'yearStart' | 'yearEnd'> & { cancerType?: string; breed?: string } = {}): Promise<PCCPZipResponse> {
+  const params = new URLSearchParams();
+  if (filters.sex && filters.sex !== 'all') params.append('sex', filters.sex);
+  if (filters.ageGroup && filters.ageGroup !== 'all') params.append('age_group', filters.ageGroup);
+  if (filters.yearStart) params.append('year_start', String(filters.yearStart));
+  if (filters.yearEnd) params.append('year_end', String(filters.yearEnd));
+  if (filters.cancerType && filters.cancerType !== 'All Types') params.append('cancer_type', filters.cancerType);
+  if (filters.breed && filters.breed !== 'All Breeds') params.append('breed', filters.breed);
+  const url = params.toString() ? `/api/v1/incidence/pccp-by-zip?${params}` : '/api/v1/incidence/pccp-by-zip';
+  return fetchJson(url);
+}
+
 export async function fetchCountiesGeoJSON(filters: FilterParams = {}): Promise<GeoJSONResponse> {
   const params = filtersToParams(filters);
   const url = params.toString() ? `/api/v1/geo/counties?${params}` : '/api/v1/geo/counties';
@@ -153,6 +235,8 @@ export interface TrendPointApi {
   count: number;
   deceased: number | null;
   alive: number | null;
+  pccp?: number | null;
+  total_patients?: number | null;
 }
 
 export interface TrendSeriesApi {
@@ -181,14 +265,37 @@ export async function fetchTrendsByCancerType(filters: FilterParams = {}): Promi
 export interface BreedDetail {
   breed: string;
   total_cases: number;
+  breed_total_patients?: number;
+  global_total_patients?: number;
+  pccp_within_breed?: number;
+  pccp_of_all?: number;
   sex_breakdown: { sex: string; count: number }[];
-  cancer_types: { cancer_type: string; count: number }[];
-  county_cases: { county_name: string; fips_code: string; count: number }[];
+  cancer_types: { cancer_type: string; count: number; pccp_within_breed?: number; pccp_of_all?: number }[];
+  county_cases: { county_name: string; fips_code: string; count: number; county_all_tested: number; county_breed_tested: number; cancer_types: { cancer_type: string; count: number }[] }[];
 }
 
 export async function fetchBreedDetail(breed: string): Promise<BreedDetail> {
   const params = new URLSearchParams({ breed });
   return fetchJson(`/api/v1/incidence/breed-detail?${params}`);
+}
+
+// --- Age Detail ---
+
+export interface AgeDetail {
+  age_group: string;
+  total_cases: number;
+  age_total_patients?: number;
+  global_total_patients?: number;
+  pccp_within_age?: number;
+  pccp_of_all?: number;
+  sex_breakdown: { sex: string; count: number }[];
+  cancer_types: { cancer_type: string; count: number; pccp_within_age?: number; pccp_of_all?: number }[];
+  county_cases: { county_name: string; fips_code: string; count: number; county_all_tested: number; county_age_tested: number; cancer_types: { cancer_type: string; count: number }[] }[];
+}
+
+export async function fetchAgeDetail(age_group: string): Promise<AgeDetail> {
+  const params = new URLSearchParams({ age_group });
+  return fetchJson(`/api/v1/incidence/age-detail?${params}`);
 }
 
 // --- CalEnviroScreen ---
@@ -210,6 +317,20 @@ export interface MeResponse {
 
 export async function fetchMe(token: string): Promise<MeResponse> {
   return fetchJsonAuth('/api/v1/auth/me', token);
+}
+
+/** Permanently delete the current user's own account. Irreversible. */
+export async function deleteAccount(token: string): Promise<void> {
+  const response = await fetch(apiUrl('/api/v1/auth/me'), {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    const raw = err.detail;
+    const msg = typeof raw === 'string' ? raw : `Delete failed: ${response.status}`;
+    throw new ApiError(response.status, msg);
+  }
 }
 
 // --- User-role admin panel ---
@@ -243,6 +364,10 @@ export async function fetchUserRoles(token: string, email: string): Promise<User
   );
 }
 
+export async function fetchAllUserRoles(token: string): Promise<UserRoles[]> {
+  return fetchJsonAuth('/api/v1/admin/users/roles', token);
+}
+
 export async function updateUserRoles(
   token: string,
   email: string,
@@ -273,6 +398,7 @@ export interface IngestionJob {
   id: number;
   uploaded_by_email: string;
   dataset_a_filename: string;
+  clinic_name?: string | null;
   status: string;
   processing_stage?: string | null;
   model_folder?: string | null;
@@ -290,6 +416,7 @@ export interface IngestionJob {
     low_confidence: number;
     top_cancer_types: { name: string; count: number }[];
   } | null;
+  upload_duration_ms?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -315,9 +442,11 @@ export interface IngestionResponse {
 export async function uploadCSV(
   dataset: File,
   token: string,
+  clinicName: string,
 ): Promise<IngestionJob> {
   const formData = new FormData();
   formData.append('dataset_a', dataset);
+  formData.append('clinic_name', clinicName);
 
   const response = await fetch(apiUrl('/api/v1/ingest/upload'), {
     method: 'POST',
@@ -379,6 +508,7 @@ export async function reviewJob(
   action: 'approve' | 'reject',
   rejectionReason?: string,
   modelFolder?: string,
+  clinicName?: string,
 ): Promise<IngestionJob> {
   const response = await fetch(apiUrl(`/api/v1/ingest/jobs/${jobId}/review`), {
     method: 'POST',
@@ -390,6 +520,7 @@ export async function reviewJob(
       action,
       rejection_reason: rejectionReason || null,
       model_folder: modelFolder || null,
+      clinic_name: clinicName || null,
     }),
   });
 
@@ -421,6 +552,7 @@ export interface PendingDiagnosis {
   prediction_method: string | null;
   diagnosis_index: number | null;
   review_status: 'pending' | 'confirmed' | 'corrected' | 'rejected';
+  needs_spot_check: boolean;
   ingestion_job_id: number | null;
   job_filename: string | null;
   job_created_at: string | null;
@@ -446,10 +578,17 @@ export interface DiagnosisDetail extends PendingDiagnosis {
   original_predicted_term: string | null;
   /** Raw source text PetBERT classified — null for legacy rows. */
   original_text: string | null;
+  /** Diagnosis text from the clinic's dataset — null when not provided. */
+  source_diagnosis: string | null;
   reviewed_by_email: string | null;
   reviewed_at: string | null;
   reviewer_notes: string | null;
   events: DiagnosisReviewEvent[];
+  /** Patient demographic fields for reviewer context */
+  patient_sex: string | null;
+  patient_breed: string | null;
+  test_request_date: string | null;
+  patient_age: number | null;
 }
 
 export type ReviewActionKind = 'confirm' | 'correct' | 'reject';
@@ -471,6 +610,11 @@ export async function fetchPendingDiagnoses(
     method?: string;
     max_confidence?: number;
     ingestion_job_id?: number;
+    year?: number;
+    patient_id?: string;
+    clinic?: string;
+    cancer_group?: string;
+    needs_spot_check?: boolean;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -488,6 +632,11 @@ export async function fetchAllDiagnoses(
     limit?: number;
     offset?: number;
     ingestion_job_id?: number;
+    year?: number;
+    patient_id?: string;
+    clinic?: string;
+    cancer_group?: string;
+    needs_spot_check?: boolean;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -500,6 +649,50 @@ export async function fetchAllDiagnoses(
 
 export async function fetchPendingCount(token: string): Promise<{ count: number }> {
   return fetchJsonAuth('/api/v1/diagnoses/pending/count', token);
+}
+
+export async function fetchDiagnosesCount(
+  token: string,
+  params: {
+    status?: string;
+    year?: number;
+    patient_id?: string;
+    clinic?: string;
+    cancer_group?: string;
+    needs_spot_check?: boolean;
+  } = {},
+): Promise<{ count: number }> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) qs.append(k, String(v));
+  }
+  const url = `/api/v1/diagnoses/count${qs.toString() ? `?${qs}` : ''}`;
+  return fetchJsonAuth(url, token);
+}
+
+export interface SpotCheckImportSummary {
+  total_rows: number;
+  flagged: number;
+  not_found: string[];
+}
+
+export async function importSpotCheckCases(token: string, file: File): Promise<SpotCheckImportSummary> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(apiUrl('/api/v1/diagnoses/spot-check/import'), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Upload failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchDiagnosisUploaders(token: string): Promise<string[]> {
+  return fetchJsonAuth('/api/v1/diagnoses/uploaders', token);
 }
 
 export async function fetchDiagnosisDetail(
@@ -529,6 +722,32 @@ export async function reviewDiagnosis(
   }
 
   return response.json();
+}
+
+// case_id, diagnosis_index, clinical_diagnosis, cancer_type, icd_o_code — trimmed to
+// what a retraining pipeline needs. "Audited" is manually confirmed/corrected/rejected
+// diagnoses only; "all" is every finalized (confirmed/corrected) diagnosis, which
+// includes the audited subset.
+export async function downloadAuditedDiagnosesCsv(token: string): Promise<Blob> {
+  const response = await fetch(apiUrl('/api/v1/diagnoses/export/audited.csv'), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Export failed: ${response.status}`);
+  }
+  return response.blob();
+}
+
+export async function downloadAllDiagnosesCsv(token: string): Promise<Blob> {
+  const response = await fetch(apiUrl('/api/v1/diagnoses/export/all.csv'), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+    throw new Error(err.detail || `Export failed: ${response.status}`);
+  }
+  return response.blob();
 }
 
 

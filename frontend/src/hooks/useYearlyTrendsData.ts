@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchTrendsByCancerType } from '../api/client';
-import { topNWithOther, type TrendSeries } from '../lib/trends';
+import type { TrendSeries } from '../lib/trends';
 
 export interface YearlyTrendsState {
   series: TrendSeries[];
@@ -8,13 +8,11 @@ export interface YearlyTrendsState {
   error: string | null;
 }
 
-const TOP_N = 5;
-
 /**
- * Fetches /api/v1/trends/by-cancer-type once on mount and reduces the
- * full per-cancer-type series list to the top N by total case count plus
- * an aggregated "Other" line.  Mirrors the useCancerTypesData pattern:
- * async fetch in useEffect with a cancelled flag to handle unmount.
+ * Fetches /api/v1/trends/by-cancer-type once on mount and returns the
+ * full per-cancer-type series list. Mirrors the useCancerTypesData
+ * pattern: async fetch in useEffect with a cancelled flag to handle
+ * unmount.
  */
 export function useYearlyTrendsData(): YearlyTrendsState {
   const [series, setSeries] = useState<TrendSeries[]>([]);
@@ -32,9 +30,14 @@ export function useYearlyTrendsData(): YearlyTrendsState {
         // chart only renders total counts per year.
         const normalized: TrendSeries[] = response.series.map((s) => ({
           name: s.name,
-          data: s.data.map((p) => ({ year: p.year, count: p.count })),
+          data: s.data.map((p) => {
+            const point: TrendSeries['data'][0] = { year: p.year, count: p.count };
+            if (p.pccp != null) point.pccp = p.pccp;
+            if (p.total_patients != null) point.total_patients = p.total_patients;
+            return point;
+          }),
         }));
-        setSeries(topNWithOther(normalized, TOP_N));
+        setSeries(normalized);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Unable to load trend data');

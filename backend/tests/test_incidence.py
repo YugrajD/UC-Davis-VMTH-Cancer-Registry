@@ -135,7 +135,11 @@ async def test_incidence_filters_echoed_in_response():
 @pytest.mark.asyncio
 async def test_by_cancer_type_returns_200():
     mock_db = AsyncMock()
-    mock_db.execute.return_value = all_result([])
+    # Two DB calls: (1) scalar denominator, (2) per-type numerator rows
+    mock_db.execute.side_effect = [
+        scalar_result(0),
+        all_result([]),
+    ]
 
     async def override():
         yield mock_db
@@ -152,10 +156,14 @@ async def test_by_cancer_type_returns_200():
 @pytest.mark.asyncio
 async def test_by_cancer_type_schema():
     mock_db = AsyncMock()
-    mock_db.execute.return_value = all_result([
-        row(cancer_type="Lymphoma", count=50),
-        row(cancer_type="Mast Cell Tumor", count=30),
-    ])
+    # Two DB calls: (1) scalar denominator = 100 patients, (2) per-type rows
+    mock_db.execute.side_effect = [
+        scalar_result(100),
+        all_result([
+            row(cancer_type="Lymphoma", count=50),
+            row(cancer_type="Mast Cell Tumor", count=30),
+        ]),
+    ]
 
     async def override():
         yield mock_db
@@ -167,9 +175,10 @@ async def test_by_cancer_type_schema():
 
     app.dependency_overrides.clear()
 
-    assert data["total"] == 80
+    assert data["total"] == 100  # total_patients (denominator)
     assert data["data"][0]["cancer_type"] == "Lymphoma"
     assert data["data"][0]["count"] == 50
+    assert data["data"][0]["pccp"] == 50.0  # 50/100 * 100
 
 
 # ---------------------------------------------------------------------------
@@ -265,11 +274,18 @@ async def test_breed_detail_requires_breed_param():
 @pytest.mark.asyncio
 async def test_breed_detail_schema():
     mock_db = AsyncMock()
+    # 9 DB calls: global_denom, breed_denom, total_cases, sex, cancer_types,
+    #             county, county_all_tested, county_breed_tested, county_cancer
     mock_db.execute.side_effect = [
-        scalar_result(10),
+        scalar_result(1580),   # global_total_patients (Eq 5 denominator)
+        scalar_result(100),    # breed_total_patients (Eq 6 denominator)
+        scalar_result(10),     # total_cases (cancer patients of this breed)
         all_result([row(sex="Male", count=6), row(sex="Female", count=4)]),
         all_result([row(cancer_type="Lymphoma", count=10)]),
         all_result([row(county_name="Yolo", fips_code="06113", count=5)]),
+        all_result([row(county_name="Yolo", n=50)]),   # county_all_tested
+        all_result([row(county_name="Yolo", n=20)]),   # county_breed_tested
+        all_result([row(county_name="Yolo", cancer_type="Lymphoma", count=5)]),  # county_cancer
     ]
 
     async def override():
@@ -286,9 +302,216 @@ async def test_breed_detail_schema():
 
     assert data["breed"] == "Labrador Retriever"
     assert data["total_cases"] == 10
+    assert data["breed_total_patients"] == 100
+    assert data["global_total_patients"] == 1580
+    assert round(data["pccp_within_breed"], 2) == 10.0   # 10/100 * 100
+    assert data["pccp_of_all"] == 0.63                    # round(10/1580*100, 2)
     assert len(data["sex_breakdown"]) == 2
     assert data["cancer_types"][0]["cancer_type"] == "Lymphoma"
+    assert data["cancer_types"][0]["pccp_within_breed"] == 10.0
+    assert data["cancer_types"][0]["pccp_of_all"] == 0.63
     assert data["county_cases"][0]["fips_code"] == "06113"
+
+
+# ---------------------------------------------------------------------------
+# /incidence/pccp
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pccp_by_county_returns_200():
+    mock_db = AsyncMock()
+    # Two DB calls: (1) denominator rows, (2) numerator rows. No county_ids
+    # means the third (county name lookup) call never happens.
+    mock_db.execute.side_effect = [
+        all_result([]),
+        all_result([]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_county_schema():
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(county_id=1, n=100)]),          # denominator
+        all_result([row(county_id=1, n=40)]),            # numerator
+        all_result([row(id=1, name="Yolo")]),             # county name lookup
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        data = (await client.get("/api/v1/incidence/pccp")).json()
+
+    app.dependency_overrides.clear()
+
+    assert len(data["data"]) == 1
+    record = data["data"][0]
+    assert record["county"] == "Yolo"
+    assert record["cancer_patients"] == 40
+    assert record["total_patients"] == 100
+    assert record["pccp"] == 40.0
+    assert data["overall_cancer_patients"] == 40
+    assert data["overall_total_patients"] == 100
+    assert data["overall_pccp"] == 40.0
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_county_accepts_breed_param():
+    """breed is a real, optional query param — passing it must not 422 or crash."""
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(county_id=1, n=20)]),
+        all_result([row(county_id=1, n=5)]),
+        all_result([row(id=1, name="Yolo")]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp?breed=Golden+Retriever")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data"][0]["pccp"] == 25.0  # 5/20 * 100
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_county_all_breeds_sentinel_is_noop():
+    """The frontend's 'All Breeds' sentinel must not be treated as a real breed name."""
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([]),
+        all_result([]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp?breed=All+Breeds")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# /incidence/pccp-by-zip
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pccp_by_zip_returns_200():
+    mock_db = AsyncMock()
+    # Two DB calls: (1) denominator rows, (2) numerator rows — no separate
+    # name-lookup call, unlike /pccp, since the zip code is its own label.
+    mock_db.execute.side_effect = [
+        all_result([]),
+        all_result([]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp-by-zip")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_zip_schema():
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(zip_code="95616", n=100)]),   # denominator
+        all_result([row(zip_code="95616", n=40)]),     # numerator
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        data = (await client.get("/api/v1/incidence/pccp-by-zip")).json()
+
+    app.dependency_overrides.clear()
+
+    assert len(data["data"]) == 1
+    record = data["data"][0]
+    assert record["zip_code"] == "95616"
+    assert record["cancer_patients"] == 40
+    assert record["total_patients"] == 100
+    assert record["pccp"] == 40.0
+    assert data["overall_cancer_patients"] == 40
+    assert data["overall_total_patients"] == 100
+    assert data["overall_pccp"] == 40.0
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_zip_multiple_zips_aggregate_correctly():
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(zip_code="95616", n=100), row(zip_code="95618", n=50)]),
+        all_result([row(zip_code="95616", n=40), row(zip_code="95618", n=10)]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        data = (await client.get("/api/v1/incidence/pccp-by-zip")).json()
+
+    app.dependency_overrides.clear()
+
+    assert data["overall_cancer_patients"] == 50    # 40 + 10
+    assert data["overall_total_patients"] == 150     # 100 + 50
+    assert data["overall_pccp"] == round(50 / 150 * 100, 2)
+
+
+@pytest.mark.asyncio
+async def test_pccp_by_zip_accepts_breed_param():
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        all_result([row(zip_code="95616", n=20)]),
+        all_result([row(zip_code="95616", n=5)]),
+    ]
+
+    async def override():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/incidence/pccp-by-zip?breed=Golden+Retriever")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data"][0]["pccp"] == 25.0  # 5/20 * 100
 
 
 # ---------------------------------------------------------------------------

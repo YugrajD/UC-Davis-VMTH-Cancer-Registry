@@ -89,14 +89,15 @@ def decide(comparison: dict, fired: list[triggers.Trigger]) -> bool:
     return bool(comparison["good_lo"] >= MARGIN and any(t.met for t in fired))
 
 
-def _score(generation: str, predictions_csv: str | Path, gold_rows: pd.DataFrame, cases: pd.DataFrame) -> pd.DataFrame:
-    """One generation's gold-eval verdict table, with its own uncommon groups."""
+def _score(generation: str, predictions_csv: str | Path, gold_rows: pd.DataFrame,
+           cases: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """One generation's gold-eval verdict table, with its own uncommon groups, and how many gold-eval
+    cases have no prediction row. predict.py writes no row for a case whose report sections are all
+    empty, so such a case scores as "predicted nothing", as it does in silver-eval and gold-eval."""
     predictions = silver_eval.read_predictions(predictions_csv)
     _, uncommon = silver_eval.generation_uncommon_groups(generation, predictions)
-    unpredicted = sorted(set(cases.index) - set(predictions["case_id"]))
-    if unpredicted:
-        raise PromotionError(f"{generation} predictions miss {len(unpredicted)} gold-eval case(s): {unpredicted[:5]}")
-    return gold_eval.score_bronze(gold_rows, predictions, uncommon, cases)
+    unpredicted = len(set(cases.index) - set(predictions["case_id"]))
+    return gold_eval.score_bronze(gold_rows, predictions, uncommon, cases), unpredicted
 
 
 def trigger_status(silver_id: str | None, incumbent_predictions_csv: str | Path, *, split_id: str | None = None,
@@ -111,7 +112,7 @@ def trigger_status(silver_id: str | None, incumbent_predictions_csv: str | Path,
         slice_drop = triggers.Trigger("random_slice_drop", False, {"slice_cases": 0})
     else:
         cases = gold_eval.case_weights(gold_rows, _ledger(), split_id)
-        table = _score("current", incumbent_predictions_csv, gold_rows, cases)
+        table, _ = _score("current", incumbent_predictions_csv, gold_rows, cases)
         slice_drop = triggers.random_slice_drop(table, cases, gold_rows, n_boot, seed)
     return [triggers.new_silver_lineage(incumbent_manifest, silver_id), slice_drop,
             triggers.gold_train_growth(incumbent_manifest, split_id)]
@@ -135,8 +136,10 @@ def recommend(challenger_predictions_csv: str | Path, incumbent_predictions_csv:
                              "promotion needs gold-eval (ingest an eval batch or a random slice first)")
     cases = gold_eval.case_weights(gold_rows, _ledger(), split_id)
 
-    comparison = compare(_score("candidate", challenger_predictions_csv, gold_rows, cases),
-                         _score("current", incumbent_predictions_csv, gold_rows, cases), cases, n_boot, seed)
+    challenger_table, challenger_unpredicted = _score("candidate", challenger_predictions_csv, gold_rows, cases)
+    incumbent_table, incumbent_unpredicted = _score("current", incumbent_predictions_csv, gold_rows, cases)
+    comparison = {**compare(challenger_table, incumbent_table, cases, n_boot, seed),
+                  "challenger_unpredicted": challenger_unpredicted, "incumbent_unpredicted": incumbent_unpredicted}
     fired = trigger_status((challenger_manifest.get("parents") or {}).get("silver_id"), incumbent_predictions_csv,
                            split_id=split_id, n_boot=n_boot, seed=seed)
     return {

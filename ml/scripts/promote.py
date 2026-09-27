@@ -52,7 +52,8 @@ def main() -> int:
 
     c = result["comparison"]
     print(f"Challenger {result['challenger_id']} vs incumbent {result['incumbent_id']} on gold-eval of "
-          f"{result['split_id']} ({c['cases']} cases; {c['challenger_codes']} / {c['incumbent_codes']} code rows)")
+          f"{result['split_id']} ({c['cases']} cases; {c['challenger_codes']} / {c['incumbent_codes']} code rows; "
+          f"{c['challenger_unpredicted']} / {c['incumbent_unpredicted']} cases with no prediction row)")
     for name, label in (("good", "good (primary)"), ("gs", "G+S")):
         print(f"  {label:<15} {100 * c[f'challenger_{name}']:.2f}% vs {100 * c[f'incumbent_{name}']:.2f}%  "
               f"diff {_pp(c[f'{name}_diff'])} [{_pp(c[f'{name}_lo'])}, {_pp(c[f'{name}_hi'])}]")

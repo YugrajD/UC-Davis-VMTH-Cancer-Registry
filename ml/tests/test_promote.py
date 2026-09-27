@@ -107,12 +107,14 @@ def test_uncalibrated_candidate_is_refused(env, tiny_bert_dir):
         _recommend(env)
 
 
-def test_predictions_must_cover_gold_eval(env):
+def test_a_case_without_prediction_rows_scores_as_predicting_nothing(env):
+    # predict.py writes no row for an empty report; that case is a miss, and the count is reported.
     _eval_batch_gold()
     partial = _predictions(env / "b.csv", "gen-B")
     io_utils.write_csv(io_utils.read_csv(partial, encoding="utf-8", dtype=str).iloc[1:], partial)
-    with pytest.raises(promote.PromotionError, match="miss 1 gold-eval case"):
-        promote.recommend(partial, _predictions(env / "a.csv", "gen-A"), split_id=SPLIT, n_boot=50)
+    c = promote.recommend(partial, _predictions(env / "a.csv", "gen-A"), split_id=SPLIT, n_boot=50)["comparison"]
+    assert (c["challenger_unpredicted"], c["incumbent_unpredicted"]) == (1, 0)
+    assert c["challenger_good"] == pytest.approx(39 / 40) and c["incumbent_good"] == 1.0
 
 
 def test_equal_challenger_with_new_silver_is_promoted_and_applied(env):

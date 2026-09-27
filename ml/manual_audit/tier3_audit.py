@@ -97,6 +97,7 @@ Read the `Clinical Diagnosis`, then look at the `Predicted Match`.
 - **Prediction is wrong** — put the correct diagnosis in `Actual Diagnosis`. This
   includes a `(none)` row that you think *does* describe a cancer; those rows are the
   whole point of this batch.
+- **Predicted a cancer, but the line describes none** — write `no cancer`.
 - **Can't tell from this line** — write `unclear`. That is a real finding about the
   pipeline's input, not a failure on your part.
 
@@ -121,6 +122,12 @@ Save as CSV (not .xlsx) when you are done.
 
 VALID_VERDICTS = frozenset({"correct", "wrong", "no_cancer", "uncertain"})
 UNCLEAR_MARKERS = frozenset({"unclear", "uncertain", "unsure", "?"})
+# "The line describes no cancer": agrees with a (none) prediction, and is the only way to say a predicted
+# match is a false positive (a blank would read as "correct").
+NO_CANCER_MARKERS = frozenset({"no cancer", "non cancer", "non-cancer", "not cancer"})
+NO_CANCER_CODE = "NO_CANCER"
+# Optional free-text column a reviewer may add; kept in the audit store's notes.
+NOTES_COL = "Notes"
 
 AUDIT_STORE_FIELDS = [
     "case_id", "diagnosis_number", "decision_stage", "sample_stratum", "sample_weight",
@@ -413,7 +420,9 @@ def ingest(
 
     Verdict is derived (see the module docstring's table): blank -> correct or
     no_cancer depending on whether the cascade predicted anything; an "unclear"
-    marker -> uncertain; any other text -> wrong, resolved to a taxonomy code.
+    marker -> uncertain; a "no cancer" marker -> no_cancer without a prediction,
+    else wrong with corrected_code NO_CANCER; any other text -> wrong, resolved
+    to a taxonomy code. An optional ``Notes`` column is appended to ``notes``.
     Any row that resolves to neither aborts the whole ingest before anything is
     written — a CSV has no dropdowns, so this is the only typo guard.
 
@@ -453,6 +462,9 @@ def ingest(
             verdict = "correct" if has_prediction else "no_cancer"
         elif actual.lower().rstrip(".") in UNCLEAR_MARKERS:
             verdict = "uncertain"
+        elif actual.lower().rstrip(".") in NO_CANCER_MARKERS:
+            verdict = "wrong" if has_prediction else "no_cancer"
+            corrected_code = NO_CANCER_CODE if has_prediction else ""
         else:
             verdict = "wrong"
             try:
@@ -480,7 +492,7 @@ def ingest(
             "corrected_code": corrected_code,
             "reviewer": reviewer,
             "reviewed_at": today,
-            "notes": actual,
+            "notes": " | ".join(n for n in (actual, (row.get(NOTES_COL) or "").strip()) if n),
         })
 
     if errors:

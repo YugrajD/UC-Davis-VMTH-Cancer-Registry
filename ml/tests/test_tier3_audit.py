@@ -98,6 +98,24 @@ def test_ingest_from_real_sheet_shape_never_touches_gold(tmp_path, labels_csv):
     assert (store["batch"] == "1").all()
 
 
+def test_no_cancer_marker_flags_a_false_positive_and_agrees_with_none(tmp_path, labels_csv):
+    review_csv, key_csv = _write_invented_sheets(tmp_path)
+    rows = sheets.read_csv(review_csv)
+    rows[0]["Actual Diagnosis"] = "No cancer"  # CASE-A had a prediction
+    rows[1]["Actual Diagnosis"] = "non cancer"  # CASE-B predicted (none)
+    for row in rows:
+        row["Notes"] = "a reviewer note" if row["row_id"] == "2" else ""
+    sheets.write_csv(review_csv, [*REAL_REVIEW_HEADER, "Notes"], rows)
+    audit_store = tmp_path / "audit_store.csv"
+
+    tier3_audit.ingest(review_csv, key_csv, batch=1, reviewer="Dr. Test", labels_csv=labels_csv, out_csv=audit_store)
+    by_case = io_utils.read_csv(audit_store, encoding="utf-8", dtype=str, keep_default_na=False).set_index("case_id")
+    assert by_case.loc["CASE-A", ["verdict", "corrected_code"]].tolist() == ["wrong", tier3_audit.NO_CANCER_CODE]
+    assert by_case.loc["CASE-B", ["verdict", "corrected_code"]].tolist() == ["no_cancer", ""]
+    assert by_case.loc["CASE-B", "notes"] == "non cancer | a reviewer note"
+    assert by_case.loc["CASE-D", "notes"] == "Fibrosarcoma, NOS"
+
+
 def test_ingest_resolves_ambiguous_term_with_group_prefix(tmp_path, labels_csv):
     # Extend the synthetic taxonomy with a second term sharing a group + a
     # colliding term name in another group, mirroring the real taxonomy's one

@@ -34,7 +34,9 @@ The Mac-side work is committed on `Revised-ICD-Mapping`. The suite passes with 5
 
 **Next, on Windows:**
 1. Pull the branch. Check that `ml/output/report_mapping/candidate` doesn't exist and that Syncthing has
-   finished bringing over `ml/output` and `ml/data`.
+   finished syncing back the outputs made on the Mac: `parity_reference/`, `splits/`, `silver/`, `predictions/`,
+   `report_mapping/current/` (including its rewritten `manifest.json`) and `report_mapping/embedding_cache/`.
+   `ml/data` needs no check, because Windows is where it comes from.
 2. Run the Windows block in the Parity runbook in order: L2b, then L3, then L4. L3 trains 46,572 cases,
    80 fewer than legacy; see Decisions added during Part B.
 3. Fix the open items above, starting with the `train.py` manifest fields and a unique `generation_id`, since
@@ -374,8 +376,9 @@ ml/.venv/bin/python ml/next/scripts/predict.py --generation current             
 ml/.venv/bin/python ml/next/scripts/parity.py l2 --predictions <gen-0 predictions.csv>
 ```
 
-**Windows + CUDA** (PowerShell from the repo root). Code arrives through git (push on the Mac, pull on Windows);
-the reference pack, `report.csv` and the embedding cache arrive through Syncthing. `ml/output/report_mapping/candidate`
+**Windows + CUDA** (PowerShell from the repo root). Code arrives through git (push on the Mac, pull on Windows).
+Windows is the source of `ml/data`; the reference pack, splits, silver, gen-0 and the embedding cache were made on
+the Mac and come back through Syncthing. `ml/output/report_mapping/candidate`
 must not exist before L3, and L3 must run before L4.
 
 ```powershell

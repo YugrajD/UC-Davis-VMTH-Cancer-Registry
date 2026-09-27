@@ -552,7 +552,6 @@ export interface PendingDiagnosis {
   prediction_method: string | null;
   diagnosis_index: number | null;
   review_status: 'pending' | 'confirmed' | 'corrected' | 'rejected';
-  needs_spot_check: boolean;
   ingestion_job_id: number | null;
   job_filename: string | null;
   job_created_at: string | null;
@@ -614,7 +613,6 @@ export async function fetchPendingDiagnoses(
     patient_id?: string;
     clinic?: string;
     cancer_group?: string;
-    needs_spot_check?: boolean;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -636,7 +634,6 @@ export async function fetchAllDiagnoses(
     patient_id?: string;
     clinic?: string;
     cancer_group?: string;
-    needs_spot_check?: boolean;
   } = {},
 ): Promise<PendingDiagnosis[]> {
   const qs = new URLSearchParams();
@@ -659,7 +656,6 @@ export async function fetchDiagnosesCount(
     patient_id?: string;
     clinic?: string;
     cancer_group?: string;
-    needs_spot_check?: boolean;
   } = {},
 ): Promise<{ count: number }> {
   const qs = new URLSearchParams();
@@ -668,27 +664,6 @@ export async function fetchDiagnosesCount(
   }
   const url = `/api/v1/diagnoses/count${qs.toString() ? `?${qs}` : ''}`;
   return fetchJsonAuth(url, token);
-}
-
-export interface SpotCheckImportSummary {
-  total_rows: number;
-  flagged: number;
-  not_found: string[];
-}
-
-export async function importSpotCheckCases(token: string, file: File): Promise<SpotCheckImportSummary> {
-  const formData = new FormData();
-  formData.append('file', file);
-  const response = await fetch(apiUrl('/api/v1/diagnoses/spot-check/import'), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData,
-  });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
-    throw new Error(err.detail || `Upload failed: ${response.status}`);
-  }
-  return response.json();
 }
 
 export async function fetchDiagnosisUploaders(token: string): Promise<string[]> {

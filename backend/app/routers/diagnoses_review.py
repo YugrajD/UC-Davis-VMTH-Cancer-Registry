@@ -20,10 +20,10 @@ import io
 from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -40,7 +40,6 @@ from app.models.models import (
     Patient,
     PathologyReport,
 )
-from app.services.ingestion_service import normalize_anon_id
 
 _VALID_STATUSES = frozenset({"pending", "confirmed", "corrected", "rejected"})
 _UNIDENTIFIED_METHODS = ("low_confidence", "unidentified_cancer")
@@ -81,7 +80,6 @@ class PendingDiagnosis(BaseModel):
     prediction_method: Optional[str]
     diagnosis_index: Optional[int]
     review_status: str
-    needs_spot_check: bool = False
     ingestion_job_id: Optional[int] = None
     job_filename: Optional[str] = None
     job_created_at: Optional[datetime] = None
@@ -133,12 +131,6 @@ class ReviewAction(BaseModel):
     icd_o_code: Optional[str] = Field(default=None, max_length=20)
     predicted_term: Optional[str] = Field(default=None, max_length=500)
     notes: Optional[str] = Field(default=None, max_length=5000)
-
-
-class SpotCheckImportSummary(BaseModel):
-    total_rows: int
-    flagged: int
-    not_found: list[str]
 
 
 # --- Helpers --------------------------------------------------------------
@@ -223,7 +215,6 @@ def _to_detail(diag: CaseDiagnosis, report_text: str | None = None) -> Diagnosis
         prediction_method=diag.prediction_method,
         diagnosis_index=diag.diagnosis_index,
         review_status=diag.review_status,
-        needs_spot_check=bool(patient.needs_spot_check) if patient else False,
         original_cancer_type_id=diag.original_cancer_type_id,
         original_icd_o_code=diag.original_icd_o_code,
         original_predicted_term=diag.original_predicted_term,
@@ -275,7 +266,6 @@ async def list_diagnoses(
     patient_id: Optional[str] = Query(default=None, max_length=100),
     clinic: Optional[str] = Query(default=None, max_length=255),
     cancer_group: Optional[str] = Query(default=None, max_length=20),
-    needs_spot_check: bool = Query(default=False),
 ) -> list[PendingDiagnosis]:
     """All diagnoses with optional status/year/patient/clinic/cancer_group filter; non-admins scoped to their own jobs."""
     if not user.is_uploader:
@@ -286,7 +276,6 @@ async def list_diagnoses(
             CaseDiagnosis,
             CancerType.name,
             Patient.anon_id,
-            Patient.needs_spot_check,
             IngestionJob.dataset_a_filename,
             IngestionJob.created_at,
         )
@@ -312,8 +301,6 @@ async def list_diagnoses(
         query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
     if clinic and user.is_admin:
         query = query.where(IngestionJob.clinic_name == clinic)
-    if needs_spot_check:
-        query = query.where(Patient.needs_spot_check.is_(True))
     query = _apply_cancer_group_filter(query, cancer_group)
 
     query = (
@@ -338,12 +325,11 @@ async def list_diagnoses(
             prediction_method=d.prediction_method,
             diagnosis_index=d.diagnosis_index,
             review_status=d.review_status,
-            needs_spot_check=bool(spot_check),
             ingestion_job_id=d.ingestion_job_id,
             job_filename=job_filename,
             job_created_at=job_created_at,
         )
-        for d, ct_name, anon_id, spot_check, job_filename, job_created_at in rows
+        for d, ct_name, anon_id, job_filename, job_created_at in rows
     ]
 
 
@@ -379,7 +365,6 @@ async def list_pending(
     patient_id: Optional[str] = Query(default=None, max_length=100),
     clinic: Optional[str] = Query(default=None, max_length=255),
     cancer_group: Optional[str] = Query(default=None, max_length=20),
-    needs_spot_check: bool = Query(default=False),
 ) -> list[PendingDiagnosis]:
     """Paginated review queue, optionally filtered."""
     query = (
@@ -387,7 +372,6 @@ async def list_pending(
             CaseDiagnosis,
             CancerType.name,
             Patient.anon_id,
-            Patient.needs_spot_check,
             IngestionJob.dataset_a_filename,
             IngestionJob.created_at,
         )
@@ -410,8 +394,6 @@ async def list_pending(
         query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
     if clinic and reviewer.is_admin:
         query = query.where(IngestionJob.clinic_name == clinic)
-    if needs_spot_check:
-        query = query.where(Patient.needs_spot_check.is_(True))
     query = _apply_cancer_group_filter(query, cancer_group)
 
     query = (
@@ -436,12 +418,11 @@ async def list_pending(
             prediction_method=d.prediction_method,
             diagnosis_index=d.diagnosis_index,
             review_status=d.review_status,
-            needs_spot_check=bool(spot_check),
             ingestion_job_id=d.ingestion_job_id,
             job_filename=job_filename,
             job_created_at=job_created_at,
         )
-        for d, ct_name, anon_id, spot_check, job_filename, job_created_at in rows
+        for d, ct_name, anon_id, job_filename, job_created_at in rows
     ]
 
 
@@ -475,7 +456,6 @@ async def count_diagnoses(
     patient_id: Optional[str] = Query(default=None, max_length=100),
     clinic: Optional[str] = Query(default=None, max_length=255),
     cancer_group: Optional[str] = Query(default=None, max_length=20),
-    needs_spot_check: bool = Query(default=False),
 ) -> dict:
     """Row count matching the same filters as list_diagnoses; used for pagination."""
     if not user.is_uploader:
@@ -503,8 +483,6 @@ async def count_diagnoses(
         query = query.where(Patient.anon_id.ilike(f"%{patient_id.strip()}%"))
     if clinic and user.is_admin:
         query = query.where(IngestionJob.clinic_name == clinic)
-    if needs_spot_check:
-        query = query.where(Patient.needs_spot_check.is_(True))
     query = _apply_cancer_group_filter(query, cancer_group)
 
     result = await db.execute(query)
@@ -700,72 +678,3 @@ async def export_all_diagnoses_csv(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=all_diagnoses.csv"},
     )
-
-
-# --- Spot-check flagging ----------------------------------------------------
-#
-# Lets an admin flag a batch of cases (by CASE_ID / anon_id) as needing
-# manual spot-check. Pairs with database/migrations/031_spot_check_flag.sql.
-# The flag lives on patients (a case-level concept), and list_diagnoses /
-# list_pending / count_diagnoses all accept needs_spot_check=true to filter
-# the queue down to just those cases' diagnoses.
-
-
-@router.post("/spot-check/import")
-@limiter.limit(settings.RATE_LIMIT_WRITE)
-async def import_spot_check_cases(
-    request: Request,
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-) -> SpotCheckImportSummary:
-    """Admin-only. CSV with a case_id (or anon_id) column; every matching
-    patient is flagged needs_spot_check=true. Previously-flagged cases are
-    unaffected by other uploads — this only ever adds to the flagged set."""
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin role required")
-
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="File is empty")
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded CSV")
-
-    records = list(csv.DictReader(io.StringIO(text)))
-    if not records:
-        raise HTTPException(status_code=400, detail="No rows found in file")
-
-    header_map = {h.strip().lower(): h for h in records[0].keys() if h}
-    id_col = header_map.get("case_id") or header_map.get("anon_id")
-    if id_col is None:
-        raise HTTPException(status_code=400, detail="Missing a case_id (or anon_id) column")
-
-    normalized_ids = {
-        normalize_anon_id(rec.get(id_col, "")) for rec in records
-    }
-    normalized_ids.discard("")
-    if not normalized_ids:
-        raise HTTPException(status_code=400, detail="No valid case IDs found in file")
-
-    existing = set(
-        (
-            await db.execute(select(Patient.anon_id).where(Patient.anon_id.in_(normalized_ids)))
-        ).scalars()
-    )
-    not_found = sorted(normalized_ids - existing)
-
-    if existing:
-        await db.execute(
-            update(Patient)
-            .where(Patient.anon_id.in_(existing))
-            .values(
-                needs_spot_check=True,
-                spot_check_flagged_by_email=user.email,
-                spot_check_flagged_at=datetime.now(timezone.utc),
-            )
-        )
-        await db.commit()
-
-    return SpotCheckImportSummary(total_rows=len(records), flagged=len(existing), not_found=not_found)

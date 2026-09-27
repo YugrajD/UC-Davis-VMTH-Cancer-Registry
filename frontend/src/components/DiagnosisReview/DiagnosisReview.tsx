@@ -11,7 +11,6 @@ import {
   fetchDiagnosisUploaders,
   fetchPendingCount,
   fetchPendingDiagnoses,
-  importSpotCheckCases,
   reviewDiagnosis,
   type DiagnosisDetail,
   type PendingDiagnosis,
@@ -230,11 +229,6 @@ function DetailPanelBody({ detail, onAction, busy }: DetailPanelBodyProps) {
             {detail.cancer_type_name || 'Unknown'}
           </h3>
           <StatusPill status={detail.review_status} />
-          {detail.needs_spot_check && (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-amber-100 text-amber-800 border-amber-200">
-              Flagged for spot check
-            </span>
-          )}
         </div>
         <p className="text-xs text-gray-500">
           Patient {detail.patient_anon_id ?? '—'} · diagnosis #{detail.diagnosis_index ?? '?'} · Vet-ICD-O {detail.icd_o_code ?? '—'}
@@ -417,7 +411,6 @@ export function DiagnosisReview() {
   const canAudit = isUploader || isAdmin;
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
   const [cancerGroupFilter, setCancerGroupFilter] = useState<CancerGroupFilter>('all');
-  const [needsSpotCheckFilter, setNeedsSpotCheckFilter] = useState(false);
   // yearInput is the live input value; yearFilter is debounced (triggers load).
   const [yearInput, setYearInput] = useState('');
   const [yearFilter, setYearFilter] = useState<number | undefined>(undefined);
@@ -452,7 +445,6 @@ export function DiagnosisReview() {
         patient_id: patientIdFilter || undefined,
         clinic: clinicFilter || undefined,
         cancer_group: cancerGroupFilter === 'all' ? undefined : cancerGroupFilter,
-        needs_spot_check: needsSpotCheckFilter || undefined,
       };
       if (canAudit && statusFilter !== 'pending') {
         rows = await fetchAllDiagnoses(token, {
@@ -468,7 +460,7 @@ export function DiagnosisReview() {
     } finally {
       setLoadingList(false);
     }
-  }, [getAccessToken, page, canAudit, statusFilter, cancerGroupFilter, needsSpotCheckFilter, yearFilter, patientIdFilter, clinicFilter]);
+  }, [getAccessToken, page, canAudit, statusFilter, cancerGroupFilter, yearFilter, patientIdFilter, clinicFilter]);
 
   useEffect(() => {
     setPageInput(String(page + 1));
@@ -494,10 +486,9 @@ export function DiagnosisReview() {
         patient_id: patientIdFilter || undefined,
         clinic: clinicFilter || undefined,
         cancer_group: cancerGroupFilter === 'all' ? undefined : cancerGroupFilter,
-        needs_spot_check: needsSpotCheckFilter || undefined,
       }).then((r) => setAllCount(r.count)).catch(() => {});
     });
-  }, [getAccessToken, canAudit, statusFilter, yearFilter, patientIdFilter, clinicFilter, cancerGroupFilter, needsSpotCheckFilter]);
+  }, [getAccessToken, canAudit, statusFilter, yearFilter, patientIdFilter, clinicFilter, cancerGroupFilter]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -628,32 +619,6 @@ export function DiagnosisReview() {
   }, [getAccessToken]);
 
   const [showAdminTools, setShowAdminTools] = useState(false);
-  const [importingSpotCheck, setImportingSpotCheck] = useState(false);
-  const [spotCheckSummary, setSpotCheckSummary] = useState<string | null>(null);
-  const [spotCheckError, setSpotCheckError] = useState<string | null>(null);
-  const spotCheckFileRef = useRef<HTMLInputElement>(null);
-
-  const handleImportSpotCheck = useCallback(async (file: File) => {
-    const token = await getAccessToken();
-    if (!token) return;
-    setImportingSpotCheck(true);
-    setSpotCheckSummary(null);
-    setSpotCheckError(null);
-    try {
-      const summary = await importSpotCheckCases(token, file);
-      let msg = `Flagged ${summary.flagged} of ${summary.total_rows} case(s) for spot check.`;
-      if (summary.not_found.length > 0) {
-        msg += ` ${summary.not_found.length} not found: ${summary.not_found.slice(0, 10).join(', ')}${summary.not_found.length > 10 ? '…' : ''}`;
-      }
-      setSpotCheckSummary(msg);
-      await load();
-    } catch (e) {
-      setSpotCheckError(friendlyError(e, 'Upload failed'));
-    } finally {
-      setImportingSpotCheck(false);
-      if (spotCheckFileRef.current) spotCheckFileRef.current.value = '';
-    }
-  }, [getAccessToken, load]);
 
   // Group diagnoses by ingestion_job_id, preserving server sort order within
   // each group.  The key is the job id (or -1 for legacy/unlinked rows).
@@ -770,22 +735,6 @@ export function DiagnosisReview() {
                     {label}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNeedsSpotCheckFilter((v) => !v);
-                    setPage(0);
-                    setSelectedId(null);
-                    setDetail(null);
-                  }}
-                  className={`px-2 py-1 text-xs rounded border transition-colors ${
-                    needsSpotCheckFilter
-                      ? 'bg-amber-500 text-white border-amber-500'
-                      : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  Spot Check
-                </button>
               </div>
             </div>
           </div>
@@ -801,17 +750,6 @@ export function DiagnosisReview() {
             </button>
             {showAdminTools && (
               <div className="mt-2 space-y-2">
-                <label className="text-xs text-gray-600 flex items-center gap-1.5">
-                  Flag spot-check CSV
-                  <input
-                    ref={spotCheckFileRef}
-                    type="file"
-                    accept=".csv"
-                    disabled={importingSpotCheck}
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportSpotCheck(f); }}
-                    className="text-xs w-32"
-                  />
-                </label>
                 <div className="flex gap-2 items-center">
                   <button
                     type="button"
@@ -830,9 +768,7 @@ export function DiagnosisReview() {
                     {exportingAll ? 'Exporting…' : 'Export all diagnoses CSV'}
                   </button>
                   {exportError && <span className="text-xs text-red-600">{exportError}</span>}
-                  {spotCheckError && <span className="text-xs text-red-600">{spotCheckError}</span>}
                 </div>
-                {spotCheckSummary && <p className="text-xs text-emerald-700">{spotCheckSummary}</p>}
               </div>
             )}
           </div>
@@ -962,14 +898,6 @@ export function DiagnosisReview() {
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
                                 {d.cancer_type_name}
-                                {d.needs_spot_check && (
-                                  <span
-                                    title="Flagged for spot check"
-                                    className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-amber-100 text-amber-800 border-amber-200"
-                                  >
-                                    Spot check
-                                  </span>
-                                )}
                               </p>
                               <p className="text-xs text-gray-500 truncate">
                                 {d.patient_anon_id ?? '—'} · {d.predicted_term ?? d.icd_o_code ?? '—'}

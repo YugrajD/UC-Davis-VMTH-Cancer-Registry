@@ -504,11 +504,12 @@ def make_eval_batch_silver_csv(path: Path, case_ids: list[str] = EVAL_BATCH_CASE
 def point_training_config_at(monkeypatch, root: Path) -> None:
     """Redirect every config path report_mapping.training reads or writes into
     ``root``: builds on ``point_generations_config_at`` (split dirs, gold
-    store, corrected annotations) and adds ``report.csv``, ``labels.csv``, and
-    the report-mapping generation/cache directories."""
+    store, corrected annotations) and adds ``report.csv``, ``labels.csv``, the
+    report-mapping generation/cache directories and the predictions directory."""
     import config
 
     point_generations_config_at(monkeypatch, root)
+    monkeypatch.setattr(config, "PREDICTIONS_DIR", root / "output" / "predictions")
     monkeypatch.setattr(config, "REPORT_CSV", root / "data" / "report.csv")
     monkeypatch.setattr(config, "LABELS_CSV", root / "labels.csv")
     report_mapping_dir = root / "output" / "report_mapping"

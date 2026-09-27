@@ -4,43 +4,58 @@
 [icd-mapping-strategy.md](icd-mapping-strategy.md) as a clean-slate rewrite of `ml/` and `ml-worker/`.
 This is the working contract for the Part B agent team and for any later session picking the work up.
 
-## Status and next steps (2026-09-26, end of the Mac session)
+## Status and next steps (2026-09-26, Windows session)
 
-The Mac-side work is committed on `Revised-ICD-Mapping`. The suite passes with 597 tests
-(`ml/.venv/bin/python -m pytest ml/next -q -p no:cacheprovider`). Work continues on the Windows machine.
+Work is committed on `Revised-ICD-Mapping`. The suite passes with 617 tests on Windows
+(`ml\.venv\Scripts\python.exe -m pytest ml/next -q -p no:cacheprovider`; the Windows venv was brought up to
+`ml/requirements.txt`: numpy 2.x, pandas 2.2.3, scikit-learn 1.5.0, pytest).
+
+**Parity (L1–L3 gate the cutover):**
+
+| Level | Where | Result |
+|---|---|---|
+| L1 | Mac, re-run on Windows | PASS, identical verdicts on the eval half and the full test |
+| L2a | Mac | PASS (68,800 rows; 199 Uncommon-reordered cases) |
+| L2b | Windows, CUDA | PASS: 58,313 cases re-embedded, min cosine 1.000000; 68,800/68,800 rows identical (199 Uncommon-reordered); eval-half G+S 61.8%, +0.00 pp. Re-embed 9.2 min |
+| L3 | Windows, CUDA | PASS: mean G+S 61.44% (seeds 60.4 / 61.6 / 62.3, sd 0.96) vs 61.76%, −0.32 pp (tolerance ±1.93). Good −0.45, Slight +0.12, CO +0.11, FP +0.83, FN −0.62 pp. 46,572 gate/group cases as expected. About 6.7 min per seed |
+| L4 | Windows | not run yet (report only) |
+
+- **L3 notes.** Groups losing > 5 pp (reported, not gating): Odontogenic tumors (n=51, 86.3 → 78.9) and
+  Transitional cell papillomas and carcinomas (n=61, 75.4 → 69.3); at these sizes 5 pp is 3 codes. The FP rise
+  is gate calibration: with the gate held at 0.80 (legacy mode), the retrained gates pass 42.9 / 44.5 / 43.9%
+  of eval-half cases against legacy's 43.0%. WP14's refit of every threshold on the calibration half is where
+  that is absorbed.
+- **L2 exactness is Mac-bound.** On Windows (CPU or CUDA) the strict L2 check fails on 13 cases: 4-decimal
+  probabilities differ in the last digit (1e-4) and tied rows reorder; no case's code set changes. L2a's 1e-5
+  tolerance was set on the Mac's CPU; L2b's tolerances are the cross-machine check.
 
 **Done:**
-- **WP0–WP4:** scaffold, parity harness, config, taxonomy, generations and inference. L1 passes; L2a passes
-  (68,800 of 68,800 rows, and 199 cases that only differ by Uncommon-group row order).
-- **WP5:** trainers and calibration. The Windows wiring is dry-checked on tiny fixtures
-  (`test_l3_wiring_dry_check.py`).
-- **WP6:** evaluation. `evaluate.py silver` reproduces 61.76% on 4,456 eval-half rows.
-- **WP7–WP9:** manual audit, diagnosis mapping and coding. On real data every case is either adopted or
-  queued; the queue holds 4,281 cases.
-- **WP10, partly:** the promotion rule, the triggers and `scripts/promote.py`.
-- **WP11:** handoff contracts, imports, exports, the bundle tarball and `worker_format.py`.
+- **WP0–WP9, WP11:** as before (L1/L2a on the Mac; `evaluate.py silver` reproduces 61.76%; every case is
+  adopted or queued).
+- **Windows line endings.** Every `ml/next` text and CSV writer pins LF, so Windows artefacts and gold snapshot
+  hashes match the Mac's. A CRLF working copy of `ml/ICD_labels/labels.csv` (checked out before
+  `.gitattributes` existed) had to be re-checked out for the pack to verify.
+- **Manifest lineage + unique IDs.** `train.py` records `parents.silver_id`, `gold_train_snapshot` and
+  `gold_train_codes` (from the labels table it trained on) and mints `generation_id = gen-<UTC timestamp>`
+  (e.g. `gen-20260927T003905Z`) on every training run; calibrate keeps it.
+- **WP10.** `generations.py status`, `promote.trigger_status`, `retrain_cycle.py` (recommend-only; heads-only
+  unless `--backbone`; optional gold ingest; stops without gold-eval or without a met trigger unless
+  `--force`). Promotion sets manifest status `archived` / `current` and moves the embedding-cache entries the
+  new `current/` cannot use into the archive (listed in its manifest).
+- **WP11 smoke run.** A bundle of `current/` is 538.8 MB (63 members, top-level folder `current/`); sha256
+  sidecar and re-extracted verification pass. Deleted afterwards.
+- **WP12.** `ml-worker` reads one verified bundle (root = parent of the model path; other path variables must
+  point inside it), predicts through `report_mapping.inference.predict.predict_frame`, and adds
+  `source_version` to each prediction. Dataset A's Text fills every section; uploads are read as UTF-8; the
+  embedding length follows the generation (512, the legacy worker used 256). Dockerfiles copy the
+  post-cutover `ml/` layout. Worker parity: `test_worker_parity.py` runs `batch_predict.py` in-process
+  against `run_predict`. Backend change request: [ml-worker-change-request.md](ml-worker-change-request.md).
+  `.gitignore`'s `ml-*/` also matches `ml-worker/`, so new files there need `git add -f` until it is excepted.
 
-**Open items in finished packages:**
-- **`retrain_cycle.py` and `generations.py status` are not written.** Both belong to WP10.
-- **`train.py` doesn't record what the triggers read.** It must write `parents.silver_id`,
-  `gold_train_snapshot` and `gold_train_codes`. Without them, a trained incumbent reads as "unknown silver
-  lineage" and all of its gold-train counts as new.
-- **`generation_id` is the folder name, so every candidate is called "candidate".** After the first
-  promotion, `promote` refuses the same ID. It needs a unique ID scheme, which the cloud's `source_version`
-  also needs.
-- **Promotion leaves the manifest status as `candidate`** and doesn't archive the embedding cache.
-- **WP11 has had no real-data smoke run.** Build one bundle from `current/` in a scratch folder, check its
-  size and sha, then delete it.
-
-**Next, on Windows:**
-1. Pull the branch. Check that `ml/output/report_mapping/candidate` doesn't exist and that Syncthing has
-   finished bringing over `ml/output` and `ml/data`.
-2. Run the Windows block in the Parity runbook in order: L2b, then L3, then L4. L3 trains 46,572 cases,
-   80 fewer than legacy; see Decisions added during Part B.
-3. Fix the open items above, starting with the `train.py` manifest fields and a unique `generation_id`, since
-   both affect every candidate trained from then on.
-4. WP12, the `ml-worker` changes. The steps are in `handoff/worker_format.py` and the WP12 row.
-5. WP16 docs, then WP13 cutover once L1–L3 pass, then WP14 and WP15.
+**Next:**
+1. L4 (cold start, report only) on Windows.
+2. WP16 docs (post-cutover layout; `training-guide.md` Step 8 grid), then the WP13 cutover (L1–L3 pass, worker parity test green; needs Opus sign-off).
+3. WP14, then WP15, on Windows.
 
 ## Decisions (binding)
 
@@ -225,7 +240,7 @@ ml/
 - **Report-mapping generation** (`current/`, `candidate/`) — its layout *is* the cloud bundle layout:
   `petbert/`, `labels/labels.csv`, `checkpoints/{case_presence_classifier.pt, group_classifier_best.pt,
   label_presence/*.pt, lp_thresholds.json, thresholds.json, uncommon_groups.txt}`, `manifest.json`
-  (generation_id; parents {silver_id, gold_train_snapshot, split_id}; resolved recipe + seeds; device and
+  (generation_id `gen-<UTC timestamp>`; parents {silver_id, gold_train_snapshot, gold_train_codes, split_id}; resolved recipe + seeds; device and
   library versions; embedding fingerprint (backbone sha, section-spec version, max_length); calibration
   {partition, objective, values}; file sha256s; scores; status). The embedding cache sits beside it, never
   bundled.

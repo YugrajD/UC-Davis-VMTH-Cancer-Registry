@@ -47,8 +47,11 @@ def _review_queue_case_ids() -> list[str]:
     return list(io_utils.read_csv(path, encoding="utf-8", dtype=str, keep_default_na=False)["case_id"])
 
 
-def build(list_id: str) -> dict:
-    """The list's case IDs in order, with each case's origin. Writes nothing; ``record`` does."""
+def build(list_id: str, *, include_review_queue: bool = True) -> dict:
+    """The list's case IDs in order, with each case's origin. Writes nothing; ``record`` does.
+
+    ``include_review_queue=False`` leaves the review queue off, e.g. while a cascade fix is expected to
+    shrink it."""
     ledger = _ledger()
     if list_id in set(ledger["list_id"]):
         raise AuditListError(f"list_id {list_id!r} is already in {config.AUDIT_LIST_LEDGER_CSV}")
@@ -58,7 +61,7 @@ def build(list_id: str) -> dict:
         ("eval_batch", eval_batch.pending_case_ids()),
         ("diagnosis_mapping_audit", diagnosis_mapping_audit.pending_case_ids()),
         ("report_mapping_audit", report_mapping_audit.pending_case_ids()),
-        ("review_queue", _review_queue_case_ids()),
+        ("review_queue", _review_queue_case_ids() if include_review_queue else []),
     ]
     origin_of_case: dict[str, str] = {}
     for origin, case_ids in sources:

@@ -6,7 +6,7 @@ Usage:
   python ml/scripts/handoff.py export-silver   --silver-id SID
   python ml/scripts/handoff.py export-coding   --run-id RUN
   python ml/scripts/handoff.py export-bundle   [--generation current]
-  python ml/scripts/handoff.py export-audit-list --list-id 2026-09-27
+  python ml/scripts/handoff.py export-audit-list --list-id 2026-09-27 [--no-review-queue]
 """
 
 import argparse
@@ -57,7 +57,7 @@ def _cmd_export_bundle(args: argparse.Namespace) -> int:
 
 
 def _cmd_export_audit_list(args: argparse.Namespace) -> int:
-    result = exports.export_audit_list(args.list_id)
+    result = exports.export_audit_list(args.list_id, include_review_queue=not args.no_review_queue)
     print(f"wrote {result['path']} ({result['cases']} cases, {result['new_cases']} listed for the first time)")
     for origin, n in result["by_origin"].items():
         print(f"  {origin:<25} {n:>6}")
@@ -90,6 +90,7 @@ def main() -> int:
 
     p = sub.add_parser("export-audit-list", help="Write audit_list_<id>.txt (every case awaiting review) to the outbox.")
     p.add_argument("--list-id", required=True)
+    p.add_argument("--no-review-queue", action="store_true", help="Leave the review queue off the list.")
 
     args = parser.parse_args()
     dispatch = {

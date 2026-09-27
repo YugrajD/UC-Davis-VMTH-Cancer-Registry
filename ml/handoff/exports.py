@@ -101,9 +101,9 @@ def export_coding(
     }
 
 
-def export_audit_list(list_id: str, *, out_dir: str | Path | None = None) -> dict:
+def export_audit_list(list_id: str, *, include_review_queue: bool = True, out_dir: str | Path | None = None) -> dict:
     """Write ``audit_list_<list_id>.txt`` (one case_id per line, review order) and record each case's origin."""
-    built = audit_list.build(list_id)
+    built = audit_list.build(list_id, include_review_queue=include_review_queue)
     out_dir = Path(out_dir) if out_dir is not None else config.HANDOFF_OUTBOX_DIR
     out_path = out_dir / f"audit_list_{list_id}.txt"
     if out_path.exists():

@@ -45,6 +45,10 @@ def test_build_orders_by_source_lists_each_case_once_and_skips_gold(sources):
     assert built["new_cases"] == 5
 
 
+def test_build_can_leave_the_review_queue_off(sources):
+    assert audit_list.build("L1", include_review_queue=False)["case_ids"] == ["E1", "E2", "D1", "R1"]
+
+
 def test_export_writes_ids_only_records_origins_and_keeps_them_across_lists(sources):
     result = exports.export_audit_list("L1")
     assert result["path"].read_text(encoding="utf-8") == "E1\nE2\nD1\nR1\nQ1\n"

@@ -1,23 +1,23 @@
-# Dockerfile for GCP Batch PetBERT inference.
-# Build from the repo root:
+# Dockerfile for GCP Batch report-mapping inference.
+# Build from the repo root (after the ml/next -> ml cutover):
 #   docker build -f ml-worker/Dockerfile.batch -t petbert-batch .
 #
 # Model weights come from GCS (downloaded by the setup runnable),
 # NOT baked into the image.
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /worker
 
 COPY ml-worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pipeline package and its sibling dependencies (model, ICD_labels, utils, config)
-COPY ml/production /ml/production
-COPY ml/model /ml/model
-COPY ml/ICD_labels /ml/ICD_labels
-COPY ml/utils /ml/utils
-COPY ml/config.py /ml/config.py
+# The packages batch_predict.py imports, and what they import in turn
+COPY ml/config.py ml/io_utils.py /ml/
+COPY ml/taxonomy /ml/taxonomy
+COPY ml/report_mapping /ml/report_mapping
+COPY ml/generations /ml/generations
+COPY ml/handoff /ml/handoff
 
 COPY ml-worker/batch_predict.py .
 

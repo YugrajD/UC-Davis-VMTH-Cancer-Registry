@@ -132,6 +132,57 @@ def load_cached_embeddings(gen) -> embedding_cache_mod.EmbeddingCache:
     return cache
 
 
+def classify(gen, cache: embedding_cache_mod.EmbeddingCache, dataframe: pd.DataFrame, ids: list[str]) -> list[dict]:
+    """Every stage on already-embedded reports: one dict per prediction row (``prediction_rows``).
+    ``dataframe`` must have the section columns (``sections.build_section_frame``)."""
+    cache_index = {cid: i for i, cid in enumerate(cache.case_ids)}
+    missing = [cid for cid in ids if cid not in cache_index]
+    if missing:
+        raise ValueError(f"{len(missing)} case(s) missing from the embedding cache, e.g. {missing[:5]}")
+    sel = [cache_index[cid] for cid in ids]
+
+    concat_3 = cache.col_embeddings[sections.CONCAT_3_KEY][sel].astype(np.float32)
+    group_input = group_classifier_input(cache, sel)
+    texts = sections.merged_texts(dataframe)
+    labels = [tl.term for tl in gen.taxonomy_labels]
+
+    gate_mask, case_presence_probs = stages.run_case_presence(
+        gen.case_presence, concat_3, gen.thresholds["case_presence_gate"],
+    )
+    group_probs = stages.run_group(gen.group_head, group_input, gate_mask)
+
+    result = stages.categorize_cases(
+        texts=texts,
+        lp_embeddings=concat_3,
+        label_embeddings=cache.label_embeddings,
+        taxonomy_labels=gen.taxonomy_labels,
+        labels=labels,
+        group_probs=group_probs,
+        group_names=gen.group_names,
+        group_threshold=gen.thresholds["group"],
+        tail_max_predictions=gen.thresholds["tail_max_predictions"],
+        tail_max_group_prob_gap=gen.thresholds["tail_max_group_prob_gap"],
+        presence_mask=gate_mask,
+        uncommon_groups=gen.uncommon_groups,
+        label_presence_heads=gen.label_presence_heads,
+        label_presence_fallback=gen.thresholds["label_presence_fallback"],
+        lp_thresholds=gen.lp_thresholds,
+    )
+
+    rows = prediction_rows(ids, result, gen.taxonomy_labels, labels, case_presence_probs, gen.generation_id)
+    return rows
+
+
+def predict_frame(gen, reports: pd.DataFrame, ids: list[str], *, device_arg: str = "auto",
+                  local_only: bool = True) -> list[dict]:
+    """Prediction rows for reports held in memory (ml-worker): embedded fresh with the generation's
+    own backbone, never through the on-disk cache. ``reports`` has the raw report columns."""
+    dataframe = sections.build_section_frame(reports)
+    cache = build_fresh_cache(str(gen.petbert_dir), gen.taxonomy_labels, local_only=local_only,
+                              device=backbone_mod.device_from_arg(device_arg), dataframe=dataframe, ids=ids)
+    return classify(gen, cache, dataframe, ids)
+
+
 def run_predict(
     *,
     generation_dir: str | Path | None = None,
@@ -176,41 +227,7 @@ def run_predict(
     if embed_only:
         return None
 
-    cache_index = {cid: i for i, cid in enumerate(cache.case_ids)}
-    missing = [cid for cid in ids if cid not in cache_index]
-    if missing:
-        raise ValueError(f"{len(missing)} case(s) missing from the embedding cache, e.g. {missing[:5]}")
-    sel = [cache_index[cid] for cid in ids]
-
-    concat_3 = cache.col_embeddings[sections.CONCAT_3_KEY][sel].astype(np.float32)
-    group_input = group_classifier_input(cache, sel)
-    texts = sections.merged_texts(dataframe)
-    labels = [tl.term for tl in gen.taxonomy_labels]
-
-    gate_mask, case_presence_probs = stages.run_case_presence(
-        gen.case_presence, concat_3, gen.thresholds["case_presence_gate"],
-    )
-    group_probs = stages.run_group(gen.group_head, group_input, gate_mask)
-
-    result = stages.categorize_cases(
-        texts=texts,
-        lp_embeddings=concat_3,
-        label_embeddings=cache.label_embeddings,
-        taxonomy_labels=gen.taxonomy_labels,
-        labels=labels,
-        group_probs=group_probs,
-        group_names=gen.group_names,
-        group_threshold=gen.thresholds["group"],
-        tail_max_predictions=gen.thresholds["tail_max_predictions"],
-        tail_max_group_prob_gap=gen.thresholds["tail_max_group_prob_gap"],
-        presence_mask=gate_mask,
-        uncommon_groups=gen.uncommon_groups,
-        label_presence_heads=gen.label_presence_heads,
-        label_presence_fallback=gen.thresholds["label_presence_fallback"],
-        lp_thresholds=gen.lp_thresholds,
-    )
-
-    rows = prediction_rows(ids, result, gen.taxonomy_labels, labels, case_presence_probs, gen.generation_id)
+    rows = classify(gen, cache, dataframe, ids)
     if out_path is None:
         out_path = config.PREDICTIONS_DIR / f"{gen.generation_id}_predictions.csv"
     out_path = Path(out_path)

@@ -81,7 +81,33 @@ Work is committed on `Revised-ICD-Mapping`. The suite passes with 493 tests afte
    `_pythonhashseed_repro_check.py` were kept and switched to normal (non-legacy) calibrate — the
    latter is eval_batch's own PYTHONHASHSEED regression test, unrelated to the parity harness despite
    the similar name. `.github/workflows/ci.yml`'s ml job now runs `python -m pytest ml -q`.
-2. WP14, then WP15, on Windows.
+2. **WP14 split generation — done on silver; gold path exercised on mock gold (2026-09-27).**
+   `generations.py fork --split three-way-v1` copied gen-0 as `gen-20260927T025939Z` (same models; the fork
+   refuses a split whose train partition differs). A full refit on the calibration half picked gate 0.80,
+   group 0.90, tail K=2 / gap 0.05 (62.29% G+S on calibration). Test half vs silver: G+S 62.13% vs 61.76%,
+   Good 46.27 vs 45.78, CO 12.84 vs 15.28, FN 22.68 vs 20.40. Not promoted (no trigger: same silver, no
+   gold); archived at `ml/output/archive/2026-09-27_wp14-split-generation/` for when real gold exists.
+3. **WP15 corrected-annotations generation — exercised on MOCK gold (2026-09-27).** No real gold exists, so
+   a throwaway driver (not committed) redirected every gold, audit, ledger and coding store into a scratch
+   folder and asserted the real stores were never created. Mock reviewer: silver terms on decisive cases,
+   gen-0's rank-1 term on vague ones. It drew the real eval batch (826 cases, 955 gold rows) and gave 500
+   train-partition queue cases mock gold. Corrected annotations: 43,687 train cases. Heads trained on them
+   (`gen-20260927T032037Z`, `gold_train_codes` 500), calibrated on silver: test half vs silver G+S 62.50%,
+   Good 45.68. `promote.recommend` on mock gold-eval: gold-train growth MET (500 ≥ 200), Good +0.39 pp
+   [−1.78, +2.76] → PROMOTE (not applied). WP14's fork on the same mock gold: no trigger → DO NOT PROMOTE.
+   These numbers only prove the gold path runs; mock gold measures nothing. The candidate was trained on
+   mock gold and is parked at `ml/output/archive/2026-09-27_wp15-MOCK-GOLD-candidate-do-not-promote/`.
+   OOF disagreement on the corrected labels (5-fold, heads only): gate 1,056 of 43,687 train cases (2.4%)
+   confidently contradict their label (465 cancer-labelled with p < 0.2, 591 no-cancer with p > 0.8); group
+   top-1 outside the label for 13.2% of cancer cases, mostly Uncommon, Adenomas and Epithelial NOS.
+   Bugs found and fixed on the way: `promote` refused gold-eval cases with no prediction row (the 141
+   empty-report cases get none) — they now score as "predicted nothing" and are counted; `calibrate` fitted
+   silently on a labels table with no calibration rows (the train-only corrected table) — it now refuses,
+   and `retrain_cycle.py` calibrates on silver. One silver-eval history row (61.60%, 2026-09-27) comes from
+   that broken calibration and is invalid.
+4. **Next, when real gold arrives:** ingest eval batch 1 (`audit.py eval-batch` → review → `ingest-sheet`),
+   then `promote.py` the WP14 fork (it needs a trigger) and rerun WP15 on real review-queue gold with
+   `retrain_cycle.py`.
 
 ## Decisions (binding)
 

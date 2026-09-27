@@ -76,6 +76,10 @@ class Patient(Base):
     birth_date = Column(Date, nullable=True)
     diagnosis_date = Column(Date, nullable=True)
     outcome = Column(String(20), nullable=True)
+    # Set via admin CSV upload — see database/migrations/031_spot_check_flag.sql
+    needs_spot_check = Column(Boolean, nullable=False, server_default="false")
+    spot_check_flagged_by_email = Column(String(255), nullable=True)
+    spot_check_flagged_at = Column(DateTime(timezone=True), nullable=True)
 
     species = relationship("Species", back_populates="patients")
     breed = relationship("Breed", back_populates="patients")

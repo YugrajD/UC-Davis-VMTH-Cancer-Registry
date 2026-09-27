@@ -185,3 +185,68 @@ async def test_list_diagnoses_requires_auth():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         r = await client.get("/api/v1/diagnoses")
     assert r.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/diagnoses/spot-check/import
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_spot_check_requires_admin():
+    _override_user(_uploader())
+    _override_db([])
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.post(
+                "/api/v1/diagnoses/spot-check/import",
+                files={"file": ("cases.csv", b"case_id\nCASE-0001\n", "text/csv")},
+            )
+        assert r.status_code == 403
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_import_spot_check_rejects_missing_id_column():
+    _override_user(_admin())
+    _override_db([])
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.post(
+                "/api/v1/diagnoses/spot-check/import",
+                files={"file": ("cases.csv", b"not_an_id\nfoo\n", "text/csv")},
+            )
+        assert r.status_code == 400
+        assert "case_id" in r.json()["detail"]
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_import_spot_check_flags_matching_patients_and_reports_not_found():
+    _override_user(_admin())
+    mock_db = AsyncMock()
+    select_result = MagicMock()
+    select_result.scalars.return_value = ["CASE-0001"]
+    update_result = MagicMock()
+    mock_db.execute.side_effect = [select_result, update_result]
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.post(
+                "/api/v1/diagnoses/spot-check/import",
+                files={"file": ("cases.csv", b"case_id\nCASE-0001\nCASE-9999\n", "text/csv")},
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total_rows"] == 2
+        assert body["flagged"] == 1
+        assert body["not_found"] == ["CASE-9999"]
+        mock_db.commit.assert_awaited_once()
+    finally:
+        _cleanup()

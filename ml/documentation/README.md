@@ -161,7 +161,7 @@ ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
 | [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes. |
 | [ml-rewrite-plan.md](ml-rewrite-plan.md) | You're working on the rewrite itself: contract, work packages, parity runbook, status. |
 | [ml-worker-change-request.md](ml-worker-change-request.md) | You're deploying the worker or changing the backend's model-upload path. |
-| [audit-list-change-request.md](audit-list-change-request.md) | You're wiring the dashboard review worklist or the gold export on the backend. |
+| [audit-list-change-request.md](audit-list-change-request.md) | You're wiring the combined codes, the dashboard review worklist or the gold export on the backend. |
 | [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer. |
 | [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) | Proposed (not implemented) Box + rclone layout for sharing data and weights. |
 | [archive/](archive/) | Historical docs — the pre-rewrite tree, the annotation-redesign plan, phase logs. Do not consult for current behavior. |

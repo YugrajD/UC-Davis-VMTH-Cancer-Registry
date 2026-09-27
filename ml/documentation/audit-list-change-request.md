@@ -1,13 +1,103 @@
-# Change request for the backend: the dashboard review worklist (audit list)
+# Change request for the backend: combined codes and the review worklist (audit list)
 
 **From:** ML. **To:** the backend developer.
 
-The specialist now reviews every case ML needs a human answer on in one place: a worklist on the
-dashboard. ML sends the worklist as a list of case IDs; the backend shows it, records each review as
-the case's full code set, and sends the reviews back as a gold export. This replaces the review sheets
-(the Tier-3 audit and eval-batch CSVs) and the review queue as the thing the specialist works from.
+Two files from ML complete the picture:
 
-## 1. What ML sends: the audit list
+- **`combined_codes_<run>.csv`** — the best code set ML currently has for every case, combining
+  gold (specialist reviews), silver (the diagnosis-text mapping) and bronze (the report model). The
+  backend loads it as the registry's code of record.
+- **`audit_list_<list_id>.txt`** — the cases ML needs a specialist to review, as a worklist on the
+  dashboard. The reviews come back to ML as a gold export, and the next combined-codes file carries
+  them.
+
+This replaces the backend's own review gate at ingest, the per-row confirm/correct/reject review,
+the review sheets (the Tier-3 audit and eval-batch CSVs) and the review queue as the thing the
+specialist works from.
+
+```
+pending_diagnoses ──► ML ──► combined_codes + review_queue ──► registry codes
+                       ▲  └─► audit_list ──► dashboard worklist ──┐
+                       └──────────── gold export ◄────────────────┘
+```
+
+## 1. Combined codes: the registry's code of record
+
+### What ML sends
+
+`combined_codes_<run>.csv`, plus a sidecar `combined_codes_<run>.csv.manifest.json`
+(`{"kind": "combined_codes", "schema_version": 1, "sha256": ..., "written_at": ...}`). UTF-8,
+header row, no report or diagnosis text:
+
+```
+case_id,code,term,group,code_source,source_version,source_confidence,review_status
+CASE-0123,9740.2/1,Cutaneous mast cell tumor grade Patnaik II,Mast cell neoplasms,diagnosis,silver-0-legacy,tier1_exact,auto_accepted
+CASE-0123,8810/3,"Fibrosarcoma, NOS",Fibromatous neoplasms,diagnosis,silver-0-legacy,tier1_exact,auto_accepted
+CASE-0456,NO_CANCER,,,diagnosis,silver-0-legacy,no_signal,auto_accepted
+CASE-0789,8810/3,"Fibrosarcoma, NOS",Fibromatous neoplasms,report,gen-0-legacy,0.74,auto_accepted
+CASE-0999,8050/3,Papillary adenocarcinoma,"Epithelial neoplasms, NOS",manual,eval_batch:2026-10-01-1,,confirmed
+```
+
+- **One row per code**; a case with several cancers has several rows. A non-cancer case has exactly
+  one row with `code` = `NO_CANCER` and empty `term`/`group`.
+- **`code_source`** — where the case's codes came from, one value per case:
+
+  | `code_source` | Means | `source_version` | `source_confidence` |
+  |---|---|---|---|
+  | `manual` | a specialist reviewed the case (gold) | `<origin>:<gold export_id>` | empty |
+  | `diagnosis` | the diagnosis-text mapping (silver) | the silver generation | the mapping stage that decided it (`tier1_exact`, `tier2_fuzzy`, `tier3_llm`, `no_signal`) — **text, not a number** |
+  | `report` | the report model (bronze), only for a case with no diagnosis text | the model generation | the model's confidence, `0`–`1` |
+
+  Gold beats silver beats bronze: a reviewed case is always `manual`, and the report model never
+  overrides the diagnosis text.
+- **`review_status`**, one value per case: `confirmed` (a specialist reviewed it), `auto_accepted`
+  (ML is confident), or `queued` (ML's best guess, but it needs a review).
+- **Each file is complete**: every case ML has coded, not only what changed since the last one.
+
+### What the backend needs to build
+
+1. **Load the file as the registry's codes.** Check it against the sidecar's `sha256` first. For
+   every case in the file, replace all of that case's code rows with the file's rows. The registry's
+   counts, maps and exports read these codes.
+2. **Map the status onto the dashboard's:** `confirmed` and `auto_accepted` → confirmed, `queued` →
+   pending. Keep `code_source`, `source_version` and ML's own `review_status` alongside, so the
+   dashboard can tell a specialist's code from a machine's.
+3. **Store `source_confidence` as text.** Show it as a confidence only when `code_source` is
+   `report`; for `diagnosis` it names the mapping stage.
+4. **Record no cancer at the case level**, not as a code row: a `NO_CANCER` case is coded and
+   cancer-free, which is different from a case with no codes yet.
+5. **Mark cases awaiting review with `review_queue_<run>.csv`** (sent with every combined-codes
+   file, same `<run>`; only its `case_id` column matters here). A case on the review queue that has
+   no row in the combined codes has no code yet: show it as *awaiting review*, with no codes, and
+   leave it out of the registry's counts. A case in neither file hasn't reached ML yet; leave it as
+   it is.
+6. **Retire the backend's own review gate at ingest** (`REVIEW_AUTO_ACCEPT_CONFIDENCE`/`MARGIN`) for
+   codes that come from ML: `review_status` already carries ML's decision, made with the same
+   thresholds (0.23 confidence, 0.15 margin).
+7. **Retire the per-row confirm/correct/reject review** in favour of the worklist review below. The
+   dashboard may show a specialist's answer straight away, but it is not the code of record until it
+   comes back from ML as `code_source=manual` in the next combined-codes file; otherwise the next
+   file would overwrite it.
+
+### When ML sends it
+
+A new `combined_codes_<run>` + `review_queue_<run>` pair after every pending-diagnoses import and
+every gold import. A newer `<run>` replaces the older one.
+
+**Current file: `combined_codes_2026-09-27.csv`**, 59,763 rows across 54,103 cases:
+
+| `code_source` | `review_status` | Cancer cases | No-cancer cases |
+|---|---|---:|---:|
+| `diagnosis` | `auto_accepted` | 25,260 | 28,749 |
+| `report` | `auto_accepted` | 23 | 0 |
+| `report` | `queued` | 5 | 66 |
+
+`review_queue_2026-09-27.csv` holds 4,281 cases: 71 of them are the `queued` cases above, and the
+other 4,210 have no code yet (awaiting review). No case is `manual` yet: no gold has come back.
+
+## 2. The audit list: the specialist's worklist
+
+### What ML sends
 
 `audit_list_<list_id>.txt`, plus a sidecar `audit_list_<list_id>.txt.manifest.json`
 (`{"kind": "audit_list", "schema_version": 1, "sha256": ..., "written_at": ...}`):
@@ -33,14 +123,14 @@ CASE-0456
 | 100 | Report-Mapping audit: cases where the report model confidently disagrees with the diagnosis-text code |
 
 If `audit_list_2026-09-27.txt` (4,937 cases) reached you, discard it; `-2` replaces it. The large
-review queue is left off for now and will come back, smaller, in a later list.
+review queue is left off the worklist for now and will come back, smaller, in a later list.
 
-## 2. What the backend needs to build
+### What the backend needs to build
 
 1. **Load the list as the specialist's worklist**, in file order, replacing the previous list. A
    case that drops off a newer list no longer needs review.
 2. **Review screen.** The specialist opens each case with its full record (diagnosis text, report,
-   and the currently predicted codes; seeing the predictions is fine) and records one of:
+   and the case's current combined codes; seeing them is fine) and records one of:
    - **the case's complete set of cancer codes** — every reportable cancer in the case, not only the
      one on a particular diagnosis line. Each is a term chosen from the taxonomy
      (`ml/taxonomy/labels.csv`), ideally from a picker so nothing is typed; or
@@ -80,19 +170,23 @@ list. The error names the case IDs.
 
 ## 3. What stays the same
 
-- `pending_diagnoses_<export>.csv` (cloud → ML) and `silver_codes_<silver_id>.csv` /
-  `combined_codes_<run>.csv` (ML → cloud) are unchanged.
-- `review_queue_<run>.csv` is still produced by `handoff.py export-coding`, but it is no longer the
-  specialist's worklist; the audit list is.
+- `pending_diagnoses_<export>.csv` (cloud → ML) and `silver_codes_<silver_id>.csv` (ML → cloud) are
+  unchanged.
+- `review_queue_<run>.csv` still comes with every combined-codes file, but only to mark cases
+  awaiting review (section 1); the audit list is the specialist's worklist.
 - The worker bundle is a separate request: [ml-worker-change-request.md](ml-worker-change-request.md).
 
 ## 4. What ML does on its side (for reference)
 
 ```
+ml/.venv/Scripts/python.exe ml/scripts/code_cases.py combine --silver <silver_id> --split <split_id> --predictions <predictions.csv>
+ml/.venv/Scripts/python.exe ml/scripts/code_cases.py queue   --silver <silver_id> --split <split_id> --predictions <predictions.csv>
+ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-coding --run-id <run>
 ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-audit-list --list-id <id> [--no-review-queue]
 ml/.venv/Scripts/python.exe ml/scripts/handoff.py import-gold --csv gold_<export_id>.csv --export-id <export_id> --reviewer "<name>"
 ```
 
-ML keeps the origin of every listed case in `audit_list_ledger.csv`. Imported reviews become gold:
-evaluation-batch cases measure accuracy, Report-Mapping audit cases correct training labels, and
-Diagnosis-Mapping audit cases score the diagnosis-text mapping. See [manual-audit.md](manual-audit.md).
+The combination rule is in [coding.md](coding.md). ML keeps the origin of every listed case in
+`audit_list_ledger.csv`. Imported reviews become gold: evaluation-batch cases measure accuracy,
+Report-Mapping audit cases correct training labels, and Diagnosis-Mapping audit cases score the
+diagnosis-text mapping. See [manual-audit.md](manual-audit.md).

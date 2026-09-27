@@ -22,8 +22,11 @@ import io_utils
 from generations.manifest import read_manifest
 from generations.splits import Split, load_split, split_dir
 
-GOLD_ORIGINS = {"eval_batch", "review_queue", "random_slice"}
+GOLD_ORIGINS = {"eval_batch", "review_queue", "random_slice", "diagnosis_mapping_audit", "report_mapping_audit"}
 GOLD_EVAL_ORIGINS = {"eval_batch", "random_slice"}  # public: manual_audit imports it
+# Gold that may train, and only on train-partition cases. diagnosis_mapping_audit gold is neither eval nor
+# train: its sample is skewed toward the cascade's hardest rows, so it only scores the diagnosis mapping.
+GOLD_TRAIN_ORIGINS = {"review_queue", "report_mapping_audit"}
 CORRECTED_LABEL_SOURCES = {"gold", "silver"}
 
 _EXAMPLES = 5
@@ -84,13 +87,14 @@ def check_gold_eval_in_test(gold: pd.DataFrame, split: Split) -> None:
 
 
 def check_eval_queue_gold_not_trained(gold: pd.DataFrame, labels: pd.DataFrame, split: Split) -> None:
-    """Review-queue gold for an eval-side case (calibration ∪ test) never enters training labels.
+    """Gold-train-origin gold for an eval-side case (calibration ∪ test) never enters training labels.
 
     Expects ``gold`` columns ``case_id, origin`` and ``labels`` column ``case_id``.
     """
-    eval_side_queue = _case_ids(gold[gold["origin"] == "review_queue"]) & (split.calibration | split.test)
+    eval_side_queue = (_case_ids(gold[gold["origin"].isin(GOLD_TRAIN_ORIGINS)])
+                       & (split.calibration | split.test))
     _fail_if_any(eval_side_queue & _case_ids(labels),
-                 "have eval-side review-queue gold and appear in training labels")
+                 "have eval-side review-queue or report-mapping-audit gold and appear in training labels")
 
 
 def check_labels_train_only(labels: pd.DataFrame, split: Split) -> None:

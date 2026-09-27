@@ -264,6 +264,26 @@ def test_gold_eval_and_gold_train_split_by_origin_and_partition(three_way, label
     assert eval_side_queue_case not in set(gt["case_id"])  # eval-side queue gold excluded from gold_train
 
 
+def test_audit_origins_report_mapping_trains_on_train_diagnosis_mapping_does_neither(three_way, labels_csv):
+    out = config.GOLD_STORE_CSV
+    train_a, train_b = sorted(three_way.train)[:2]
+    test_case, calibration_case = sorted(three_way.test)[0], sorted(three_way.calibration)[0]
+    for case_id, origin in ((train_a, "report_mapping_audit"), (calibration_case, "report_mapping_audit"),
+                            (train_b, "diagnosis_mapping_audit"), (test_case, "diagnosis_mapping_audit")):
+        gold.ingest_gold(_rows([(case_id, "Fibrosarcoma, NOS", origin)]),
+                         reviewer="Dr. Test", labels_csv=labels_csv, out_csv=out)
+
+    assert set(gold.gold_train(config.DEFAULT_SPLIT_ID, out)["case_id"]) == {train_a}
+    assert gold.gold_eval(out).empty
+
+
+@pytest.mark.parametrize("origin", ["diagnosis_mapping_audit", "report_mapping_audit"])
+def test_audit_origins_need_a_term_not_a_bare_code(labels_csv, tmp_path, origin):
+    with pytest.raises(gold.GoldIngestError, match="must resolve a term"):
+        gold.ingest_gold(_rows([("CASE-A", "1001/3", origin)], columns=("case_id", "code", "origin")),
+                         reviewer="Dr. Test", labels_csv=labels_csv, out_csv=tmp_path / "gold.csv")
+
+
 def test_gold_snapshot_hash_changes_with_train_gold(three_way, labels_csv):
     out = config.GOLD_STORE_CSV
     train_case = sorted(three_way.train)[0]

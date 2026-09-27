@@ -2,10 +2,14 @@
 
 One row per (case_id, code), or exactly one ``NO_CANCER`` row for a case the
 specialist confirms has no reportable cancer. Every row must carry a valid
-``origin`` — ``eval_batch``, ``review_queue`` or ``random_slice`` (see
+``origin`` — ``eval_batch``, ``review_queue``, ``random_slice``,
+``diagnosis_mapping_audit`` or ``report_mapping_audit`` (see
 ``generations.guards.GOLD_ORIGINS``) — which is the only thing that later
 separates gold-eval (measures) from gold-train (trains); ingest refuses any
 row without one, per icd-mapping-strategy.md ("the origin tag is mandatory").
+Gold-eval is ``eval_batch``/``random_slice``; gold-train is ``review_queue``/
+``report_mapping_audit`` on train cases; ``diagnosis_mapping_audit`` gold is
+neither (it scores the diagnosis mapping on a sample skewed to its hardest rows).
 
 **Gold is collected as taxonomy terms, not codes** (2026-09-26 decision). A
 code alone is ambiguous for 186 of the taxonomy's 534 distinct codes — always
@@ -58,7 +62,7 @@ import pandas as pd
 
 import config
 import io_utils
-from generations.guards import GOLD_EVAL_ORIGINS, GOLD_ORIGINS
+from generations.guards import GOLD_EVAL_ORIGINS, GOLD_ORIGINS, GOLD_TRAIN_ORIGINS
 from generations.manifest import sha256_file
 from generations.splits import load_split
 from manual_audit import sheets
@@ -66,7 +70,7 @@ from manual_audit.terms import TermResolutionError, build_term_index, resolve_te
 from taxonomy.taxonomy import load_labels_taxonomy
 
 NO_CANCER = "NO_CANCER"
-TERM_REQUIRED_ORIGINS = frozenset({"eval_batch", "random_slice"})
+TERM_REQUIRED_ORIGINS = frozenset({"eval_batch", "random_slice", "diagnosis_mapping_audit", "report_mapping_audit"})
 
 GOLD_STORE_FIELDS = [
     "case_id", "code", "term", "group", "origin",
@@ -386,14 +390,15 @@ def gold_train(
     split_id: str | None = None,
     gold_csv: str | Path | None = None,
 ) -> pd.DataFrame:
-    """Gold used to train: origin == review_queue, restricted to the split's train cases.
+    """Gold used to train: origin in ``GOLD_TRAIN_ORIGINS`` (review_queue, report_mapping_audit),
+    restricted to the split's train cases.
 
-    Review-queue gold for a calibration/test case is excluded here (not just
-    from ``gold_eval``) — see the module docstring.
+    Such gold for a calibration/test case is excluded here (not just from
+    ``gold_eval``) — see the module docstring.
     """
     split_id = split_id if split_id is not None else config.DEFAULT_SPLIT_ID
     gold = load_gold(gold_csv)
-    queue = gold[gold["origin"] == "review_queue"]
+    queue = gold[gold["origin"].isin(GOLD_TRAIN_ORIGINS)]
     train_cases = load_split(split_id).train
     return queue[queue["case_id"].isin(train_cases)].reset_index(drop=True)
 

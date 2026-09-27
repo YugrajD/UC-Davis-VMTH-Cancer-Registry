@@ -2,8 +2,8 @@
 
 Per icd-mapping-strategy.md ("Improving the methods") and ml-rewrite-plan.md's
 Artefacts: per case, gold where it exists, silver elsewhere — **train
-partition only**. Gold-train (``manual_audit.gold.gold_train``, origin ==
-review_queue, restricted to the split's train cases) replaces a case's silver
+partition only**. Gold-train (``manual_audit.gold.gold_train``, origin in
+review_queue/report_mapping_audit, restricted to the split's train cases) replaces a case's silver
 rows entirely, whether or not that case was actually vague; a vague case
 *without* gold-train is excluded outright (its silver rows are not usable
 training signal and there is nothing to replace them with). A decisive silver
@@ -12,7 +12,7 @@ carries an empty ``matched_term``).
 
 Gold-eval (``eval_batch``/``random_slice`` origin) and the row-level audit
 store are never read here at all — the only gold source touched is
-``gold_train()``, which is already restricted to origin == review_queue and
+``gold_train()``, which is already restricted to the gold-train origins and
 to train-partition cases, so an eval-side queue-gold row (a review_queue row
 that happens to land on a calibration/test case) structurally cannot appear
 (WP3 -> WP9: "the corrected-annotations builder must itself ensure that
@@ -102,7 +102,7 @@ def build_corrected_annotations(silver_id: str, split_id: str) -> pd.DataFrame:
     train_cases = load_split(split_id).train
     silver = load_silver(silver_id)
     silver_train = silver[silver["case_id"].astype(str).str.strip().isin(train_cases)]
-    gold = gold_train(split_id)  # already train-only, origin == review_queue
+    gold = gold_train(split_id)  # already train-only, gold-train origins only
 
     silver_by_case = {cid: g for cid, g in silver_train.groupby("case_id")}
     gold_by_case = {cid: g for cid, g in gold.groupby("case_id")}

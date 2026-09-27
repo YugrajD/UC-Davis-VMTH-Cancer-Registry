@@ -121,6 +121,12 @@ def test_eval_queue_gold_catches_training_leak():
         check_eval_queue_gold_not_trained(CLEAN_GOLD, _labels(["T1", "C1"]), SPLIT)
 
 
+def test_eval_queue_gold_catches_eval_side_report_mapping_audit_gold():
+    gold = pd.concat([CLEAN_GOLD, _gold([("C2", "1001/3", "report_mapping_audit")])])
+    with pytest.raises(GuardViolation, match="1 case\\(s\\).*C2"):
+        check_eval_queue_gold_not_trained(gold, _labels(["T1", "C2"]), SPLIT)
+
+
 def test_eval_queue_gold_allows_train_side_queue_gold():
     check_eval_queue_gold_not_trained(CLEAN_GOLD, _labels(["T1"]), SPLIT)  # T1 is train-side queue gold
 

@@ -1,34 +1,23 @@
 # ML Directory — Overview
 
-A machine learning system that maps free-text veterinary pathology reports to standardized Vet-ICD-O-canine-1 cancer labels (term, group, ICD code). Production inference runs `ml/scripts/run_production.py`, which loads a per-section contrastive PetBERT backbone, embeds each report as a 2304-dim concat-3 vector, and runs a 4-stage classifier pipeline (case-presence gate → group classifier → per-group label-presence head → keyword correction).
+> **Describes the tree after the `ml/next` → `ml` cutover (WP13).** Until that commit, the new code
+> lives in `ml/next/` and the old tree is still production; this banner is removed by the cutover
+> commit. See [ml-rewrite-plan.md](ml-rewrite-plan.md) for status.
 
-Current production baseline: **G+S 62.1% on the held-out eval-half** (Good 46.1, Slight 16.0, CO 14.7, FP 2.3, FN 20.8).
-That figure is superseded: re-running the current checkpoints gives **61.8% on 4,456 eval-half rows** (frozen in
-`ml/output/parity_reference/`); see [ml-rewrite-plan.md](ml-rewrite-plan.md) Findings.
+A machine learning system that codes veterinary cancer cases to standardized Vet-ICD-O-canine-1
+labels (term, group, ICD code) from three sources of decreasing confidence — a specialist's
+**manual audit** (gold), the clinic's **diagnosis** text (silver), and the pathology **report** text
+(bronze) — and records how far each code can be trusted. See
+[icd-mapping-strategy.md](icd-mapping-strategy.md) for the full strategy.
 
----
+Production report-mapping inference (`scripts/predict.py`) loads a per-section contrastive PetBERT
+backbone, embeds each report as a 2304-dim concat-3 vector, and runs a 4-stage classifier pipeline
+(case-presence gate → group classifier → per-group label-presence head → keyword correction).
 
-## Rewrite in progress: `ml/next/`
-
-A clean-slate rewrite of `ml/` and `ml-worker/`, organised by method (gold / silver / bronze), is being built
-beside the old tree in `ml/next/`. It replaces the old tree in one cutover commit once parity L1–L3 pass. The
-contract, parity runbook, status and next steps are in [ml-rewrite-plan.md](ml-rewrite-plan.md). Until the
-cutover, everything else in this README describes the old tree, which is still production.
-
-```
-ml/next/                 Import root (tests: ml/next/tests, run with pytest from the repo root)
-├── config.py            Every path, including LEGACY_* (old tree, removed at cutover) and ARCHIVE_ROOT
-├── taxonomy/            Vet-ICD-O-canine table (labels.csv), behaviour and subtype keywords
-├── generations/         Manifests, splits (three-way-v1 = train / calibration / test), leakage guards
-├── diagnosis_mapping/   Silver: keyword tiers → local LLM tier → optional cleanup
-├── manual_audit/        Gold: Tier-3 audit, eval batches, gold store, cause pass
-├── coding/              Adoption rule (gold > silver > bronze), corrected annotations, review queue
-├── report_mapping/      Bronze: sections, model (backbone, heads, generation), inference, training
-├── evaluation/          Verdicts, intervals, silver-eval, gold-eval, audit rates
-├── parity/              Old-vs-new comparison (L1–L4) against the frozen reference pack
-└── scripts/             Thin entry points: map_diagnoses, audit, code_cases, train, calibrate, predict,
-                         evaluate, split, generations, parity
-```
+**Current reference baseline: G+S 61.76% on the eval half of the legacy split** (4,456 per-code
+rows; Good 45.8, Slight 16.0, CO 15.3, FP 2.6, FN 20.4). The previously published **62.1%** does not
+reproduce from the files on disk today and is superseded — see
+[report-mapping.md](report-mapping.md#the-621-caveat) for the reconciliation.
 
 ---
 
@@ -36,126 +25,124 @@ ml/next/                 Import root (tests: ml/next/tests, run with pytest from
 
 ```
 ml/
-├── data/                Raw input CSVs (report.csv, diagnoses.csv) — gitignored
-├── ICD_labels/          Vet-ICD-O taxonomy, behavior/subtype keyword filters, labels.csv
-├── model/               Neural-network module definitions
-├── annotation/          Diagnosis → ICD label annotation (LLM cascade + cleanup)
-├── training/            Per-stage training scripts (binary, group, label_presence, contrastive)
-├── production/          4-stage inference pipeline (production/petbert_pipeline/)
-├── evaluation/          Verdict scoring (end-to-end + per-stage + per-LP)
-├── analysis/            Annotation coverage statistics
-├── scripts/             Top-level entry points — only place a user runs Python
-├── utils/               Shared helpers (encoding, csv I/O)
-├── output/              All generated artifacts (gitignored — see "Where outputs go")
-├── documentation/       This directory
-├── config.py            Project-wide path constants — every script reads from here
-├── requirements.txt     Pinned Python dependencies
-└── .venv/               Python virtual environment
+  config.py            Every path, incl. ARCHIVE_ROOT (written only by generations/)
+  io_utils.py           The one shared CSV reader/writer (BOM, latin-1 reports / utf-8 outputs)
+  taxonomy/             labels.csv; taxonomy.py (load, label texts, code<->term<->group);
+                        behavior.py; subtype.py
+  manual_audit/         sheets.py (review CSVs + sidecars); tier3_audit.py (row-level Tier-3
+                        sample/pilot/ingest -> audit store); eval_batch.py (case-level gold-eval
+                        batch); gold.py (case-level gold ingest); cause_pass.py (misses -> cause store)
+  diagnosis_mapping/    keyword_tiers.py (no_signal/tier1/tier2); llm_tier.py; llm_client.py (local
+                        only); cleanup.py; silver.py (run -> versioned silver generation); stats.py
+  report_mapping/
+    sections.py          The single concat-3 section spec + report-text builder
+    model/               backbone.py (load, mean-pool embed); heads.py (3 heads, state_dict-
+                         compatible with legacy .pt); generation.py (load/save a generation dir)
+    training/             recipe.py (production hyperparameters + seeds); labels.py; backbone.py;
+                         case_presence.py; group.py; label_presence.py; calibrate.py; oof.py
+    inference/            embedding_cache.py (content-hash keyed); stages.py; keyword_correction.py
+                         (+ Lipoma rescue); predict.py
+  coding/                rule.py (decisive/vague); adopt.py (gold > silver > bronze); corrected.py
+                        (report-mapping training labels); queue.py (review queue)
+  evaluation/            verdicts.py; intervals.py (Wilson, Kish n_eff, stratified case-cluster
+                        bootstrap); silver_eval.py; gold_eval.py (four results); audit_rates.py
+  generations/           manifest.py; splits.py; guards.py (leakage checks); promote.py; triggers.py
+  handoff/               contracts.py; imports.py; exports.py; worker_format.py (shared with
+                        ml-worker)
+  scripts/               Thin entry points — see "Entry points" below
+  tests/                 pytest, synthetic fixtures only (a tiny random-init BERT saved locally)
 ```
 
 | Subdir | Purpose |
 |---|---|
-| `ICD_labels/` | Loads `labels.csv` (845 Vet-ICD-O terms, 52 groups). Hosts `behavior_keywords.py` and `subtype_keywords.py` consumed by Stage 4 (keyword correction). |
-| `model/` | `CasePresenceClassifier`, `GroupClassifier`, `LabelPresenceClassifier` module defs plus `constants.py` (PETBERT_EMB_DIM=768, DEFAULT_HIDDEN_DIM=512). |
-| `annotation/llm_pipeline/` | Three-tier diagnosis cascade (exact → fuzzy → LLM) + ensemble verification cleanup. Produces `ml/output/annotation/llm_annotation.csv`; the cleaned version is promoted to `annotation.csv` for training. |
-| `annotation/gold/` | Human-in-the-loop gold annotation: `sample` draws a review CSV, `ingest` validates it back into the gold store, `check_split` guards the train/test boundary. Entry point `run_gold_annotation.py`. |
-| `training/binary/` | CasePresenceClassifier (Stage 1) dataset build + training. |
-| `training/group/` | GroupClassifier (Stage 2) dataset build + training. |
-| `training/label_presence/` | Per-group LabelPresenceClassifier (Stage 3a) — one model per ICD group. |
-| `training/contrastive/` | PetBERT backbone adaptation via InfoNCE on per-section `(report_text, label_text)` pairs. |
-| `training/data/` | One-shot train/test split generator (`create_split.py`). |
-| `production/petbert_pipeline/` | 4-stage inference pipeline. `pipeline.py` orchestrates; `stages/` holds one module per stage. |
-| `evaluation/` | End-to-end (`evaluate.py`), case-based, common-labels, plus per-stage scorers for Stage 1/2/3. |
-| `analysis/annotation_stats.py` | Annotation coverage stats (cases-per-group, collisions, etc.). |
-| `scripts/` | The only Python entry points: `run_annotation.py`, `run_gold_annotation.py`, `run_training.py`, `run_production.py`, `run_evaluation.py`, `run_data_analysis.py`, `sweep_lp_thresholds.py`, `sweep_tail_gate.py`. |
-| `utils/` | `encoding.py` (safe filename + NPZ key helpers), `csv_io.py` (BOM stripping). |
-
----
-
-## Quick start
-
-Use `ml/.venv/Scripts/python.exe` on Windows, `ml/.venv/bin/python3` on macOS/Linux. Every `scripts/*.py` adds `ml/` to `sys.path` automatically.
-
-**Annotate diagnoses** (produces training labels — needs LM Studio running locally):
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py
-```
-
-**Train (cold start)** — adapt backbone, then train the three classifier heads in order:
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode adapt-backbone --device cuda --local-only
-rm -f ml/output/training/embedding_cache.npz
-ml/.venv/Scripts/python.exe ml/scripts/run_production.py --embed-only --device cuda
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-case-presence  --device cuda --local-only --train-cases ml/output/splits/train_cases.txt
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-groups         --device cuda --local-only --train-cases ml/output/splits/train_cases.txt --epochs 300 --lr 5e-5 --dropout 0.1
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py --mode train-label-presence --device cuda --local-only --train-cases ml/output/splits/train_cases.txt
-```
-See [training-guide.md](training-guide.md) for the full retraining cycle including threshold calibration.
-
-**Run inference** — scores every row in `ml/data/report.csv`:
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_production.py --device cuda --local-only
-```
-All four checkpoint paths and the gate/group thresholds (0.80 / 0.85) default to the production values via `run_production.py`'s `parser.set_defaults(...)`; you only override flags you want to change. See [production-pipeline.md](production-pipeline.md) for the full flag list.
-
----
-
-## Pipeline at a glance
-
-```
-report.csv (latin-1)
-  │
-  ▼  Build three section views per case
-     __sec_0__ = HISTOPATHOLOGICAL SUMMARY
-     __sec_1__ = FINAL COMMENT + COMMENT
-     __sec_2__ = ANCILLARY TESTS
-  │
-  ▼  Embed each section through PetBERT (concat-3 backbone) → (N, 3×768)
-     Concatenate → (N, 2304)   [cache: ml/output/training/embedding_cache.npz]
-  │
-  ▼  Stage 1: CasePresenceClassifier   2304 → cancer probability   (threshold 0.80)
-  ▼  Stage 2: GroupClassifier          2304 → 25 group probs       (threshold 0.85 + tail-gate K=2, gap=0.08)
-  ▼  Stage 3a: per-group LabelPresenceClassifier   2304+label → in-group label score
-              (per-LP threshold from lp_thresholds.json; argmax fallback)
-  ▼  Stage 3b/4: keyword correction    behavior digit + subtype filter
-  ▼  Post-Stage-3 rescue: Lipoma keyword RESCUE (appends Lipoma, NOS when applicable)
-  │
-  ▼  predictions.csv + provenance + similarity + visualization + embeddings + summary
-```
-
-Gate-rejected cases become `Non-Cancer`. Cases that pass the gate but fail every group threshold become `Unidentified Cancer` (unless argmax fallback is on — default).
+| `taxonomy/` | Vet-ICD-O-canine-1 table (845 terms, 52 groups) plus behavior/subtype keyword filters used by report-mapping's Stage 3b. |
+| `manual_audit/` | Gold: the row-level Tier-3 diagnostic audit, the case-level gold-eval batch, the gold store, the cause pass. See [manual-audit.md](manual-audit.md). |
+| `diagnosis_mapping/` | Silver: the 3-tier diagnosis cascade + ensemble cleanup, versioned as silver generations. See [diagnosis-mapping.md](diagnosis-mapping.md). |
+| `report_mapping/` | Bronze: the 4-stage PetBERT pipeline, its training and its inference. See [report-mapping.md](report-mapping.md). |
+| `coding/` | Applies gold > silver > bronze per case; builds the report mapping's training labels; builds the review queue. See [coding.md](coding.md). |
+| `evaluation/` | Verdict scoring, confidence intervals, silver-eval and the four gold-eval results. See [evaluation.md](evaluation.md). |
+| `generations/` | Manifests, splits, leakage guards, promotion and retraining triggers — shared by every versioned artefact. See [generations.md](generations.md). |
+| `handoff/` | File contracts with the cloud (registry app / backend) and the worker bundle contract. See [handoff.md](handoff.md). |
+| `scripts/` | The only Python entry points. |
+| `tests/` | pytest; synthetic fixtures only — never reads `ml/data/` or `ml/output/`. |
 
 ---
 
 ## Where outputs go
 
-All under `ml/output/` (gitignored).
+All under `output/` (gitignored). Paths below are the `config.py` constants, relative to `ml/`.
 
 | Path | Contents |
 |---|---|
-| `output/annotation/annotation.csv` | Canonical training supervision (`config.ANNOTATION_CSV`); promoted from the cleaned annotation below |
-| `output/annotation/llm_annotation.csv` | Raw three-tier annotation result |
-| `output/annotation/llm_annotation_cleaned.csv` | After ensemble cleanup pass; promote to `annotation.csv` to use for training |
-| `output/annotation/llm_summary.{json,md}` | Annotation statistics |
-| `output/annotation/tier3_audit_review.csv` | Human-review surface for the row-level Tier-2/Tier-3 audit, plus its `tier3_audit_instructions.md` and `tier3_audit_taxonomy.csv` sidecars and the `tier3_audit_batch<N>_cases.txt` ledger (from `run_gold_annotation.py sample`) |
-| `output/annotation/gold_annotation.csv` | Human-confirmed gold store (from `run_gold_annotation.py ingest`). Currently row-level Tier-3 audit rows (`provenance=tier3_audit`) — **not** scoreable by `evaluate.py`, which is per-case; weight rates by `sample_weight` within each `sample_stratum`. See [annotation-redesign-plan.md](annotation-redesign-plan.md) |
-| `output/splits/train_cases.txt` / `test_cases.txt` | 80/20 stratified case-ID lists (generated once) |
-| `output/training/embedding_cache.npz` | Per-section + concat-3 + mean + label embeddings. Auto-invalidates on model change. |
-| `output/training/contrastive/contrastive_pairs.csv` | Per-section (report, label) pairs for backbone adaptation |
-| `output/training/group/group_training_data.npz` | Multi-hot targets for GroupClassifier |
-| `output/training/group/uncommon_groups.txt` | Group names merged into the "Uncommon" bucket |
-| `output/training/binary/case_presence_dataset.npz` | Cancer/no-cancer dataset for CasePresenceClassifier |
-| `output/training/label_presence/{safe_group}_pairs.csv` | Within-group (case, label, target) pairs |
-| `output/checkpoints/contrastive/` | Adapted PetBERT backbone (HuggingFace format) |
-| `output/checkpoints/case_presence/case_presence_classifier.pt` | Stage 1 gate |
-| `output/checkpoints/group/group_classifier_best.pt` | Stage 2 |
-| `output/checkpoints/label_presence/{safe_group}.pt` | Stage 3a — one per ICD group + `uncommon.pt` |
-| `output/checkpoints/label_presence/lp_thresholds.json` | Per-LP thresholds from `sweep_lp_thresholds.py` |
-| `output/production/petbert_predictions.csv` | Top-k predictions per case (current run) |
-| `output/production/petbert_{provenance,similarity_scores,visualization,embeddings,summary}.*` | Debug artifacts |
-| `output/evaluation/{subdir}/evaluation*.csv` + `*_history.csv` | End-to-end verdicts + cycle history |
-| `output/evaluation/{subdir}/{case_presence,groups,label_presence}_evaluation*.csv` | Per-stage scorer outputs |
-| `output/data_analysis/` | Annotation coverage tables + plots |
+| `output/splits/<split_id>/{train,calibration,test}_cases.txt` + `manifest.json` | A split generation. `three-way-v1` is the default. |
+| `output/silver/<silver_id>/annotation.csv` + `manifest.json` | A silver generation (the diagnosis cascade's output). |
+| `output/diagnosis_mapping_stats/<silver_id>/` | Coverage-stats artifacts for a silver generation. |
+| `output/manual_audit/audit_store.csv` | Row-level Tier-3 audit judgements. Never gold. |
+| `output/manual_audit/gold_store.csv` | Case-level gold: one row per (case_id, code), or one `NO_CANCER` row. |
+| `output/manual_audit/eval_batch_ledger.csv` | The gold-eval batch series ledger (`N_h`, `n_h`, `sample_weight`, ...). |
+| `output/manual_audit/cause_store.csv` | Cause-pass answers on misses. |
+| `output/manual_audit/tier3_audit/` | Tier-3 audit review/key/instructions/taxonomy sheets. |
+| `output/manual_audit/eval_batch/` | Case-level eval-batch review sheets. |
+| `output/coding/corrected_annotations.csv` | The report mapping's training labels (train partition only). |
+| `output/coding/adopted_codes.csv` | The registry's adopted code per case. |
+| `output/coding/review_queue.csv` | Cases the specialist needs to look at. |
+| `output/report_mapping/current/`, `output/report_mapping/candidate/` | Report-mapping generations (production / being trained). Layout in [report-mapping.md](report-mapping.md). |
+| `output/report_mapping/embedding_cache/<key>.npz` | Content-hash keyed PetBERT embedding cache. Never bundled into a generation. |
+| `output/predictions/<generation_id>_predictions.csv` | Stamped report-mapping predictions. |
+| `output/eval/silver_eval_history.csv` | One line per `evaluate.py silver` run. |
+| `output/handoff/inbox/`, `output/handoff/outbox/` | Cloud file contracts (pending diagnoses, gold imports; silver/coding exports; worker bundle tarballs). |
+| `output/archive/YYYY-MM-DD_<desc>/` | An archived (superseded) report-mapping generation. Written only by `generations/promote.py`; nothing loads from it. |
+
+---
+
+## Entry points (`scripts/`)
+
+| Script | Subcommands | Does |
+|---|---|---|
+| `map_diagnoses.py` | `run \| import-legacy \| stats` | Diagnosis-mapping cascade; import the legacy silver generation; coverage stats. |
+| `audit.py` | `tier3-sample \| tier3-pilot \| tier3-ingest \| eval-batch \| ingest-sheet \| ingest-gold \| cause-sheet \| ingest-cause` | Manual-audit sheets and stores. |
+| `split.py` | `import-legacy \| create \| check` | Split generations; leakage guards. |
+| `code_cases.py` | `adopt \| corrected \| queue` | Coding-rule outputs. |
+| `train.py` | `--stage backbone\|case-presence\|group\|label-presence\|heads\|oof` | Train a report-mapping candidate. |
+| `calibrate.py` | — | Fit every inference threshold on the calibration partition. |
+| `predict.py` | — | Stamped report-mapping predictions (`--embed-only` to just build the cache). |
+| `evaluate.py` | `silver \| gold \| audit-rates` | Verdicts, the four gold-eval results, Tier-3 audit rates. |
+| `promote.py` | `[--apply]` | The promotion recommendation, or carrying it out. |
+| `generations.py` | `import-gen0 \| import-cache \| status` | Legacy generation imports; current/candidate status + trigger check. |
+| `handoff.py` | `import-pending \| import-gold \| export-silver \| export-coding \| export-bundle` | Cloud file contracts. |
+| `retrain_cycle.py` | — | The strategy's local retraining lane, end to end (recommend-only). |
+
+`split.py check` also runs automatically inside `train.py`, `calibrate.py`, `evaluate.py gold` and
+`promote.py`, and refuses on any leakage-guard violation.
+
+---
+
+## Quick start
+
+Use `ml/.venv/Scripts/python.exe` on Windows, `ml/.venv/bin/python` on macOS/Linux. Every
+`scripts/*.py` adds `ml/` to `sys.path` automatically.
+
+**Run tests:**
+```bash
+ml/.venv/Scripts/python.exe -m pytest ml -q -p no:cacheprovider
+```
+
+**Run inference** (scores every row in `ml/data/report.csv` against the production generation):
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/predict.py --generation current --device cuda --local-only
+```
+
+**Retrain** (heads only, on an existing silver generation and split):
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/retrain_cycle.py --silver silver-0-legacy --device cuda --local-only
+```
+See [training-guide.md](training-guide.md) for the full cycle broken into individual steps, exact
+commands and runtimes.
+
+**Run the diagnosis cascade** (needs LM Studio running locally):
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
+```
 
 ---
 
@@ -163,14 +150,17 @@ All under `ml/output/` (gitignored).
 
 | File | When to read it |
 |---|---|
-| [production-pipeline.md](production-pipeline.md) | You're invoking `run_production.py` or debugging an inference run |
-| [classifiers.md](classifiers.md) | You want the architecture, input/output shapes, or threshold mechanics of any classifier |
-| [label-annotation.md](label-annotation.md) | You're running or debugging `run_annotation.py` |
-| [model-training.md](model-training.md) | You want the reasoning behind the 4-stage design and concat-3 representation |
-| [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes |
-| [ml-rewrite-plan.md](ml-rewrite-plan.md) | You're working on the `ml/next/` rewrite: contract, work packages, parity runbook, status and next steps |
-| [icd-mapping-strategy.md](icd-mapping-strategy.md) | Project-level strategy: how manual audit (gold), diagnosis-based mapping (silver), and report-based mapping (bronze) combine to code every case, including future uploads |
-| [annotation-redesign-plan.md](annotation-redesign-plan.md) | The approved gold/silver bootstrap plan for a trustworthy annotation corpus (Phase 0 executing) |
-| [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer, or picking the work back up after a break |
-| [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) | Proposed (not implemented) Box + rclone layout for sharing data and weights across teammates' pipelines |
-| [archive/training-log/](archive/training-log/) | Historical phase logs — do not consult for current behavior |
+| [icd-mapping-strategy.md](icd-mapping-strategy.md) | The project-level strategy: how gold, silver and bronze combine to code every case. Read this first. |
+| [report-mapping.md](report-mapping.md) | You're invoking `predict.py`/`train.py`/`calibrate.py`, or want the 4-stage design and why it looks the way it does. |
+| [diagnosis-mapping.md](diagnosis-mapping.md) | You're running or debugging `map_diagnoses.py`. |
+| [manual-audit.md](manual-audit.md) | You're running the Tier-3 audit or an eval-batch draw, or ingesting gold. |
+| [coding.md](coding.md) | You want the adoption rule, the corrected-annotations builder, or the review queue. |
+| [evaluation.md](evaluation.md) | You're scoring predictions, reading a gold-eval report, or want the CI methodology. |
+| [generations.md](generations.md) | You're creating a split, promoting a candidate, or want the retraining-trigger logic. |
+| [handoff.md](handoff.md) | You're exchanging files with the backend, or building/reading a worker bundle. |
+| [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes. |
+| [ml-rewrite-plan.md](ml-rewrite-plan.md) | You're working on the rewrite itself: contract, work packages, parity runbook, status. |
+| [ml-worker-change-request.md](ml-worker-change-request.md) | You're deploying the worker or changing the backend's model-upload path. |
+| [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer. |
+| [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) | Proposed (not implemented) Box + rclone layout for sharing data and weights. |
+| [archive/](archive/) | Historical docs — the pre-rewrite tree, the annotation-redesign plan, phase logs. Do not consult for current behavior. |

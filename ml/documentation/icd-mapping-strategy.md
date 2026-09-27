@@ -39,7 +39,7 @@ manually with the cloud.
 |---|---|---|---|
 | **Produces** | Gold | Silver | Bronze |
 | **Input** | The full case record | The clinic's free-text diagnosis | The pathology report text |
-| **Code** | `annotation/gold/` + the review app | `annotation/llm_pipeline/` | `production/petbert_pipeline/` |
+| **Code** | `manual_audit/` + the review app | `diagnosis_mapping/` | `report_mapping/` |
 | **Confidence** | Highest | High where decisive | Lowest |
 | **Cost per case** | Very high | Low | Very low |
 | **Runs on** | Sampled and queued cases | Every case with a diagnosis | Every case |
@@ -272,7 +272,9 @@ only, and an Admin decides by hand.
 
 **The local lane is the retraining contract (3.1).** Each run fetches its inputs, archives the
 current generation, retrains and applies the promotion rule. A winning generation is uploaded to
-the ML worker; a losing one is discarded and the incumbent restored from the archive.
+the ML worker; a losing one is discarded and the incumbent restored from the archive. This lane now
+runs end to end with one local command, `scripts/retrain_cycle.py` (recommend-only — an Admin still
+applies the promotion by hand); see [generations.md](generations.md#retrain_cyclepy--the-local-lane-in-one-go).
 
 ## Roadmap
 
@@ -288,14 +290,17 @@ flowchart LR
 ### Phase 1 — Historical data (current)
 
 **1.1 Tier-3 audit.** Pilot → remainder → fix the cascade → re-run the LLM locally, per
-[annotation-redesign-plan.md](annotation-redesign-plan.md). It also settles the two provisional
-rows of the vagueness table: declined LLM answers, and whether `tier2_fuzzy` stays decisive.
+[archive/annotation-redesign-plan.md](archive/annotation-redesign-plan.md) (its still-binding
+decisions are in [manual-audit.md](manual-audit.md)). It also settles the two provisional rows of
+the vagueness table: declined LLM answers, and whether `tier2_fuzzy` stays decisive.
 
-**1.2 First evaluation batch.** About 385 cases from the test split: blind review, full record,
-cause pass on misses, producing the four results.
+**1.2 First evaluation batch.** About 385 cases from the test split: full record, cause pass on
+misses, producing the four results. Review turned out **not blind** in practice (2026-09-26): the
+specialist reviews in the registry app, which already shows the case's prediction — see
+[manual-audit.md](manual-audit.md) for the `review_mode` tracking this implies for reported accuracy.
 *Today:* there is no gold, and production's Good + Slightly-off rate is agreement with silver, not
 correctness.
-*Test:* `check-split` passes; per-code scoring through `evaluate.py --expectation-csv`.
+*Test:* `split.py check` passes; per-code scoring through `evaluate.py gold`.
 *Risk:* additive; `annotation.csv` untouched.
 
 **1.3 Version silver generations.** Stamp every silver output with its annotation-pipeline
@@ -337,8 +342,13 @@ matches.
 **2.2 Review routing and code provenance.** Every adopted code records:
 
 - `code_source`: `manual`, `diagnosis` or `report`;
-- `source_version`: the generation that produced it;
+- `source_version`: the generation that produced it (a silver_id for `diagnosis`, or a bronze
+  `generation_id` such as `gen-20260927T003905Z` for `report`);
 - `source_confidence`: `decision_stage` for silver, calibrated probability for bronze.
+
+`code_source`, `source_version` and `source_confidence` are already implemented locally
+(`coding.adopt`, [coding.md](coding.md)); this item's remaining scope is the cloud-side database
+migration and review-app routing below.
 
 Review status separates `auto_accepted` from human `confirmed`. Queue by the adopted method:
 vagueness for silver, a bronze threshold recalibrated from the random slice for bronze. Rename the

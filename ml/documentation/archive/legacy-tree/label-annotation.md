@@ -77,7 +77,7 @@ A request failure and a genuine "no match" reply are both counted as `tier3_no_m
 `tier3_llm` on a `No Match` row is an **upper bound** on real declines.
 
 This is what makes the silently-dropped rows measurable, and it is the basis of the
-row-level Tier-3 audit in [annotation-redesign-plan.md](annotation-redesign-plan.md).
+row-level Tier-3 audit in [annotation-redesign-plan.md](../annotation-redesign-plan.md).
 
 **Backfilling an older corpus.** Every gate ahead of the LLM call is deterministic, so the
 stage a row reached is recoverable from its diagnosis text alone — no LLM calls, no re-run:

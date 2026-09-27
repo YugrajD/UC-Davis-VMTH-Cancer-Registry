@@ -692,7 +692,7 @@ BCE (Exp13, dropout=0.05): **0.4435** — unbeaten. ASL provides no benefit here
 
 ## What to Try Next
 
-> **Update (Phase 23, 2026-04-28):** GroupClassifier became competitive with ~21,853 LLM-annotated train cases (46,652 total train cases). It beats binary at threshold=0.90: +2.9pp G+S, −15.3pp FP. It is now part of the three-stage production pipeline (Phase 25). This log covers Phase 16 and earlier experiments — see [classifiers.md](../classifiers.md) for Phase 23+ results.
+> **Update (Phase 23, 2026-04-28):** GroupClassifier became competitive with ~21,853 LLM-annotated train cases (46,652 total train cases). It beats binary at threshold=0.90: +2.9pp G+S, −15.3pp FP. It is now part of the three-stage production pipeline (Phase 25). This log covers Phase 16 and earlier experiments — see [classifiers.md](../legacy-tree/classifiers.md) for Phase 23+ results.
 
 Historical roadmap (superseded):
 
@@ -701,5 +701,5 @@ Historical roadmap (superseded):
 | ~10,000 confirmed cases | Re-run Experiment 3 baseline; expect more groups to cross 100-case threshold |
 | ~15,000+ confirmed cases | GroupClassifier expected to pull ahead of binary on CO% |
 
-See [classifiers.md](../classifiers.md) for the discriminating-keyword term selection idea,
+See [classifiers.md](../legacy-tree/classifiers.md) for the discriminating-keyword term selection idea,
 which may improve within-group accuracy once the group prediction step is reliable.

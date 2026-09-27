@@ -1,161 +1,167 @@
 # Training Guide
 
-Step-by-step instructions for cold-start training and retraining cycles. For architecture rationale see [model-training.md](model-training.md); for the head-by-head reference see [classifiers.md](classifiers.md).
+The full retraining cycle, with exact commands and runtimes. For the model design and calibration
+mechanics see [report-mapping.md](report-mapping.md); for the promotion/trigger logic see
+[generations.md](generations.md); for the strategy behind retraining at all see
+[icd-mapping-strategy.md](icd-mapping-strategy.md), "The full cycle".
+
+Most of this cycle is `retrain_cycle.py` in one call ([generations.md](generations.md)). This page
+spells out each of its steps individually — use it when you need to stop between steps, rerun just
+one, or do a cold start (a backbone retrain, which `retrain_cycle.py` also drives with `--backbone`).
 
 ## Prerequisites
 
-- **Python venv:** `ml/.venv/Scripts/python.exe` (Windows) / `ml/.venv/bin/python3` (macOS/Linux). Every script in `ml/scripts/` adds `ml/` to `sys.path`, so no `PYTHONPATH` is needed.
-- **Device:** `--device cuda` recommended (PyTorch 2.6+ on CUDA 12.8 supports Blackwell sm_120). `--device auto` picks the best available (cuda → mps → xpu → cpu).
-- **Annotations:** `ml/output/annotation/annotation.csv` must exist — this is the canonical training-supervision file (`config.ANNOTATION_CSV`, the default for every training and evaluation script). If missing, run `python ml/scripts/run_annotation.py` to generate `ml/output/annotation/llm_annotation_cleaned.csv`, then promote it (`Copy-Item ml/output/annotation/llm_annotation_cleaned.csv ml/output/annotation/annotation.csv`). Training scripts error out if the canonical file is missing.
-- **Reports:** `ml/data/report.csv` must exist.
-- **Train/test split:** `ml/output/splits/train_cases.txt` and `test_cases.txt` must exist. Generate once with `ml/.venv/Scripts/python.exe ml/training/data/create_split.py`. Do NOT regenerate between training runs — a new seed invalidates comparisons.
+- **Python venv:** `ml/.venv/Scripts/python.exe` (Windows) / `ml/.venv/bin/python` (macOS/Linux).
+  Every `scripts/*.py` adds `ml/` to `sys.path` itself — no `PYTHONPATH` needed.
+- **Device:** `--device cuda` on the RTX 5070 Ti (PyTorch 2.6+ / CUDA 12.8 for Blackwell sm_120
+  support). `--device auto` (the default on most scripts) picks cuda → mps → xpu → cpu.
+  `train.py`/`predict.py`/`calibrate.py` all accept it.
+- **A split**: `config.DEFAULT_SPLIT_ID` (`three-way-v1`) must exist (`scripts/split.py
+  import-legacy` then `create --parent legacy-80-20 --id three-way-v1`, one-time). Every training
+  and calibration command below defaults `--split` to it.
+- **A silver generation** to train on: an existing `silver_id` (`silver-0-legacy`, or a fresh one
+  from Step 1).
 
-## Cold-start protocol
-
-A cold start is required whenever embeddings change (backbone retraining or a change in the section grouping fed to PetBERT). Run the steps in this order; each step's outputs feed the next.
-
-### Step 1 — Annotate (skip if `annotation.csv` already exists)
-
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_annotation.py
-```
-Produces `ml/output/annotation/llm_annotation_cleaned.csv` (cleanup pass included by default). Promote it to the canonical training-supervision path that every training script reads:
-```bash
-Copy-Item ml/output/annotation/llm_annotation_cleaned.csv ml/output/annotation/annotation.csv
-```
-`run_training.py` checks for `annotation.csv` at startup and errors out (with a hint) if it isn't there. Runtime: 30–60 minutes plus cleanup on a full corpus.
-
-### Step 2 — Adapt the PetBERT backbone
+## Step 1 — Diagnosis mapping (skip if the silver generation you need already exists)
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode adapt-backbone \
-  --epochs 3 --batch-size 32 --lr 2e-5 --temperature 0.07 \
-  --device cuda --local-only
-```
-Builds per-section `(report_text, label_text)` pairs from `llm_annotation.csv` + `report.csv`, then InfoNCE-fine-tunes PetBERT. Saves the full HuggingFace checkpoint to `ml/output/checkpoints/contrastive/`. Use `--skip-pair-build` to reuse an existing pairs CSV. Runtime: ~30 min on cuda.
-
-### Step 3 — Invalidate the embedding cache
-
-The backbone's embedding space changed, so the cache is stale:
-```bash
-rm -f ml/output/training/embedding_cache.npz
+ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
 ```
 
-### Step 4 — Rebuild the embedding cache
+Runs the full cascade + cleanup over `config.DIAGNOSES_CSV` and writes a new, immutable silver
+generation (`output/silver/silver-1/`). See [diagnosis-mapping.md](diagnosis-mapping.md). Needs LM
+Studio running locally. Runtime: tens of minutes on a full corpus (cascade + cleanup).
+
+## Step 2 — Corrected annotations
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_production.py --embed-only --device cuda
+ml/.venv/Scripts/python.exe ml/scripts/code_cases.py corrected --silver silver-1 --split three-way-v1
 ```
-`--embed-only` runs the production pipeline up to and including embedding, then stops. Populates `ml/output/training/embedding_cache.npz` with `concat_3`, the three per-section views, the masked-mean, and label embeddings. Runtime: ~25 min on cuda. Subsequent training and inference reuse this cache.
 
-### Step 5 — Train the CasePresenceClassifier (Stage 1 gate)
+Builds the report mapping's training labels for the train partition: gold-train where it exists,
+silver elsewhere ([coding.md](coding.md)). Writes `config.CORRECTED_ANNOTATIONS_CSV`. This is the
+`--labels` value every training/calibration command below reads.
+
+## Step 3 — Adapt the backbone (cold start only)
+
+Skip this step and Step 4 unless the backbone itself needs to change (a section-spec change, or a
+fresh contrastive adaptation). Heads-only retraining (the common case) reuses the current
+generation's `petbert/` untouched.
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-case-presence \
-  --epochs 20 --case-presence-recall-weight 0.7 \
-  --device cuda --local-only \
-  --train-cases ml/output/splits/train_cases.txt
+ml/.venv/Scripts/python.exe ml/scripts/train.py --stage backbone \
+    --labels ml/output/coding/corrected_annotations.csv --split three-way-v1 \
+    --device cuda --out candidate --local-only
 ```
-Output: `ml/output/checkpoints/case_presence/case_presence_classifier.pt`. Runtime: a few minutes.
 
-### Step 6 — Train the GroupClassifier (Stage 2)
+Hyperparameters come from `report_mapping.training.recipe.BACKBONE` (see
+[report-mapping.md, Training](report-mapping.md#training)). Writes the full HuggingFace checkpoint to
+`candidate/petbert/`.
+
+## Step 4 — Rebuild the embedding cache (cold start only)
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-groups \
-  --epochs 300 --lr 5e-5 --dropout 0.1 \
-  --max-class-weight 50 --weight-decay 1e-3 \
-  --device cuda --local-only \
-  --train-cases ml/output/splits/train_cases.txt
+ml/.venv/Scripts/python.exe ml/scripts/predict.py --generation candidate --embed-only --device cuda
 ```
-Critical hyperparameters (all required):
-- `--max-class-weight 50` — caps per-group BCE `pos_weight` (rare-group weights would otherwise reach >3000×).
-- `--weight-decay 1e-3` — prevents the degenerate "predict every group on every case" solution.
-- `--dropout 0.1` — current production setting; 0.3 over-regularises.
-- `--epochs 300` — best epoch typically lands in the 200–280 range.
 
-Output: `ml/output/checkpoints/group/group_classifier_best.pt` (only overwritten when val macro F1 beats the previous best). `group_classifier_current.pt` is overwritten each run. Runtime: ~15 min on cuda.
+A new backbone changes the embedding fingerprint, so the content-hash cache automatically misses and
+this rebuilds it (`output/report_mapping/embedding_cache/<key>.npz`) — no manual invalidation step;
+the cache is keyed on content hash, not mtime (see [report-mapping.md](report-mapping.md)).
+**Runtime: ~9 minutes** on the RTX 5070 Ti for the full corpus.
 
-### Step 7 — Train the per-group LabelPresenceClassifiers (Stage 3a)
+## Step 5 — Train the heads
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_training.py \
-  --mode train-label-presence \
-  --label-presence-epochs 25 --label-presence-negs-per-pos 5 \
-  --label-presence-recall-weight 0.5 \
-  --label-presence-n-cols 3 --label-presence-col-pair-mode --label-presence-col-combine learned \
-  --device cuda --local-only \
-  --train-cases ml/output/splits/train_cases.txt
-```
-Defaults for the `--label-presence-*` flags match production. Trains one model per common group plus the Uncommon head. Outputs `ml/output/checkpoints/label_presence/{safe_group_name}.pt`. Runtime: ~10–20 min total on cuda.
-
-### Step 8 — Calibrate per-LP thresholds
-
-First produce per-(case, label) scores on the test split:
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
-  --stage label-presence \
-  --test-cases ml/output/splits/test_cases.txt \
-  --out-dir ml/output/evaluation/label_presence \
-  --label "lp eval (baseline t=0.5)"
+ml/.venv/Scripts/python.exe ml/scripts/train.py --stage heads \
+    --labels ml/output/coding/corrected_annotations.csv --split three-way-v1 \
+    --seed 42 --device cuda --out candidate --local-only
 ```
 
-Then sweep per-LP thresholds on the sweep half; eval half stays unbiased:
-```bash
-ml/.venv/Scripts/python.exe ml/scripts/sweep_lp_thresholds.py \
-  --eval-csv ml/output/evaluation/label_presence/label_presence_evaluation.csv \
-  --baseline-threshold 0.5 --grid 0.05,0.95,0.01 \
-  --out-json ml/output/checkpoints/label_presence/lp_thresholds.json
-```
-`run_production.py` auto-loads the resulting JSON next run.
+Trains CasePresence, Group and LabelPresence in sequence against `candidate/`'s backbone (the
+current generation's, unless Step 3 ran first), reusing one embedding cache. Hyperparameters come
+from `report_mapping.training.recipe` (see [report-mapping.md, Training](report-mapping.md#training)).
 
-### Step 9 — Recalibrate the Stage-2 tail gate (optional)
+To train one head only, pass `--stage case-presence`, `--stage group` or `--stage label-presence`
+instead of `heads`. Writes a candidate manifest with `calibration.status: "pending"`.
+**Runtime: ~5 minutes** total on the RTX 5070 Ti (heads-only, cache already built).
+
+## Step 6 — Calibrate thresholds
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/sweep_tail_gate.py
+ml/.venv/Scripts/python.exe ml/scripts/calibrate.py --generation candidate \
+    --labels ml/output/coding/corrected_annotations.csv --split three-way-v1
 ```
-Runs production + evaluation for a small grid of `(K, gap)` pairs against `test_cases.txt`. The current production defaults (`K=2, gap=0.08`) were calibrated 2026-05-11; rerun this if the GroupClassifier has changed.
 
-### Step 10 — Score the held-out test set
+Fits every threshold on the split's **calibration** partition, from cached embeddings (never
+re-embeds): per-LP thresholds first (0.05-step grid, F1-maximizing), then gate/group/tail jointly
+(a small fixed grid, per-code G+S objective) — see [report-mapping.md](report-mapping.md#calibration)
+for the exact grids. Writes `checkpoints/thresholds.json` and
+`checkpoints/label_presence/lp_thresholds.json`, and flips the manifest's `calibration.status` to
+`"calibrated"`. **Runtime: ~2 minutes** on the RTX 5070 Ti.
+
+## Step 7 — Predict and evaluate
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
-  --test-cases ml/output/splits/test_cases.txt \
-  --out-dir ml/output/evaluation/contrastive_test \
-  --label "cold-start cycle"
+ml/.venv/Scripts/python.exe ml/scripts/predict.py --generation candidate --device cuda
 ```
-Add `--stage all` to also write per-stage metrics for Stage 1/2/3 plus case-based and common-labels evaluations:
+
+Runs every stage over `config.REPORT_CSV` and writes a stamped predictions CSV
+(`output/predictions/<generation_id>_predictions.csv`). **Runtime: ~2 minutes** on the RTX 5070 Ti
+(embeddings already cached).
+
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/run_evaluation.py \
-  --stage all \
-  --test-cases ml/output/splits/test_cases.txt \
-  --out-dir ml/output/evaluation/contrastive_test \
-  --label "cold-start cycle"
+ml/.venv/Scripts/python.exe ml/scripts/evaluate.py silver --predictions PATH --labels silver-1 --split three-way-v1 --partition test
+ml/.venv/Scripts/python.exe ml/scripts/evaluate.py gold --predictions PATH --silver silver-1 --split three-way-v1
 ```
 
-## Embedding & classifier versioning
+`evaluate.py silver` is the cheap ruler (bronze vs the labels table on the test partition —
+[evaluation.md](evaluation.md)); `evaluate.py gold` is the four gold-eval results with confidence
+intervals, once gold-eval exists.
 
-From `CLAUDE.md`: embeddings change when (a) the text fed to PetBERT changes (not applicable currently — concat-3 is the only path) or (b) PetBERT weights change (i.e. a backbone retrain). When embeddings change, every downstream classifier (Group, CasePresence, LabelPresence) is invalidated. Stale classifiers load silently and produce wrong results — no error.
+## Step 8 — Promote
 
-Before retraining the backbone:
-1. Move the full old generation (embeddings + backbone + all classifiers) to `ml/output/archive/YYYY-MM-DD_<short-description>/` (sibling of `checkpoints/`, never referenced by `config.py`).
-2. Delete originals from production paths.
-3. Run the cold-start protocol above.
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/promote.py \
+    --candidate-predictions ml/output/predictions/<candidate_id>_predictions.csv \
+    --incumbent-predictions ml/output/predictions/<current_id>_predictions.csv
+```
+
+Recommends only, by default. Add `--apply` to carry it out (archives `current/`, swaps `candidate/`
+in) once you've reviewed the recommendation. See [generations.md](generations.md#promotion-rule-promotepy)
+for the rule and the retraining triggers it checks.
+
+## Doing all of the above in one call
+
+```bash
+ml/.venv/Scripts/python.exe ml/scripts/retrain_cycle.py --silver silver-1 --device cuda --local-only
+```
+
+Runs Steps 2, 5–8 as subprocesses (fresh processes free GPU memory between steps), stopping early if
+gold-eval doesn't exist yet or no retraining trigger is met (`--force` overrides the trigger check;
+`--backbone` adds Steps 3–4 first for a cold start). See
+[generations.md](generations.md#retrain_cyclepy--the-local-lane-in-one-go).
 
 ## Retraining a single head
 
-When only one head changes (e.g. you retrained GroupClassifier with a new hyperparameter), the cache and backbone are still valid — skip Steps 1–4 and rerun only the affected step plus the calibration steps that depend on it. The LP thresholds depend on which LPs exist, and the tail-gate calibration depends on the GroupClassifier — recalibrate them if the corresponding head changed.
+When only one head changes, the backbone and its embedding cache are still valid — skip Steps 3–4
+and rerun only the affected `--stage`, then Step 6 (calibration depends on every head, since the
+gate/group/tail grid search categorizes with whichever heads are loaded) and Step 7.
 
 ## Troubleshooting
 
-**Windows torch DLL load order.** `production/petbert_pipeline/pipeline.py` imports `torch` at module top (with `# noqa: F401`) before `pandas` / `numpy` / `sklearn`. Originally needed because the XPU torch wheel's c10.dll search path conflicted with sklearn-loaded MKL DLLs. With CUDA wheels on Windows a similar collision is possible; leave the early import in place.
+**A run scores far below the ~61.76% eval-half reference.** Almost always a stale or mismatched
+generation — check `manifest.json`'s `embedding_fingerprint` and `calibration.status`;
+`load_generation` refuses to load a mismatched or uncalibrated generation, so this should surface as
+an error rather than silently-wrong numbers, but a placeholder `thresholds.json` copied from the
+parent generation (before calibration) will still *load* successfully.
 
-**Embedding cache invalidation.** `production/petbert_pipeline/embedding_cache.py` validates the cache against the model-name string, report-CSV mtime, labels-CSV mtime, and the expected section column names. On any mismatch the cache is treated as invalid and a fresh embed pass runs. If you intentionally renamed the model directory, expect the next run to rebuild the cache (~25 min on cuda).
+**`GenerationError: embedding fingerprint mismatch`.** The backbone, section spec, or inference
+`max_length` changed since this generation's classifiers were trained — a real cold-start boundary,
+not a bug. Start from Step 3.
 
-**`emb_dim` mismatches.** GroupClassifier and CasePresenceClassifier serialize `emb_dim` in their checkpoints and validate against the cache shape at load time. A 768-dim head against a 2304-dim cache (or vice-versa) is a sign the backbone or embedding pipeline changed without retraining — start a fresh cold-start cycle.
+**GroupClassifier diverges to all-1s.** Missing `weight_decay=1e-3` or `max_class_weight=50` — both
+are required guards in `recipe.GROUP`, not optional tuning knobs.
 
-**Annotation file missing.** `run_training.py` errors out and asks you to run `python ml/scripts/run_annotation.py` first. There is no auto-keyword fallback.
-
-**GroupClassifier diverges to all-1s.** You forgot `--weight-decay 1e-3` or `--max-class-weight 50`. Both are required guards.
+**`GuardViolation` from `train.py`/`calibrate.py`/`promote.py`.** One of the leakage guards failed
+([generations.md](generations.md#leakage-guards-guardspy)) — read the violation message (case
+counts + a few example case_ids) before overriding anything; it names exactly which invariant broke.

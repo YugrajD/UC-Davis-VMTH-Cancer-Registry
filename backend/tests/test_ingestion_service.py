@@ -132,6 +132,26 @@ def test_parse_predictions_numbered_format_splits_into_two():
     assert diags[1]["confidence"] == pytest.approx(0.60)
 
 
+def test_parse_predictions_source_version_preserved_on_all_ranks():
+    row = _row(
+        predicted_term="1) Lymphoma 2) MCT",
+        predicted_group="1) Lymphoma 2) MCT",
+        predicted_code="1) 9590/3 2) 8720/3",
+        confidence="1) 0.85 2) 0.60",
+        method="1) embedding 2) embedding",
+    )
+    row["source_version"] = "gen-20260927T003905Z"
+    result = parse_predictions([row])
+    diags = result["ID_1"]
+    assert diags[0]["source_version"] == "gen-20260927T003905Z"
+    assert diags[1]["source_version"] == "gen-20260927T003905Z"
+
+
+def test_parse_predictions_missing_source_version_is_none():
+    result = parse_predictions([_row()])
+    assert result["ID_1"][0]["source_version"] is None
+
+
 def test_parse_predictions_original_text_preserved_on_all_ranks():
     row = _row(
         original_text="full report",

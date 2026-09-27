@@ -102,6 +102,9 @@ class CaseDiagnosis(Base):
     prediction_method = Column(String(50), nullable=True)
     source_row_index = Column(Integer, nullable=True)
     diagnosis_index = Column(Integer, nullable=True)
+    # The report-mapping generation_id that produced this code (e.g. "gen-20260927T003905Z"),
+    # from the worker's source_version — see database/migrations/032_case_diagnosis_source_version.sql
+    source_version = Column(String(80), nullable=True)
 
     # Review workflow — see database/migrations/010_diagnosis_review.sql
     review_status = Column(String(20), nullable=False, server_default="confirmed")

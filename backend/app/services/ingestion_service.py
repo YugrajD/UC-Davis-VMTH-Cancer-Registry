@@ -114,6 +114,7 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
             continue
 
         original_text = row.get("original_text", "").strip()
+        source_version = (row.get("source_version") or "").strip() or None
 
         # Detect per-row format: explicit integer diagnosis_index AND no
         # numbered strings in predicted_term/predicted_group.
@@ -137,6 +138,7 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
                 "confidence": conf,
                 "original_text": original_text,
                 "method": method,
+                "source_version": source_version,
             })
             continue
 
@@ -170,6 +172,7 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
                 "confidence": conf,
                 "original_text": original_text,
                 "method": meth,
+                "source_version": source_version,
             })
 
     return dict(result)
@@ -599,6 +602,7 @@ async def ingest_upload(
                 prediction_method=method or None,
                 source_row_index=diag["row_index"],
                 diagnosis_index=rank,
+                source_version=diag.get("source_version"),
                 review_status=review_status,
                 top2_margin=round(row_margin, 2) if row_margin is not None else None,
                 ingestion_job_id=ingestion_job_id,

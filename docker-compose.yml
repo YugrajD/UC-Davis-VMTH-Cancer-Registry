@@ -113,12 +113,11 @@ services:
       - ./ml:/ml
     environment:
       HF_HOME: /ml/.cache/huggingface
-      PETBERT_MODEL_PATH: ${PETBERT_MODEL_PATH:-/ml/models/petbert}
-      LABELS_CSV_PATH: ${LABELS_CSV_PATH:-/ml/ICD_labels/labels.csv}
-      GROUP_CLASSIFIER_PATH: ${GROUP_CLASSIFIER_PATH:-/ml/output/checkpoints/group/group_classifier_best.pt}
-      CASE_PRESENCE_CLASSIFIER_PATH: ${CASE_PRESENCE_CLASSIFIER_PATH:-}
-      LP_THRESHOLDS_JSON_PATH: ${LP_THRESHOLDS_JSON_PATH:-}
-      UNCOMMON_GROUPS_PATH: ${UNCOMMON_GROUPS_PATH:-}
+      # One bundle, verified at startup (ml/handoff/worker_format.py). The bundle
+      # root is this variable's parent; every other WORKER_ENV_VAR_TO_BUNDLE_PATH
+      # var must point inside that same bundle if set at all, so they're left
+      # unset here rather than defaulted.
+      PETBERT_MODEL_PATH: ${PETBERT_MODEL_PATH:-/ml/output/report_mapping/current/petbert}
     ports:
       - "8001:8001"
     command: uvicorn app:app --host 0.0.0.0 --port 8001 --reload

@@ -9,7 +9,8 @@ import pandas as pd
 import pytest
 
 from io_utils import write_csv
-from generations.manifest import ManifestError, read_manifest, sha256_file, verify_manifest, write_manifest
+from generations.manifest import (ManifestError, read_manifest, sha256_file, update_manifest, verify_manifest,
+                                  write_manifest)
 
 
 @pytest.fixture
@@ -42,6 +43,13 @@ def test_written_files_use_lf_on_every_os(generation_dir):
     write_csv(pd.DataFrame({"case_id": ["C1", "C2"]}), generation_dir / "t.csv")
     for name in ("manifest.json", "t.csv"):
         assert b"\r" not in (generation_dir / name).read_bytes()
+
+
+def test_update_manifest_changes_fields_without_restamping(generation_dir):
+    written = write_manifest(generation_dir, {"status": "candidate"})
+    updated = update_manifest(generation_dir, {"status": "current"})
+    assert updated == {**written, "status": "current"} == read_manifest(generation_dir)
+    verify_manifest(generation_dir)
 
 
 def test_rewrite_does_not_list_old_manifest(generation_dir):

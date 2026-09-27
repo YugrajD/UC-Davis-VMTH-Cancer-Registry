@@ -148,6 +148,7 @@ def test_apply_archives_only_the_cache_entries_the_new_current_cannot_use(env):
     assert outcome["archived_caches"] == 1
     assert [p.name for p in config.EMBEDDING_CACHE_DIR.iterdir()] == [f"{keep}.npz"]
     assert (outcome["archive"] / "embedding_cache" / "stale-key.npz").is_file()
+    verify_manifest(outcome["archive"])  # the moved cache file is listed
 
 
 def test_trigger_status_runs_before_any_candidate_and_without_gold_eval(env):

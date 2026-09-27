@@ -41,7 +41,7 @@ import config
 import io_utils
 from evaluation import gold_eval, intervals, silver_eval, verdicts
 from generations import guards, triggers
-from generations.manifest import read_manifest, update_manifest, verify_manifest
+from generations.manifest import read_manifest, sha256_file, update_manifest, verify_manifest
 from manual_audit import eval_batch, gold
 from report_mapping.inference import embedding_cache
 from report_mapping.model.generation import compute_embedding_fingerprint, generation_paths, verify_fingerprint
@@ -174,28 +174,31 @@ def apply(result: dict, description: str | None = None, today: date | None = Non
     except OSError:
         os.rename(archive, current)
         raise
-    update_manifest(archive, {"status": "archived"})
     update_manifest(current, {"status": "current"})
-    archived_caches = _archive_stale_caches(archive)
+    moved = _archive_stale_caches(archive)
+    # The archive's manifest lists the moved cache files too, so the archive still verifies.
+    files = {**read_manifest(archive)["files"], **{rel: sha256_file(archive / rel) for rel in moved}}
+    update_manifest(archive, {"status": "archived", "files": files})
     return {"action": "promoted", "generation_id": result["challenger_id"], "archive": archive,
-            "archived_caches": archived_caches}
+            "archived_caches": len(moved)}
 
 
-def _archive_stale_caches(archive: Path) -> int:
-    """Move every embedding-cache entry the new current/ cannot use into ``archive``.
+def _archive_stale_caches(archive: Path) -> list[str]:
+    """Move every embedding-cache entry the new current/ cannot use into ``archive``; return their
+    paths relative to it.
 
     CLAUDE.md archives a generation's embeddings with it. The cache is keyed by content, so the
     entry to keep is the one for the new current's backbone and today's report.csv. A heads-only
     promotion shares the incumbent's backbone, so its entry stays."""
     cached = sorted(config.EMBEDDING_CACHE_DIR.glob("*.npz"))
     if not cached:
-        return 0
+        return []
     paths = generation_paths(config.REPORT_MAPPING_CURRENT_DIR)
     keep = embedding_cache.content_key(config.REPORT_CSV, paths.labels_csv,
                                        compute_embedding_fingerprint(paths.petbert_dir))
-    stale = [path for path in cached if path.stem != keep]
-    if stale:
+    moved = [f"embedding_cache/{path.name}" for path in cached if path.stem != keep]
+    if moved:
         (archive / "embedding_cache").mkdir()
-    for path in stale:
-        os.rename(path, archive / "embedding_cache" / path.name)
-    return len(stale)
+    for rel in moved:
+        os.rename(config.EMBEDDING_CACHE_DIR / Path(rel).name, archive / rel)
+    return moved

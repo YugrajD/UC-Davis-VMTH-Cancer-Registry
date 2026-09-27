@@ -8,12 +8,14 @@ Steps, each the existing entry point run as its own process (the parity runbook'
 process frees GPU memory between steps):
 
 1. ``handoff.py import-gold`` when ``--gold-csv`` is given.
-2. Stop unless gold-eval exists (promotion cannot be decided without it) and a retraining trigger is met
-   for a challenger trained on ``--silver`` (``--force`` trains anyway; ``promote.py`` still needs a trigger).
-3. ``code_cases.py corrected``: latest silver + gold-train, the table the challenger trains on.
-4. ``train.py`` heads on the current backbone, after ``--stage backbone`` when ``--backbone`` is given.
-5. ``calibrate.py``, then ``predict.py`` for the candidate, and for current/ if its predictions are missing.
-6. ``promote.py`` without ``--apply``. Applying the recommendation is left to the Admin.
+2. Stop unless gold-eval exists: promotion cannot be decided without it.
+3. ``predict.py`` for current/ if its predictions are missing (the random-slice trigger scores them), then
+   stop unless a retraining trigger is met for a challenger trained on ``--silver`` (``--force`` trains
+   anyway; ``promote.py`` still needs a trigger).
+4. ``code_cases.py corrected``: latest silver + gold-train, the table the challenger trains on.
+5. ``train.py`` heads on the current backbone, after ``--stage backbone`` when ``--backbone`` is given.
+6. ``calibrate.py``, then ``predict.py`` for the candidate.
+7. ``promote.py`` without ``--apply``. Applying the recommendation is left to the Admin.
 
 It never runs the LLM cascade: a new silver generation is its own step (``map_diagnoses.py``).
 """

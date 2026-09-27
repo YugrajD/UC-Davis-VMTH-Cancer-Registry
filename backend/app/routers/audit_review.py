@@ -1,27 +1,31 @@
 """The dashboard review worklist (audit list) and gold export.
 
 Pairs with database/migrations/033_gold_review.sql and
-ml/documentation/audit-list-change-request.md. Admin-only for now (import);
-worklist/review-screen/export endpoints land in later commits.
+ml/documentation/audit-list-change-request.md. Import and worklist are
+implemented; review-screen/export endpoints land in later commits.
 
 Endpoints:
   POST /api/v1/audit-review/lists/import   - import audit_list_<id>.txt + its
                                               .manifest.json sidecar, replacing
                                               the active worklist
+  GET  /api/v1/audit-review/worklist       - the active list's cases in
+                                              order, with review status
 """
 
 import hashlib
 import json
+from datetime import datetime
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import CurrentUser, require_admin
+from app.auth import CurrentUser, require_admin, require_reviewer
 from app.config import settings
 from app.database import get_db
-from app.models.models import AuditList, AuditListCase, Patient
+from app.models.models import AuditList, AuditListCase, CaseReview, CaseReviewCode, Patient
 from app.rate_limit import limiter
 from app.services.ingestion_service import normalize_anon_id
 
@@ -175,4 +179,104 @@ async def import_audit_list(
         case_count=len(case_ids),
         replaced_list_id=previous_active,
         not_found=not_found,
+    )
+
+
+# --- Worklist ----------------------------------------------------------
+
+
+class WorklistCase(BaseModel):
+    case_id: str
+    position: int
+    patient_found: bool
+    review_status: Literal["unreviewed", "reviewed", "locked"]
+    no_cancer: Optional[bool]
+    code_count: int
+    reviewed_by_email: Optional[str]
+    reviewed_at: Optional[datetime]
+
+
+class WorklistResponse(BaseModel):
+    list_id: Optional[str]
+    imported_at: Optional[datetime]
+    case_count: int
+    cases: list[WorklistCase]
+
+
+@router.get("/worklist")
+async def get_worklist(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_reviewer),
+) -> WorklistResponse:
+    """The active audit list's cases in review order, each flagged with
+    whether a matching patient exists and its review status. No active list
+    (never imported, or the DB is otherwise empty) returns an empty worklist,
+    not an error."""
+    active_list = (
+        await db.execute(select(AuditList).where(AuditList.is_active.is_(True)))
+    ).scalar_one_or_none()
+    if active_list is None:
+        return WorklistResponse(list_id=None, imported_at=None, case_count=0, cases=[])
+
+    entries = (
+        await db.execute(
+            select(AuditListCase)
+            .where(AuditListCase.audit_list_id == active_list.id)
+            .order_by(AuditListCase.position)
+        )
+    ).scalars().all()
+    case_ids = [entry.case_id for entry in entries]
+
+    reviews: dict[str, CaseReview] = {}
+    if case_ids:
+        rows = (
+            await db.execute(select(CaseReview).where(CaseReview.case_id.in_(case_ids)))
+        ).scalars().all()
+        reviews = {r.case_id: r for r in rows}
+
+    code_counts: dict[int, int] = {}
+    review_ids = [r.id for r in reviews.values()]
+    if review_ids:
+        count_rows = (
+            await db.execute(
+                select(CaseReviewCode.case_review_id, func.count(CaseReviewCode.id))
+                .where(CaseReviewCode.case_review_id.in_(review_ids))
+                .group_by(CaseReviewCode.case_review_id)
+            )
+        ).all()
+        code_counts = dict(count_rows)
+
+    normalized_ids = {normalize_anon_id(case_id) for case_id in case_ids}
+    normalized_ids.discard("")
+    found_patients: set[str] = set()
+    if normalized_ids:
+        found_patients = set(
+            (await db.execute(select(Patient.anon_id).where(Patient.anon_id.in_(normalized_ids)))).scalars()
+        )
+
+    cases = []
+    for entry in entries:
+        review = reviews.get(entry.case_id)
+        if review is None:
+            status: Literal["unreviewed", "reviewed", "locked"] = "unreviewed"
+        elif review.locked:
+            status = "locked"
+        else:
+            status = "reviewed"
+        cases.append(WorklistCase(
+            case_id=entry.case_id,
+            position=entry.position,
+            patient_found=normalize_anon_id(entry.case_id) in found_patients,
+            review_status=status,
+            no_cancer=review.no_cancer if review else None,
+            code_count=code_counts.get(review.id, 0) if review else 0,
+            reviewed_by_email=review.reviewed_by_email if review else None,
+            reviewed_at=review.reviewed_at if review else None,
+        ))
+
+    return WorklistResponse(
+        list_id=active_list.list_id,
+        imported_at=active_list.imported_at,
+        case_count=active_list.case_count,
+        cases=cases,
     )

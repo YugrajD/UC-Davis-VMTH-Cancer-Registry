@@ -1,30 +1,40 @@
 """The dashboard review worklist (audit list) and gold export.
 
 Pairs with database/migrations/033_gold_review.sql and
-ml/documentation/audit-list-change-request.md. Import and worklist are
-implemented; review-screen/export endpoints land in later commits.
+ml/documentation/audit-list-change-request.md.
 
 Endpoints:
-  POST /api/v1/audit-review/lists/import   - import audit_list_<id>.txt + its
-                                              .manifest.json sidecar, replacing
-                                              the active worklist
-  GET  /api/v1/audit-review/worklist       - the active list's cases in
-                                              order, with review status
-  GET  /api/v1/audit-review/taxonomy-terms - the code picker's source data
+  POST /api/v1/audit-review/lists/import    - import audit_list_<id>.txt + its
+                                               .manifest.json sidecar, replacing
+                                               the active worklist
+  GET  /api/v1/audit-review/worklist        - the active list's cases in
+                                               order, with review status
+  GET  /api/v1/audit-review/taxonomy-terms  - the code picker's source data
   GET  /api/v1/audit-review/cases/{case_id} - one case's full record: report
-                                              text, predicted codes, and its
-                                              existing gold review if any
+                                               text, predicted codes, and its
+                                               existing gold review if any
+  POST /api/v1/audit-review/cases/{case_id}/review - record/replace a case's
+                                               complete gold review
+  POST /api/v1/audit-review/cases/{case_id}/reopen - admin: unlock an
+                                               exported review for editing
+  POST /api/v1/audit-review/gold-exports    - admin: lock one reviewer's
+                                               unlocked reviews into a batch
+  GET  /api/v1/audit-review/gold-exports/{export_id} - re-download that
+                                               batch's gold_<export_id>.csv
 """
 
 import asyncio
+import csv
 import hashlib
+import io
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, require_admin, require_reviewer
@@ -37,6 +47,7 @@ from app.models.models import (
     CaseDiagnosis,
     CaseReview,
     CaseReviewCode,
+    GoldExport,
     Patient,
     PathologyReport,
     TaxonomyTerm,
@@ -463,4 +474,311 @@ async def get_case_detail(
         review_locked=review.locked if review else None,
         reviewed_by_email=review.reviewed_by_email if review else None,
         reviewed_at=review.reviewed_at if review else None,
+    )
+
+
+# --- Save review -----------------------------------------------------------
+
+
+class ReviewCodeIn(BaseModel):
+    taxonomy_group: str = Field(..., max_length=255)
+    taxonomy_term: str = Field(..., max_length=255)
+
+
+class ReviewSaveRequest(BaseModel):
+    no_cancer: bool
+    codes: list[ReviewCodeIn] = Field(default_factory=list)
+
+
+class ReviewSaveResult(BaseModel):
+    case_id: str
+    no_cancer: bool
+    code_count: int
+    reviewed_by_email: str
+    reviewed_at: datetime
+    locked: bool
+
+
+async def _invalid_taxonomy_pairs(db: AsyncSession, pairs: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """The subset of (group, term) `pairs` not present in taxonomy_terms."""
+    if not pairs:
+        return set()
+    groups = {g for g, _ in pairs}
+    terms = {t for _, t in pairs}
+    rows = (
+        await db.execute(
+            select(TaxonomyTerm.taxonomy_group, TaxonomyTerm.taxonomy_term)
+            .where(TaxonomyTerm.taxonomy_group.in_(groups))
+            .where(TaxonomyTerm.taxonomy_term.in_(terms))
+        )
+    ).all()
+    valid = {(g, t) for g, t in rows}
+    return pairs - valid
+
+
+@router.post("/cases/{case_id}/review")
+@limiter.limit(settings.RATE_LIMIT_WRITE)
+async def save_case_review(
+    request: Request,
+    case_id: str,
+    payload: ReviewSaveRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_reviewer),
+) -> ReviewSaveResult:
+    """Record or replace a case's complete gold review: either no_cancer or a
+    complete code set, never both — each save fully replaces the prior code
+    set, it doesn't patch it. Any reviewer/admin can edit an unlocked review;
+    the last saver becomes reviewed_by_email. Refuses to edit a locked
+    (exported, not yet reopened) review."""
+    on_a_list = (
+        await db.execute(select(AuditListCase.id).where(AuditListCase.case_id == case_id).limit(1))
+    ).scalar_one_or_none()
+    if on_a_list is None:
+        raise HTTPException(status_code=404, detail=f"case_id {case_id!r} was never on an audit list")
+
+    if payload.no_cancer:
+        if payload.codes:
+            raise HTTPException(status_code=400, detail="no_cancer=true cannot carry any codes")
+    elif not payload.codes:
+        raise HTTPException(status_code=400, detail="At least one code is required unless no_cancer=true")
+
+    seen: set[tuple[str, str]] = set()
+    duplicates: list[str] = []
+    for code in payload.codes:
+        key = (code.taxonomy_group, code.taxonomy_term)
+        if key in seen:
+            duplicates.append(f"{code.taxonomy_group}: {code.taxonomy_term}")
+        seen.add(key)
+    if duplicates:
+        raise HTTPException(status_code=400, detail=f"Duplicate code(s): {', '.join(duplicates)}")
+
+    invalid = await _invalid_taxonomy_pairs(db, seen)
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not in the taxonomy: {', '.join(f'{g}: {t}' for g, t in sorted(invalid))}",
+        )
+
+    existing = (
+        await db.execute(select(CaseReview).where(CaseReview.case_id == case_id))
+    ).scalar_one_or_none()
+    if existing is not None and existing.locked:
+        raise HTTPException(status_code=409, detail="This review is locked (already exported) — reopen it first")
+
+    now = datetime.now(timezone.utc)
+    if existing is None:
+        review = CaseReview(
+            case_id=case_id, no_cancer=payload.no_cancer,
+            reviewed_by_email=user.email, reviewed_at=now, locked=False,
+        )
+        db.add(review)
+        await db.flush()
+    else:
+        review = existing
+        review.no_cancer = payload.no_cancer
+        review.reviewed_by_email = user.email
+        review.reviewed_at = now
+        await db.execute(delete(CaseReviewCode).where(CaseReviewCode.case_review_id == review.id))
+
+    if not payload.no_cancer:
+        db.add_all(
+            CaseReviewCode(
+                case_review_id=review.id,
+                taxonomy_group=code.taxonomy_group,
+                taxonomy_term=code.taxonomy_term,
+            )
+            for code in payload.codes
+        )
+
+    await db.commit()
+
+    return ReviewSaveResult(
+        case_id=case_id,
+        no_cancer=review.no_cancer,
+        code_count=0 if payload.no_cancer else len(payload.codes),
+        reviewed_by_email=review.reviewed_by_email,
+        reviewed_at=review.reviewed_at,
+        locked=review.locked,
+    )
+
+
+# --- Reopen ------------------------------------------------------------
+
+
+class ReopenResult(BaseModel):
+    case_id: str
+    locked: bool
+
+
+@router.post("/cases/{case_id}/reopen")
+@limiter.limit(settings.RATE_LIMIT_WRITE)
+async def reopen_case_review(
+    request: Request,
+    case_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_admin),
+) -> ReopenResult:
+    """Admin-only. Clears locked on an exported review so it can be edited
+    again. gold_export_id/exported_at are left as-is — history of the last
+    export, not cleared — the next save-and-export replaces ML's copy."""
+    review = (
+        await db.execute(select(CaseReview).where(CaseReview.case_id == case_id))
+    ).scalar_one_or_none()
+    if review is None:
+        raise HTTPException(status_code=404, detail=f"No review recorded for case_id {case_id!r}")
+    if not review.locked:
+        raise HTTPException(status_code=400, detail="This review is not locked")
+
+    review.locked = False
+    await db.commit()
+
+    return ReopenResult(case_id=case_id, locked=False)
+
+
+# --- Gold export -------------------------------------------------------
+
+
+class GoldExportRequest(BaseModel):
+    reviewer_email: str = Field(..., max_length=255)
+
+
+class GoldExportSummary(BaseModel):
+    export_id: str
+    reviewer_email: str
+    case_count: int
+
+
+def _build_gold_csv(reviews_with_codes: list[tuple[CaseReview, list[CaseReviewCode]]]) -> str:
+    """case_id,term rows — one per code, or exactly one NO_CANCER row.
+    Exact strings, standard quoting; deliberately not the existing
+    admin-export's _safe_csv_value, whose formula-injection tab-prefix would
+    corrupt a term and get the whole file refused by ML."""
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
+    writer.writerow(["case_id", "term"])
+    for review, codes in reviews_with_codes:
+        if review.no_cancer:
+            writer.writerow([review.case_id, "NO_CANCER"])
+        else:
+            for code in codes:
+                writer.writerow([review.case_id, f"{code.taxonomy_group}: {code.taxonomy_term}"])
+    return output.getvalue()
+
+
+async def _next_export_id(db: AsyncSession) -> str:
+    """<today's date>-<counter>, e.g. 2026-09-27-1, then -2, ..."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    existing = (
+        await db.execute(select(GoldExport.export_id).where(GoldExport.export_id.like(f"{today}-%")))
+    ).scalars().all()
+    max_n = 0
+    for export_id in existing:
+        suffix = export_id.rsplit("-", 1)[-1]
+        if suffix.isdigit():
+            max_n = max(max_n, int(suffix))
+    return f"{today}-{max_n + 1}"
+
+
+@router.post("/gold-exports")
+@limiter.limit(settings.RATE_LIMIT_WRITE)
+async def create_gold_export(
+    request: Request,
+    payload: GoldExportRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_admin),
+) -> GoldExportSummary:
+    """Admin-only. Locks one reviewer's every unlocked review (first-time
+    exports and reopened-then-corrected ones alike) into one new gold export
+    batch, under SELECT ... FOR UPDATE so a concurrent edit can't slip in
+    mid-export. Re-validates every code against the taxonomy first — like ML,
+    refuses the whole export for one bad row rather than exporting the rest,
+    naming the case IDs."""
+    eligible = (
+        await db.execute(
+            select(CaseReview)
+            .where(CaseReview.reviewed_by_email == payload.reviewer_email)
+            .where(CaseReview.locked.is_(False))
+            .with_for_update()
+        )
+    ).scalars().all()
+    if not eligible:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No unlocked reviews for {payload.reviewer_email!r} to export",
+        )
+
+    review_ids = [r.id for r in eligible]
+    code_rows = (
+        await db.execute(select(CaseReviewCode).where(CaseReviewCode.case_review_id.in_(review_ids)))
+    ).scalars().all()
+    codes_by_review: dict[int, list[CaseReviewCode]] = {}
+    for code in code_rows:
+        codes_by_review.setdefault(code.case_review_id, []).append(code)
+
+    all_pairs = {(code.taxonomy_group, code.taxonomy_term) for code in code_rows}
+    invalid_pairs = await _invalid_taxonomy_pairs(db, all_pairs)
+    if invalid_pairs:
+        bad_case_ids = sorted({
+            review.case_id
+            for review in eligible
+            for code in codes_by_review.get(review.id, [])
+            if (code.taxonomy_group, code.taxonomy_term) in invalid_pairs
+        })
+        raise HTTPException(
+            status_code=400,
+            detail=f"Code(s) no longer in the taxonomy — case_id(s): {', '.join(bad_case_ids)}",
+        )
+
+    export_id = await _next_export_id(db)
+    export = GoldExport(export_id=export_id, reviewer_email=payload.reviewer_email, case_count=len(eligible))
+    db.add(export)
+    await db.flush()
+
+    now = datetime.now(timezone.utc)
+    for review in eligible:
+        review.locked = True
+        review.gold_export_id = export.id
+        review.exported_at = now
+
+    await db.commit()
+
+    return GoldExportSummary(export_id=export_id, reviewer_email=payload.reviewer_email, case_count=len(eligible))
+
+
+@router.get("/gold-exports/{export_id}")
+async def download_gold_export(
+    export_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_admin),
+) -> StreamingResponse:
+    """Admin-only. Re-download a past export batch's gold CSV, rebuilt from
+    the case_reviews rows still carrying its gold_export_id — never from a
+    file on disk, so it's always exactly what was recorded at export time."""
+    export = (
+        await db.execute(select(GoldExport).where(GoldExport.export_id == export_id))
+    ).scalar_one_or_none()
+    if export is None:
+        raise HTTPException(status_code=404, detail=f"export_id {export_id!r} not found")
+
+    reviews = (
+        await db.execute(
+            select(CaseReview).where(CaseReview.gold_export_id == export.id).order_by(CaseReview.case_id)
+        )
+    ).scalars().all()
+
+    codes_by_review: dict[int, list[CaseReviewCode]] = {}
+    review_ids = [r.id for r in reviews]
+    if review_ids:
+        code_rows = (
+            await db.execute(select(CaseReviewCode).where(CaseReviewCode.case_review_id.in_(review_ids)))
+        ).scalars().all()
+        for code in code_rows:
+            codes_by_review.setdefault(code.case_review_id, []).append(code)
+
+    csv_text = _build_gold_csv([(review, codes_by_review.get(review.id, [])) for review in reviews])
+
+    return StreamingResponse(
+        iter([csv_text]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=gold_{export_id}.csv"},
     )

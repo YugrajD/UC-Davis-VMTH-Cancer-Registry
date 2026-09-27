@@ -10,8 +10,13 @@ Endpoints:
                                               the active worklist
   GET  /api/v1/audit-review/worklist       - the active list's cases in
                                               order, with review status
+  GET  /api/v1/audit-review/taxonomy-terms - the code picker's source data
+  GET  /api/v1/audit-review/cases/{case_id} - one case's full record: report
+                                              text, predicted codes, and its
+                                              existing gold review if any
 """
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime
@@ -25,7 +30,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import CurrentUser, require_admin, require_reviewer
 from app.config import settings
 from app.database import get_db
-from app.models.models import AuditList, AuditListCase, CaseReview, CaseReviewCode, Patient
+from app.models.models import (
+    AuditList,
+    AuditListCase,
+    CancerType,
+    CaseDiagnosis,
+    CaseReview,
+    CaseReviewCode,
+    Patient,
+    PathologyReport,
+    TaxonomyTerm,
+)
 from app.rate_limit import limiter
 from app.services.ingestion_service import normalize_anon_id
 
@@ -279,4 +294,173 @@ async def get_worklist(
         imported_at=active_list.imported_at,
         case_count=active_list.case_count,
         cases=cases,
+    )
+
+
+# --- Taxonomy ------------------------------------------------------------
+
+
+class TaxonomyTermOut(BaseModel):
+    vet_icd_o_code: Optional[str]
+    taxonomy_group: str
+    taxonomy_term: str
+
+
+@router.get("/taxonomy-terms")
+async def list_taxonomy_terms(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_reviewer),
+) -> list[TaxonomyTermOut]:
+    """The Vet-ICD-O-Canine-1 (group, term) pairs the review screen's code
+    picker is built from — seeded once via database/seed/seed_taxonomy_terms.py,
+    never read live from ml/taxonomy/labels.csv (production has no /ml)."""
+    rows = (
+        await db.execute(
+            select(TaxonomyTerm).order_by(TaxonomyTerm.taxonomy_group, TaxonomyTerm.taxonomy_term)
+        )
+    ).scalars().all()
+    return [
+        TaxonomyTermOut(
+            vet_icd_o_code=r.vet_icd_o_code,
+            taxonomy_group=r.taxonomy_group,
+            taxonomy_term=r.taxonomy_term,
+        )
+        for r in rows
+    ]
+
+
+# --- Case detail -----------------------------------------------------------
+
+
+class PredictedCode(BaseModel):
+    diagnosis_index: Optional[int]
+    cancer_type_name: str
+    icd_o_code: Optional[str]
+    predicted_term: Optional[str]
+    confidence: Optional[float]
+    prediction_method: Optional[str]
+
+
+class ExistingReviewCode(BaseModel):
+    taxonomy_group: str
+    taxonomy_term: str
+
+
+class CaseDetail(BaseModel):
+    case_id: str
+    patient_found: bool
+    patient_anon_id: Optional[str]
+    # The clinic's short "Clinical Diagnoses" text, from pathology_reports.
+    source_diagnosis: Optional[str]
+    # The full pathology report, fetched from GCS. None if unavailable
+    # (GCS not configured, or the fetch failed) — never an error.
+    report_text: Optional[str]
+    predicted_codes: list[PredictedCode]
+    # The case's existing gold review, if a specialist has already recorded
+    # one — lets the review screen pre-fill (editable) or show it read-only
+    # (locked).
+    review_exists: bool
+    review_no_cancer: Optional[bool]
+    review_codes: list[ExistingReviewCode]
+    review_locked: Optional[bool]
+    reviewed_by_email: Optional[str]
+    reviewed_at: Optional[datetime]
+
+
+async def _fetch_report_text(report: PathologyReport) -> Optional[str]:
+    """Fetch a pathology report's full text from GCS. Mirrors
+    diagnoses_review._fetch_report_text, adapted to take the report
+    directly rather than through a CaseDiagnosis's relationship — never
+    raises; a missing bucket/path/fetch failure just means no text."""
+    if not report.gcs_path or not settings.GCS_BUCKET:
+        return None
+    try:
+        from app.services.gcp_batch_service import download_report_text_from_gcs
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, download_report_text_from_gcs, report.gcs_path)
+    except Exception:
+        return None
+
+
+@router.get("/cases/{case_id}")
+async def get_case_detail(
+    case_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_reviewer),
+) -> CaseDetail:
+    """One case's full record for the review screen: the clinical diagnosis
+    text, the full pathology report, every current predicted code (seeing
+    predictions is fine per the change request), and the case's existing
+    gold review if one has already been recorded. Scoped to case IDs that
+    have appeared on some audit list — this isn't a general patient lookup."""
+    on_a_list = (
+        await db.execute(select(AuditListCase.id).where(AuditListCase.case_id == case_id).limit(1))
+    ).scalar_one_or_none()
+    if on_a_list is None:
+        raise HTTPException(status_code=404, detail=f"case_id {case_id!r} was never on an audit list")
+
+    normalized = normalize_anon_id(case_id)
+    patient = None
+    if normalized:
+        patient = (
+            await db.execute(select(Patient).where(Patient.anon_id == normalized))
+        ).scalar_one_or_none()
+
+    source_diagnosis: Optional[str] = None
+    report_text: Optional[str] = None
+    predicted_codes: list[PredictedCode] = []
+    if patient is not None:
+        report = (
+            await db.execute(select(PathologyReport).where(PathologyReport.patient_id == patient.id))
+        ).scalar_one_or_none()
+        if report is not None:
+            source_diagnosis = report.source_diagnosis
+            report_text = await _fetch_report_text(report)
+
+        diag_rows = (
+            await db.execute(
+                select(CaseDiagnosis, CancerType.name)
+                .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+                .where(CaseDiagnosis.patient_id == patient.id)
+                .order_by(CaseDiagnosis.diagnosis_index)
+            )
+        ).all()
+        predicted_codes = [
+            PredictedCode(
+                diagnosis_index=diag.diagnosis_index,
+                cancer_type_name=name,
+                icd_o_code=diag.icd_o_code,
+                predicted_term=diag.predicted_term,
+                confidence=float(diag.confidence) if diag.confidence is not None else None,
+                prediction_method=diag.prediction_method,
+            )
+            for diag, name in diag_rows
+        ]
+
+    review = (
+        await db.execute(select(CaseReview).where(CaseReview.case_id == case_id))
+    ).scalar_one_or_none()
+    review_codes: list[ExistingReviewCode] = []
+    if review is not None:
+        code_rows = (
+            await db.execute(select(CaseReviewCode).where(CaseReviewCode.case_review_id == review.id))
+        ).scalars().all()
+        review_codes = [
+            ExistingReviewCode(taxonomy_group=c.taxonomy_group, taxonomy_term=c.taxonomy_term)
+            for c in code_rows
+        ]
+
+    return CaseDetail(
+        case_id=case_id,
+        patient_found=patient is not None,
+        patient_anon_id=patient.anon_id if patient else None,
+        source_diagnosis=source_diagnosis,
+        report_text=report_text,
+        predicted_codes=predicted_codes,
+        review_exists=review is not None,
+        review_no_cancer=review.no_cancer if review else None,
+        review_codes=review_codes,
+        review_locked=review.locked if review else None,
+        reviewed_by_email=review.reviewed_by_email if review else None,
+        reviewed_at=review.reviewed_at if review else None,
     )

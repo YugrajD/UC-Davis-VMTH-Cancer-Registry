@@ -18,7 +18,17 @@ from httpx import ASGITransport, AsyncClient
 from app.auth import CurrentUser, get_current_user
 from app.database import get_db
 from app.main import app
-from app.models.models import AuditList, AuditListCase, CaseReview
+from app.models.models import (
+    AuditList,
+    AuditListCase,
+    CancerType,
+    CaseDiagnosis,
+    CaseReview,
+    CaseReviewCode,
+    Patient,
+    PathologyReport,
+    TaxonomyTerm,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -363,5 +373,176 @@ async def test_worklist_merges_review_status_patient_match_and_code_count():
         assert locked["patient_found"] is False
         assert locked["no_cancer"] is True
         assert locked["code_count"] == 0
+    finally:
+        _cleanup()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/audit-review/taxonomy-terms
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_terms_requires_reviewer():
+    _override_user(_non_reviewer())
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/audit-review/taxonomy-terms")
+        assert r.status_code == 403
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_terms_returns_rows():
+    _override_user(_reviewer())
+    mock_db = AsyncMock()
+    terms_result = MagicMock()
+    terms_result.scalars.return_value.all.return_value = [
+        TaxonomyTerm(id=1, vet_icd_o_code="9590/3", taxonomy_group="Malignant lymphomas", taxonomy_term="Malignant lymphoma, NOS"),
+        TaxonomyTerm(id=2, vet_icd_o_code="8050/3", taxonomy_group="Epithelial neoplasms, NOS", taxonomy_term="Papillary adenocarcinoma"),
+    ]
+    mock_db.execute.side_effect = [terms_result]
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/audit-review/taxonomy-terms")
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body) == 2
+        assert body[0] == {
+            "vet_icd_o_code": "9590/3", "taxonomy_group": "Malignant lymphomas",
+            "taxonomy_term": "Malignant lymphoma, NOS",
+        }
+    finally:
+        _cleanup()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/audit-review/cases/{case_id}
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_case_detail_requires_reviewer():
+    _override_user(_non_reviewer())
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/audit-review/cases/CASE-0001")
+        assert r.status_code == 403
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_case_detail_404_when_never_on_a_list():
+    _override_user(_reviewer())
+    mock_db = AsyncMock()
+    not_on_list_result = MagicMock()
+    not_on_list_result.scalar_one_or_none.return_value = None
+    mock_db.execute.side_effect = [not_on_list_result]
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/audit-review/cases/CASE-0001")
+        assert r.status_code == 404
+        assert "never on an audit list" in r.json()["detail"]
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_case_detail_patient_not_found_still_returns_200():
+    _override_user(_reviewer())
+    mock_db = AsyncMock()
+    on_list_result = MagicMock()
+    on_list_result.scalar_one_or_none.return_value = 1
+    patient_result = MagicMock()
+    patient_result.scalar_one_or_none.return_value = None
+    review_result = MagicMock()
+    review_result.scalar_one_or_none.return_value = None
+    mock_db.execute.side_effect = [on_list_result, patient_result, review_result]
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/audit-review/cases/CASE-9999")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["patient_found"] is False
+        assert body["predicted_codes"] == []
+        assert body["source_diagnosis"] is None
+        assert body["review_exists"] is False
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_case_detail_happy_path_with_predictions_and_existing_review():
+    _override_user(_reviewer())
+
+    patient = Patient(id=1, anon_id="CASE-0001", data_source="petbert")
+    report = PathologyReport(id=1, patient_id=1, gcs_path=None, source_diagnosis="Mast cell tumor, skin mass")
+    diag = CaseDiagnosis(
+        id=1, patient_id=1, cancer_type_id=1, icd_o_code="9740/3", predicted_term="Mast cell tumor, NOS",
+        confidence=0.91, prediction_method="embedding", diagnosis_index=1,
+    )
+    review = CaseReview(
+        id=10, case_id="CASE-0001", no_cancer=False, reviewed_by_email="dr.smith@ucdavis.edu",
+        locked=False,
+    )
+    review_code = CaseReviewCode(
+        id=1, case_review_id=10, taxonomy_group="Mast cell neoplasms",
+        taxonomy_term="Cutaneous mast cell tumor grade Patnaik II",
+    )
+
+    mock_db = AsyncMock()
+    on_list_result = MagicMock()
+    on_list_result.scalar_one_or_none.return_value = 1
+    patient_result = MagicMock()
+    patient_result.scalar_one_or_none.return_value = patient
+    report_result = MagicMock()
+    report_result.scalar_one_or_none.return_value = report
+    diag_result = MagicMock()
+    diag_result.all.return_value = [(diag, "Mast cell neoplasms")]
+    review_result = MagicMock()
+    review_result.scalar_one_or_none.return_value = review
+    review_codes_result = MagicMock()
+    review_codes_result.scalars.return_value.all.return_value = [review_code]
+    mock_db.execute.side_effect = [
+        on_list_result, patient_result, report_result, diag_result, review_result, review_codes_result,
+    ]
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/audit-review/cases/CASE-0001")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["patient_found"] is True
+        assert body["source_diagnosis"] == "Mast cell tumor, skin mass"
+        assert body["report_text"] is None  # gcs_path unset — no GCS call attempted
+        assert len(body["predicted_codes"]) == 1
+        assert body["predicted_codes"][0]["cancer_type_name"] == "Mast cell neoplasms"
+        assert body["predicted_codes"][0]["icd_o_code"] == "9740/3"
+        assert body["review_exists"] is True
+        assert body["review_no_cancer"] is False
+        assert body["review_locked"] is False
+        assert len(body["review_codes"]) == 1
+        assert body["review_codes"][0]["taxonomy_term"] == "Cutaneous mast cell tumor grade Patnaik II"
     finally:
         _cleanup()

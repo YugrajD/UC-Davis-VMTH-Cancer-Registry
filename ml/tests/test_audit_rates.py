@@ -1,4 +1,4 @@
-"""evaluation/audit_rates.py: weighted Tier-3 audit rates and Wilson/Kish CIs, against hand computation."""
+"""evaluation/audit_rates.py: weighted Diagnosis-Mapping audit rates and Wilson/Kish CIs, against hand computation."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 import config
 import io_utils
 from evaluation import audit_rates, intervals
-from manual_audit.tier3_audit import AUDIT_STORE_FIELDS
+from manual_audit.diagnosis_mapping_audit import AUDIT_STORE_FIELDS
 
 from . import fixtures as fx
 

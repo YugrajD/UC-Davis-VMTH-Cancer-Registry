@@ -1,7 +1,7 @@
 """Case-level evaluation batch: the gold-eval sample.
 
-Draws cases from the **test** partition of a split, minus the Tier-3 audit's
-198 cases and any case already drawn by an earlier eval batch, stratified by
+Draws cases from the **test** partition of a split, minus the Diagnosis-Mapping
+audit's 198 batch-1 cases and any case already drawn by an earlier eval batch, stratified by
 the case's silver group (plus a ``no_cancer`` stratum), and writes a review
 sheet for the specialist to fill in.
 
@@ -42,7 +42,7 @@ plan this reads roughly as "half of what's left," so two such calls draw
 roughly 3/4 of the total and a third mops up the rest.
 
 **Pooling N_h across batches.** ``N_h`` (and hence the target) is computed
-once from the *first* batch's reference frame (test partition minus Tier-3
+once from the *first* batch's reference frame (test partition minus Diagnosis-Mapping audit batch-1
 cases — see "Gold exclusion" below for why gold is NOT subtracted here) and
 does not shrink as later batches consume cases from it — only the *sampling
 pool* per batch shrinks (by cases already ledgered or already gold). Because
@@ -53,9 +53,9 @@ across a batch series, ``generate_batch`` refuses a call whose ``silver_id``,
 (see "Series consistency" on ``generate_batch`` itself); when the whole series
 is done, use ``pooled_weights()`` below rather than any single batch's own
 ``sample_weight`` column, which is only that batch's local weight and is
-provisional until the series is complete. The Tier-3 exclusion list itself is
-read from ``config.TIER3_AUDIT_BATCH1_EXCLUSION_TXT`` (see
-``_tier3_batch1_cases``); every call, in every series, reads that one file.
+provisional until the series is complete. The Diagnosis-Mapping audit exclusion
+list itself is read from ``config.DIAGNOSIS_MAPPING_AUDIT_BATCH1_TXT`` (see
+``_dm_audit_batch1_cases``); every call, in every series, reads that one file.
 
 **Gold exclusion (WP7 fix 8).** Any case that already has a gold-store row —
 regardless of that row's origin — is excluded from the *sampling pool* only,
@@ -108,7 +108,7 @@ EVAL_BATCH_LEDGER_FIELDS = [
     "target_codes_per_group", "no_cancer_target", "rare_stratum_n",
 ]
 
-_TIER3_BATCH1_CASES_TXT = "tier3_audit_batch1_cases.txt"
+_DM_AUDIT_BATCH1_TXT = "diagnosis_mapping_audit_batch1.txt"
 
 _INSTRUCTIONS = """\
 # Evaluation batch review — instructions
@@ -146,27 +146,20 @@ def _load_case_ids(path: Path) -> set[str]:
     return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
 
 
-def _tier3_batch1_cases(explicit_path: str | Path | None) -> set[str]:
-    """The 198 Tier-3 audit batch-1 cases, refusing (not silently skipping) if missing.
+def _dm_audit_batch1_cases(explicit_path: str | Path | None) -> set[str]:
+    """The Diagnosis-Mapping audit's batch-1 cases, refusing (not silently skipping) if missing.
 
-    Reads from ``config.TIER3_AUDIT_BATCH1_EXCLUSION_TXT`` — its own path,
-    deliberately distinct from ``tier3_audit.batch_ledger_path(1)`` (that name
-    is what a *new* ``tier3_audit.sample(batch=1)`` writes its own case ledger
-    to, and the two must never collide).
+    Reads ``config.DIAGNOSIS_MAPPING_AUDIT_BATCH1_TXT`` (the batch's own case-ID
+    list). Only batch 1 is excluded from the frame, so the frame stays fixed
+    for the whole eval-batch series.
     """
-    if explicit_path is not None:
-        path = Path(explicit_path)
-        if not path.is_file():
-            raise EvalBatchError(f"Tier-3 batch-1 cases file is missing: {path}")
-        return _load_case_ids(path)
-
-    new_path = config.TIER3_AUDIT_BATCH1_EXCLUSION_TXT
-    if not new_path.is_file():
+    path = Path(explicit_path) if explicit_path is not None else config.DIAGNOSIS_MAPPING_AUDIT_BATCH1_TXT
+    if not path.is_file():
         raise EvalBatchError(
-            f"Tier-3 batch-1 cases file is missing at {new_path} — refusing to draw an eval "
-            f"batch without it, since it must exclude those 198 already-audited cases"
+            f"Diagnosis-Mapping audit batch-1 case list is missing at {path} — refusing to draw an eval "
+            f"batch without it, since it must exclude those already-audited cases"
         )
-    return _load_case_ids(new_path)
+    return _load_case_ids(path)
 
 
 def _silver_strata(silver_df: pd.DataFrame, case_ids: set[str]) -> dict[str, str]:
@@ -236,7 +229,7 @@ def generate_batch(
     labels_csv: str | Path | None = None,
     ledger_csv: str | Path | None = None,
     sheet_dir: str | Path | None = None,
-    tier3_batch1_ledger: str | Path | None = None,
+    dm_audit_batch1_cases: str | Path | None = None,
     gold_csv: str | Path | None = None,
 ) -> dict:
     """Draw one batch of a (possibly multi-call) eval-batch series and write its sheet + ledger rows.
@@ -290,7 +283,7 @@ def generate_batch(
             )
 
     split = load_split(split_id)
-    tier3_cases = _tier3_batch1_cases(tier3_batch1_ledger)
+    dm_audit_cases = _dm_audit_batch1_cases(dm_audit_batch1_cases)
     gold_path = Path(gold_csv) if gold_csv is not None else config.GOLD_STORE_CSV
     gold_cases = (
         set(io_utils.read_csv(gold_path, encoding="utf-8", dtype=str, keep_default_na=False)["case_id"])
@@ -298,14 +291,14 @@ def generate_batch(
     )
     # The reference frame the series' targets (N_h, target_h) are computed
     # from — stable across every call in the series, since it depends only on
-    # the split and the Tier-3 exclusion list, neither of which changes
+    # the split and the Diagnosis-Mapping audit's batch-1 list, neither of which changes
     # between batches (WP7 fix 8). It deliberately does NOT subtract
     # gold_cases: N_h/targets must stay fixed even as gold accumulates
     # between batches (e.g. the review queue being worked in parallel, or a
     # prior batch's own gold being ingested) — see the module docstring's
     # "Pooling N_h across batches", which depends on exactly this. The gold
     # exclusion only ever narrows the per-batch *sampling pool* below.
-    reference_frame = split.test - tier3_cases
+    reference_frame = split.test - dm_audit_cases
 
     silver_df = load_silver(silver_id)
     strata = _silver_strata(silver_df, reference_frame)
@@ -347,8 +340,8 @@ def generate_batch(
     excluded_sources = []
     if already_drawn:
         excluded_sources.append(Path(ledger_csv).name)
-    if tier3_cases:
-        excluded_sources.append(_TIER3_BATCH1_CASES_TXT)
+    if dm_audit_cases:
+        excluded_sources.append(_DM_AUDIT_BATCH1_TXT)
     if gold_cases:
         excluded_sources.append(Path(gold_path).name)
     excluded_ledgers = ",".join(excluded_sources) if excluded_sources else "none"
@@ -397,7 +390,7 @@ def generate_batch(
         "sheet_path": sheet_path,
         "ledger_csv": ledger_csv,
         "total_cases": len(all_case_ids),
-        "excluded_count": len((already_drawn | tier3_cases | gold_cases) & split.test),
+        "excluded_count": len((already_drawn | dm_audit_cases | gold_cases) & split.test),
         "excluded_ledgers": excluded_ledgers,
         "targets": dict(targets),
         "stratum_counts": {s: len(drawn.get(s, [])) for s in sorted(targets)},

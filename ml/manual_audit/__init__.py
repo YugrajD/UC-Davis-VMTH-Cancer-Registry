@@ -1,1 +1,1 @@
-"""Manual audit: review sheets, the Tier-3 audit, blind eval batches, gold, cause passes."""
+"""Manual audit: review sheets, the Diagnosis-Mapping and Report-Mapping audits, blind eval batches, gold, cause passes."""

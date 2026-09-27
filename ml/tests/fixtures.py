@@ -389,30 +389,24 @@ def point_manual_audit_config_at(monkeypatch, root: Path) -> None:
 
     Builds on ``point_generations_config_at`` (manual_audit tests also build
     split generations) and additionally redirects the audit/gold/ledger/cause
-    stores, the Tier-3 sheet paths, the eval-batch sheet dir, and the silver dir.
+    stores, the audit directories and list ledger, the eval-batch sheet dir, and the silver dir.
     """
     import config
 
     point_generations_config_at(monkeypatch, root)
     manual_audit_dir = root / "output" / "manual_audit"
-    tier3_dir = manual_audit_dir / "tier3_audit"
     monkeypatch.setattr(config, "MANUAL_AUDIT_DIR", manual_audit_dir)
     monkeypatch.setattr(config, "AUDIT_STORE_CSV", manual_audit_dir / "audit_store.csv")
     monkeypatch.setattr(config, "GOLD_STORE_CSV", manual_audit_dir / "gold_store.csv")
     monkeypatch.setattr(config, "EVAL_BATCH_LEDGER_CSV", manual_audit_dir / "eval_batch_ledger.csv")
     monkeypatch.setattr(config, "CAUSE_STORE_CSV", manual_audit_dir / "cause_store.csv")
-    monkeypatch.setattr(config, "TIER3_AUDIT_DIR", tier3_dir)
-    monkeypatch.setattr(config, "TIER3_AUDIT_REVIEW_CSV", tier3_dir / "tier3_audit_review.csv")
-    monkeypatch.setattr(config, "TIER3_AUDIT_KEY_CSV", tier3_dir / "tier3_audit_key.csv")
-    monkeypatch.setattr(config, "TIER3_AUDIT_INSTRUCTIONS_MD", tier3_dir / "tier3_audit_instructions.md")
-    monkeypatch.setattr(config, "TIER3_AUDIT_TAXONOMY_CSV", tier3_dir / "tier3_audit_taxonomy.csv")
-    monkeypatch.setattr(config, "TIER3_AUDIT_PILOT_CSV", tier3_dir / "tier3_audit_pilot_review.csv")
-    monkeypatch.setattr(config, "TIER3_AUDIT_REMAINDER_CSV", tier3_dir / "tier3_audit_remainder_review.csv")
-    monkeypatch.setattr(config, "TIER3_AUDIT_PILOT_INSTRUCTIONS_MD", tier3_dir / "tier3_audit_pilot_instructions.md")
+    monkeypatch.setattr(config, "DIAGNOSIS_MAPPING_AUDIT_DIR", manual_audit_dir / "diagnosis_mapping_audit")
+    monkeypatch.setattr(config, "DIAGNOSIS_MAPPING_AUDIT_BATCH1_TXT",
+                        manual_audit_dir / "diagnosis_mapping_audit" / "diagnosis_mapping_audit_batch1.txt")
+    monkeypatch.setattr(config, "REPORT_MAPPING_AUDIT_DIR", manual_audit_dir / "report_mapping_audit")
+    monkeypatch.setattr(config, "AUDIT_LIST_LEDGER_CSV", manual_audit_dir / "audit_list_ledger.csv")
     monkeypatch.setattr(config, "EVAL_BATCH_DIR", manual_audit_dir / "eval_batch")
     monkeypatch.setattr(config, "SILVER_DIR", root / "output" / "silver")
-    # Without this, a default-path eval_batch draw would look in the real output tree.
-    monkeypatch.setattr(config, "TIER3_AUDIT_BATCH1_EXCLUSION_TXT", manual_audit_dir / "tier3_audit_batch1_exclusion.txt")
 
 
 # Case ids for a stratifiable silver csv: enough cases per group to exercise
@@ -574,7 +568,7 @@ def make_silver_generation(silver_id: str, rows: list[tuple], columns: list[str]
     return silver_id
 
 
-def make_tier3_silver_generation(silver_id: str = "tier3-test-silver") -> str:
+def make_dm_audit_silver_generation(silver_id: str = "dm-audit-test-silver") -> str:
     """Same rows as ``make_annotation_csv``, as a loadable silver generation."""
     return make_silver_generation(silver_id, _ANNOTATION_ROWS)
 

@@ -1,7 +1,8 @@
-"""Per-stratum verdict rates for the row-level Tier-3 audit, with Wilson/Kish CIs.
+"""Per-stratum verdict rates for the row-level Diagnosis-Mapping (formerly Tier-3) audit, with Wilson/Kish CIs.
 
 Carries over ``ml/annotation/gold/rates.py``, now reading the audit store
-(``config.AUDIT_STORE_CSV``, written by ``manual_audit.tier3_audit.ingest``).
+(``config.AUDIT_STORE_CSV``: the row-level reviews of batch 1's pilot sheet; later
+batches are reviewed as whole cases and come back as gold).
 
 The audit deliberately over-samples the small strata, so a raw rate off the store
 is not a Tier-3 population rate. Every row carries ``sample_weight`` (N_h/n_h),
@@ -77,7 +78,7 @@ def load_audit_store(audit_store_csv: str | Path | None = None) -> pd.DataFrame:
     rows = (io_utils.read_csv(path, encoding="utf-8", dtype=str, keep_default_na=False)
             if path.is_file() else pd.DataFrame())
     if rows.empty:
-        raise AuditRatesError(f"no audit rows in {path}; ingest a Tier-3 audit batch first")
+        raise AuditRatesError(f"no audit rows in {path}")
     rows["weight"] = rows["sample_weight"].astype(float)
     return rows
 

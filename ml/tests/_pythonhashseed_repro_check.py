@@ -35,7 +35,7 @@ def main(root: Path) -> None:
     config.CAUSE_STORE_CSV = manual_audit_dir / "cause_store.csv"
     config.EVAL_BATCH_DIR = manual_audit_dir / "eval_batch"
     config.SILVER_DIR = root / "output" / "silver"
-    config.TIER3_AUDIT_BATCH1_EXCLUSION_TXT = manual_audit_dir / "tier3_audit_batch1_exclusion.txt"
+    config.DIAGNOSIS_MAPPING_AUDIT_BATCH1_TXT = manual_audit_dir / "diagnosis_mapping_audit_batch1.txt"
     config.CORRECTED_ANNOTATIONS_CSV = root / "output" / "coding" / "corrected_annotations.csv"
 
     train_ids = [f"TRAIN-{i:04d}" for i in range(1, 6)]
@@ -43,12 +43,12 @@ def main(root: Path) -> None:
     fx.make_two_way_split_generation("legacy-80-20", train_ids=train_ids, test_ids=test_ids)
 
     silver_id = fx.make_eval_batch_silver_generation()
-    no_tier3 = root / "tier3_batch1_cases.txt"
-    no_tier3.write_text("", encoding="utf-8")
+    no_dm_audit = root / "dm_audit_batch1_cases.txt"
+    no_dm_audit.write_text("", encoding="utf-8")
 
     eval_batch.generate_batch(
         "eval-batch-1", silver_id=silver_id, fraction=0.5, split_id="legacy-80-20",
-        seed=42, tier3_batch1_ledger=no_tier3,
+        seed=42, dm_audit_batch1_cases=no_dm_audit,
     )
     sys.stdout.write(config.EVAL_BATCH_LEDGER_CSV.read_text(encoding="utf-8"))
 

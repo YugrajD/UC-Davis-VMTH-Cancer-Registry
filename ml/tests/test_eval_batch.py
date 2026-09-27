@@ -14,7 +14,7 @@ import pytest
 import config
 import io_utils
 from diagnosis_mapping.silver import load_silver
-from manual_audit import eval_batch, sheets, tier3_audit
+from manual_audit import diagnosis_mapping_audit, eval_batch, sheets
 
 from . import fixtures as fx
 
@@ -31,10 +31,10 @@ def eval_batch_env(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def no_tier3_exclusions(tmp_path):
-    """An empty Tier-3 batch-1 ledger, passed explicitly so tests don't need the
+def no_dm_audit_exclusions(tmp_path):
+    """An empty Diagnosis-Mapping audit batch-1 case list, passed explicitly so tests don't need the
     default-path exclusion file unless they're specifically testing it."""
-    path = tmp_path / "tier3_batch1_cases.txt"
+    path = tmp_path / "dm_audit_batch1_cases.txt"
     path.write_text("", encoding="utf-8")
     return path
 
@@ -77,10 +77,10 @@ def test_plan_targets_rare_share_falls_back_to_fixed_n():
     assert targets["no_cancer"] == 10  # capped by the (tiny) population here
 
 
-def test_sheet_has_no_prediction_or_silver_column(eval_batch_env, no_tier3_exclusions):
+def test_sheet_has_no_prediction_or_silver_column(eval_batch_env, no_dm_audit_exclusions):
     result = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     rows = sheets.read_csv(result["sheet_path"])
     header = set(rows[0].keys())
@@ -95,10 +95,10 @@ def test_sheet_has_no_prediction_or_silver_column(eval_batch_env, no_tier3_exclu
             assert row[col] == ""
 
 
-def test_ledger_records_silver_id_seed_and_review_mode(eval_batch_env, no_tier3_exclusions):
+def test_ledger_records_silver_id_seed_and_review_mode(eval_batch_env, no_dm_audit_exclusions):
     eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20", seed=7,
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
     assert list(ledger.columns) == eval_batch.EVAL_BATCH_LEDGER_FIELDS
@@ -107,10 +107,10 @@ def test_ledger_records_silver_id_seed_and_review_mode(eval_batch_env, no_tier3_
     assert (ledger["review_mode"] == "app_non_blind").all()
 
 
-def test_weights_sum_to_stratum_populations_within_a_batch(eval_batch_env, no_tier3_exclusions):
+def test_weights_sum_to_stratum_populations_within_a_batch(eval_batch_env, no_dm_audit_exclusions):
     result = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
     for stratum, group in ledger.groupby("stratum"):
@@ -123,17 +123,17 @@ def test_weights_sum_to_stratum_populations_within_a_batch(eval_batch_env, no_ti
         assert N_h[0] == result["stratum_populations"][stratum]
 
 
-def test_fraction_draws_a_share_of_the_remaining_target(eval_batch_env, no_tier3_exclusions):
+def test_fraction_draws_a_share_of_the_remaining_target(eval_batch_env, no_dm_audit_exclusions):
     first = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     for stratum, target in first["targets"].items():
         assert first["stratum_counts"][stratum] == math.ceil(0.5 * target)
 
     second = eval_batch.generate_batch(
         "eval-batch-2", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     # fraction=1.0 on whatever remains mops up the rest of every target exactly.
     for stratum, target in second["targets"].items():
@@ -141,78 +141,77 @@ def test_fraction_draws_a_share_of_the_remaining_target(eval_batch_env, no_tier3
         assert drawn_total == target
 
 
-def test_refuses_to_redraw_same_batch_id(eval_batch_env, no_tier3_exclusions):
+def test_refuses_to_redraw_same_batch_id(eval_batch_env, no_dm_audit_exclusions):
     eval_batch.generate_batch("eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-                              tier3_batch1_ledger=no_tier3_exclusions)
+                              dm_audit_batch1_cases=no_dm_audit_exclusions)
     with pytest.raises(eval_batch.EvalBatchError, match="eval-batch-1"):
         eval_batch.generate_batch("eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-                                  tier3_batch1_ledger=no_tier3_exclusions)
+                                  dm_audit_batch1_cases=no_dm_audit_exclusions)
 
 
-def test_refuses_invalid_fraction(eval_batch_env, no_tier3_exclusions):
+def test_refuses_invalid_fraction(eval_batch_env, no_dm_audit_exclusions):
     with pytest.raises(eval_batch.EvalBatchError, match="fraction"):
         eval_batch.generate_batch("eval-batch-1", silver_id=eval_batch_env, fraction=0, split_id="legacy-80-20",
-                                  tier3_batch1_ledger=no_tier3_exclusions)
+                                  dm_audit_batch1_cases=no_dm_audit_exclusions)
     with pytest.raises(eval_batch.EvalBatchError, match="fraction"):
         eval_batch.generate_batch("eval-batch-1", silver_id=eval_batch_env, fraction=1.5, split_id="legacy-80-20",
-                                  tier3_batch1_ledger=no_tier3_exclusions)
+                                  dm_audit_batch1_cases=no_dm_audit_exclusions)
 
 
-def test_tier3_missing_file_refuses(eval_batch_env, tmp_path):
-    with pytest.raises(eval_batch.EvalBatchError, match="Tier-3 batch-1"):
+def test_dm_audit_missing_file_refuses(eval_batch_env, tmp_path):
+    with pytest.raises(eval_batch.EvalBatchError, match="Diagnosis-Mapping audit batch-1"):
         eval_batch.generate_batch(
             "eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-            tier3_batch1_ledger=tmp_path / "does_not_exist.txt",
+            dm_audit_batch1_cases=tmp_path / "does_not_exist.txt",
         )
 
 
-def test_tier3_cases_excluded_and_counted_within_partition(eval_batch_env, tmp_path):
-    tier3_cases = fx.EVAL_BATCH_CASE_IDS[:3]
-    tier3_path = tmp_path / "tier3_batch1_cases.txt"
-    tier3_path.write_text("\n".join(tier3_cases) + "\n", encoding="utf-8")
+def test_dm_audit_cases_excluded_and_counted_within_partition(eval_batch_env, tmp_path):
+    dm_audit_cases = fx.EVAL_BATCH_CASE_IDS[:3]
+    dm_audit_path = tmp_path / "dm_audit_batch1_cases.txt"
+    dm_audit_path.write_text("\n".join(dm_audit_cases) + "\n", encoding="utf-8")
 
     result = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=tier3_path,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=dm_audit_path,
     )
     ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
-    assert not (set(tier3_cases) & set(ledger["case_id"]))
+    assert not (set(dm_audit_cases) & set(ledger["case_id"]))
     assert result["excluded_count"] == 3
-    assert "tier3_audit_batch1_cases.txt" in result["excluded_ledgers"]
+    assert "diagnosis_mapping_audit_batch1.txt" in result["excluded_ledgers"]
 
 
-def test_tier3_default_path_used_when_present(eval_batch_env):
-    new_path = config.TIER3_AUDIT_BATCH1_EXCLUSION_TXT
+def test_dm_audit_default_path_used_when_present(eval_batch_env):
+    new_path = config.DIAGNOSIS_MAPPING_AUDIT_BATCH1_TXT
     new_path.parent.mkdir(parents=True, exist_ok=True)
     new_path.write_text(fx.EVAL_BATCH_CASE_IDS[0] + "\n", encoding="utf-8")
-    # Its own path, distinct from tier3_audit's own batch-1 case ledger — the
-    # two must never collide (see item 5 of the WP7 fixes).
-    assert new_path != tier3_audit.batch_ledger_path(1)
+    # The eval-batch frame excludes exactly the Diagnosis-Mapping audit's own batch-1 case list.
+    assert new_path == diagnosis_mapping_audit.case_list_path(1)
 
     result = eval_batch.generate_batch("eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20")
     assert fx.EVAL_BATCH_CASE_IDS[0] not in set(
         io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)["case_id"]
     )
-    assert "tier3_audit_batch1_cases.txt" in result["excluded_ledgers"]
+    assert "diagnosis_mapping_audit_batch1.txt" in result["excluded_ledgers"]
 
 
-def test_tier3_default_path_missing_refuses(eval_batch_env):
-    assert not config.TIER3_AUDIT_BATCH1_EXCLUSION_TXT.exists()
-    with pytest.raises(eval_batch.EvalBatchError, match="Tier-3 batch-1"):
+def test_dm_audit_default_path_missing_refuses(eval_batch_env):
+    assert not config.DIAGNOSIS_MAPPING_AUDIT_BATCH1_TXT.exists()
+    with pytest.raises(eval_batch.EvalBatchError, match="Diagnosis-Mapping audit batch-1"):
         eval_batch.generate_batch("eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20")
 
 
-def test_excludes_prior_ledger_cases(eval_batch_env, no_tier3_exclusions):
+def test_excludes_prior_ledger_cases(eval_batch_env, no_dm_audit_exclusions):
     first = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-        tier3_batch1_ledger=no_tier3_exclusions,
+        dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     first_ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
     claimed = set(first_ledger["case_id"])
 
     second = eval_batch.generate_batch(
         "eval-batch-2", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        tier3_batch1_ledger=no_tier3_exclusions,
+        dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     second_ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
     second_rows = second_ledger[second_ledger["batch_id"] == "eval-batch-2"]
@@ -220,10 +219,10 @@ def test_excludes_prior_ledger_cases(eval_batch_env, no_tier3_exclusions):
     assert "eval_batch_ledger.csv" in second["excluded_ledgers"]
 
 
-def test_ingest_sheet_round_trip(eval_batch_env, no_tier3_exclusions, labels_csv):
+def test_ingest_sheet_round_trip(eval_batch_env, no_dm_audit_exclusions, labels_csv):
     result = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     rows = sheets.read_csv(result["sheet_path"])
     ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
@@ -248,10 +247,10 @@ def test_ingest_sheet_round_trip(eval_batch_env, no_tier3_exclusions, labels_csv
     assert (store["batch_or_export_id"] == "eval-batch-1").all()
 
 
-def test_ingest_sheet_refuses_case_not_in_batch(eval_batch_env, no_tier3_exclusions, tmp_path):
+def test_ingest_sheet_refuses_case_not_in_batch(eval_batch_env, no_dm_audit_exclusions, tmp_path):
     eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     bad_sheet = tmp_path / "bad_sheet.csv"
     sheets.write_csv(bad_sheet, ["case_id", "record_pointer", "term_1", "term_2", "term_3", "term_4", "term_5",
@@ -262,10 +261,10 @@ def test_ingest_sheet_refuses_case_not_in_batch(eval_batch_env, no_tier3_exclusi
         eval_batch.ingest_sheet(bad_sheet, "eval-batch-1", "Dr. Test")
 
 
-def test_ingest_sheet_refuses_blank_and_both_filled_rows(eval_batch_env, no_tier3_exclusions):
+def test_ingest_sheet_refuses_blank_and_both_filled_rows(eval_batch_env, no_dm_audit_exclusions):
     result = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     rows = sheets.read_csv(result["sheet_path"])
     header = list(rows[0].keys())
@@ -283,10 +282,10 @@ def test_ingest_sheet_refuses_blank_and_both_filled_rows(eval_batch_env, no_tier
         eval_batch.ingest_sheet(result["sheet_path"], "eval-batch-1", "Dr. Test")
 
 
-def test_ingest_sheet_refuses_repeated_case_id(eval_batch_env, no_tier3_exclusions, labels_csv):
+def test_ingest_sheet_refuses_repeated_case_id(eval_batch_env, no_dm_audit_exclusions, labels_csv):
     result = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
     )
     rows = sheets.read_csv(result["sheet_path"])
     header = list(rows[0].keys())
@@ -296,36 +295,36 @@ def test_ingest_sheet_refuses_repeated_case_id(eval_batch_env, no_tier3_exclusio
         eval_batch.ingest_sheet(result["sheet_path"], "eval-batch-1", "Dr. Test", labels_csv=labels_csv)
 
 
-def test_series_consistency_refuses_changed_silver_split_or_target_params(eval_batch_env, no_tier3_exclusions):
+def test_series_consistency_refuses_changed_silver_split_or_target_params(eval_batch_env, no_dm_audit_exclusions):
     eval_batch.generate_batch("eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-                              rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions)
+                              rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions)
 
     other_silver_id = fx.make_eval_batch_silver_generation(silver_id="a-different-silver")
     with pytest.raises(eval_batch.EvalBatchError, match="silver_id"):
         eval_batch.generate_batch("eval-batch-2", silver_id=other_silver_id, fraction=0.5, split_id="legacy-80-20",
-                                  rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions)
+                                  rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions)
 
     with pytest.raises(eval_batch.EvalBatchError, match="no_cancer_target"):
         eval_batch.generate_batch("eval-batch-2", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-                                  rare_stratum_n=2, no_cancer_target=999, tier3_batch1_ledger=no_tier3_exclusions)
+                                  rare_stratum_n=2, no_cancer_target=999, dm_audit_batch1_cases=no_dm_audit_exclusions)
 
     with pytest.raises(eval_batch.EvalBatchError, match="rare_stratum_n"):
         eval_batch.generate_batch("eval-batch-2", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-                                  rare_stratum_n=3, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions)
+                                  rare_stratum_n=3, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions)
 
     # Same parameters as batch 1: allowed.
     eval_batch.generate_batch("eval-batch-2", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-                              rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions)
+                              rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions)
 
 
-def test_generate_batch_excludes_cases_with_existing_gold(eval_batch_env, no_tier3_exclusions, tmp_path):
+def test_generate_batch_excludes_cases_with_existing_gold(eval_batch_env, no_dm_audit_exclusions, tmp_path):
     gold_csv = tmp_path / "gold_store.csv"
     already_gold_case = fx.EVAL_BATCH_CASE_IDS[0]  # a Mast Cell Tumors case
     io_utils.write_csv(pd.DataFrame([{"case_id": already_gold_case, "origin": "review_queue"}]), gold_csv)
 
     result = eval_batch.generate_batch(
         "eval-batch-1", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-        rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions, gold_csv=gold_csv,
+        rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions, gold_csv=gold_csv,
     )
     ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
     assert already_gold_case not in set(ledger["case_id"])
@@ -333,9 +332,9 @@ def test_generate_batch_excludes_cases_with_existing_gold(eval_batch_env, no_tie
     assert result["excluded_count"] >= 1  # already_gold_case is in the split's test partition
 
 
-def test_gold_ingest_between_batches_does_not_change_series_targets(tmp_path, monkeypatch, no_tier3_exclusions, labels_csv):
-    """WP7 fix 8: N_h/targets must come from split.test - tier3 only, never
-    from split.test - tier3 - gold. Ingesting batch 1's own gold before
+def test_gold_ingest_between_batches_does_not_change_series_targets(tmp_path, monkeypatch, no_dm_audit_exclusions, labels_csv):
+    """WP7 fix 8: N_h/targets must come from split.test - dm_audit only, never
+    from split.test - dm_audit - gold. Ingesting batch 1's own gold before
     drawing batch 2 must not shrink any stratum's population or target."""
 
     def _run_series(root, *, ingest_after_batch1: bool) -> dict:
@@ -347,7 +346,7 @@ def test_gold_ingest_between_batches_does_not_change_series_targets(tmp_path, mo
 
         first = eval_batch.generate_batch(
             "eval-batch-1", silver_id=silver_id, fraction=0.5, split_id="legacy-80-20",
-            rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+            rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
         )
         if ingest_after_batch1:
             ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
@@ -366,7 +365,7 @@ def test_gold_ingest_between_batches_does_not_change_series_targets(tmp_path, mo
 
         return eval_batch.generate_batch(
             "eval-batch-2", silver_id=silver_id, fraction=1.0, split_id="legacy-80-20",
-            rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions,
+            rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions,
         )
 
     without_ingest = _run_series(tmp_path / "no_ingest", ingest_after_batch1=False)
@@ -376,11 +375,11 @@ def test_gold_ingest_between_batches_does_not_change_series_targets(tmp_path, mo
     assert with_ingest["stratum_populations"] == without_ingest["stratum_populations"]
 
 
-def test_pooled_weights_over_a_multi_batch_series(eval_batch_env, no_tier3_exclusions):
+def test_pooled_weights_over_a_multi_batch_series(eval_batch_env, no_dm_audit_exclusions):
     eval_batch.generate_batch("eval-batch-1", silver_id=eval_batch_env, fraction=0.5, split_id="legacy-80-20",
-                              rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions)
+                              rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions)
     eval_batch.generate_batch("eval-batch-2", silver_id=eval_batch_env, fraction=1.0, split_id="legacy-80-20",
-                              rare_stratum_n=2, no_cancer_target=5, tier3_batch1_ledger=no_tier3_exclusions)
+                              rare_stratum_n=2, no_cancer_target=5, dm_audit_batch1_cases=no_dm_audit_exclusions)
     ledger = io_utils.read_csv(config.EVAL_BATCH_LEDGER_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
 
     weights = eval_batch.pooled_weights(ledger)

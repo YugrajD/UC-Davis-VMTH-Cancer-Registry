@@ -1,6 +1,6 @@
 """Resolve a reviewer-typed taxonomy term to its code and group.
 
-Shared by ``tier3_audit.py`` (row-level "Actual Diagnosis" corrections) and
+Used by
 ``gold.py`` (case-level gold terms), so a term typed once is validated the
 same way everywhere.
 

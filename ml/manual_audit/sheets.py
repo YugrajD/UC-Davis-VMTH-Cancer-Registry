@@ -18,11 +18,8 @@ prediction column even though the specialist looks each case up in the
 registry app, which does show its predictions (a 2026-09-26 user decision;
 review is knowingly non-blind there, tracked via the ledger's ``review_mode``).
 
-The Tier-3 audit sheet (``manual_audit/tier3_audit.py``) is the other sheet
-that shows a cascade answer, by its original row-level design (see that
-module's docstring) — it uses the generic ``write_csv``/``read_csv`` here like
-everything else, it just chooses to put a ``Predicted Match`` column in its
-header.
+The Diagnosis-Mapping audit (``manual_audit/diagnosis_mapping_audit.py``)
+keeps its key CSV here too; it no longer writes a reviewer sheet.
 """
 
 from __future__ import annotations

@@ -1,21 +1,12 @@
-"""Manual audit: Tier-3 sample/pilot/ingest, eval batches, gold ingest, cause pass.
+"""Manual audit: Diagnosis-Mapping audit batches, eval batches, gold ingest, cause pass.
 
 Usage:
-  python ml/scripts/audit.py tier3-sample --silver-id silver-0-legacy --test-cases-txt PATH --batch 1
-  python ml/scripts/audit.py tier3-pilot --review-csv PATH --key-csv PATH
-  python ml/scripts/audit.py tier3-ingest --review-csv PATH --key-csv PATH --batch 1 --reviewer "Dr. Smith"
+  python ml/scripts/audit.py dm-sample --silver-id silver-0-legacy --batch 2
   python ml/scripts/audit.py eval-batch --batch-id eval-batch-1 --silver-id silver-0-legacy --fraction 0.5
   python ml/scripts/audit.py ingest-sheet --sheet PATH --batch-id eval-batch-1 --reviewer "Dr. Smith"
   python ml/scripts/audit.py ingest-gold --rows-csv PATH --origin eval_batch --reviewer "Dr. Smith"
   python ml/scripts/audit.py cause-sheet --verdicts-csv PATH --out-csv PATH
   python ml/scripts/audit.py ingest-cause --filled-csv PATH --reviewer "Dr. Smith"
-
-``tier3-pilot`` and ``tier3-ingest``'s ``--review-csv``/``--key-csv`` default to
-this rewrite's own sheet paths, but point them at the already-issued legacy
-sheets to ingest those unchanged, e.g.:
-  --review-csv ml/output/annotation/tier3_audit_review.csv
-  --key-csv    ml/output/annotation/tier3_audit_key.csv
-(or the ``_pilot_``/``_remainder_`` variants next to them).
 """
 
 import argparse
@@ -27,40 +18,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 
 import config
-from manual_audit import cause_pass, eval_batch, gold, tier3_audit
+from manual_audit import cause_pass, diagnosis_mapping_audit, eval_batch, gold
 
 
-def _cmd_tier3_sample(args: argparse.Namespace) -> int:
-    test_case_ids = {line.strip() for line in Path(args.test_cases_txt).read_text(encoding="utf-8").splitlines() if line.strip()}
-    exclude = set()
-    for path in args.exclude_cases or []:
-        exclude.update(line.strip() for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip())
-    result = tier3_audit.sample(
-        silver_id=args.silver_id, test_case_ids=test_case_ids, labels_csv=args.labels_csv,
-        batch=args.batch, n_rows=args.n_rows, seed=args.seed, exclude_case_ids=exclude,
+def _cmd_dm_sample(args: argparse.Namespace) -> int:
+    result = diagnosis_mapping_audit.sample(
+        silver_id=args.silver_id, split_id=args.split_id, batch=args.batch, n_rows=args.n_rows, seed=args.seed,
     )
-    print(f"Sampled {result['n_rows']} rows across {result['n_cases']} cases -> {result['review_csv']}")
-    return 0
-
-
-def _cmd_tier3_pilot(args: argparse.Namespace) -> int:
-    result = tier3_audit.pilot(
-        review_csv=args.review_csv, key_csv=args.key_csv,
-        out_pilot_csv=args.out_pilot, out_remainder_csv=args.out_remainder,
-        n_rows=args.n_rows, min_per_stratum=args.min_per_stratum,
-        out_instructions_md=args.out_instructions,
-    )
-    print(f"Pilot {result['pilot_rows']} rows, remainder {result['remainder_rows']} rows.")
-    return 0
-
-
-def _cmd_tier3_ingest(args: argparse.Namespace) -> int:
-    result = tier3_audit.ingest(
-        review_csv=args.review_csv, key_csv=args.key_csv, batch=args.batch,
-        reviewer=args.reviewer, labels_csv=args.labels_csv,
-    )
-    print(f"Ingested {result['ingested']} row(s): {result['added']} new, {result['replaced']} re-reviewed. "
-          f"Audit store now holds {result['total_rows']} row(s).")
+    print(f"Sampled {result['n_rows']} rows across {result['n_cases']} cases -> {result['case_list']}")
+    for stratum, n in result["stratum_counts"].items():
+        print(f"  {stratum:<22} {n:>4} of {result['stratum_populations'][stratum]}")
     return 0
 
 
@@ -128,40 +95,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("tier3-sample", help="Draw a row-level Tier-3 audit sample.")
+    p = sub.add_parser("dm-sample", help="Draw a Diagnosis-Mapping audit batch (key CSV + case-ID list).")
     p.add_argument("--silver-id", required=True, help="Silver generation id, loaded via diagnosis_mapping.silver.load_silver.")
-    p.add_argument("--test-cases-txt", required=True)
-    p.add_argument("--labels-csv", default=str(config.LABELS_CSV))
-    p.add_argument("--batch", type=int, default=1)
+    p.add_argument("--split-id", default=config.DEFAULT_SPLIT_ID, help="Rows come from its calibration and test cases.")
+    p.add_argument("--batch", type=int, required=True)
     p.add_argument("--n-rows", type=int, default=200)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--exclude-cases", nargs="*", default=[])
-
-    p = sub.add_parser("tier3-pilot", help="Split a review CSV into a stratified pilot + remainder.")
-    p.add_argument("--review-csv", default=str(config.TIER3_AUDIT_REVIEW_CSV),
-                   help="Point this at the real legacy sheet to split it unchanged, e.g. "
-                        "ml/output/annotation/tier3_audit_review.csv.")
-    p.add_argument("--key-csv", default=str(config.TIER3_AUDIT_KEY_CSV),
-                   help="The key CSV written alongside --review-csv, e.g. "
-                        "ml/output/annotation/tier3_audit_key.csv.")
-    p.add_argument("--out-pilot", default=str(config.TIER3_AUDIT_PILOT_CSV))
-    p.add_argument("--out-remainder", default=str(config.TIER3_AUDIT_REMAINDER_CSV))
-    p.add_argument("--out-instructions", default=str(config.TIER3_AUDIT_PILOT_INSTRUCTIONS_MD))
-    p.add_argument("--n-rows", type=int, default=30)
-    p.add_argument("--min-per-stratum", type=int, default=3)
-
-    p = sub.add_parser("tier3-ingest", help="Merge a filled Tier-3 review CSV into the audit store.")
-    p.add_argument("--review-csv", default=str(config.TIER3_AUDIT_REVIEW_CSV),
-                   help="The filled sheet to ingest. For the already-issued legacy batch, point this at "
-                        "ml/output/annotation/tier3_audit_review.csv (or its pilot/remainder variant).")
-    p.add_argument("--key-csv", default=str(config.TIER3_AUDIT_KEY_CSV),
-                   help="The key CSV written alongside --review-csv by the legacy or new `sample`, e.g. "
-                        "ml/output/annotation/tier3_audit_key.csv.")
-    p.add_argument("--batch", type=int, required=True,
-                   help="Which batch this filled sheet is (no default: ingesting under the wrong "
-                        "batch number silently mislabels every row's audit-store 'batch' column).")
-    p.add_argument("--reviewer", required=True)
-    p.add_argument("--labels-csv", default=str(config.LABELS_CSV))
 
     p = sub.add_parser("eval-batch", help="Draw one batch of the case-level eval-batch series.")
     p.add_argument("--batch-id", required=True)
@@ -203,9 +142,7 @@ def main() -> int:
 
     args = parser.parse_args()
     dispatch = {
-        "tier3-sample": _cmd_tier3_sample,
-        "tier3-pilot": _cmd_tier3_pilot,
-        "tier3-ingest": _cmd_tier3_ingest,
+        "dm-sample": _cmd_dm_sample,
         "eval-batch": _cmd_eval_batch,
         "ingest-sheet": _cmd_ingest_sheet,
         "ingest-gold": _cmd_ingest_gold,

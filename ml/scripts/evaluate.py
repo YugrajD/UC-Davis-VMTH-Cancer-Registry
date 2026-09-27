@@ -1,4 +1,4 @@
-"""Thin entry point: silver-eval, gold-eval (four results) and Tier-3 audit rates.
+"""Thin entry point: silver-eval, gold-eval (four results) and Diagnosis-Mapping audit rates.
 
 Replaces ``ml/scripts/run_evaluation.py``. Prints counts and percentages only.
 
@@ -107,7 +107,7 @@ def _print_rate(label: str, r: dict) -> None:
 
 def _cmd_audit_rates(args: argparse.Namespace) -> int:
     result = audit_rates.audit_rates()
-    print(f"Tier-3 audit rates — {result['rows']} reviewed row(s), {result['cases']} case(s)")
+    print(f"Diagnosis-Mapping audit rates — {result['rows']} reviewed row(s), {result['cases']} case(s)")
     for _, row in result["by_stratum"].iterrows():
         _print_rate(f"{row['stratum']} {row['verdict']}{' ←' if row['headline'] else ''}", row)
     print()
@@ -146,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--misses-out", default=None, help="Write the misses table for audit.py cause-sheet.")
     p.set_defaults(func=_cmd_gold)
 
-    p = sub.add_parser("audit-rates", help="Weighted Tier-3 audit rates per stratum.")
+    p = sub.add_parser("audit-rates", help="Weighted Diagnosis-Mapping audit rates per stratum.")
     p.set_defaults(func=_cmd_audit_rates)
     return parser
 

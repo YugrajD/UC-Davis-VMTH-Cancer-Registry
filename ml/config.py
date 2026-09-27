@@ -51,27 +51,23 @@ GOLD_STORE_CSV = MANUAL_AUDIT_DIR / "gold_store.csv"
 EVAL_BATCH_LEDGER_CSV = MANUAL_AUDIT_DIR / "eval_batch_ledger.csv"
 CAUSE_STORE_CSV = MANUAL_AUDIT_DIR / "cause_store.csv"
 
-# Tier-3 audit sheets (manual_audit/tier3_audit.py) — row-level, writes to
-# AUDIT_STORE_CSV above, never to the gold store.
-TIER3_AUDIT_DIR = MANUAL_AUDIT_DIR / "tier3_audit"
-TIER3_AUDIT_REVIEW_CSV = TIER3_AUDIT_DIR / "tier3_audit_review.csv"
-TIER3_AUDIT_KEY_CSV = TIER3_AUDIT_DIR / "tier3_audit_key.csv"
-TIER3_AUDIT_INSTRUCTIONS_MD = TIER3_AUDIT_DIR / "tier3_audit_instructions.md"
-TIER3_AUDIT_TAXONOMY_CSV = TIER3_AUDIT_DIR / "tier3_audit_taxonomy.csv"
-TIER3_AUDIT_PILOT_CSV = TIER3_AUDIT_DIR / "tier3_audit_pilot_review.csv"
-TIER3_AUDIT_REMAINDER_CSV = TIER3_AUDIT_DIR / "tier3_audit_remainder_review.csv"
-TIER3_AUDIT_PILOT_INSTRUCTIONS_MD = TIER3_AUDIT_DIR / "tier3_audit_pilot_instructions.md"
+# Diagnosis-Mapping audit (manual_audit/diagnosis_mapping_audit.py, formerly the
+# Tier-3 audit): per batch, a key CSV and a case-ID list. Batch 1's case list is
+# also what eval_batch.py excludes from its frame (it refuses to draw without it).
+DIAGNOSIS_MAPPING_AUDIT_DIR = MANUAL_AUDIT_DIR / "diagnosis_mapping_audit"
+DIAGNOSIS_MAPPING_AUDIT_BATCH1_TXT = DIAGNOSIS_MAPPING_AUDIT_DIR / "diagnosis_mapping_audit_batch1.txt"
+
+# Report-Mapping audit (manual_audit/report_mapping_audit.py): per batch, a
+# ledger CSV and a case-ID list.
+REPORT_MAPPING_AUDIT_DIR = MANUAL_AUDIT_DIR / "report_mapping_audit"
+
+# The universal audit list (manual_audit/audit_list.py): one ledger of every
+# case put on a list and its gold origin; the lists themselves go to the outbox.
+AUDIT_LIST_LEDGER_CSV = MANUAL_AUDIT_DIR / "audit_list_ledger.csv"
 
 # Case-level eval batches (manual_audit/eval_batch.py) — sheets live here; the
 # ledger of record is EVAL_BATCH_LEDGER_CSV above.
 EVAL_BATCH_DIR = MANUAL_AUDIT_DIR / "eval_batch"
-
-# The Tier-3 audit's batch-1 case-id exclusion list, as eval_batch.py needs it
-# (see eval_batch.py — it refuses to draw a batch without this file).
-# Deliberately its own path, not TIER3_AUDIT_DIR/tier3_audit_batch1_cases.txt:
-# that name is also what tier3_audit.sample(batch=1) writes its OWN case
-# ledger to, and the two must never collide.
-TIER3_AUDIT_BATCH1_EXCLUSION_TXT = MANUAL_AUDIT_DIR / "tier3_audit_batch1_exclusion.txt"
 
 # ---------------------------------------------------------------------------
 # Coding: corrected annotations, adopted codes, review queue

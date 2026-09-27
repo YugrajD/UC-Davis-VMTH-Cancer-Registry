@@ -13,7 +13,8 @@ re-implementing either (per CLAUDE.md, "call the public interface").
 
 ml-rewrite-plan.md's Decisions: "The worker refuses to start if a file listed
 in its manifest is missing" — ``verify_worker_bundle`` below is that check,
-run by ``handoff.exports.export_bundle`` and by the worker at startup.
+run by ``handoff.exports.export_bundle``; the worker gets the same check from
+``load_generation`` at startup.
 """
 
 from __future__ import annotations
@@ -56,9 +57,9 @@ def resolve_bundle_root(env: Mapping[str, str], model_var: str) -> Path:
 
     Every other path var that is set must point at its own place in that bundle, so a deployment
     that mixes files from two generations refuses to start rather than predicting with them."""
-    root = Path(env[model_var]).parent
+    root = Path(env[model_var]).resolve().parent
     wrong = sorted(var for var, rel in WORKER_ENV_VAR_TO_BUNDLE_PATH.items()
-                   if env.get(var) and Path(env[var]) != root / rel)
+                   if env.get(var) and Path(env[var]).resolve() != root / rel)
     if wrong:
         raise BundleError(f"{', '.join(wrong)} must point inside the bundle at {root} "
                           f"({', '.join(WORKER_ENV_VAR_TO_BUNDLE_PATH[v] for v in wrong)})")

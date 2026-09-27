@@ -135,11 +135,16 @@ def load_cached_embeddings(gen) -> embedding_cache_mod.EmbeddingCache:
 def classify(gen, cache: embedding_cache_mod.EmbeddingCache, dataframe: pd.DataFrame, ids: list[str]) -> list[dict]:
     """Every stage on already-embedded reports: one dict per prediction row (``prediction_rows``).
     ``dataframe`` must have the section columns (``sections.build_section_frame``)."""
-    cache_index = {cid: i for i, cid in enumerate(cache.case_ids)}
-    missing = [cid for cid in ids if cid not in cache_index]
-    if missing:
-        raise ValueError(f"{len(missing)} case(s) missing from the embedding cache, e.g. {missing[:5]}")
-    sel = [cache_index[cid] for cid in ids]
+    if cache.case_ids == ids:
+        # Embedded for exactly these rows (predict_frame): match by position, since an upload
+        # may repeat an anon_id and an id lookup would give every repeat the last row's embedding.
+        sel = list(range(len(ids)))
+    else:
+        cache_index = {cid: i for i, cid in enumerate(cache.case_ids)}
+        missing = [cid for cid in ids if cid not in cache_index]
+        if missing:
+            raise ValueError(f"{len(missing)} case(s) missing from the embedding cache, e.g. {missing[:5]}")
+        sel = [cache_index[cid] for cid in ids]
 
     concat_3 = cache.col_embeddings[sections.CONCAT_3_KEY][sel].astype(np.float32)
     group_input = group_classifier_input(cache, sel)

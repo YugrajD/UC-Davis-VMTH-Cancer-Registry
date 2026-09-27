@@ -70,3 +70,16 @@ def test_batch_worker_refuses_a_bundle_with_a_missing_file(tmp_path, monkeypatch
     with pytest.raises(worker_format.ManifestError, match="missing"):
         _load_batch_script().main()
     assert not (tmp_path / "out").exists()
+
+
+def test_repeated_upload_ids_keep_each_rows_own_report(tmp_path, report_mapping_bundle):
+    # Dataset A may repeat an anon_id; each row must be scored on its own report, not the last one's.
+    from report_mapping.inference.predict import predict_frame
+    from report_mapping.model.generation import load_generation
+
+    gen = load_generation(report_mapping_bundle)
+    reports = io_utils.read_csv(fx.make_training_reports_csv(tmp_path / "r.csv"), encoding="utf-8", dtype=str,
+                                keep_default_na=False).iloc[:2]
+    alone = [predict_frame(gen, reports.iloc[[i]], ["X"], device_arg="cpu") for i in (0, 1)]
+    together = predict_frame(gen, reports, ["X", "X"], device_arg="cpu")
+    assert together == alone[0] + alone[1]

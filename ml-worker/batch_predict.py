@@ -26,8 +26,7 @@ def main() -> None:
     output_dir = os.environ["OUTPUT_DIR"]
 
     bundle_root = worker_format.resolve_bundle_root(os.environ, "MODEL_PATH")
-    worker_format.verify_worker_bundle(bundle_root)  # refuse on a missing or changed bundle file
-    generation = load_generation(bundle_root)
+    generation = load_generation(bundle_root)  # verifies manifest + fingerprint first; refuses a bad bundle
     print(f"[batch_predict] job={job_id} input={input_csv} output={output_dir} "
           f"source_version={generation.generation_id}")
 

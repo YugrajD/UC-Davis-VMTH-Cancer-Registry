@@ -22,7 +22,7 @@ from report_mapping.model.generation import load_generation
 from report_mapping.sections import clean_text
 
 BUNDLE_ROOT = worker_format.resolve_bundle_root(os.environ, "PETBERT_MODEL_PATH")
-worker_format.verify_worker_bundle(BUNDLE_ROOT)  # refuse to start on a missing or changed bundle file
+# load_generation verifies the manifest and fingerprint first: the worker refuses to start on a bad bundle.
 GENERATION = load_generation(BUNDLE_ROOT)
 
 app = FastAPI(title="VMTH PetBERT ML Worker")
@@ -56,6 +56,8 @@ async def predict(file: UploadFile = File(...)):
         rows = predict_mod.predict_frame(GENERATION, worker_format.upload_to_reports(upload), ids, device_arg="auto")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Report-mapping prediction failed")
 
     return {
         "predictions": worker_format.response_rows(rows, dict(zip(ids, text.map(clean_text)))),

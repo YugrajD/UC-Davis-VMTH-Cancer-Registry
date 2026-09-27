@@ -33,6 +33,7 @@ import torch
 from sklearn.model_selection import KFold
 
 import config
+import io_utils
 from generations.splits import load_split
 from report_mapping import sections
 from report_mapping.model import backbone as backbone_mod
@@ -111,6 +112,15 @@ def run_case_presence_oof(
             probs[val_pos] = model.predict_proba(torch.from_numpy(embs)).numpy()
 
     return CasePresenceOOF(case_ids=case_ids, probs=probs, targets=targets)
+
+
+def write_case_presence_oof(result: CasePresenceOOF, out_csv: str | Path) -> Path:
+    """Save gate OOF scores (IDs and numbers only); the Report-Mapping audit samples contradicted labels from it."""
+    out_csv = Path(out_csv)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    io_utils.write_csv(pd.DataFrame({"case_id": result.case_ids, "target": result.targets.astype(int),
+                                     "prob": np.round(result.probs, 4)}), out_csv)
+    return out_csv
 
 
 def run_group_oof(

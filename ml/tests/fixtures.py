@@ -480,6 +480,7 @@ def point_training_config_at(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(config, "REPORT_MAPPING_CURRENT_DIR", report_mapping_dir / "current")
     monkeypatch.setattr(config, "REPORT_MAPPING_CANDIDATE_DIR", report_mapping_dir / "candidate")
     monkeypatch.setattr(config, "EMBEDDING_CACHE_DIR", report_mapping_dir / "embedding_cache")
+    monkeypatch.setattr(config, "OOF_DIR", report_mapping_dir / "oof")
 
 
 def make_two_way_split_generation(split_id: str, train_ids: list[str], test_ids: list[str] = ()) -> None:

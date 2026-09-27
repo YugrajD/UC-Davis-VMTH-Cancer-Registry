@@ -132,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
         result = run(labels, split_id, args.seed, args.device, k=args.k,
                       backbone_dir=args.model, local_only=args.local_only)
         print(f"oof[{args.oof_stage}]: {len(result.case_ids)} train cases, k={args.k}")
+        if args.oof_stage == "case-presence":
+            out = config.OOF_DIR / f"case_presence_oof_{Path(args.labels).stem}_{split_id}.csv"
+            print(f"wrote {oof_mod.write_case_presence_oof(result, out)}")
         return 0  # a diagnostic run, not a training stage -- no candidate manifest to write
 
     lineage = labels_mod.lineage(labels, args.labels)  # before training, so a mixed-lineage table fails fast

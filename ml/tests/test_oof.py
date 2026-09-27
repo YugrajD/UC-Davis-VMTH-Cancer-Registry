@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from report_mapping.model.generation import generation_paths
@@ -44,6 +45,14 @@ def test_case_presence_oof_covers_every_train_case(tmp_path, monkeypatch, tiny_b
     # Every case got a real fold prediction (no leftover zero-initialised slot
     # from a case that fell through the k-fold partition).
     assert (result.probs != 0.0).any()
+
+
+def test_write_case_presence_oof_round_trips_ids_targets_and_rounded_probs(tmp_path):
+    result = oof.CasePresenceOOF(case_ids=["CASE-B", "CASE-A"], probs=np.array([0.123456, 0.9], dtype=np.float32),
+                                 targets=np.array([1.0, 0.0], dtype=np.float32))
+    out = oof.write_case_presence_oof(result, tmp_path / "oof" / "gate.csv")
+    df = pd.read_csv(out, dtype=str, keep_default_na=False)
+    assert df.to_dict("list") == {"case_id": ["CASE-B", "CASE-A"], "target": ["1", "0"], "prob": ["0.1235", "0.9"]}
 
 
 def test_group_oof_covers_every_train_case(tmp_path, monkeypatch, tiny_bert_dir):

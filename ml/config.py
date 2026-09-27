@@ -90,6 +90,8 @@ REPORT_MAPPING_CURRENT_DIR = REPORT_MAPPING_DIR / "current"
 REPORT_MAPPING_CANDIDATE_DIR = REPORT_MAPPING_DIR / "candidate"
 # Content-hash keyed embedding cache. Sits beside the generations; never bundled.
 EMBEDDING_CACHE_DIR = REPORT_MAPPING_DIR / "embedding_cache"
+# k-fold out-of-fold gate scores on train cases (train.py --stage oof); read by the Report-Mapping audit.
+OOF_DIR = REPORT_MAPPING_DIR / "oof"
 
 # ---------------------------------------------------------------------------
 # Predictions and evaluation outputs

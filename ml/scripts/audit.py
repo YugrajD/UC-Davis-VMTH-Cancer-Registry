@@ -1,7 +1,8 @@
-"""Manual audit: Diagnosis-Mapping audit batches, eval batches, gold ingest, cause pass.
+"""Manual audit: Diagnosis-Mapping and Report-Mapping audit batches, eval batches, gold ingest, cause pass.
 
 Usage:
   python ml/scripts/audit.py dm-sample --silver-id silver-0-legacy --batch 2
+  python ml/scripts/audit.py rm-sample --oof-csv PATH --batch 1
   python ml/scripts/audit.py eval-batch --batch-id eval-batch-1 --silver-id silver-0-legacy --fraction 0.5
   python ml/scripts/audit.py ingest-sheet --sheet PATH --batch-id eval-batch-1 --reviewer "Dr. Smith"
   python ml/scripts/audit.py ingest-gold --rows-csv PATH --origin eval_batch --reviewer "Dr. Smith"
@@ -18,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 
 import config
-from manual_audit import cause_pass, diagnosis_mapping_audit, eval_batch, gold
+from manual_audit import cause_pass, diagnosis_mapping_audit, eval_batch, gold, report_mapping_audit
 
 
 def _cmd_dm_sample(args: argparse.Namespace) -> int:
@@ -28,6 +29,17 @@ def _cmd_dm_sample(args: argparse.Namespace) -> int:
     print(f"Sampled {result['n_rows']} rows across {result['n_cases']} cases -> {result['case_list']}")
     for stratum, n in result["stratum_counts"].items():
         print(f"  {stratum:<22} {n:>4} of {result['stratum_populations'][stratum]}")
+    return 0
+
+
+def _cmd_rm_sample(args: argparse.Namespace) -> int:
+    result = report_mapping_audit.sample(
+        oof_csv=args.oof_csv, split_id=args.split_id, batch=args.batch,
+        n_contradicted=args.n_contradicted, n_random=args.n_random, seed=args.seed,
+    )
+    print(f"Sampled {result['n_cases']} cases -> {result['case_list']}")
+    for reason, pool in result["pools"].items():
+        print(f"  {reason:<30} {result['counts'].get(reason, 0):>4} of {pool}")
     return 0
 
 
@@ -102,6 +114,14 @@ def main() -> int:
     p.add_argument("--n-rows", type=int, default=200)
     p.add_argument("--seed", type=int, default=42)
 
+    p = sub.add_parser("rm-sample", help="Draw a Report-Mapping audit batch (ledger CSV + case-ID list).")
+    p.add_argument("--oof-csv", required=True, help="Gate OOF scores from train.py --stage oof (config.OOF_DIR).")
+    p.add_argument("--split-id", default=config.DEFAULT_SPLIT_ID, help="The split the OOF scores were trained on.")
+    p.add_argument("--batch", type=int, required=True)
+    p.add_argument("--n-contradicted", type=int, default=100)
+    p.add_argument("--n-random", type=int, default=100)
+    p.add_argument("--seed", type=int, default=42)
+
     p = sub.add_parser("eval-batch", help="Draw one batch of the case-level eval-batch series.")
     p.add_argument("--batch-id", required=True)
     p.add_argument("--silver-id", required=True, help="Silver generation id, loaded via diagnosis_mapping.silver.load_silver.")
@@ -143,6 +163,7 @@ def main() -> int:
     args = parser.parse_args()
     dispatch = {
         "dm-sample": _cmd_dm_sample,
+        "rm-sample": _cmd_rm_sample,
         "eval-batch": _cmd_eval_batch,
         "ingest-sheet": _cmd_ingest_sheet,
         "ingest-gold": _cmd_ingest_gold,

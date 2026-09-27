@@ -285,6 +285,7 @@ def cycle(env, monkeypatch, tiny_bert_dir):
     candidate (gen-C) behind, as the real one would."""
     script = _load_cycle_script()
     shutil.rmtree(config.REPORT_MAPPING_CANDIDATE_DIR)
+    config.PREDICTIONS_DIR.mkdir(parents=True)
     _predictions(config.PREDICTIONS_DIR / "gen-A_predictions.csv", "gen-A")
     ran, real_run = [], subprocess.run
 

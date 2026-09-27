@@ -1,9 +1,5 @@
 # ML Directory — Overview
 
-> **Describes the tree after the `ml/next` → `ml` cutover (WP13).** Until that commit, the new code
-> lives in `ml/next/` and the old tree is still production; this banner is removed by the cutover
-> commit. See [ml-rewrite-plan.md](ml-rewrite-plan.md) for status.
-
 A machine learning system that codes veterinary cancer cases to standardized Vet-ICD-O-canine-1
 labels (term, group, ICD code) from three sources of decreasing confidence — a specialist's
 **manual audit** (gold), the clinic's **diagnosis** text (silver), and the pathology **report** text
@@ -99,16 +95,16 @@ All under `output/` (gitignored). Paths below are the `config.py` constants, rel
 
 | Script | Subcommands | Does |
 |---|---|---|
-| `map_diagnoses.py` | `run \| import-legacy \| stats` | Diagnosis-mapping cascade; import the legacy silver generation; coverage stats. |
+| `map_diagnoses.py` | `run \| stats` | Diagnosis-mapping cascade; coverage stats. |
 | `audit.py` | `tier3-sample \| tier3-pilot \| tier3-ingest \| eval-batch \| ingest-sheet \| ingest-gold \| cause-sheet \| ingest-cause` | Manual-audit sheets and stores. |
-| `split.py` | `import-legacy \| create \| check` | Split generations; leakage guards. |
+| `split.py` | `create \| check` | Split generations; leakage guards. |
 | `code_cases.py` | `adopt \| corrected \| queue` | Coding-rule outputs. |
 | `train.py` | `--stage backbone\|case-presence\|group\|label-presence\|heads\|oof` | Train a report-mapping candidate. |
 | `calibrate.py` | — | Fit every inference threshold on the calibration partition. |
 | `predict.py` | — | Stamped report-mapping predictions (`--embed-only` to just build the cache). |
 | `evaluate.py` | `silver \| gold \| audit-rates` | Verdicts, the four gold-eval results, Tier-3 audit rates. |
 | `promote.py` | `[--apply]` | The promotion recommendation, or carrying it out. |
-| `generations.py` | `import-gen0 \| import-cache \| status` | Legacy generation imports; current/candidate status + trigger check. |
+| `generations.py` | `status` | current/candidate status + trigger check. |
 | `handoff.py` | `import-pending \| import-gold \| export-silver \| export-coding \| export-bundle` | Cloud file contracts. |
 | `retrain_cycle.py` | — | The strategy's local retraining lane, end to end (recommend-only). |
 

@@ -23,15 +23,15 @@ manifest, then reads only the partition files it lists (a partition it doesn't l
 calibration file in a legacy split — loads as an empty set).
 
 ```
-ml/.venv/Scripts/python.exe ml/scripts/split.py import-legacy
 ml/.venv/Scripts/python.exe ml/scripts/split.py create --parent legacy-80-20 --id three-way-v1
 ml/.venv/Scripts/python.exe ml/scripts/split.py check --split three-way-v1
 ```
 
-- `import-legacy` copies the old flat split files byte-identical into two split generations:
-  `legacy-80-20` (46,652 train / 11,661 test; cancer cases stratified by first `matched_group`, no
+- `legacy-80-20` (46,652 train / 11,661 test; cancer cases stratified by first `matched_group`, no
   calibration partition) and `legacy-temporal` (56,905 / 1,408; drift check, no calibration
-  partition either; the cutoff year isn't recorded by the legacy tooling — `cutoff_year: null`).
+  partition either; the cutoff year isn't recorded by the legacy tooling — `cutoff_year: null`) are
+  two split generations imported once, before cutover, from the pre-rewrite tree's flat split files
+  (byte-identical). The one-time importer is gone; both splits are on disk to stay.
 - `create --parent P --id ID` derives a **three-way split** from a two-way parent: train copied
   unchanged; the parent's test cases split by the **md5 half rule**
   (`int(hashlib.md5(case_id.encode()).hexdigest(), 16) % 2 == 0` → calibration/"sweep" half, else test/"eval"
@@ -116,9 +116,9 @@ ml/.venv/Scripts/python.exe ml/scripts/generations.py status --silver silver-0-l
 ```
 
 `generations.py status` prints `current/` and `candidate/`'s generation_id, calibration status,
-parents, and whether a challenger trained on `--silver` would meet a trigger; `import-gen0` and
-`import-cache` are the one-time legacy imports (`current/` from the legacy checkpoints; the legacy
-embedding cache re-keyed under the new content-hash scheme).
+parents, and whether a challenger trained on `--silver` would meet a trigger. `current/`'s gen-0 and
+the embedding cache's first (re-keyed) entry were imported once, before cutover, from the legacy
+checkpoints and the legacy embedding cache; the one-time importers are gone.
 
 ## `retrain_cycle.py` — the local lane in one go
 

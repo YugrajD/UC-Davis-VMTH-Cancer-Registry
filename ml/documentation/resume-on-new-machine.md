@@ -87,7 +87,8 @@ wrong numbers.
 
 Branch: `Revised-ICD-Mapping`. The ML rewrite ([ml-rewrite-plan.md](ml-rewrite-plan.md)) is the
 authoritative status page — read it before touching anything below; it records exactly which work
-packages are done, what's next, and the parity gate before the `ml/next` → `ml` cutover.
+packages are done and what's next. The `ml/next` → `ml` cutover (WP13) is complete; the tree
+described in this doc is the current one.
 
 If you are resuming purely to continue the manual audit or eval-batch review (no training), you need
 only `ml/data/`, `ml/output/silver/` and `ml/output/manual_audit/` — no GPU, no checkpoints. See

@@ -148,9 +148,8 @@ embeddings — never re-embeds):
    of the `evaluation.verdicts` table against the labels table on the partition; ties go to the
    higher `good` share, then the first point in grid order.
 
-`--legacy` (parity L3 only) fits only step 1 and keeps the frozen legacy values (gate 0.80, group
-0.85, K=2, gap=0.08, LP fallback 0.5). Every calibration run checks `guards.check_all` and that no
-calibration case is in the generation's own training split. Output: `checkpoints/thresholds.json`,
+Every calibration run checks `guards.check_all` and that no calibration case is in the generation's
+own training split. Output: `checkpoints/thresholds.json`,
 `checkpoints/label_presence/lp_thresholds.json`, and a `calibration_diagnostics.json` (gate P/R/F1,
 group top-k accuracy, per-LP P/R) beside them; the manifest's `calibration` block is rewritten last
 (so a partial write never leaves loadable-but-wrong thresholds in place).

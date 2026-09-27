@@ -16,9 +16,9 @@ one, or do a cold start (a backbone retrain, which `retrain_cycle.py` also drive
 - **Device:** `--device cuda` on the RTX 5070 Ti (PyTorch 2.6+ / CUDA 12.8 for Blackwell sm_120
   support). `--device auto` (the default on most scripts) picks cuda → mps → xpu → cpu.
   `train.py`/`predict.py`/`calibrate.py` all accept it.
-- **A split**: `config.DEFAULT_SPLIT_ID` (`three-way-v1`) must exist (`scripts/split.py
-  import-legacy` then `create --parent legacy-80-20 --id three-way-v1`, one-time). Every training
-  and calibration command below defaults `--split` to it.
+- **A split**: `config.DEFAULT_SPLIT_ID` (`three-way-v1`) must exist (`scripts/split.py create
+  --parent legacy-80-20 --id three-way-v1`, one-time — it already does). Every training and
+  calibration command below defaults `--split` to it.
 - **A silver generation** to train on: an existing `silver_id` (`silver-0-legacy`, or a fresh one
   from Step 1).
 

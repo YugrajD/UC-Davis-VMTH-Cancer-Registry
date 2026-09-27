@@ -85,7 +85,6 @@ A silver generation is a versioned, **immutable** output: `output/silver/<silver
 ```
 ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
 ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1-no-llm --no-llm
-ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py import-legacy
 ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py stats --silver silver-0-legacy
 ```
 
@@ -94,9 +93,9 @@ ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py stats --silver silver-0-
 - `--no-llm` records every Tier-3-eligible row as a declined LLM match. That generation is refused
   by `load_silver` (and by the coding rule / Tier-3 sampler) unless `allow_no_llm=True` is passed
   explicitly — it must never be adopted as an authoritative silver source.
-- `import-legacy` creates `silver-0-legacy` from the pre-rewrite cleaned `annotation.csv`
-  (`config.LEGACY_ANNOTATION_CSV`): rows unchanged, only a `silver_generation` column added. This is
-  the silver generation every parity/legacy comparison uses.
+- `silver-0-legacy` is the pre-rewrite cleaned `annotation.csv`, imported once before cutover: rows
+  unchanged, only a `silver_generation` column added. This is the silver generation every
+  pre-cutover parity comparison used.
 - `stats` (replaces `run_data_analysis.py`) writes coverage statistics
   (`config.DIAGNOSIS_MAPPING_STATS_DIR/<silver_id>/`): a combined report, per-analysis CSVs, and PNG
   plots (skip with `--no-plots`).

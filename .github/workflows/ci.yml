@@ -98,4 +98,4 @@ jobs:
           pip install -r ml/requirements.txt
 
       - name: Run pytest
-        run: python -m pytest ml/next -q
+        run: python -m pytest ml -q

@@ -1,91 +1,124 @@
-"""Project-wide path defaults and shared helpers.
+"""Every path used by the ml pipeline, as ``pathlib.Path`` objects.
 
-All paths are relative to the project root (the directory containing ml/).
-Import these constants instead of hardcoding paths in individual scripts.
-
-To override any path, pass the corresponding CLI argument to the relevant
-script — every path here is used as the argparse default, not as a hard lock.
+In-tree assets (e.g. ``taxonomy/labels.csv``) resolve relative to this
+package (``PACKAGE_ROOT``), which is also ``ML_ROOT``, the project's ``ml/``
+directory. Data (``ml/data/...``) and outputs (``ml/output/...``) resolve
+relative to ``ML_ROOT``.
 """
 
-# ---------------------------------------------------------------------------
-# Input data
-# ---------------------------------------------------------------------------
-REPORTS_CSV = "ml/data/report.csv"
-DIAGNOSES_CSV = "ml/data/diagnoses.csv"
-LABELS_CSV = "ml/ICD_labels/labels.csv"
-DEMOGRAPHICS_CSV = "ml/data/demographics.csv"
+from __future__ import annotations
+
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parent
+ML_ROOT = PACKAGE_ROOT
+
+DATA_DIR = ML_ROOT / "data"
+OUTPUT_DIR = ML_ROOT / "output"
 
 # ---------------------------------------------------------------------------
-# Feature encoder specs (fitted on train data, persisted for inference)
+# Raw inputs
 # ---------------------------------------------------------------------------
-DEMOGRAPHICS_ENCODER_SPEC = "ml/output/training/demographics_encoder_spec.json"
+REPORT_CSV = DATA_DIR / "report.csv"
+DIAGNOSES_CSV = DATA_DIR / "diagnoses.csv"
 
 # ---------------------------------------------------------------------------
-# Annotation outputs
+# Taxonomy (in-tree asset — resolves from the package, not ML_ROOT)
 # ---------------------------------------------------------------------------
-ANNOTATION_DIR = "ml/output/annotation"
-ANNOTATION_CSV = f"{ANNOTATION_DIR}/annotation.csv"
-LLM_ANNOTATION_CSV = f"{ANNOTATION_DIR}/llm_annotation.csv"
-LLM_ANNOTATION_CLEANED_CSV = f"{ANNOTATION_DIR}/llm_annotation_cleaned.csv"
-# Gold annotation store (human-confirmed; schema = annotation.csv + tier/verified_by/verified_date/provenance).
-GOLD_ANNOTATION_CSV = f"{ANNOTATION_DIR}/gold_annotation.csv"
-# Human-review surface produced by `run_gold_annotation.py sample` and filled in by the
-# professional. Row-level Tier-2/Tier-3 audit — not a per-case set, so not scoreable by evaluate.py.
-TIER3_AUDIT_REVIEW_CSV = f"{ANNOTATION_DIR}/tier3_audit_review.csv"
-# Internal join key for the review CSV: row_id -> case identity, the cascade's full answer,
-# and the sampling bookkeeping. Never sent to the reviewer; `ingest` joins on it.
-TIER3_AUDIT_KEY_CSV = f"{ANNOTATION_DIR}/tier3_audit_key.csv"
-# Sidecars written alongside the review CSV: how to fill it in, and the valid (Group, Term, Code) list.
-TIER3_AUDIT_INSTRUCTIONS_MD = f"{ANNOTATION_DIR}/tier3_audit_instructions.md"
-TIER3_AUDIT_TAXONOMY_CSV = f"{ANNOTATION_DIR}/tier3_audit_taxonomy.csv"
-# `pilot` splits a review CSV into a short comprehension check and the rest. The pilot is
-# filled in and ingested first, so a misread instruction is caught after ~30 rows instead
-# of contaminating the whole batch. Together the two files are exactly the review CSV.
-TIER3_AUDIT_PILOT_CSV = f"{ANNOTATION_DIR}/tier3_audit_pilot_review.csv"
-TIER3_AUDIT_REMAINDER_CSV = f"{ANNOTATION_DIR}/tier3_audit_remainder_review.csv"
-# The shared instructions name the full review CSV, which is not what the reviewer is sent
-# for a pilot; `pilot` writes its own copy naming the pilot file.
-TIER3_AUDIT_PILOT_INSTRUCTIONS_MD = f"{ANNOTATION_DIR}/tier3_audit_pilot_instructions.md"
+LABELS_CSV = PACKAGE_ROOT / "taxonomy" / "labels.csv"
 
 # ---------------------------------------------------------------------------
-# Training intermediates
+# The split every WP defaults to once the three-way split exists (see
+# generations/splits.py's create_three_way for how it and other splits are made).
 # ---------------------------------------------------------------------------
-EMBEDDING_CACHE_NPZ = "ml/output/training/embedding_cache.npz"
-CONTRASTIVE_PAIRS_CSV = "ml/output/training/contrastive/contrastive_pairs.csv"
-
-# ---------------------------------------------------------------------------
-# Model checkpoints
-# ---------------------------------------------------------------------------
-CHECKPOINT_CONTRASTIVE_DIR = "ml/output/checkpoints/contrastive"
-CHECKPOINT_GROUP_DIR = "ml/output/checkpoints/group"
-CHECKPOINT_CASE_PRESENCE_DIR = "ml/output/checkpoints/case_presence"
-CHECKPOINT_LABEL_PRESENCE_DIR = "ml/output/checkpoints/label_presence"
-LABEL_PRESENCE_THRESHOLDS_JSON = "ml/output/checkpoints/label_presence/lp_thresholds.json"
+DEFAULT_SPLIT_ID = "three-way-v1"
 
 # ---------------------------------------------------------------------------
-# Output directories
+# Silver generation (diagnosis_mapping) — output/silver/<silver_id>/...
 # ---------------------------------------------------------------------------
-OUTPUT_TRAINING_DIR = "ml/output/training"
-OUTPUT_EVALUATION_DIR = "ml/output/evaluation"
-OUTPUT_PRODUCTION_DIR = "ml/output/production"
-DATA_ANALYSIS_DIR = "ml/output/data_analysis"
-PETBERT_SCAN_OUTPUT_DIR = "ml/output/report"  # default for standalone petbert_pipeline CLI
+SILVER_DIR = OUTPUT_DIR / "silver"
+# Coverage-stats artifacts (diagnosis_mapping/stats.py) — one subdir per silver
+# generation analysed. Separate from SILVER_DIR since silver directories are
+# write-once and stats are reproducible, derived output.
+DIAGNOSIS_MAPPING_STATS_DIR = OUTPUT_DIR / "diagnosis_mapping_stats"
 
-# Train/test split files (generated once by ml/training/data/create_split.py)
-SPLITS_DIR      = "ml/output/splits"
-TRAIN_CASES_TXT = "ml/output/splits/train_cases.txt"
-TEST_CASES_TXT  = "ml/output/splits/test_cases.txt"
+# ---------------------------------------------------------------------------
+# Manual audit: sheets, audit store, gold store, eval-batch ledger, cause store
+# ---------------------------------------------------------------------------
+MANUAL_AUDIT_DIR = OUTPUT_DIR / "manual_audit"
+AUDIT_STORE_CSV = MANUAL_AUDIT_DIR / "audit_store.csv"
+GOLD_STORE_CSV = MANUAL_AUDIT_DIR / "gold_store.csv"
+EVAL_BATCH_LEDGER_CSV = MANUAL_AUDIT_DIR / "eval_batch_ledger.csv"
+CAUSE_STORE_CSV = MANUAL_AUDIT_DIR / "cause_store.csv"
 
-# Temporal-holdout split files (generated by create_split.py --temporal-cutoff-year).
-# Separate from the canonical random split so production checkpoints are never invalidated.
-TRAIN_CASES_TEMPORAL_TXT = "ml/output/splits/train_cases_temporal.txt"
-TEST_CASES_TEMPORAL_TXT  = "ml/output/splits/test_cases_temporal.txt"
+# Tier-3 audit sheets (manual_audit/tier3_audit.py) — row-level, writes to
+# AUDIT_STORE_CSV above, never to the gold store.
+TIER3_AUDIT_DIR = MANUAL_AUDIT_DIR / "tier3_audit"
+TIER3_AUDIT_REVIEW_CSV = TIER3_AUDIT_DIR / "tier3_audit_review.csv"
+TIER3_AUDIT_KEY_CSV = TIER3_AUDIT_DIR / "tier3_audit_key.csv"
+TIER3_AUDIT_INSTRUCTIONS_MD = TIER3_AUDIT_DIR / "tier3_audit_instructions.md"
+TIER3_AUDIT_TAXONOMY_CSV = TIER3_AUDIT_DIR / "tier3_audit_taxonomy.csv"
+TIER3_AUDIT_PILOT_CSV = TIER3_AUDIT_DIR / "tier3_audit_pilot_review.csv"
+TIER3_AUDIT_REMAINDER_CSV = TIER3_AUDIT_DIR / "tier3_audit_remainder_review.csv"
+TIER3_AUDIT_PILOT_INSTRUCTIONS_MD = TIER3_AUDIT_DIR / "tier3_audit_pilot_instructions.md"
 
-# Derived structured outputs
-GROUP_TRAINING_DATA_NPZ = "ml/output/training/group/group_training_data.npz"
-UNCOMMON_GROUPS_TXT = "ml/output/training/group/uncommon_groups.txt"
-CASE_PRESENCE_DATASET_NPZ = "ml/output/training/binary/case_presence_dataset.npz"
-CASE_PRESENCE_CLASSIFIER_PT = "ml/output/checkpoints/case_presence/case_presence_classifier.pt"
+# Case-level eval batches (manual_audit/eval_batch.py) — sheets live here; the
+# ledger of record is EVAL_BATCH_LEDGER_CSV above.
+EVAL_BATCH_DIR = MANUAL_AUDIT_DIR / "eval_batch"
 
-# Recency-weight experiment scratch outputs (never production; safe to delete).
-CHECKPOINT_RECENCY_SCRATCH_DIR = "ml/output/checkpoints_recency_scratch"
+# The Tier-3 audit's batch-1 case-id exclusion list, as eval_batch.py needs it
+# (see eval_batch.py — it refuses to draw a batch without this file).
+# Deliberately its own path, not TIER3_AUDIT_DIR/tier3_audit_batch1_cases.txt:
+# that name is also what tier3_audit.sample(batch=1) writes its OWN case
+# ledger to, and the two must never collide.
+TIER3_AUDIT_BATCH1_EXCLUSION_TXT = MANUAL_AUDIT_DIR / "tier3_audit_batch1_exclusion.txt"
+
+# ---------------------------------------------------------------------------
+# Coding: corrected annotations, adopted codes, review queue
+# ---------------------------------------------------------------------------
+CODING_DIR = OUTPUT_DIR / "coding"
+CORRECTED_ANNOTATIONS_CSV = CODING_DIR / "corrected_annotations.csv"
+ADOPTED_CODES_CSV = CODING_DIR / "adopted_codes.csv"
+REVIEW_QUEUE_CSV = CODING_DIR / "review_queue.csv"
+
+# ---------------------------------------------------------------------------
+# Split generations — output/splits/<split_id>/{train,calibration,test}_cases.txt
+# ---------------------------------------------------------------------------
+SPLITS_DIR = OUTPUT_DIR / "splits"
+
+# ---------------------------------------------------------------------------
+# Report-mapping generations (this layout is also the cloud bundle layout)
+# ---------------------------------------------------------------------------
+REPORT_MAPPING_DIR = OUTPUT_DIR / "report_mapping"
+REPORT_MAPPING_CURRENT_DIR = REPORT_MAPPING_DIR / "current"
+REPORT_MAPPING_CANDIDATE_DIR = REPORT_MAPPING_DIR / "candidate"
+# Content-hash keyed embedding cache. Sits beside the generations; never bundled.
+EMBEDDING_CACHE_DIR = REPORT_MAPPING_DIR / "embedding_cache"
+
+# ---------------------------------------------------------------------------
+# Predictions and evaluation outputs
+# ---------------------------------------------------------------------------
+PREDICTIONS_DIR = OUTPUT_DIR / "predictions"
+EVAL_DIR = OUTPUT_DIR / "eval"
+# One line per silver-eval run (evaluation/silver_eval.py), carried over from log_evaluation.py.
+SILVER_EVAL_HISTORY_CSV = EVAL_DIR / "silver_eval_history.csv"
+
+# ---------------------------------------------------------------------------
+# Handoff (cloud file contracts)
+# ---------------------------------------------------------------------------
+HANDOFF_DIR = OUTPUT_DIR / "handoff"
+HANDOFF_INBOX_DIR = HANDOFF_DIR / "inbox"
+HANDOFF_OUTBOX_DIR = HANDOFF_DIR / "outbox"
+# Cumulative landing table merged from every pending_diagnoses_<export>.csv
+# import (handoff/imports.py) — case_id-keyed, a later export's case replaces
+# its earlier rows. Raw per-export copies + sidecars stay in HANDOFF_INBOX_DIR
+# under their own export-stamped filename.
+HANDOFF_PENDING_DIAGNOSES_CSV = HANDOFF_INBOX_DIR / "pending_diagnoses.csv"
+# Bundle tarballs (handoff/exports.py export_bundle) — kept out of
+# HANDOFF_OUTBOX_DIR's flat file list since a bundle is large and binary.
+HANDOFF_BUNDLES_DIR = HANDOFF_OUTBOX_DIR / "bundles"
+
+# ---------------------------------------------------------------------------
+# Archive — written only by generations/ (promote.py); nothing loads from it.
+# ---------------------------------------------------------------------------
+ARCHIVE_ROOT = OUTPUT_DIR / "archive"

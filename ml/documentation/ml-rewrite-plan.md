@@ -6,8 +6,8 @@ This is the working contract for the Part B agent team and for any later session
 
 ## Status and next steps (2026-09-26, Windows session)
 
-Work is committed on `Revised-ICD-Mapping`. The suite passes with 617 tests on Windows
-(`ml\.venv\Scripts\python.exe -m pytest ml/next -q -p no:cacheprovider`; the Windows venv was brought up to
+Work is committed on `Revised-ICD-Mapping`. The suite passes with 493 tests after the cutover
+(`ml\.venv\Scripts\python.exe -m pytest ml -q -p no:cacheprovider`; the Windows venv was brought up to
 `ml/requirements.txt`: numpy 2.x, pandas 2.2.3, scikit-learn 1.5.0, pytest).
 
 **Parity (L1–L3 gate the cutover):**
@@ -59,9 +59,28 @@ Work is committed on `Revised-ICD-Mapping`. The suite passes with 617 tests on W
   `.gitignore`'s `ml-*/` also matches `ml-worker/`, so new files there need `git add -f` until it is excepted.
 
 **Next:**
-1. WP13 cutover, on Windows (approved 2026-09-27): remove the one-time legacy importers, every `LEGACY_*`
-   constant and `calibrate --legacy`; delete the parity harness and the old tree; `git mv ml/next/* ml/`.
-   WP16 docs are done and already describe the post-cutover tree.
+1. **WP13 cutover — done (2026-09-27, Windows).** Removed: the one-time legacy importers
+   (`diagnosis_mapping.silver.import_legacy`, `generations.splits.import_legacy`,
+   `report_mapping.model.generation.import_legacy_gen0` + `GEN0_THRESHOLDS`,
+   `report_mapping.inference.embedding_cache.import_legacy_cache`) and their `scripts/*.py`
+   subcommands (`map_diagnoses.py import-legacy`, `split.py import-legacy`, `generations.py
+   import-gen0`/`import-cache`); every `LEGACY_*` constant in `config.py`; `calibrate.py`'s `legacy`
+   parameter / `LEGACY_FIXED_THRESHOLDS` / `scripts/calibrate.py --legacy` (its
+   `label_presence_fallback` value lives on as `calibrate.LABEL_PRESENCE_FALLBACK`);
+   `manual_audit/eval_batch.py`'s legacy-sheets-dir fallback (it now reads only
+   `config.TIER3_AUDIT_BATCH1_EXCLUSION_TXT` and refuses if missing); the parity harness
+   (`parity/`, `scripts/parity.py`, `tests/test_parity.py`); and the legacy-comparison tests
+   (`test_legacy_comparison_diagnosis_mapping.py`, and those inside `test_sections.py` and
+   `test_verdicts.py`). `test_taxonomy.py`'s golden tests were rewritten against frozen values
+   (27 tests: CSV title row, dedup, header check, the real table's hashes, index resolution, behavior
+   and subtype rules), so `taxonomy/` stays covered without the old tree. The old tree (`ICD_labels/, analysis/, annotation/, config.py,
+   evaluation/, features/, model/, production/, scripts/, tests/, training/, utils/`) is deleted and
+   `ml/next/*` is `git mv`'d up into `ml/`; `config.py`'s `if ML_ROOT.name == "next"` block is gone.
+   Suite: 493 tests (was 618). After the move, `evaluate.py silver` on the gen-0 predictions still gives
+   61.76% on 4,456 eval-half rows. `test_l3_wiring_dry_check.py` and
+   `_pythonhashseed_repro_check.py` were kept and switched to normal (non-legacy) calibrate — the
+   latter is eval_batch's own PYTHONHASHSEED regression test, unrelated to the parity harness despite
+   the similar name. `.github/workflows/ci.yml`'s ml job now runs `python -m pytest ml -q`.
 2. WP14, then WP15, on Windows.
 
 ## Decisions (binding)

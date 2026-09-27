@@ -112,7 +112,7 @@ Carried over from the pre-rewrite cascade (unchanged by this rewrite):
 - Hedged parenthetical language (`"(SUSPECT METASTASIS)"`) occasionally matches rather than being
   flagged `Uncertain`.
 - If the Tier-3 group token index picks the wrong group, the correct term never enters the LLM's
-  candidate list (this is the `tier3_no_candidates` failure mode the Tier-3 audit in
+  candidate list (this is the `tier3_no_candidates` failure mode the Diagnosis-Mapping audit in
   [manual-audit.md](manual-audit.md) measures).
 - Tier 3 takes ~1–2s per LLM call; a full corpus run is tens of minutes plus the cleanup pass.
 - No behavior-code disambiguation at Tier 1 (regex match only).

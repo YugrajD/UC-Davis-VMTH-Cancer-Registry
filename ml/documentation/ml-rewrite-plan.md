@@ -105,9 +105,23 @@ Work is committed on `Revised-ICD-Mapping`. The suite passes with 493 tests afte
    silently on a labels table with no calibration rows (the train-only corrected table) — it now refuses,
    and `retrain_cycle.py` calibrates on silver. One silver-eval history row (61.60%, 2026-09-27) comes from
    that broken calibration and is invalid.
-4. **Next, when real gold arrives:** ingest eval batch 1 (`audit.py eval-batch` → review → `ingest-sheet`),
-   then `promote.py` the WP14 fork (it needs a trigger) and rerun WP15 on real review-queue gold with
-   `retrain_cycle.py`.
+4. **Audit redesign (2026-09-27, after the plan).** The Tier-3 audit's pilot came back (30 rows, reviewer
+   MSK, written as codes); 27 rows were converted and ingested into the audit store, 3 free-text rows
+   left out, and the importer gained a "no cancer" marker (a false positive when a match was predicted).
+   Then, at the user's request: the Tier-3 audit became the **Diagnosis-Mapping audit** (batches write a
+   key CSV and a case-ID list; the sheets, pilot and sheet ingest are gone; batch 1's other 171 cases
+   are pending). A new **Report-Mapping audit** samples train cases whose out-of-fold gate score
+   contradicts their label (p < 0.2 on a cancer label, p > 0.8 on a no-cancer label; strongest first)
+   plus a random train baseline, 100 + 100 per batch. A **universal audit list**
+   (`handoff.py export-audit-list`) sends every case awaiting review — eval batch, both audits, review
+   queue — as one case-ID `.txt` for the dashboard; each case's gold origin stays in a local ledger and
+   `import-gold` fills a blank origin from it. New gold origins: `diagnosis_mapping_audit` (neither
+   eval nor train) and `report_mapping_audit` (gold-train). Backend request:
+   [audit-list-change-request.md](audit-list-change-request.md). Details in
+   [manual-audit.md](manual-audit.md).
+5. **Next, when real gold arrives:** draw eval batch 1 and the first Report-Mapping audit batch (needs
+   `train.py --stage oof` on silver), export an audit list, and ingest the dashboard's gold; then
+   `promote.py` the WP14 fork (it needs a trigger) and rerun WP15 on real gold with `retrain_cycle.py`.
 
 ## Decisions (binding)
 

@@ -103,9 +103,10 @@ case exists. Until all three pass, gold-eval numbers are indicative and promotio
 Every gold-eval result carries a `NON_BLIND_NOTE` whenever any case in it was reviewed
 `app_non_blind` — see [manual-audit.md](manual-audit.md).
 
-## Tier-3 audit rates (`audit_rates.py`)
+## Diagnosis-Mapping audit rates (`audit_rates.py`)
 
-Per-stratum verdict rates for the row-level Tier-3 audit (`config.AUDIT_STORE_CSV`), with Wilson/Kish
+Per-stratum verdict rates for the row-level Diagnosis-Mapping (formerly Tier-3) audit rows in
+`config.AUDIT_STORE_CSV` (batch 1's pilot), with Wilson/Kish
 CIs — both the raw sample rate and the weighted (population) rate, since the audit deliberately
 over-samples small strata. Deliberately *not* wired into `verdicts.score` — a row-level sample would
 read the un-sampled rows of a partially-covered case as false positives.

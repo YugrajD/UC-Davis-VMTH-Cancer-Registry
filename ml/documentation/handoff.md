@@ -17,10 +17,11 @@ know about. Column lists are read from their owning module's own constants
 | Kind | Direction | Columns | Contains case text? |
 |---|---|---|---|
 | `pending_diagnoses` | inbox (cloud → ML) | `case_id, diagnosis_number, diagnosis` | Yes — inbox-only, never committed |
-| `gold` | inbox (cloud → ML) | `case_id, origin, ...` (at minimum) | No |
+| `gold` (v2) | inbox (cloud → ML) | `case_id, term/code, ...`; `origin` optional for a listed case | No |
 | `silver_codes` | outbox (ML → cloud) | annotation columns minus `diagnosis`, plus `silver_generation` | No |
 | `adopted_codes` | outbox (ML → cloud) | `coding.adopt.ADOPTED_CODES_COLUMNS` | No |
 | `review_queue` | outbox (ML → cloud) | `coding.queue.REVIEW_QUEUE_COLUMNS` | No |
+| `audit_list` | outbox (ML → cloud) | a `.txt`, one case_id per line, in review order | No |
 | `report_mapping_bundle` | outbox (ML → cloud) | a whole generation directory, tarred | No |
 
 ## Imports (`imports.py`)
@@ -35,8 +36,9 @@ ml/.venv/Scripts/python.exe ml/scripts/handoff.py import-gold     --csv PATH --e
   (`config.HANDOFF_PENDING_DIAGNOSES_CSV`) — the same "later export replaces the earlier one" rule
   the gold store applies per case. This module owns that merge.
 - **`import_gold`** — lands a raw copy for the audit trail, then delegates entirely to
-  `manual_audit.gold.ingest_gold` for validation (mandatory `origin`) and storage. Never duplicates
-  gold-store logic.
+  `manual_audit.gold.ingest_gold` for validation and storage. A blank or absent `origin` is filled
+  from the audit-list ledger for a case that was on an audit list (refused for any other case).
+  Never duplicates gold-store logic.
 
 Every raw import is also copied into `config.HANDOFF_INBOX_DIR` under its export-stamped filename
 with a sidecar — an audit trail of exactly what the cloud sent and when, independent of what the
@@ -49,6 +51,7 @@ raw latin-1 legacy corpus).
 ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-silver --silver-id silver-1
 ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-coding --run-id 2026-10-01
 ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-bundle --generation current
+ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-audit-list --list-id 2026-10-01
 ```
 
 - **`export_silver`** — `silver_codes_<silver_id>.csv`. No diagnosis text (the cloud already holds
@@ -61,6 +64,11 @@ ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-bundle --generation cur
   `worker_format.verify_worker_bundle`) *before* bundling, so a stale or tampered generation is
   refused rather than shipped. `verify_bundle` re-runs the same check after extracting the tarball,
   for the receiving side to confirm it travelled intact.
+- **`export_audit_list`** — `audit_list_<list_id>.txt`: every case awaiting specialist review
+  (eval batch, Diagnosis-Mapping audit, Report-Mapping audit, review queue; each once; cases with
+  gold left off), for the dashboard. Only case IDs cross; the gold origin each case must come back
+  under stays in `config.AUDIT_LIST_LEDGER_CSV`, and `import_gold` fills it in. See
+  [manual-audit.md](manual-audit.md), "Universal audit list".
 
 ## The worker bundle contract (`worker_format.py`)
 

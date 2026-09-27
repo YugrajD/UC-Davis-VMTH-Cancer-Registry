@@ -15,7 +15,7 @@ Whether a diagnosis-mapping row is **decisive** or **vague**, read from `(decisi
 |---|---|
 | `no_signal` / "No Match" | Decisive: no cancer vocabulary |
 | `tier1_exact` / "Exact" | Decisive |
-| `tier2_fuzzy` / "Fuzzy" | Decisive (provisional — pending the Tier-3 audit's finding) |
+| `tier2_fuzzy` / "Fuzzy" | Decisive (provisional — pending the Diagnosis-Mapping audit's finding) |
 | `tier3_llm` / "LLM" | Decisive: the LLM answered a code |
 | `tier3_llm` / "No Match" | Decisive non-cancer (a declined LLM answer — no switch thrown) |
 | `tier3_llm` / "Uncertain" | Vague: the LLM hedged |

@@ -25,9 +25,10 @@ ml/
   io_utils.py           The one shared CSV reader/writer (BOM, latin-1 reports / utf-8 outputs)
   taxonomy/             labels.csv; taxonomy.py (load, label texts, code<->term<->group);
                         behavior.py; subtype.py
-  manual_audit/         sheets.py (review CSVs + sidecars); tier3_audit.py (row-level Tier-3
-                        sample/pilot/ingest -> audit store); eval_batch.py (case-level gold-eval
-                        batch); gold.py (case-level gold ingest); cause_pass.py (misses -> cause store)
+  manual_audit/         sheets.py (review CSVs + sidecars); diagnosis_mapping_audit.py and
+                        report_mapping_audit.py (audit batches -> case-ID lists); eval_batch.py
+                        (case-level gold-eval batch); audit_list.py (the universal audit list);
+                        gold.py (case-level gold ingest); cause_pass.py (misses -> cause store)
   diagnosis_mapping/    keyword_tiers.py (no_signal/tier1/tier2); llm_tier.py; llm_client.py (local
                         only); cleanup.py; silver.py (run -> versioned silver generation); stats.py
   report_mapping/
@@ -52,7 +53,7 @@ ml/
 | Subdir | Purpose |
 |---|---|
 | `taxonomy/` | Vet-ICD-O-canine-1 table (845 terms, 52 groups) plus behavior/subtype keyword filters used by report-mapping's Stage 3b. |
-| `manual_audit/` | Gold: the row-level Tier-3 diagnostic audit, the case-level gold-eval batch, the gold store, the cause pass. See [manual-audit.md](manual-audit.md). |
+| `manual_audit/` | Gold: the Diagnosis-Mapping and Report-Mapping audits, the case-level gold-eval batch, the universal audit list, the gold store, the cause pass. See [manual-audit.md](manual-audit.md). |
 | `diagnosis_mapping/` | Silver: the 3-tier diagnosis cascade + ensemble cleanup, versioned as silver generations. See [diagnosis-mapping.md](diagnosis-mapping.md). |
 | `report_mapping/` | Bronze: the 4-stage PetBERT pipeline, its training and its inference. See [report-mapping.md](report-mapping.md). |
 | `coding/` | Applies gold > silver > bronze per case; builds the report mapping's training labels; builds the review queue. See [coding.md](coding.md). |
@@ -73,20 +74,23 @@ All under `output/` (gitignored). Paths below are the `config.py` constants, rel
 | `output/splits/<split_id>/{train,calibration,test}_cases.txt` + `manifest.json` | A split generation. `three-way-v1` is the default. |
 | `output/silver/<silver_id>/annotation.csv` + `manifest.json` | A silver generation (the diagnosis cascade's output). |
 | `output/diagnosis_mapping_stats/<silver_id>/` | Coverage-stats artifacts for a silver generation. |
-| `output/manual_audit/audit_store.csv` | Row-level Tier-3 audit judgements. Never gold. |
+| `output/manual_audit/audit_store.csv` | Row-level judgements from Diagnosis-Mapping audit batch 1's pilot sheet. Never gold. |
 | `output/manual_audit/gold_store.csv` | Case-level gold: one row per (case_id, code), or one `NO_CANCER` row. |
 | `output/manual_audit/eval_batch_ledger.csv` | The gold-eval batch series ledger (`N_h`, `n_h`, `sample_weight`, ...). |
 | `output/manual_audit/cause_store.csv` | Cause-pass answers on misses. |
-| `output/manual_audit/tier3_audit/` | Tier-3 audit review/key/instructions/taxonomy sheets. |
+| `output/manual_audit/diagnosis_mapping_audit/` | Per batch: `diagnosis_mapping_audit_batch<N>_key.csv` + `.txt` case-ID list; `batch1_tier3_sheets/` keeps batch 1's issued sheets. |
+| `output/manual_audit/report_mapping_audit/` | Per batch: `report_mapping_audit_batch<N>.csv` ledger + `.txt` case-ID list. |
+| `output/manual_audit/audit_list_ledger.csv` | Every case put on a universal audit list, with the gold origin it must come back under. |
 | `output/manual_audit/eval_batch/` | Case-level eval-batch review sheets. |
 | `output/coding/corrected_annotations.csv` | The report mapping's training labels (train partition only). |
 | `output/coding/adopted_codes.csv` | The registry's adopted code per case. |
 | `output/coding/review_queue.csv` | Cases the specialist needs to look at. |
 | `output/report_mapping/current/`, `output/report_mapping/candidate/` | Report-mapping generations (production / being trained). Layout in [report-mapping.md](report-mapping.md). |
 | `output/report_mapping/embedding_cache/<key>.npz` | Content-hash keyed PetBERT embedding cache. Never bundled into a generation. |
+| `output/report_mapping/oof/case_presence_oof_<labels>_<split>.csv` | Gate out-of-fold scores on train cases (`train.py --stage oof`); the Report-Mapping audit samples from them. |
 | `output/predictions/<generation_id>_predictions.csv` | Stamped report-mapping predictions. |
 | `output/eval/silver_eval_history.csv` | One line per `evaluate.py silver` run. |
-| `output/handoff/inbox/`, `output/handoff/outbox/` | Cloud file contracts (pending diagnoses, gold imports; silver/coding exports; worker bundle tarballs). |
+| `output/handoff/inbox/`, `output/handoff/outbox/` | Cloud file contracts (pending diagnoses, gold imports; silver/coding exports, `audit_list_<id>.txt`; worker bundle tarballs). |
 | `output/archive/YYYY-MM-DD_<desc>/` | An archived (superseded) report-mapping generation. Written only by `generations/promote.py`; nothing loads from it. |
 
 ---
@@ -96,16 +100,16 @@ All under `output/` (gitignored). Paths below are the `config.py` constants, rel
 | Script | Subcommands | Does |
 |---|---|---|
 | `map_diagnoses.py` | `run \| stats` | Diagnosis-mapping cascade; coverage stats. |
-| `audit.py` | `tier3-sample \| tier3-pilot \| tier3-ingest \| eval-batch \| ingest-sheet \| ingest-gold \| cause-sheet \| ingest-cause` | Manual-audit sheets and stores. |
+| `audit.py` | `dm-sample \| rm-sample \| eval-batch \| ingest-sheet \| ingest-gold \| cause-sheet \| ingest-cause` | Audit batches, manual-audit sheets and stores. |
 | `split.py` | `create \| check` | Split generations; leakage guards. |
 | `code_cases.py` | `adopt \| corrected \| queue` | Coding-rule outputs. |
 | `train.py` | `--stage backbone\|case-presence\|group\|label-presence\|heads\|oof` | Train a report-mapping candidate. |
 | `calibrate.py` | — | Fit every inference threshold on the calibration partition. |
 | `predict.py` | — | Stamped report-mapping predictions (`--embed-only` to just build the cache). |
-| `evaluate.py` | `silver \| gold \| audit-rates` | Verdicts, the four gold-eval results, Tier-3 audit rates. |
+| `evaluate.py` | `silver \| gold \| audit-rates` | Verdicts, the four gold-eval results, Diagnosis-Mapping audit rates. |
 | `promote.py` | `[--apply]` | The promotion recommendation, or carrying it out. |
 | `generations.py` | `status` | current/candidate status + trigger check. |
-| `handoff.py` | `import-pending \| import-gold \| export-silver \| export-coding \| export-bundle` | Cloud file contracts. |
+| `handoff.py` | `import-pending \| import-gold \| export-silver \| export-coding \| export-bundle \| export-audit-list` | Cloud file contracts. |
 | `retrain_cycle.py` | — | The strategy's local retraining lane, end to end (recommend-only). |
 
 `split.py check` also runs automatically inside `train.py`, `calibrate.py`, `evaluate.py gold` and
@@ -149,7 +153,7 @@ ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
 | [icd-mapping-strategy.md](icd-mapping-strategy.md) | The project-level strategy: how gold, silver and bronze combine to code every case. Read this first. |
 | [report-mapping.md](report-mapping.md) | You're invoking `predict.py`/`train.py`/`calibrate.py`, or want the 4-stage design and why it looks the way it does. |
 | [diagnosis-mapping.md](diagnosis-mapping.md) | You're running or debugging `map_diagnoses.py`. |
-| [manual-audit.md](manual-audit.md) | You're running the Tier-3 audit or an eval-batch draw, or ingesting gold. |
+| [manual-audit.md](manual-audit.md) | You're drawing an audit or eval batch, building the audit list, or ingesting gold. |
 | [coding.md](coding.md) | You want the adoption rule, the corrected-annotations builder, or the review queue. |
 | [evaluation.md](evaluation.md) | You're scoring predictions, reading a gold-eval report, or want the CI methodology. |
 | [generations.md](generations.md) | You're creating a split, promoting a candidate, or want the retraining-trigger logic. |
@@ -157,6 +161,7 @@ ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
 | [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes. |
 | [ml-rewrite-plan.md](ml-rewrite-plan.md) | You're working on the rewrite itself: contract, work packages, parity runbook, status. |
 | [ml-worker-change-request.md](ml-worker-change-request.md) | You're deploying the worker or changing the backend's model-upload path. |
+| [audit-list-change-request.md](audit-list-change-request.md) | You're wiring the dashboard review worklist or the gold export on the backend. |
 | [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer. |
 | [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) | Proposed (not implemented) Box + rclone layout for sharing data and weights. |
 | [archive/](archive/) | Historical docs — the pre-rewrite tree, the annotation-redesign plan, phase logs. Do not consult for current behavior. |

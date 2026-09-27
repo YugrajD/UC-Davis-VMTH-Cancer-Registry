@@ -164,8 +164,11 @@ higher sample weight is tested on gold-eval, not assumed.
 - Gold-eval never enters training. `check-split` enforces this for historical cases; uploads rely
   on each gold row's origin tag.
 - Threshold calibration never uses gold-eval. Thresholds are fitted parameters too.
-- Tier-3 audit rows (1.1) are row-level, diagnosis-only judgements, not case truth. They are neither
-  gold-eval nor gold-train and never enter the corrected annotations.
+- Diagnosis-Mapping audit gold (1.1, formerly the Tier-3 audit) is case truth, but drawn from the
+  cascade's hardest rows, so it is neither gold-eval nor gold-train. Report-Mapping audit gold
+  (train cases whose label the report model contradicts, plus a random baseline) is gold-train.
+  The 27 row-level pilot judgements in the audit store are not case truth and never enter the
+  corrected annotations.
 
 **Disagreement between silver and bronze is read by silver's strength:**
 
@@ -289,7 +292,8 @@ flowchart LR
 
 ### Phase 1 — Historical data (current)
 
-**1.1 Tier-3 audit.** Pilot → remainder → fix the cascade → re-run the LLM locally, per
+**1.1 Diagnosis-Mapping audit (formerly the Tier-3 audit).** Pilot (done 2026-09-27) → remainder,
+reviewed as whole cases on the dashboard → fix the cascade → re-run the LLM locally, per
 [archive/annotation-redesign-plan.md](archive/annotation-redesign-plan.md) (its still-binding
 decisions are in [manual-audit.md](manual-audit.md)). It also settles the two provisional rows of
 the vagueness table: declined LLM answers, and whether `tier2_fuzzy` stays decisive.

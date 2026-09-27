@@ -140,3 +140,48 @@ def test_load_generation_accepts_calibrated_status(report_mapping_bundle: Path):
     # report_mapping_bundle's default -- confirms the fixture itself is calibrated.
     gen = load_generation(report_mapping_bundle)
     assert gen.generation_id == "test-gen"
+
+
+@pytest.fixture
+def forkable(tmp_path, monkeypatch, tiny_bert_dir):
+    """current/ trained on split "a"; "b" has the same train partition, "c" a different one."""
+    from generations.manifest import read_manifest, write_manifest
+    from . import fixtures as fx
+
+    fx.point_training_config_at(monkeypatch, tmp_path)
+    import config
+
+    fx.make_two_way_split_generation("a", ["T1", "T2"], ["E1"])
+    fx.make_two_way_split_generation("b", ["T1", "T2"], ["E2"])
+    fx.make_two_way_split_generation("c", ["T1"], ["E1"])
+    current = fx.build_report_mapping_bundle(config.REPORT_MAPPING_CURRENT_DIR, tiny_bert_dir)
+    fields = {k: v for k, v in read_manifest(current).items() if k not in ("files", "created_at", "git_sha")}
+    write_manifest(current, {**fields, "parents": {"silver_id": "silver-A", "split_id": "a"}})
+    return config
+
+
+def test_fork_copies_the_models_as_a_new_uncalibrated_generation(forkable):
+    from report_mapping.model.generation import fork_generation
+
+    config = forkable
+    manifest = fork_generation(config.REPORT_MAPPING_CURRENT_DIR, config.REPORT_MAPPING_CANDIDATE_DIR, split_id="b")
+    assert manifest["generation_id"].startswith("gen-") and manifest["generation_id"] != "test-gen"
+    assert manifest["parents"] == {"silver_id": "silver-A", "split_id": "b", "forked_from": "test-gen"}
+    assert manifest["calibration"]["status"] == "pending" and manifest["status"] == "candidate"
+    with pytest.raises(GenerationError, match="calibration"):
+        load_generation(config.REPORT_MAPPING_CANDIDATE_DIR)  # refused until calibrate.py refits it
+    fork = load_generation(config.REPORT_MAPPING_CANDIDATE_DIR, allow_uncalibrated=True)
+    source = generation_paths(config.REPORT_MAPPING_CURRENT_DIR)
+    assert generation_paths(fork.root).group_pt.read_bytes() == source.group_pt.read_bytes()
+
+
+def test_fork_refuses_another_train_partition_or_an_existing_destination(forkable):
+    from report_mapping.model.generation import fork_generation
+
+    config = forkable
+    with pytest.raises(GenerationError, match="different train partition"):
+        fork_generation(config.REPORT_MAPPING_CURRENT_DIR, config.REPORT_MAPPING_CANDIDATE_DIR, split_id="c")
+    assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+    fork_generation(config.REPORT_MAPPING_CURRENT_DIR, config.REPORT_MAPPING_CANDIDATE_DIR, split_id="b")
+    with pytest.raises(GenerationError, match="already exists"):
+        fork_generation(config.REPORT_MAPPING_CURRENT_DIR, config.REPORT_MAPPING_CANDIDATE_DIR, split_id="b")

@@ -29,12 +29,14 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import config
 from generations import manifest as manifest_mod
+from generations.splits import load_split
 from report_mapping import sections
 from report_mapping.model import backbone as backbone_mod
 from report_mapping.model import heads
@@ -110,6 +112,33 @@ def new_generation_id(now: datetime | None = None) -> str:
     Minted on every training write, so each retrain (and each L3 seed) differs. It is
     also the cloud's ``source_version``, so it needs no state shared between machines."""
     return f"gen-{(now or datetime.now(timezone.utc)):%Y%m%dT%H%M%SZ}"
+
+
+def fork_generation(source: str | Path, dest: str | Path, *, split_id: str) -> dict:
+    """Copy ``source`` to ``dest`` as a new, uncalibrated generation on ``split_id``: same backbone and
+    heads, a new generation_id, thresholds to be refitted by calibrate.py (WP14's split generation).
+
+    ``split_id``'s train partition must equal the one the heads were trained on; otherwise the new
+    split's calibration cases could include training cases, which calibrate's own leakage check
+    (against ``parents.split_id``) could no longer see."""
+    source, dest = Path(source), Path(dest)
+    manifest_mod.verify_manifest(source)
+    manifest = verify_fingerprint(source)
+    parents = manifest.get("parents") or {}
+    if load_split(split_id).train != load_split(parents["split_id"]).train:
+        raise GenerationError(f"{split_id!r} has a different train partition from {parents['split_id']!r}, "
+                              "the split the heads were trained on; retrain instead of forking")
+    if dest.exists():
+        raise GenerationError(f"{dest} already exists")
+    shutil.copytree(source, dest)
+    fields = {k: v for k, v in manifest.items() if k not in ("files", "created_at", "git_sha")}
+    return manifest_mod.write_manifest(dest, {
+        **fields,
+        "generation_id": new_generation_id(),
+        "parents": {**parents, "split_id": split_id, "forked_from": manifest["generation_id"]},
+        "status": "candidate",
+        "calibration": {"status": "pending", "partition": None, "objective": None, "values": None},
+    })
 
 
 def compute_embedding_fingerprint(petbert_dir: str | Path) -> dict:

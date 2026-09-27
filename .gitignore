@@ -84,8 +84,6 @@ ml/data/*
 
 # Database
 pgdata/
-!database/migrations/*.sql
-!database/scripts/*.sql
 
 # Upload staging area — files are patient data and must never be committed
 backend/uploads/
@@ -196,3 +194,8 @@ _archive/
 
 # Local implementation plans (never commit — working drafts only)
 plans/
+
+# Database migrations and scripts are schema, never patient data — this must stay
+# last so it wins over every blanket/PHI pattern above (e.g. *_review*, *spot_check*).
+!database/migrations/*.sql
+!database/scripts/*.sql

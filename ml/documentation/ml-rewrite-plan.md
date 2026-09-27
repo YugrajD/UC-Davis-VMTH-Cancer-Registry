@@ -18,13 +18,19 @@ Work is committed on `Revised-ICD-Mapping`. The suite passes with 617 tests on W
 | L2a | Mac | PASS (68,800 rows; 199 Uncommon-reordered cases) |
 | L2b | Windows, CUDA | PASS: 58,313 cases re-embedded, min cosine 1.000000; 68,800/68,800 rows identical (199 Uncommon-reordered); eval-half G+S 61.8%, +0.00 pp. Re-embed 9.2 min |
 | L3 | Windows, CUDA | PASS: mean G+S 61.44% (seeds 60.4 / 61.6 / 62.3, sd 0.96) vs 61.76%, −0.32 pp (tolerance ±1.93). Good −0.45, Slight +0.12, CO +0.11, FP +0.83, FN −0.62 pp. 46,572 gate/group cases as expected. About 6.7 min per seed |
-| L4 | Windows | not run yet (report only) |
+| L4 | Windows, CUDA | REPORT: cold start (backbone 3 epochs on 56,109 section pairs, 27 min; heads 14 min incl. re-embed) G+S 62.31% vs 61.76%, +0.55 pp. Good +0.30, Slight +0.25, CO −0.50, FP +0.30, FN −0.35 pp. Generation `gen-20260927T014502Z`, archived with its cache entry at `ml/output/archive/2026-09-27_parity-l4-cold-start/` |
 
 - **L3 notes.** Groups losing > 5 pp (reported, not gating): Odontogenic tumors (n=51, 86.3 → 78.9) and
   Transitional cell papillomas and carcinomas (n=61, 75.4 → 69.3); at these sizes 5 pp is 3 codes. The FP rise
   is gate calibration: with the gate held at 0.80 (legacy mode), the retrained gates pass 42.9 / 44.5 / 43.9%
   of eval-half cases against legacy's 43.0%. WP14's refit of every threshold on the calibration half is where
-  that is absorbed.
+  that is absorbed. L4 loses > 5 pp in three groups: Mature T- and NK-cell lymphomas (n=106, 79.2 → 73.9),
+  Odontogenic tumors (86.3 → 79.1) and Transitional cell papillomas and carcinomas (75.4 → 70.3). Odontogenic
+  and Transitional cell lose in both L3 and L4, so check them after WP14's refit.
+- **Legacy data archived (2026-09-27).** The old tree's `ml/output` data (annotation/, checkpoints/,
+  training/, production/, evaluation/, the four flat split files) plus the parity pack and parity predictions
+  moved to `ml/output/archive/2026-09-27_legacy-tree/`. The unreviewed Tier-3 batch was copied to
+  `ml/output/manual_audit/tier3_audit/` (+ `tier3_audit_batch1_exclusion.txt`), where `config.py` expects it.
 - **L2 exactness is Mac-bound.** On Windows (CPU or CUDA) the strict L2 check fails on 13 cases: 4-decimal
   probabilities differ in the last digit (1e-4) and tied rows reorder; no case's code set changes. L2a's 1e-5
   tolerance was set on the Mac's CPU; L2b's tolerances are the cross-machine check.
@@ -53,9 +59,10 @@ Work is committed on `Revised-ICD-Mapping`. The suite passes with 617 tests on W
   `.gitignore`'s `ml-*/` also matches `ml-worker/`, so new files there need `git add -f` until it is excepted.
 
 **Next:**
-1. L4 (cold start, report only) on Windows.
-2. WP16 docs (post-cutover layout; `training-guide.md` Step 8 grid), then the WP13 cutover (L1–L3 pass, worker parity test green; needs Opus sign-off).
-3. WP14, then WP15, on Windows.
+1. WP13 cutover, on Windows (approved 2026-09-27): remove the one-time legacy importers, every `LEGACY_*`
+   constant and `calibrate --legacy`; delete the parity harness and the old tree; `git mv ml/next/* ml/`.
+   WP16 docs are done and already describe the post-cutover tree.
+2. WP14, then WP15, on Windows.
 
 ## Decisions (binding)
 

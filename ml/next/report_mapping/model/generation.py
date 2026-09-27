@@ -255,7 +255,7 @@ def import_legacy_gen0() -> dict:
     shutil.copyfile(config.LEGACY_CHECKPOINT_GROUP_BEST_PT, paths.group_pt)
     shutil.copytree(config.LEGACY_CHECKPOINT_LABEL_PRESENCE_DIR, paths.label_presence_dir)
     shutil.copyfile(config.LEGACY_UNCOMMON_GROUPS_TXT, paths.uncommon_groups_txt)
-    paths.thresholds_json.write_text(json.dumps(GEN0_THRESHOLDS, indent=2) + "\n", encoding="utf-8")
+    paths.thresholds_json.write_text(json.dumps(GEN0_THRESHOLDS, indent=2) + "\n", encoding="utf-8", newline="\n")
 
     fingerprint = compute_embedding_fingerprint(paths.petbert_dir)
     manifest = manifest_mod.write_manifest(directory, {

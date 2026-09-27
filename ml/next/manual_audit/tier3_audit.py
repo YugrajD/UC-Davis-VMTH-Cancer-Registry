@@ -274,7 +274,7 @@ def sample(
     )
     case_ids = sorted({r["case_id"] for r in key_rows})
     ledger.parent.mkdir(parents=True, exist_ok=True)
-    ledger.write_text("\n".join(case_ids) + "\n", encoding="utf-8")
+    ledger.write_text("\n".join(case_ids) + "\n", encoding="utf-8", newline="\n")
 
     return {
         "review_csv": review_csv, "key_csv": key_csv, "ledger": ledger,

@@ -63,7 +63,7 @@ def write_manifest(directory: str | Path, fields: dict) -> dict:
         "git_sha": _git_sha(),
         "files": files,
     }
-    (directory / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (directory / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     return manifest
 
 

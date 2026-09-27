@@ -90,7 +90,7 @@ def run_analysis(
     _emit_collisions(out, collision_max, n_collision, make_plots)
 
     combined = "\n\n".join(text_blocks) + "\n"
-    (out / COMBINED_REPORT_NAME).write_text(combined, encoding="utf-8")
+    (out / COMBINED_REPORT_NAME).write_text(combined, encoding="utf-8", newline="\n")
     print(combined, end="")
 
 

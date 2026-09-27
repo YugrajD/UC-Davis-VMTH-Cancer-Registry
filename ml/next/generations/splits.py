@@ -142,8 +142,8 @@ def create_three_way(parent_split_id: str, split_id: str) -> dict:
     directory = _new_split_dir(split_id)
     parent_dir = split_dir(parent_split_id)
     shutil.copyfile(parent_dir / TRAIN_FILE, directory / TRAIN_FILE)
-    (directory / CALIBRATION_FILE).write_text("\n".join(calibration) + "\n", encoding="utf-8")
-    (directory / TEST_FILE).write_text("\n".join(test) + "\n", encoding="utf-8")
+    (directory / CALIBRATION_FILE).write_text("\n".join(calibration) + "\n", encoding="utf-8", newline="\n")
+    (directory / TEST_FILE).write_text("\n".join(test) + "\n", encoding="utf-8", newline="\n")
     return write_manifest(directory, {
         "split_id": split_id,
         "method": "three-way from parent: train = parent train unchanged; parent test split by the md5 half rule",

@@ -86,7 +86,7 @@ def write_sidecar(path: str | Path, *, kind: str, schema_version: int) -> Path:
         "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     sidecar_path = path.with_name(path.name + SIDECAR_SUFFIX)
-    sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8")
+    sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8", newline="\n")
     return sidecar_path
 
 

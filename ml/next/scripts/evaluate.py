@@ -95,7 +95,7 @@ def _cmd_gold(args: argparse.Namespace) -> int:
         print(f"  cannot reach {gold_eval.MIN_GROUP_CODES} codes from test alone: {groups['unreachable_from_test']}")
     print(f"  random-slice cases {rep['random_slice']['cases']}: {rep['random_slice']['pass']}")
     if args.misses_out:
-        result["misses"].to_csv(args.misses_out, index=False, encoding="utf-8")
+        result["misses"].to_csv(args.misses_out, index=False, encoding="utf-8", lineterminator="\n")
         print(f"\nWrote {len(result['misses'])} miss(es) to {args.misses_out} (input to audit.py cause-sheet)")
     return 0
 

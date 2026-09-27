@@ -368,11 +368,11 @@ def calibrate(generation_dir, *, labels: str, split_id: str, partition: str = CA
     }
 
     paths = generation_mod.generation_paths(directory)
-    paths.thresholds_json.write_text(json.dumps(thresholds, indent=2) + "\n", encoding="utf-8")
+    paths.thresholds_json.write_text(json.dumps(thresholds, indent=2) + "\n", encoding="utf-8", newline="\n")
     paths.lp_thresholds_json.write_text(json.dumps(lp_thresholds, indent=2, ensure_ascii=False) + "\n",
-                                        encoding="utf-8")
+                                        encoding="utf-8", newline="\n")
     (paths.thresholds_json.parent / DIAGNOSTICS_NAME).write_text(
-        json.dumps(diagnostics, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        json.dumps(diagnostics, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     # Manifest last: until it is rewritten, the new threshold files fail verification and nothing loads them.
     fields = {k: v for k, v in read_manifest(directory).items() if k not in ("files", "created_at", "git_sha")}
     write_manifest(directory, {**fields, "calibration": block})

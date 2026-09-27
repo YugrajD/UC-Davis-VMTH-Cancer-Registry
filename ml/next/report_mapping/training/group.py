@@ -160,7 +160,7 @@ def train_on_case_ids(
     if uncommon_groups_path is not None and gt.uncommon_groups:
         uncommon_groups_path = Path(uncommon_groups_path)
         uncommon_groups_path.parent.mkdir(parents=True, exist_ok=True)
-        uncommon_groups_path.write_text("\n".join(gt.uncommon_groups) + "\n", encoding="utf-8")
+        uncommon_groups_path.write_text("\n".join(gt.uncommon_groups) + "\n", encoding="utf-8", newline="\n")
 
     model.eval()
     with torch.no_grad():

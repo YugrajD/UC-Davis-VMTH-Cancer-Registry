@@ -30,5 +30,5 @@ def read_csv(path: str | Path, *, encoding: str = "latin-1", **kwargs) -> pd.Dat
 
 
 def write_csv(df: pd.DataFrame, path: str | Path, **kwargs) -> None:
-    """Write a pipeline output CSV: utf-8, no index."""
-    df.to_csv(path, index=False, encoding="utf-8", **kwargs)
+    """Write a pipeline output CSV: utf-8, no index, LF line endings on every OS."""
+    df.to_csv(path, index=False, encoding="utf-8", lineterminator="\n", **kwargs)

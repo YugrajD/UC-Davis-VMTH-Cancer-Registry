@@ -401,5 +401,6 @@ def gold_train(
 def gold_snapshot_hash(split_id: str | None = None, gold_csv: str | Path | None = None) -> str:
     """A stable sha256 of the current gold-train rows, for a generation's manifest."""
     train = gold_train(split_id, gold_csv)
-    canonical = train.sort_values(["case_id", "code"]).to_csv(index=False)
+    # lineterminator pinned: pandas defaults to os.linesep, which would give Windows a different hash.
+    canonical = train.sort_values(["case_id", "code"]).to_csv(index=False, lineterminator="\n")
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

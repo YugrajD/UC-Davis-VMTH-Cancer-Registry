@@ -114,7 +114,7 @@ def export_bundle(generation_dir: str | Path | None = None, *, out_dir: str | Pa
 
     checksum = sha256_file(tarball_path)
     sha256_path = tarball_path.with_name(tarball_path.name + ".sha256")
-    sha256_path.write_text(f"{checksum}  {tarball_path.name}\n", encoding="utf-8")
+    sha256_path.write_text(f"{checksum}  {tarball_path.name}\n", encoding="utf-8", newline="\n")
 
     return {
         "tarball_path": tarball_path, "sha256_path": sha256_path,

@@ -70,7 +70,7 @@ def write_instructions(path: str | Path, text: str) -> None:
     """Write a reviewer-facing instructions sidecar (plain Markdown, not a CSV)."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(text, encoding="utf-8")
+    out.write_text(text, encoding="utf-8", newline="\n")
 
 
 def write_case_sheet(

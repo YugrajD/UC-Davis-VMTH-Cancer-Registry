@@ -56,7 +56,7 @@ def _ensure_backbone(out_dir: Path, backbone_override: str | None) -> str:
     return str(paths.petbert_dir)
 
 
-def _write_candidate_manifest(out_dir: Path, *, labels_source: str, split_id: str, seed: int,
+def _write_candidate_manifest(out_dir: Path, *, labels_source: str, lineage: dict, split_id: str, seed: int,
                                device: str, stage: str) -> dict:
     paths = generation_mod.generation_paths(out_dir)
     parent_paths = generation_mod.generation_paths(config.REPORT_MAPPING_CURRENT_DIR)
@@ -75,8 +75,9 @@ def _write_candidate_manifest(out_dir: Path, *, labels_source: str, split_id: st
     )
     fields = {
         "kind": "report_mapping_generation",
-        "generation_id": out_dir.name,
-        "parents": {"labels_source": labels_source, "split_id": split_id, "gold_train_snapshot": None},
+        # A fresh ID on every training write; the folder name ("candidate") is not unique.
+        "generation_id": generation_mod.new_generation_id(),
+        "parents": {"labels_source": labels_source, **lineage, "split_id": split_id},
         "recipe": {
             "gate": recipe.GATE.__dict__,
             "group": recipe.GROUP.__dict__,
@@ -133,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"oof[{args.oof_stage}]: {len(result.case_ids)} train cases, k={args.k}")
         return 0  # a diagnostic run, not a training stage -- no candidate manifest to write
 
+    lineage = labels_mod.lineage(labels, args.labels)  # before training, so a mixed-lineage table fails fast
+
     if args.stage == "backbone":
         result = backbone_mod.train(labels, split_id, args.seed, args.device,
                                      model_name=args.model, local_only=args.local_only, out_dir=out_dir)
@@ -150,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"group: {group_mod.train(labels, split_id, args.seed, args.device, backbone_dir=backbone_dir, local_only=args.local_only, out_dir=out_dir)}")
             print(f"label-presence: {label_presence_mod.train(labels, split_id, args.seed, args.device, backbone_dir=backbone_dir, local_only=args.local_only, out_dir=out_dir)}")
 
-    manifest = _write_candidate_manifest(out_dir, labels_source=args.labels, split_id=split_id,
+    manifest = _write_candidate_manifest(out_dir, labels_source=args.labels, lineage=lineage, split_id=split_id,
                                           seed=args.seed, device=args.device, stage=args.stage)
     print(f"candidate manifest: {out_dir / 'manifest.json'} (generation_id={manifest['generation_id']})")
     return 0

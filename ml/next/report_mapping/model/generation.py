@@ -31,6 +31,7 @@ import json
 import re
 import shutil
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import config
@@ -111,6 +112,14 @@ def resolve_generation_dir(name: str) -> Path:
     if name == "candidate":
         return config.REPORT_MAPPING_CANDIDATE_DIR
     return Path(name)
+
+
+def new_generation_id(now: datetime | None = None) -> str:
+    """A unique generation_id from the UTC training time, e.g. ``gen-20260927T031500Z``.
+
+    Minted on every training write, so each retrain (and each L3 seed) differs. It is
+    also the cloud's ``source_version``, so it needs no state shared between machines."""
+    return f"gen-{(now or datetime.now(timezone.utc)):%Y%m%dT%H%M%SZ}"
 
 
 def compute_embedding_fingerprint(petbert_dir: str | Path) -> dict:

@@ -21,6 +21,33 @@ def _labels_frame(rows: list[tuple[str, str, str, str]]) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# lineage
+# ---------------------------------------------------------------------------
+
+
+def test_lineage_of_a_corrected_table_counts_gold_codes_only():
+    df = _labels_frame([("C1", "T1", "G1", "8000/3"), ("C2", "", "", ""), ("C3", "T2", "G1", "8010/3")])
+    df["label_source"] = ["gold", "gold", "silver"]  # C2 is a gold NO_CANCER row: no code
+    df["silver_generation"] = "silver-7"
+    df["gold_snapshot"] = "abc123"
+    assert labels_mod.lineage(df, "corrected.csv") == {
+        "silver_id": "silver-7", "gold_train_snapshot": "abc123", "gold_train_codes": 1}
+
+
+def test_lineage_of_a_plain_table_is_unknown_silver_and_no_gold():
+    df = _labels_frame([("C1", "T1", "G1", "8000/3")])
+    assert labels_mod.lineage(df, "plain.csv") == {
+        "silver_id": None, "gold_train_snapshot": None, "gold_train_codes": 0}
+
+
+def test_lineage_refuses_a_table_mixing_silver_generations():
+    df = _labels_frame([("C1", "T1", "G1", "8000/3"), ("C2", "T1", "G1", "8000/3")])
+    df["silver_generation"] = ["silver-1", "silver-2"]
+    with pytest.raises(ValueError, match="mixes 2 silver_generation"):
+        labels_mod.lineage(df, "x")
+
+
+# ---------------------------------------------------------------------------
 # load_labels_table
 # ---------------------------------------------------------------------------
 

@@ -53,6 +53,29 @@ def load_labels_table(labels: str) -> pd.DataFrame:
     return df
 
 
+def lineage(labels_df: pd.DataFrame, labels: str) -> dict:
+    """What a labels table was built from, for a candidate manifest's ``parents``
+    (read by ``generations.triggers``): ``silver_id``, ``gold_train_snapshot`` and
+    ``gold_train_codes``. It records what the candidate trained on, not the gold store now.
+
+    ``silver_id`` comes from the table's ``silver_generation`` column, which silver and corrected
+    tables both carry. The gold fields come from a corrected-annotations table; any other table
+    trained on no gold."""
+    def single(column: str) -> str | None:
+        if column not in labels_df.columns:
+            return None
+        values = sorted(set(labels_df[column]) - {""})
+        if len(values) > 1:
+            raise ValueError(f"labels table {labels!r} mixes {len(values)} {column} values")
+        return values[0] if values else None
+
+    gold_codes = 0
+    if "label_source" in labels_df.columns:
+        gold_codes = int(((labels_df["label_source"] == "gold") & (labels_df["matched_code"] != "")).sum())
+    return {"silver_id": single("silver_generation"), "gold_train_snapshot": single("gold_snapshot"),
+            "gold_train_codes": gold_codes}
+
+
 def _gold_for_guard() -> pd.DataFrame:
     """The gold store, or an empty (case_id, origin) frame when it doesn't
     exist yet — mirrors ``generations.guards.check_all``'s own handling."""

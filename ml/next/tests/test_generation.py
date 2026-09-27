@@ -21,6 +21,13 @@ def test_safe_filename():
     assert safe_filename("Blood/vessel, tumors!!") == "blood_vessel_tumors"
 
 
+def test_new_generation_id_is_the_utc_training_time():
+    from datetime import datetime, timezone
+
+    from report_mapping.model.generation import new_generation_id
+    assert new_generation_id(datetime(2026, 9, 27, 3, 15, 0, tzinfo=timezone.utc)) == "gen-20260927T031500Z"
+
+
 def test_resolve_generation_dir(monkeypatch):
     import config
 

@@ -10,6 +10,7 @@ manifest is complete, and load_generation loads the candidate").
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -78,6 +79,10 @@ def test_heads_stage_produces_a_loadable_candidate(training_env):
     assert gen.manifest["calibration"]["status"] == "pending"
     assert gen.manifest["status"] == "candidate"
     assert gen.manifest["parents"]["split_id"] == "all-train"
+    # What the triggers read: a plain CSV with no silver_generation column trained on no gold.
+    assert gen.manifest["parents"]["silver_id"] is None
+    assert gen.manifest["parents"]["gold_train_codes"] == 0
+    assert re.fullmatch(r"gen-\d{8}T\d{6}Z", gen.generation_id)
 
 
 def test_backbone_then_heads_stage_reuses_candidate_petbert(training_env):

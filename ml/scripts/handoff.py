@@ -6,6 +6,7 @@ Usage:
   python ml/scripts/handoff.py export-silver   --silver-id SID
   python ml/scripts/handoff.py export-coding   --run-id RUN
   python ml/scripts/handoff.py export-bundle   [--generation current]
+  python ml/scripts/handoff.py export-audit-list --list-id 2026-09-27
 """
 
 import argparse
@@ -55,6 +56,14 @@ def _cmd_export_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export_audit_list(args: argparse.Namespace) -> int:
+    result = exports.export_audit_list(args.list_id)
+    print(f"wrote {result['path']} ({result['cases']} cases, {result['new_cases']} listed for the first time)")
+    for origin, n in result["by_origin"].items():
+        print(f"  {origin:<25} {n:>6}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -79,8 +88,12 @@ def main() -> int:
     p = sub.add_parser("export-bundle", help="Tar a report-mapping generation + sha256 for ml-worker.")
     p.add_argument("--generation", default="current")
 
+    p = sub.add_parser("export-audit-list", help="Write audit_list_<id>.txt (every case awaiting review) to the outbox.")
+    p.add_argument("--list-id", required=True)
+
     args = parser.parse_args()
     dispatch = {
+        "export-audit-list": _cmd_export_audit_list,
         "import-pending": _cmd_import_pending,
         "import-gold": _cmd_import_gold,
         "export-silver": _cmd_export_silver,

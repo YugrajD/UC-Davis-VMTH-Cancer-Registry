@@ -10,8 +10,9 @@ Two inbox kinds (ml-rewrite-plan.md Artefacts, "Handoff"):
   replaces the earlier one" rule the gold store applies per case. This module
   owns that merge; there is no other public store for pending diagnoses to
   delegate to.
-- **Gold** (``gold_<export>.csv``): case-level specialist review, each row
-  carrying a mandatory ``origin``. Storage, origin validation and the
+- **Gold** (``gold_<export>.csv``): case-level specialist review. Each row
+  carries an ``origin``, or leaves it blank for a case that was on an audit
+  list, whose recorded origin is filled in. Storage, origin validation and the
   per-case replace rule all belong to ``manual_audit.gold.ingest_gold``
   already — this module only lands a raw copy for the audit trail and calls
   that public API, per CLAUDE.md ("Don't reach through modules... call the
@@ -38,6 +39,7 @@ import io_utils
 from diagnosis_mapping.silver import DIAG_NUM_COL, ID_COL
 from handoff import contracts
 from manual_audit import sheets
+from manual_audit import audit_list
 from manual_audit.gold import ingest_gold
 
 READ_KWARGS = dict(encoding="utf-8", dtype=str, keep_default_na=False)
@@ -117,8 +119,10 @@ def import_gold(
     eval_batch_ledger_csv: str | Path | None = None,
 ) -> dict:
     """Land ``csv_path`` (a ``gold_<export_id>.csv``) for the audit trail, then
-    delegate entirely to ``manual_audit.gold.ingest_gold`` for validation
-    (mandatory ``origin``) and storage (per-case replace)."""
+    delegate to ``manual_audit.gold.ingest_gold`` for validation and storage
+    (per-case replace). A row with a blank or absent ``origin`` takes the origin
+    its case was listed under (``manual_audit.audit_list``); a case never listed
+    must carry one, and a given origin must match the listed one."""
     if not export_id:
         raise HandoffImportError("import_gold requires a non-empty export_id")
 
@@ -127,8 +131,22 @@ def import_gold(
     if missing:
         raise HandoffImportError(f"{csv_path}: missing required column(s) {sorted(missing)}")
 
+    with_origin = rows.assign(origin=rows["origin"].str.strip() if "origin" in rows.columns else "")
+    listed = audit_list.origin_of(with_origin["case_id"])
+    blank = with_origin["origin"] == ""
+    unlisted = sorted(set(with_origin.loc[blank, "case_id"]) - set(listed))
+    if unlisted:
+        raise HandoffImportError(f"{len(unlisted)} case(s) have no origin and were never on an audit list: "
+                                 f"{unlisted[:5]}")
+    conflicting = sorted({c for c, o in zip(with_origin["case_id"], with_origin["origin"])
+                          if o and c in listed and listed[c] != o})
+    if conflicting:
+        raise HandoffImportError(f"{len(conflicting)} case(s) carry an origin other than the one they were listed "
+                                 f"under: {conflicting[:5]}")
+    with_origin.loc[blank, "origin"] = with_origin.loc[blank, "case_id"].map(listed)
+
     result = ingest_gold(
-        rows, reviewer=reviewer, source_path=csv_path, labels_csv=labels_csv,
+        with_origin, reviewer=reviewer, source_path=csv_path, labels_csv=labels_csv,
         batch_or_export_id=export_id, upload_period=upload_period, slice_rate=slice_rate,
         eval_batch_ledger_csv=eval_batch_ledger_csv,
     )

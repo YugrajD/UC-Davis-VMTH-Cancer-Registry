@@ -1,6 +1,6 @@
 """Exports: versioned files the backend developer's cloud imports consume.
 
-Three outbox kinds (ml-rewrite-plan.md Artefacts, "Handoff"):
+Four outbox kinds (ml-rewrite-plan.md Artefacts, "Handoff"):
 
 - ``export_silver`` — ``silver_codes_<silver_id>.csv``: the diagnosis-mapping
   cascade's codes for a silver generation, so the backend can apply the coding
@@ -19,6 +19,10 @@ Three outbox kinds (ml-rewrite-plan.md Artefacts, "Handoff"):
   after extraction, plus the sha256 sidecar, for the receiving side (and for
   this module's own tests) to confirm the tarball travelled intact.
 
+- ``export_audit_list`` — ``audit_list_<list_id>.txt``: every case awaiting
+  specialist review, one case_id per line (``manual_audit.audit_list``). The
+  dashboard shows these; the gold comes back through ``imports.import_gold``.
+
 Every non-bundle export gets a ``contracts.write_sidecar`` (schema_version,
 sha256) next to it, per the module docstring's inbox/outbox convention.
 """
@@ -34,6 +38,7 @@ import io_utils
 from diagnosis_mapping.silver import load_silver
 from generations.manifest import sha256_file
 from handoff import contracts, worker_format
+from manual_audit import audit_list
 from report_mapping.model.generation import resolve_generation_dir
 
 
@@ -94,6 +99,23 @@ def export_coding(
         "adopted_codes_path": adopted_out, "review_queue_path": queue_out,
         "adopted_rows": len(adopted), "review_queue_rows": len(queue),
     }
+
+
+def export_audit_list(list_id: str, *, out_dir: str | Path | None = None) -> dict:
+    """Write ``audit_list_<list_id>.txt`` (one case_id per line, review order) and record each case's origin."""
+    built = audit_list.build(list_id)
+    out_dir = Path(out_dir) if out_dir is not None else config.HANDOFF_OUTBOX_DIR
+    out_path = out_dir / f"audit_list_{list_id}.txt"
+    if out_path.exists():
+        raise HandoffExportError(f"{out_path} already exists; pick a new list_id")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("".join(f"{c}\n" for c in built["case_ids"]), encoding="utf-8", newline="\n")
+    contracts.write_sidecar(
+        out_path, kind=contracts.AUDIT_LIST_EXPORT_KIND, schema_version=contracts.AUDIT_LIST_EXPORT_SCHEMA_VERSION,
+    )
+    audit_list.record(built)
+    return {"path": out_path, "cases": len(built["case_ids"]), "by_origin": built["by_origin"],
+            "new_cases": built["new_cases"]}
 
 
 def export_bundle(generation_dir: str | Path | None = None, *, out_dir: str | Path | None = None) -> dict:

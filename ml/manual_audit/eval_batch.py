@@ -474,6 +474,16 @@ def ingest_sheet(
     )
 
 
+def pending_case_ids(ledger_csv: str | Path | None = None, gold_csv: str | Path | None = None) -> list[str]:
+    """Every drawn case without gold yet, in ledger order (for the universal audit list)."""
+    ledger_csv = Path(ledger_csv) if ledger_csv is not None else config.EVAL_BATCH_LEDGER_CSV
+    if not ledger_csv.is_file():
+        return []
+    gold_cases = set(gold.load_gold(gold_csv)["case_id"])
+    drawn = io_utils.read_csv(ledger_csv, encoding="utf-8", dtype=str, keep_default_na=False)["case_id"]
+    return [c for c in dict.fromkeys(drawn) if c not in gold_cases]
+
+
 def pooled_weights(ledger: str | Path | pd.DataFrame) -> pd.Series:
     """The per-stratum weight pooled across every batch in an eval-batch series: ``N_h / Σ n_h``.
 

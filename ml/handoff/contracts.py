@@ -37,13 +37,14 @@ PENDING_DIAGNOSES_REQUIRED_COLUMNS = [ID_COL, TEXT_COL]
 PENDING_DIAGNOSES_COLUMNS = [ID_COL, DIAG_NUM_COL, TEXT_COL]
 
 # ---------------------------------------------------------------------------
-# Inbox: gold (cloud -> ML). ``origin`` is mandatory; storage itself is
-# manual_audit.gold's job (see handoff/imports.py) — this only names the
-# minimum shape an import must have before it can even try that ingest.
+# Inbox: gold (cloud -> ML). ``origin`` may be blank or absent for a case that
+# was on an audit list: the import fills it from the audit-list ledger (v2).
+# Storage itself is manual_audit.gold's job (see handoff/imports.py) — this
+# only names the minimum shape an import must have before it can even try that ingest.
 # ---------------------------------------------------------------------------
 GOLD_IMPORT_KIND = "gold"
-GOLD_IMPORT_SCHEMA_VERSION = 1
-GOLD_IMPORT_REQUIRED_COLUMNS = ["case_id", "origin"]
+GOLD_IMPORT_SCHEMA_VERSION = 2
+GOLD_IMPORT_REQUIRED_COLUMNS = ["case_id"]
 
 # ---------------------------------------------------------------------------
 # Outbox: silver codes (ML -> cloud). No ``diagnosis`` text column — the cloud
@@ -65,6 +66,12 @@ ADOPTED_CODES_EXPORT_COLUMNS = ADOPTED_CODES_COLUMNS
 REVIEW_QUEUE_EXPORT_KIND = "review_queue"
 REVIEW_QUEUE_EXPORT_SCHEMA_VERSION = 1
 REVIEW_QUEUE_EXPORT_COLUMNS = REVIEW_QUEUE_COLUMNS
+
+# Outbox: the universal audit list (ML -> cloud): ``audit_list_<list_id>.txt``,
+# one case_id per line, in review order. Nothing else — the gold origin each
+# case comes back under stays in ML's audit-list ledger.
+AUDIT_LIST_EXPORT_KIND = "audit_list"
+AUDIT_LIST_EXPORT_SCHEMA_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Outbox: report-mapping generation bundle (ML -> cloud, for ml-worker). The

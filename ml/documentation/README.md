@@ -39,7 +39,7 @@ ml/
                          case_presence.py; group.py; label_presence.py; calibrate.py; oof.py
     inference/            embedding_cache.py (content-hash keyed); stages.py; keyword_correction.py
                          (+ Lipoma rescue); predict.py
-  coding/                rule.py (decisive/vague); adopt.py (gold > silver > bronze); corrected.py
+  coding/                rule.py (decisive/vague); combine.py (gold > silver > bronze); corrected.py
                         (report-mapping training labels); queue.py (review queue)
   evaluation/            verdicts.py; intervals.py (Wilson, Kish n_eff, stratified case-cluster
                         bootstrap); silver_eval.py; gold_eval.py (four results); audit_rates.py
@@ -83,7 +83,7 @@ All under `output/` (gitignored). Paths below are the `config.py` constants, rel
 | `output/manual_audit/audit_list_ledger.csv` | Every case put on a universal audit list, with the gold origin it must come back under. |
 | `output/manual_audit/eval_batch/` | Case-level eval-batch review sheets. |
 | `output/coding/corrected_annotations.csv` | The report mapping's training labels (train partition only). |
-| `output/coding/adopted_codes.csv` | The registry's adopted code per case. |
+| `output/coding/combined_codes.csv` | The best current code set per case: gold > silver > bronze. |
 | `output/coding/review_queue.csv` | Cases the specialist needs to look at. |
 | `output/report_mapping/current/`, `output/report_mapping/candidate/` | Report-mapping generations (production / being trained). Layout in [report-mapping.md](report-mapping.md). |
 | `output/report_mapping/embedding_cache/<key>.npz` | Content-hash keyed PetBERT embedding cache. Never bundled into a generation. |
@@ -102,7 +102,7 @@ All under `output/` (gitignored). Paths below are the `config.py` constants, rel
 | `map_diagnoses.py` | `run \| stats` | Diagnosis-mapping cascade; coverage stats. |
 | `audit.py` | `dm-sample \| rm-sample \| eval-batch \| ingest-sheet \| ingest-gold \| cause-sheet \| ingest-cause` | Audit batches, manual-audit sheets and stores. |
 | `split.py` | `create \| check` | Split generations; leakage guards. |
-| `code_cases.py` | `adopt \| corrected \| queue` | Coding-rule outputs. |
+| `code_cases.py` | `combine \| corrected \| queue` | Coding-rule outputs. |
 | `train.py` | `--stage backbone\|case-presence\|group\|label-presence\|heads\|oof` | Train a report-mapping candidate. |
 | `calibrate.py` | — | Fit every inference threshold on the calibration partition. |
 | `predict.py` | — | Stamped report-mapping predictions (`--embed-only` to just build the cache). |
@@ -154,7 +154,7 @@ ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
 | [report-mapping.md](report-mapping.md) | You're invoking `predict.py`/`train.py`/`calibrate.py`, or want the 4-stage design and why it looks the way it does. |
 | [diagnosis-mapping.md](diagnosis-mapping.md) | You're running or debugging `map_diagnoses.py`. |
 | [manual-audit.md](manual-audit.md) | You're drawing an audit or eval batch, building the audit list, or ingesting gold. |
-| [coding.md](coding.md) | You want the adoption rule, the corrected-annotations builder, or the review queue. |
+| [coding.md](coding.md) | You want the combination rule, the corrected-annotations builder, or the review queue. |
 | [evaluation.md](evaluation.md) | You're scoring predictions, reading a gold-eval report, or want the CI methodology. |
 | [generations.md](generations.md) | You're creating a split, promoting a candidate, or want the retraining-trigger logic. |
 | [handoff.md](handoff.md) | You're exchanging files with the backend, or building/reading a worker bundle. |

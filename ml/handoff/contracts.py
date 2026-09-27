@@ -7,7 +7,7 @@ builds"): every exchanged file gets a schema version stamped in a sidecar
 so a schema change on either side is visible rather than silently
 misinterpreted. Column lists here are read from their owning module's own
 constants where one already exists (``diagnosis_mapping.silver``,
-``coding.adopt``, ``coding.queue``) rather than duplicated, per CLAUDE.md
+``coding.combine``, ``coding.queue``) rather than duplicated, per CLAUDE.md
 ("Don't reach through modules... call the public interface").
 
 Bump a ``*_SCHEMA_VERSION`` constant whenever that file's columns change in a
@@ -20,7 +20,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from coding.adopt import ADOPTED_CODES_COLUMNS
+from coding.combine import COMBINED_CODES_COLUMNS
 from coding.queue import REVIEW_QUEUE_COLUMNS
 from diagnosis_mapping.silver import ANNOTATION_COLUMNS, DIAG_NUM_COL, ID_COL, TEXT_COL
 from generations.manifest import sha256_file
@@ -56,12 +56,12 @@ SILVER_EXPORT_SCHEMA_VERSION = 1
 SILVER_EXPORT_COLUMNS = [c for c in ANNOTATION_COLUMNS if c != TEXT_COL] + ["silver_generation"]
 
 # ---------------------------------------------------------------------------
-# Outbox: adopted codes + review queue (ML -> cloud). Both are already
-# text-free (coding.adopt / coding.queue never carry report or diagnosis text).
+# Outbox: combined codes + review queue (ML -> cloud). Both are already
+# text-free (coding.combine / coding.queue never carry report or diagnosis text).
 # ---------------------------------------------------------------------------
-ADOPTED_CODES_EXPORT_KIND = "adopted_codes"
-ADOPTED_CODES_EXPORT_SCHEMA_VERSION = 1
-ADOPTED_CODES_EXPORT_COLUMNS = ADOPTED_CODES_COLUMNS
+COMBINED_CODES_EXPORT_KIND = "combined_codes"
+COMBINED_CODES_EXPORT_SCHEMA_VERSION = 1
+COMBINED_CODES_EXPORT_COLUMNS = COMBINED_CODES_COLUMNS
 
 REVIEW_QUEUE_EXPORT_KIND = "review_queue"
 REVIEW_QUEUE_EXPORT_SCHEMA_VERSION = 1

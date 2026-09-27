@@ -1,7 +1,7 @@
-"""Coding-rule outputs: adopted codes, corrected annotations, the review queue.
+"""Coding-rule outputs: combined codes, corrected annotations, the review queue.
 
 Usage:
-  python ml/scripts/code_cases.py adopt     --silver SID --split SPLIT --predictions PATH [--generation-id ID] [--out PATH]
+  python ml/scripts/code_cases.py combine   --silver SID --split SPLIT --predictions PATH [--generation-id ID] [--out PATH]
   python ml/scripts/code_cases.py corrected --silver SID --split SPLIT [--out PATH]
   python ml/scripts/code_cases.py queue     --silver SID --split SPLIT --predictions PATH [--generation-id ID] [--out PATH]
 """
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from coding.adopt import write_adopted_codes
+from coding.combine import write_combined_codes
 from coding.corrected import write_corrected_annotations
 from coding.queue import write_review_queue
 
@@ -20,12 +20,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    adopt = sub.add_parser("adopt", help="Write the adopted-codes table.")
-    adopt.add_argument("--silver", required=True)
-    adopt.add_argument("--split", required=True)
-    adopt.add_argument("--predictions", required=True)
-    adopt.add_argument("--generation-id", default=None)
-    adopt.add_argument("--out", default=None)
+    combine = sub.add_parser("combine", help="Write the combined-codes table.")
+    combine.add_argument("--silver", required=True)
+    combine.add_argument("--split", required=True)
+    combine.add_argument("--predictions", required=True)
+    combine.add_argument("--generation-id", default=None)
+    combine.add_argument("--out", default=None)
 
     corrected = sub.add_parser("corrected", help="Write the corrected-annotations table (train partition only).")
     corrected.add_argument("--silver", required=True)
@@ -41,8 +41,8 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    if args.command == "adopt":
-        out_path = write_adopted_codes(
+    if args.command == "combine":
+        out_path = write_combined_codes(
             args.silver, args.split, args.predictions,
             generation_id=args.generation_id, out_csv=args.out,
         )

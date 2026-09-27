@@ -81,7 +81,7 @@ only if the specialist codes it.
 `no_signal` is decisive on purpose: it is most of the corpus, and queuing it would bury the
 specialist.
 
-**If any row of a case is vague, the whole case is queued.** Its decisive rows are not adopted
+**If any row of a case is vague, the whole case is queued.** Its decisive rows are not used
 separately, because gold is the case's complete code set.
 
 **Bronze never overrides silver.** The report mapping learns mostly from silver, so when the two
@@ -110,7 +110,7 @@ flowchart LR
   recorded. Review is **blind**: no prediction is shown, because a visible suggestion anchors the
   reviewer.
 - **The upload random slice** is a random share of auto-accepted bronze codes: the only measure of
-  the report mapping where its codes are actually adopted.
+  the report mapping where its codes are actually used.
 - **The review queue** concentrates on the cases where silver is weakest. That skew helps training
   but would bias measurement, so queue gold is never gold-eval.
 
@@ -138,7 +138,7 @@ stand-in for day-to-day iteration. If not, model decisions must go through gold.
 
 - overall per-code accuracy has a 95% confidence interval of about ±5 points or narrower (roughly
   385 codes);
-- every group making up at least ~1% of adopted codes has at least ~30 gold codes;
+- every group making up at least ~1% of combined codes has at least ~30 gold codes;
 - it includes upload random-slice cases, not only historical ones.
 
 Until then, gold-eval numbers are indicative, and model promotion is decided by hand.
@@ -251,7 +251,7 @@ flowchart LR
 
 ¹ Today the LLM tier runs locally through the manual handoff (2.1). The whole diagnosis mapping
 moves to the cloud only with the BERT coder (4.1).
-² Scoring adopted codes against gold only compares tables and runs no model, so in the end state it
+² Scoring combined codes against gold only compares tables and runs no model, so in the end state it
 runs in the cloud. Until the backend developer builds it, an Admin runs it locally. Candidate
 models are always scored locally.
 
@@ -316,7 +316,7 @@ before 1.1's re-run, so the fixed cascade's output becomes the first versioned g
 historical corpus. The vague cases in the train split form the first review queue, and their gold
 becomes gold-train. That queue runs to thousands of cases, more if declined LLM answers count as
 vague, so the specialist works it over many rounds in the order bronze sets. Until reviewed, those
-cases have no adopted code. Vague test-split cases can be reviewed too, but their gold stays on the
+cases have no combined code. Vague test-split cases can be reviewed too, but their gold stays on the
 evaluation side and, being a biased sample, is not gold-eval. Also collect hard examples from
 decisive-silver disagreements, using out-of-fold predictions.
 *Today:* bronze trains on silver only.
@@ -343,7 +343,7 @@ the same generation, and the queued share matches the count from `decision_stage
 turnaround depend on two people. Build beside the existing path; switch over once the replay
 matches.
 
-**2.2 Review routing and code provenance.** Every adopted code records:
+**2.2 Review routing and code provenance.** Every combined code records:
 
 - `code_source`: `manual`, `diagnosis` or `report`;
 - `source_version`: the generation that produced it (a silver_id for `diagnosis`, or a bronze
@@ -351,10 +351,10 @@ matches.
 - `source_confidence`: `decision_stage` for silver, calibrated probability for bronze.
 
 `code_source`, `source_version` and `source_confidence` are already implemented locally
-(`coding.adopt`, [coding.md](coding.md)); this item's remaining scope is the cloud-side database
+(`coding.combine`, [coding.md](coding.md)); this item's remaining scope is the cloud-side database
 migration and review-app routing below.
 
-Review status separates `auto_accepted` from human `confirmed`. Queue by the adopted method:
+Review status separates `auto_accepted` from human `confirmed`. Queue by the method that produced the code:
 vagueness for silver, a bronze threshold recalibrated from the random slice for bronze. Rename the
 gold schema's `bronze` tier (a weak cascade match), which clashes with this doc's meaning.
 *Today:* bronze is queued by hand-set confidence and margin thresholds; everything else is stamped

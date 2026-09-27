@@ -96,7 +96,7 @@ method's input, which doesn't change between model versions) to report method-er
 shares.
 
 **Representativeness** — three pass/fail criteria (icd-mapping-strategy.md's proposed thresholds):
-overall `good` CI half-width ≤ 5 points; every group at ≥1% of adopted codes has ≥30 gold codes
+overall `good` CI half-width ≤ 5 points; every group at ≥1% of combined codes has ≥30 gold codes
 (reports which majors are unreachable from the test partition alone); at least one random-slice
 case exists. Until all three pass, gold-eval numbers are indicative and promotion is a human call.
 

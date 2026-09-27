@@ -37,7 +37,7 @@ Work is committed on `Revised-ICD-Mapping`. The suite passes with 493 tests afte
 
 **Done:**
 - **WP0–WP9, WP11:** as before (L1/L2a on the Mac; `evaluate.py silver` reproduces 61.76%; every case is
-  adopted or queued).
+  coded or queued).
 - **Windows line endings.** Every `ml/next` text and CSV writer pins LF, so Windows artefacts and gold snapshot
   hashes match the Mac's. A CRLF working copy of `ml/ICD_labels/labels.csv` (checked out before
   `.gitattributes` existed) had to be re-checked out for the pack to verify.
@@ -260,7 +260,7 @@ ml/
                        oof.py (k-fold heads-only out-of-fold predictions)
     inference/         embedding_cache.py (content-hash keyed); stages.py; keyword_correction.py
                        (+ Lipoma rescue); predict.py
-  coding/              rule.py (decisive/vague); adopt.py (gold > silver > bronze + provenance);
+  coding/              rule.py (decisive/vague); combine.py (gold > silver > bronze + provenance);
                        corrected.py (corrected annotations); queue.py (review queue, bronze priority)
   evaluation/          verdicts.py; intervals.py (Wilson, Kish n_eff, stratified case-cluster bootstrap,
                        single + paired); silver_eval.py; gold_eval.py (four results, representativeness);
@@ -296,12 +296,12 @@ ml/
   term = no cancer. Old `annotation.csv` qualifies unchanged. Corrected annotations add
   `label_source (gold|silver), silver_generation, gold_snapshot`; train partition only; vague-without-gold
   excluded.
-- **Adopted codes**: `case_id, code, term, group, code_source (manual|diagnosis|report), source_version,
+- **Combined codes**: `case_id, code, term, group, code_source (manual|diagnosis|report), source_version,
   source_confidence, review_status (auto_accepted|queued|confirmed)`.
 - **Review queue**: `case_id, reason (vague_silver|low_conf_bronze|random_slice|no_evidence), priority,
   partition, silver_generation, bronze_generation`. `no_evidence` (WP9 fix 2, lowest priority) covers a
   case in split ∪ silver ∪ bronze with no gold, no diagnosis row and no bronze prediction at all — the
-  coverage gap that otherwise adopted nothing and queued nothing.
+  coverage gap that otherwise coded nothing and queued nothing.
 - **Predictions**: old columns + `generation_id`.
 - **Report-mapping generation** (`current/`, `candidate/`) — its layout *is* the cloud bundle layout:
   `petbert/`, `labels/labels.csv`, `checkpoints/{case_presence_classifier.pt, group_classifier_best.pt,
@@ -311,7 +311,7 @@ ml/
   {partition, objective, values}; file sha256s; scores; status). The embedding cache sits beside it, never
   bundled.
 - **Handoff**: inbox `pending_diagnoses_<export>.csv`, `gold_<export>.csv`; outbox
-  `silver_codes_<silver_id>.csv`, `adopted_codes_<run>.csv`, `review_queue_<run>.csv`, bundle tarball; each
+  `silver_codes_<silver_id>.csv`, `combined_codes_<run>.csv`, `review_queue_<run>.csv`, bundle tarball; each
   with a sidecar manifest (schema_version, sha256).
 
 ## Entry points (`scripts/`)
@@ -321,7 +321,7 @@ ml/
 | `map_diagnoses.py run\|stats` | run_annotation, run_annotation_cleanup, run_data_analysis | Silver generation; coverage stats |
 | `audit.py tier3-sample\|tier3-pilot\|tier3-ingest\|eval-batch\|ingest-gold\|cause-sheet\|ingest-cause` | run_gold_annotation | Specialist sheets and stores |
 | `split.py create\|import-legacy\|check` | create_split, check_split | Split generations; `check` = all leakage guards |
-| `code_cases.py adopt\|corrected\|queue` | — | Coding rule outputs |
+| `code_cases.py combine\|corrected\|queue` | — | Coding rule outputs |
 | `train.py --stage backbone\|case-presence\|group\|label-presence\|heads\|oof` | run_training | Recipe defaults = production |
 | `calibrate.py --generation --partition calibration` | sweep_lp_thresholds, sweep_tail_gate | All thresholds, in-process |
 | `predict.py --generation current [--model …] [--embed-only]` | run_production | Stamped predictions |
@@ -381,7 +381,7 @@ marked, where Opus implements because errors would be silent.
 | **WP6** evaluation | `verdicts` exact port; `intervals`; `silver_eval`; `gold_eval` (four results, weighted, CIs, representativeness); `audit_rates` | **Opus** / Sonnet | Mac |
 | **WP7** manual_audit | Tier-3 sample/pilot/ingest (old sheets ingest unchanged); `eval_batch`; `gold`; `cause_pass` | Sonnet / **Opus** | Mac |
 | **WP8** diagnosis_mapping | Port cascade, local LLM tier, cleanup; `silver.py`; import `silver-0-legacy`; replay no_signal/tier1/tier2 vs old annotation.csv | Sonnet / Sonnet | Mac |
-| **WP9** coding | Vagueness table; adoption rule; corrected annotations; review queue | Sonnet / **Opus** | Mac |
+| **WP9** coding | Vagueness table; combination rule; corrected annotations; review queue | Sonnet / **Opus** | Mac |
 | **WP10** promote, triggers, retrain_cycle | Promotion rule above; archive + swap; triggers (new silver lineage, random-slice CI non-overlap, ≥ 200 new gold-train codes) | **Opus** / Sonnet | Mac |
 | **WP11** handoff | Schemas + versions; imports (origin mandatory, later export replaces); exports; bundle tarball + sha256 | Sonnet / Sonnet | Mac |
 | **WP12** ml-worker | Keep env-var contract; resolve bundle root; verify manifest; wire LP heads + `thresholds.json`; fix the `TypeError`; import shared code; response schema + `source_version`; aligned pins; Dockerfiles copy `taxonomy/`, `report_mapping/`, `handoff/`; backend change request written | Sonnet / Sonnet | Mac |
@@ -552,7 +552,7 @@ unchanged. A direct run would therefore miss the cache, re-embed everything and 
   the 80 no-diagnosis train cases (46,652 → 46,572), a known small difference for L3.
 - **Cleanup pairs in the coding rule.** A cleanup-rewritten "No Match" is decisive non-cancer; a cleanup
   "Uncertain" is vague.
-- **Coverage invariant.** Every case is either adopted or queued. Cases with no evidence at all (11 today: no
+- **Coverage invariant.** Every case is either coded or queued. Cases with no evidence at all (11 today: no
   diagnosis, empty report, no bronze row) are queued as `no_evidence` at the lowest priority.
 - **Queue order.** Test-partition items come after all train and calibration items. Reviewing a test case
   removes it from the gold-eval frame, and the vague cases would otherwise leave gold-eval first.

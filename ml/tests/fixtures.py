@@ -653,7 +653,7 @@ def make_three_way_split_generation(split_id: str, train: list[str], calibration
 
 
 # ---------------------------------------------------------------------------
-# coding/ (rule, adopt, corrected, queue): config redirection, a bronze
+# coding/ (rule, combine, corrected, queue): config redirection, a bronze
 # predictions csv factory, and a direct gold-store writer.
 # ---------------------------------------------------------------------------
 
@@ -670,7 +670,7 @@ def point_coding_config_at(monkeypatch, root: Path) -> None:
     coding_dir = root / "output" / "coding"
     monkeypatch.setattr(config, "CODING_DIR", coding_dir)
     monkeypatch.setattr(config, "CORRECTED_ANNOTATIONS_CSV", coding_dir / "corrected_annotations.csv")
-    monkeypatch.setattr(config, "ADOPTED_CODES_CSV", coding_dir / "adopted_codes.csv")
+    monkeypatch.setattr(config, "COMBINED_CODES_CSV", coding_dir / "combined_codes.csv")
     monkeypatch.setattr(config, "REVIEW_QUEUE_CSV", coding_dir / "review_queue.csv")
 
 
@@ -784,7 +784,7 @@ def build_coding_scenario(monkeypatch, root: Path) -> dict:
     ])
 
     predictions_rows = [
-        # Disagrees with DECISIVE_CANCER's silver code on purpose (never adopted).
+        # Disagrees with DECISIVE_CANCER's silver code on purpose (never used).
         (C.DECISIVE_CANCER, 1, "Wrong Term", "Wrong Group", "9999/0", "0.9500", "0.95", "0.95",
          "label_presence", CODING_GENERATION_ID),
         (C.VAGUE_NOGOLD, 1, "V-Term", "V-Group", "9993/3", "0.9000", "0.90", "0.90",
@@ -825,7 +825,7 @@ def build_coding_scenario(monkeypatch, root: Path) -> dict:
 def point_evaluation_config_at(monkeypatch, root: Path) -> None:
     """Redirect every config path evaluation/ reads or writes into ``root``
     (builds on ``point_coding_config_at``: splits, silver, gold, ledger, cause and
-    audit stores, adopted codes)."""
+    audit stores, combined codes)."""
     import config
 
     point_coding_config_at(monkeypatch, root)
@@ -844,7 +844,7 @@ def point_handoff_config_at(monkeypatch, root: Path) -> None:
     """Redirect every config path handoff/ reads or writes into ``root``.
 
     Builds on ``point_coding_config_at`` (silver dir, gold store, eval-batch
-    ledger, adopted codes, review queue) and adds the inbox/outbox dirs and
+    ledger, combined codes, review queue) and adds the inbox/outbox dirs and
     the report-mapping generation dirs (``export_bundle``'s source).
     """
     import config

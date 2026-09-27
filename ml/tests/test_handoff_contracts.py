@@ -21,9 +21,9 @@ def test_write_and_verify_sidecar_round_trip(tmp_path):
 
 
 def test_verify_sidecar_detects_tampering(tmp_path):
-    csv_path = tmp_path / "adopted_codes_run1.csv"
+    csv_path = tmp_path / "combined_codes_run1.csv"
     csv_path.write_text("case_id,code\nCASE-A,1001/3\n", encoding="utf-8")
-    contracts.write_sidecar(csv_path, kind=contracts.ADOPTED_CODES_EXPORT_KIND, schema_version=1)
+    contracts.write_sidecar(csv_path, kind=contracts.COMBINED_CODES_EXPORT_KIND, schema_version=1)
 
     csv_path.write_text("case_id,code\nCASE-A,9999/0\n", encoding="utf-8")  # changed after the sidecar was written
     with pytest.raises(contracts.SidecarError, match="sha256"):
@@ -36,7 +36,7 @@ def test_verify_sidecar_rejects_wrong_kind(tmp_path):
     contracts.write_sidecar(csv_path, kind=contracts.REVIEW_QUEUE_EXPORT_KIND, schema_version=1)
 
     with pytest.raises(contracts.SidecarError, match="kind"):
-        contracts.verify_sidecar(csv_path, expected_kind=contracts.ADOPTED_CODES_EXPORT_KIND)
+        contracts.verify_sidecar(csv_path, expected_kind=contracts.COMBINED_CODES_EXPORT_KIND)
 
 
 def test_read_sidecar_missing_raises(tmp_path):

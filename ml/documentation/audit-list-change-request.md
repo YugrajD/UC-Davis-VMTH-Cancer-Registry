@@ -81,7 +81,7 @@ list. The error names the case IDs.
 ## 3. What stays the same
 
 - `pending_diagnoses_<export>.csv` (cloud → ML) and `silver_codes_<silver_id>.csv` /
-  `adopted_codes_<run>.csv` (ML → cloud) are unchanged.
+  `combined_codes_<run>.csv` (ML → cloud) are unchanged.
 - `review_queue_<run>.csv` is still produced by `handoff.py export-coding`, but it is no longer the
   specialist's worklist; the audit list is.
 - The worker bundle is a separate request: [ml-worker-change-request.md](ml-worker-change-request.md).

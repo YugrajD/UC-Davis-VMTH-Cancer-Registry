@@ -39,7 +39,7 @@ diagnosis) are not scored for silver. Silver is scored without the uncommon-
 group leniency, which belongs to the report-mapping generation; bronze uses it.
 
 **Bands (result 2).** One band per case, from its top-ranked prediction (the
-review gate in ``coding.adopt`` is also per case, on the top prediction):
+review gate in ``coding.combine`` is also per case, on the top prediction):
 ``non_cancer`` when that prediction is Non-Cancer (gate-rejected), else fixed
 bands of width 0.2 on ``confidence``: ``0.0-0.2`` ... ``0.8-1.0`` (lower bound
 inclusive; 1.0 falls in the top band). Fixed rather than quantile bands, so a
@@ -86,7 +86,7 @@ NON_BLIND_NOTE = "eval batches reviewed non-blind (app); accuracy may be optimis
 
 MAX_HALF_WIDTH = 0.05     # overall per-code accuracy CI half-width
 MIN_GROUP_CODES = 30      # gold codes per major group
-MIN_GROUP_SHARE = 0.01    # a group is major at >= 1% of adopted codes
+MIN_GROUP_SHARE = 0.01    # a group is major at >= 1% of combined codes
 
 _TIER3_LLM_LABEL = {"LLM": "tier3_llm", "No Match": "tier3_llm_declined", "Uncertain": "tier3_llm_uncertain"}
 
@@ -396,7 +396,7 @@ def representativeness(gold_rows: pd.DataFrame, half_width: float, group_codes: 
                        test_codes: pd.Series) -> dict:
     """The strategy's three criteria, pass/fail each.
 
-    ``group_codes``: codes per group in the adopted codes (or silver), for the 1% share.
+    ``group_codes``: codes per group in the combined codes (or silver), for the 1% share.
     ``test_codes``: silver codes per group in the split's test partition — a major group with
     fewer than ``MIN_GROUP_CODES`` there cannot reach the target from test alone.
     """
@@ -477,7 +477,7 @@ def run(predictions_csv: str | Path, silver_id: str, split_id: str, *, generatio
         n_boot: int = 1000, seed: int = 0) -> dict:
     """Guards, then load gold-eval, ledger, silver, predictions and stores from config, then ``evaluate``.
 
-    Major groups are read from ``config.ADOPTED_CODES_CSV`` when it exists, else from silver
+    Major groups are read from ``config.COMBINED_CODES_CSV`` when it exists, else from silver
     (``group_basis`` in the result says which).
     """
     guards.check_all(split_id)
@@ -489,9 +489,9 @@ def run(predictions_csv: str | Path, silver_id: str, split_id: str, *, generatio
     generation_id, uncommon_groups = silver_eval.generation_uncommon_groups(generation, predictions)
     silver = load_silver(silver_id).drop(columns=silver_eval.TEXT_COLUMNS, errors="ignore")
 
-    if config.ADOPTED_CODES_CSV.is_file():
-        adopted = io_utils.read_csv(config.ADOPTED_CODES_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
-        group_basis, group_codes = "adopted codes", code_counts_by_group(adopted, "code", "group")
+    if config.COMBINED_CODES_CSV.is_file():
+        combined = io_utils.read_csv(config.COMBINED_CODES_CSV, encoding="utf-8", dtype=str, keep_default_na=False)
+        group_basis, group_codes = "combined codes", code_counts_by_group(combined, "code", "group")
     else:
         group_basis, group_codes = f"silver {silver_id}", code_counts_by_group(silver, "matched_code", "matched_group")
     test_silver = silver[silver["case_id"].isin(load_split(split_id).test)]

@@ -1,9 +1,9 @@
-"""scripts/code_cases.py: the thin CLI entry point over coding.adopt/corrected/queue.
+"""scripts/code_cases.py: the thin CLI entry point over coding.combine/corrected/queue.
 
 Minimal coverage (WP9 fix 7): one happy-path invocation per subcommand,
 checking the CLI wires args through to the right writer and to the right
 --out path — the underlying behavior itself is already covered by
-test_adopt.py / test_corrected.py / test_queue.py.
+test_combine.py / test_corrected.py / test_queue.py.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from coding.adopt import ADOPTED_CODES_COLUMNS
+from coding.combine import COMBINED_CODES_COLUMNS
 from coding.corrected import CORRECTED_COLUMNS
 from coding.queue import REVIEW_QUEUE_COLUMNS
 
@@ -38,15 +38,15 @@ def _run(monkeypatch, argv: list[str]) -> int:
     return code_cases_script.main()
 
 
-def test_adopt_subcommand_writes_adopted_codes_csv(scenario, monkeypatch, tmp_path):
-    out_path = tmp_path / "adopted.csv"
+def test_combine_subcommand_writes_combined_codes_csv(scenario, monkeypatch, tmp_path):
+    out_path = tmp_path / "combined.csv"
     rc = _run(monkeypatch, [
-        "adopt", "--silver", scenario["silver_id"], "--split", scenario["split_id"],
+        "combine", "--silver", scenario["silver_id"], "--split", scenario["split_id"],
         "--predictions", str(scenario["predictions_csv"]), "--out", str(out_path),
     ])
     assert rc == 0
     df = pd.read_csv(out_path, dtype=str, keep_default_na=False)
-    assert list(df.columns) == ADOPTED_CODES_COLUMNS
+    assert list(df.columns) == COMBINED_CODES_COLUMNS
     assert fx.CodingCaseIDs.G_DIAG in set(df["case_id"])
 
 

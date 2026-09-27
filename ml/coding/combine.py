@@ -1,26 +1,26 @@
-"""The adoption rule: gold > silver > bronze, one adopted code set per case.
+"""The combination rule: gold > silver > bronze, one combined code set per case.
 
 Per icd-mapping-strategy.md ("Coding a case") and ml-rewrite-plan.md's
 Artefacts:
 
-- A case with any gold row (any origin) adopts gold — ``code_source=manual``,
+- A case with any gold row (any origin) takes gold — ``code_source=manual``,
   ``review_status=confirmed`` (gold is already a specialist's review).
 - Else, a case with diagnosis (silver) rows where every row is decisive
-  adopts silver — ``code_source=diagnosis``, ``review_status=auto_accepted``.
-- Else, a case with diagnosis rows where any row is vague gets **no** adopted
+  takes silver — ``code_source=diagnosis``, ``review_status=auto_accepted``.
+- Else, a case with diagnosis rows where any row is vague gets **no** combined
   code here — it is only in the review queue (``coding.queue``) until gold
   resolves it.
-- Else (no diagnosis rows at all), the case adopts bronze —
+- Else (no diagnosis rows at all), the case takes bronze —
   ``code_source=report``, ``review_status`` = ``queued`` if bronze is
   low-confidence, else ``auto_accepted``. **Bronze never overrides silver**:
-  bronze is only ever adopted for a case with zero diagnosis rows.
+  bronze is only ever used for a case with zero diagnosis rows.
   **Exception:** an ``unidentified_cancer`` bronze case (the case-presence
-  gate passed but no label resolved) gets **no** adopted row either — it is
-  not a confident non-cancer call, so it must not adopt ``NO_CANCER``; it is
+  gate passed but no label resolved) gets **no** combined row either — it is
+  not a confident non-cancer call, so it must not take ``NO_CANCER``; it is
   always low-confidence (score 0.0), so it lands in the review queue instead
-  (see ``_adopt_bronze_case``).
+  (see ``_bronze_case_codes``).
 
-A non-cancer adoption (silver's ``no_signal``/declined-LLM rows, or a bronze
+A non-cancer result (silver's ``no_signal``/declined-LLM rows, or a bronze
 row rejected by the case-presence gate) is written as one ``NO_CANCER`` row —
 the same sentinel ``manual_audit.gold.NO_CANCER`` uses, so there is exactly
 one sentinel across the codebase.
@@ -38,7 +38,7 @@ from coding.rule import case_is_vague
 from diagnosis_mapping.silver import load_silver
 from manual_audit.gold import NO_CANCER, load_gold
 
-ADOPTED_CODES_COLUMNS = [
+COMBINED_CODES_COLUMNS = [
     "case_id", "code", "term", "group", "code_source",
     "source_version", "source_confidence", "review_status",
 ]
@@ -129,7 +129,7 @@ def _gold_source_version(origin: str, batch_or_export_id: str) -> str:
     return f"{origin}:{batch_or_export_id}" if batch_or_export_id else origin
 
 
-def _adopt_gold_case(case_id: str, rows: pd.DataFrame) -> list[dict]:
+def _gold_case_codes(case_id: str, rows: pd.DataFrame) -> list[dict]:
     return [{
         "case_id": case_id, "code": r["code"], "term": r["term"], "group": r["group"],
         "code_source": "manual",
@@ -138,7 +138,7 @@ def _adopt_gold_case(case_id: str, rows: pd.DataFrame) -> list[dict]:
     } for r in rows.to_dict("records")]
 
 
-def _adopt_silver_case(case_id: str, rows: pd.DataFrame, silver_id: str) -> list[dict]:
+def _silver_case_codes(case_id: str, rows: pd.DataFrame, silver_id: str) -> list[dict]:
     records = rows.to_dict("records")
     cancer_rows = [
         {"case_id": case_id, "code": r["matched_code"], "term": r["matched_term"], "group": r["matched_group"],
@@ -159,9 +159,9 @@ def _adopt_silver_case(case_id: str, rows: pd.DataFrame, silver_id: str) -> list
 UNIDENTIFIED_CANCER_METHOD = "unidentified_cancer"  # gate passed (likely cancer), but no label resolved
 
 
-def _adopt_bronze_case(case_id: str, rows: pd.DataFrame, generation_id: str) -> list[dict] | None:
+def _bronze_case_codes(case_id: str, rows: pd.DataFrame, generation_id: str) -> list[dict] | None:
     """Adopted rows for one bronze-only case, or ``None`` if it must not be
-    adopted at all (an ``unidentified_cancer`` case — see below)."""
+    coded at all (an ``unidentified_cancer`` case — see below)."""
     # diagnosis_index is read as str (dtype=str throughout); sorting it as a
     # string would put rank 10 before rank 2, so sort by its int value.
     records = rows.sort_values("diagnosis_index", key=lambda s: s.astype(int)).to_dict("records")
@@ -172,41 +172,41 @@ def _adopt_bronze_case(case_id: str, rows: pd.DataFrame, generation_id: str) -> 
         for r in records if r["predicted_code"]
     ]
     if cancer_rows:
-        adopted = _dedup_code_rows(cancer_rows)
+        combined = _dedup_code_rows(cancer_rows)
     else:
         first = records[0]
         if first["method"] == UNIDENTIFIED_CANCER_METHOD:
             # The case-presence gate passed (the case likely has cancer) but no
             # label was ever resolved — this is not a confident non-cancer
-            # call, so it must not adopt the NO_CANCER sentinel. Its score is
+            # call, so it must not take the NO_CANCER sentinel. Its score is
             # always 0.0 (report_mapping.inference.stages), so
             # bronze_case_is_low_confidence already queues it (coding.queue);
-            # here it simply gets no adopted row at all, like a vague silver case.
+            # here it simply gets no combined row at all, like a vague silver case.
             return None
-        adopted = [{
+        combined = [{
             "case_id": case_id, "code": NO_CANCER, "term": "", "group": "",
             "code_source": "report", "source_version": generation_id, "source_confidence": first["confidence"],
             "review_status": "",
         }]
     status = "queued" if bronze_case_is_low_confidence(rows) else "auto_accepted"
-    for row in adopted:
+    for row in combined:
         row["review_status"] = status
-    return adopted
+    return combined
 
 
-def adopt_codes(
+def combine_codes(
     silver_id: str,
     split_id: str,
     predictions_csv: str | Path,
     *,
     generation_id: str | None = None,
 ) -> pd.DataFrame:
-    """Build the adopted-codes table for every case in silver ∪ bronze ∪ gold.
+    """Build the combined-codes table for every case in silver ∪ bronze ∪ gold.
 
     Gold beats silver beats bronze; a vague silver case contributes no row
     here at all (see the module docstring). ``split_id`` is accepted (and
     required) for CLI/API symmetry with ``coding.corrected``/``coding.queue``,
-    which both need a split to resolve partitions; ``adopt_codes`` itself
+    which both need a split to resolve partitions; ``combine_codes`` itself
     doesn't currently need one (gold rows are now provenance-stamped from
     their own origin, not a split-scoped gold snapshot — see
     ``_gold_source_version``).
@@ -219,7 +219,7 @@ def adopt_codes(
     silver_by_case = {cid: g for cid, g in silver.groupby("case_id")}
     bronze_by_case = {cid: g for cid, g in bronze.groupby("case_id")}
 
-    # Resolved lazily (only if a case actually needs bronze adoption), so a
+    # Resolved lazily (only if a case actually needs bronze coding), so a
     # run with no bronze-only cases never has to make sense of predictions_csv's
     # generation_id column at all.
     bronze_generation_id: str | None = None
@@ -228,25 +228,25 @@ def adopt_codes(
     rows: list[dict] = []
     for case_id in all_cases:
         if case_id in gold_by_case:
-            rows.extend(_adopt_gold_case(case_id, gold_by_case[case_id]))
+            rows.extend(_gold_case_codes(case_id, gold_by_case[case_id]))
         elif case_id in silver_by_case:
             case_rows = silver_by_case[case_id]
             if case_is_vague(case_rows):
-                continue  # queued, not adopted (coding.queue)
-            rows.extend(_adopt_silver_case(case_id, case_rows, silver_id))
+                continue  # queued, not coded (coding.queue)
+            rows.extend(_silver_case_codes(case_id, case_rows, silver_id))
         elif case_id in bronze_by_case:
             if bronze_generation_id is None:
                 bronze_generation_id = resolve_generation_id(bronze, generation_id)
-            bronze_rows = _adopt_bronze_case(case_id, bronze_by_case[case_id], bronze_generation_id)
+            bronze_rows = _bronze_case_codes(case_id, bronze_by_case[case_id], bronze_generation_id)
             if bronze_rows is not None:
                 rows.extend(bronze_rows)
-            # else: an unidentified_cancer bronze-only case — no adopted row;
+            # else: an unidentified_cancer bronze-only case — no combined row;
             # it is queued instead (coding.queue).
 
-    return pd.DataFrame(rows, columns=ADOPTED_CODES_COLUMNS)
+    return pd.DataFrame(rows, columns=COMBINED_CODES_COLUMNS)
 
 
-def write_adopted_codes(
+def write_combined_codes(
     silver_id: str,
     split_id: str,
     predictions_csv: str | Path,
@@ -254,8 +254,8 @@ def write_adopted_codes(
     generation_id: str | None = None,
     out_csv: str | Path | None = None,
 ) -> Path:
-    out_path = Path(out_csv) if out_csv is not None else config.ADOPTED_CODES_CSV
-    df = adopt_codes(silver_id, split_id, predictions_csv, generation_id=generation_id)
+    out_path = Path(out_csv) if out_csv is not None else config.COMBINED_CODES_CSV
+    df = combine_codes(silver_id, split_id, predictions_csv, generation_id=generation_id)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     io_utils.write_csv(df, out_path)
     return out_path

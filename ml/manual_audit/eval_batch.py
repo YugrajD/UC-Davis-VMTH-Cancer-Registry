@@ -14,7 +14,7 @@ never carries a prediction column. The ledger's ``review_mode`` column records
 batch should state that reported accuracy may be optimistic from anchoring.
 
 **Allocation is code-targeted, not case-targeted** (icd-mapping-strategy.md,
-"Measuring accuracy": "every group making up at least ~1% of adopted codes
+"Measuring accuracy": "every group making up at least ~1% of combined codes
 has at least ~30 gold codes"). For each "big" stratum — one whose own-group
 codes make up at least ``big_group_share`` (default 1%) of all own-group
 codes in the eligible frame — the target is enough cases to reach about

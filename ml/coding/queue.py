@@ -6,15 +6,15 @@ overrides silver"):
 - ``vague_silver`` — the case has diagnosis rows and at least one is vague
   (``coding.rule.case_is_vague``).
 - ``low_conf_bronze`` — the case has no diagnosis rows at all, and bronze's
-  own review gate (``coding.adopt.bronze_case_is_low_confidence``) flags it.
+  own review gate (``coding.combine.bronze_case_is_low_confidence``) flags it.
   This also covers an ``unidentified_cancer`` bronze case (the gate passed but
-  no label resolved): ``coding.adopt`` refuses to adopt it as ``NO_CANCER``,
+  no label resolved): ``coding.combine`` refuses to code it as ``NO_CANCER``,
   and its score is always 0.0, so the low-confidence check picks it up here.
 - ``no_evidence`` — the case has no gold, no diagnosis row and no bronze
   prediction at all (WP9 fix 2: e.g. an upload whose report never made it
-  into ``report.csv``). ``coding.adopt`` has nothing to adopt for such a
+  into ``report.csv``). ``coding.combine`` has nothing to code for such a
   case either, so without this reason it would silently vanish from both
-  the adopted-codes table and the review queue. Always the lowest priority
+  the combined-codes table and the review queue. Always the lowest priority
   (``NO_EVIDENCE_PRIORITY``, below any real bronze probability): there is no
   signal at all to rank it by, and it must never crowd out a case bronze or
   silver actually ran on.
@@ -23,9 +23,9 @@ overrides silver"):
 a case already resolved by the specialist has nothing left to queue.
 
 **Coverage invariant**: every case_id in ``split.train ∪ split.calibration ∪
-split.test ∪ silver ∪ bronze`` ends up either adopted (``coding.adopt``) or
-queued (here) — never neither. See ``test_adopt.py``'s
-``test_every_case_is_adopted_or_queued`` for the cross-module check.
+split.test ∪ silver ∪ bronze`` ends up either coded (``coding.combine``) or
+queued (here) — never neither. See ``test_combine.py``'s
+``test_every_case_is_coded_or_queued`` for the cross-module check.
 
 **Priority is bronze's case-presence probability, descending**: a vague case
 where bronze confidently says cancer goes first, since that is the case most
@@ -65,7 +65,7 @@ import pandas as pd
 
 import config
 import io_utils
-from coding.adopt import bronze_case_is_low_confidence, load_bronze_predictions, resolve_generation_id
+from coding.combine import bronze_case_is_low_confidence, load_bronze_predictions, resolve_generation_id
 from coding.rule import case_is_vague
 from diagnosis_mapping.silver import load_silver
 from generations.splits import load_split
@@ -118,14 +118,14 @@ def build_review_queue(
     bronze_by_case = {cid: g for cid, g in bronze.groupby("case_id")}
 
     rows: list[dict] = []
-    # Every case accounted for by adoption or queueing so far, so the coverage
+    # Every case accounted for by coding or queueing so far, so the coverage
     # sweep below (no_evidence) can tell what's left uncovered.
-    covered: set[str] = set(gold_case_ids)  # gold cases are adopted, never queued
+    covered: set[str] = set(gold_case_ids)  # gold cases are coded, never queued
     for case_id, case_rows in silver_by_case.items():
         if case_id in gold_case_ids:
             continue
         if not case_is_vague(case_rows):
-            covered.add(case_id)  # decisive silver -> adopted (coding.adopt), not queued
+            covered.add(case_id)  # decisive silver -> coded (coding.combine), not queued
             continue
         bronze_rows = bronze_by_case.get(case_id)
         priority = _case_presence_prob(bronze_rows) if bronze_rows is not None else "0.0000"
@@ -140,9 +140,9 @@ def build_review_queue(
     for case_id, case_rows in bronze_by_case.items():
         if case_id in gold_case_ids or case_id in diagnosed_cases:
             continue
-        # A bronze-only case always gets an adopted row (coding.adopt) except
+        # A bronze-only case always gets a combined row (coding.combine) except
         # an unidentified_cancer one, which is always low-confidence too (see
-        # coding.adopt._adopt_bronze_case) — either way it's covered.
+        # coding.combine._bronze_case_codes) — either way it's covered.
         covered.add(case_id)
         if not bronze_case_is_low_confidence(case_rows):
             continue
@@ -154,7 +154,7 @@ def build_review_queue(
 
     # Coverage invariant (WP9 fix 2): a case in the split ∪ silver ∪ bronze
     # universe with no gold, no diagnosis row and no bronze prediction at all
-    # falls through both loops above and coding.adopt entirely — queue it
+    # falls through both loops above and coding.combine entirely — queue it
     # here so it is never silently dropped.
     universe = split.train | split.calibration | split.test | set(silver_by_case) | set(bronze_by_case)
     for case_id in sorted(universe - covered):

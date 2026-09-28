@@ -11,9 +11,9 @@ Two files from ML complete the picture:
   dashboard. The reviews come back to ML as a gold export, and the next combined-codes file carries
   them.
 
-This replaces the backend's own review gate at ingest, the per-row confirm/correct/reject review,
-the review sheets (the Tier-3 audit and eval-batch CSVs) and the review queue as the thing the
-specialist works from.
+**The Audit Worklist replaces the Review Queue.** There is one place to review: a case-level
+worklist on the dashboard. It replaces the Review Queue's per-row confirm/correct/reject, the
+backend's own review gate at ingest, and the review sheets (the Tier-3 audit and eval-batch CSVs).
 
 ```
 pending_diagnoses ──► ML ──► combined_codes + review_queue ──► registry codes
@@ -74,10 +74,9 @@ CASE-0999,8050/3,Papillary adenocarcinoma,"Epithelial neoplasms, NOS",manual,eva
 6. **Retire the backend's own review gate at ingest** (`REVIEW_AUTO_ACCEPT_CONFIDENCE`/`MARGIN`) for
    codes that come from ML: `review_status` already carries ML's decision, made with the same
    thresholds (0.23 confidence, 0.15 margin).
-7. **Retire the per-row confirm/correct/reject review** in favour of the worklist review below. The
-   dashboard may show a specialist's answer straight away, but it is not the code of record until it
-   comes back from ML as `code_source=manual` in the next combined-codes file; otherwise the next
-   file would overwrite it.
+7. **Retire the Review Queue** (per-row confirm/correct/reject); the Audit Worklist (section 2)
+   replaces it. The dashboard may show a reviewer's answer straight away, but it is not the code of
+   record until it comes back from ML as `code_source=manual` in the next combined-codes file.
 
 ### When ML sends it
 
@@ -129,14 +128,34 @@ review queue is left off the worklist for now and will come back, smaller, in a 
 
 1. **Load the list as the specialist's worklist**, in file order, replacing the previous list. A
    case that drops off a newer list no longer needs review.
-2. **Review screen.** The specialist opens each case with its full record (diagnosis text, report,
-   and the case's current combined codes; seeing them is fine) and records one of:
-   - **the case's complete set of cancer codes** — every reportable cancer in the case, not only the
-     one on a particular diagnosis line. Each is a term chosen from the taxonomy
-     (`ml/taxonomy/labels.csv`), ideally from a picker so nothing is typed; or
-   - **no reportable cancer.**
+2. **Review screen: the full picture.** Each case opens with everything the reviewer needs to make
+   the best judgement:
+   - the patient's demographics;
+   - the report text;
+   - the clinical diagnosis line(s), if the case has any;
+   - the case's combined codes (section 1): each code with its taxonomy term and group, and where it
+     came from (`code_source`: an earlier review, the diagnosis text, or the report model).
 
-   Never both for the same case. The review can be edited until it is exported.
+   The reviewer then either:
+   - **approves** the combined codes, confirming they are the case's **complete** set: every
+     reportable cancer in the case, or none (`NO_CANCER`). Approving is a statement about the whole
+     case, not only that the codes shown are plausible; or
+   - **corrects** them: adds, removes or replaces codes, each a term chosen from the taxonomy
+     (`ml/taxonomy/labels.csv`) with a picker so nothing is typed, or marks the case as having no
+     reportable cancer.
+
+   Rules for the screen:
+   - Never codes and no cancer together on one case.
+   - **One case at a time; no bulk approve.** Approving means the reviewer opened the record and
+     checked it.
+   - A case with no combined code yet (awaiting review) opens with nothing to approve; the reviewer
+     codes it from scratch.
+   - The review can be edited until it is exported.
+
+   Showing the codes makes the review non-blind. The ML engineer has accepted this: accuracy
+   measured on the evaluation-batch cases may read somewhat optimistic, because reviewers tend to
+   accept what they are shown, and ML labels every accuracy report accordingly. No bulk approve keeps
+   that effect small.
 3. **Record who reviewed each case.**
 4. **Export the reviews as `gold_<export_id>.csv`** (UTF-8, header row):
 
@@ -148,6 +167,7 @@ review queue is left off the worklist for now and will come back, smaller, in a 
    CASE-0456,NO_CANCER
    ```
 
+   - Approved and corrected cases export the same way: the case's final code set.
    - One row per code, or exactly one `NO_CANCER` row for a no-cancer case.
    - Write each term as **`Group: Term`**, exactly as in `labels.csv`. One taxonomy term,
      "Papillary adenocarcinoma", exists in two groups, and the group prefix makes every row
@@ -162,6 +182,10 @@ review queue is left off the worklist for now and will come back, smaller, in a 
    - Either export everything reviewed so far or only what's new since the last export: re-sending a
      case replaces its earlier review on ML's side.
 5. **Send the file to ML** the same way the pending-diagnoses exports travel today.
+6. **Before switching off the Review Queue, send ML the case IDs of every case with a row that was
+   corrected or rejected there.** Those corrections are per-row, so they aren't gold, and the first
+   combined-codes load would overwrite them. ML puts those cases at the top of the next audit list,
+   so they are reviewed again as whole cases and nothing is lost.
 
 ML refuses the whole file, and imports nothing from it, if any row: has a term that isn't in the
 taxonomy; mixes `NO_CANCER` with a code on one case; repeats a code for a case; carries an `origin`
@@ -173,7 +197,8 @@ list. The error names the case IDs.
 - `pending_diagnoses_<export>.csv` (cloud → ML) and `silver_codes_<silver_id>.csv` (ML → cloud) are
   unchanged.
 - `review_queue_<run>.csv` still comes with every combined-codes file, but only to mark cases
-  awaiting review (section 1); the audit list is the specialist's worklist.
+  awaiting review (section 1). It is not a worklist, and there is no separate Review Queue on the
+  dashboard any more; its cases join the audit list when ML adds them to it.
 - The worker bundle is a separate request: [ml-worker-change-request.md](ml-worker-change-request.md).
 
 ## 4. What ML does on its side (for reference)

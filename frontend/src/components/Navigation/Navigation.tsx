@@ -95,6 +95,7 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
       return isAdmin || isReviewer;
     }
     if (tab.id === 'user-management') return isAdmin;
+    if (tab.id === 'settings') return !!user;
     return true;
   });
 
@@ -151,7 +152,7 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
                 California Canine Cancer Registry Dashboard
               </h1>
               <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                Cancer incidence data for dogs in California
+                Cancer statistics in dogs in California
               </p>
             </div>
           </div>

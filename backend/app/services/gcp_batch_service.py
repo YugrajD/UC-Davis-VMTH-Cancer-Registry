@@ -45,6 +45,25 @@ def download_predictions_from_gcs(job_id: int) -> list[dict[str, Any]]:
     return predictions
 
 
+def download_petbert_summary_from_gcs(job_id: int) -> dict[str, Any]:
+    """Download PetBERT's scan summary from GCS when the Batch job produced it."""
+    blob_path = f"{_GCS_PREFIX}/{job_id}/scan_output/petbert_summary.json"
+    blob = _get_bucket().blob(blob_path)
+    try:
+        raw = blob.download_as_bytes()
+    except Exception as exc:
+        logger.info("No PetBERT summary found for job %d at %s: %s", job_id, blob_path, exc)
+        return {}
+    try:
+        summary = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("Invalid PetBERT summary JSON for job %d at %s: %s", job_id, blob_path, exc)
+        return {}
+    method_counts = summary.get("prediction_method_counts", {})
+    logger.info("Downloaded PetBERT summary for job %d: methods=%s", job_id, method_counts)
+    return summary
+
+
 def cleanup_gcs_job_files(job_id: int) -> None:
     """Delete all blobs under uploads/{job_id}/."""
     bucket = _get_bucket()
@@ -115,8 +134,10 @@ def submit_batch_job(job_id: int, model_folder: str = "production") -> str:
     Returns the full job resource name
     (e.g. projects/{p}/locations/{l}/jobs/{j}).
 
-    model_folder selects which GCS bundle under gs://{bucket}/models/ to use.
-    Each folder must contain petbert/, labels/, and checkpoints/ subdirectories.
+    model_folder selects which GCS bundle under gs://{bucket}/models/ to use — one
+    report-mapping generation directory (ml/handoff/worker_format.py), verified at
+    worker startup against its manifest.json and refused if anything is missing or
+    changed. There are no optional files any more: the whole bundle travels together.
 
     Uses gsutil to download/upload files instead of gcsfuse volume mount
     to avoid compatibility issues with non-DNS-compliant bucket names.
@@ -127,39 +148,27 @@ def submit_batch_job(job_id: int, model_folder: str = "production") -> str:
     local_data = "/tmp/batch_data"
     input_csv = f"{local_data}/dataset_a.csv"
     output_dir = local_data
-    model_path = f"{local_data}/models/petbert"
-    labels_csv = f"{local_data}/models/labels/labels.csv"
-    case_presence_ckpt = f"{local_data}/models/checkpoints/case_presence_classifier.pt"
-    group_ckpt = f"{local_data}/models/checkpoints/group_classifier_best.pt"
-    lp_thresholds = f"{local_data}/models/checkpoints/lp_thresholds.json"
-    uncommon_groups_file = f"{local_data}/models/checkpoints/uncommon_groups.txt"
+    model_root = f"{local_data}/models/{model_folder}"
+    model_path = f"{model_root}/petbert"
     gcs_model_root = f"gs://{bucket}/models/{model_folder}"
 
-    # Pre-task: download input CSV, model weights, labels, and classifiers from GCS
-    # Uses google/cloud-sdk container since COS doesn't have gcloud installed.
-    # Required files use set -e (hard failure); optional files use || echo so a
-    # missing file degrades gracefully rather than aborting the job.
+    # Pre-task: download the input CSV and the whole model bundle from GCS in one
+    # recursive copy, preserving its internal layout (petbert/, labels/, checkpoints/,
+    # manifest.json). Uses google/cloud-sdk container since COS doesn't have gcloud
+    # installed. No optional-file fallbacks: the worker verifies the bundle's manifest
+    # at startup and refuses to run on an incomplete one, so a partial download should
+    # fail the job here rather than produce predictions from a mismatched bundle.
     setup_container = batch_v1.Runnable.Container(
         image_uri="gcr.io/google.com/cloudsdktool/google-cloud-cli:slim",
         commands=[
             "/bin/bash", "-c",
             " && ".join([
                 "set -e",
-                f"mkdir -p {local_data}/models/petbert {local_data}/models/labels {local_data}/models/checkpoints",
-                # Required
+                f"mkdir -p {local_data}/models",
                 f"echo 'Downloading input CSV...'",
                 f"gcloud storage cp 'gs://{bucket}/{_GCS_PREFIX}/{job_id}/dataset_a.csv' {input_csv}",
-                f"echo 'Downloading model weights from {gcs_model_root}...'",
-                f"gcloud storage cp -r '{gcs_model_root}/petbert/*' {model_path}/",
-                f"echo 'Downloading labels...'",
-                f"gcloud storage cp '{gcs_model_root}/labels/labels.csv' {labels_csv}",
-                f"echo 'Downloading group classifier (required)...'",
-                f"gcloud storage cp '{gcs_model_root}/checkpoints/group_classifier_best.pt' {group_ckpt}",
-                # Optional — missing files disable the corresponding pipeline stage
-                f"echo 'Downloading optional checkpoints...'",
-                f"gcloud storage cp '{gcs_model_root}/checkpoints/case_presence_classifier.pt' {case_presence_ckpt} || echo 'No case_presence_classifier.pt; Stage 1 gate disabled.'",
-                f"gcloud storage cp '{gcs_model_root}/checkpoints/lp_thresholds.json' {lp_thresholds} || echo 'No lp_thresholds.json; using global LP threshold.'",
-                f"gcloud storage cp '{gcs_model_root}/checkpoints/uncommon_groups.txt' {uncommon_groups_file} || echo 'No uncommon_groups.txt; using empty set.'",
+                f"echo 'Downloading model bundle from {gcs_model_root}...'",
+                f"gcloud storage cp -r '{gcs_model_root}' {local_data}/models/",
                 f"echo 'Download complete.'",
             ]),
         ],
@@ -182,16 +191,13 @@ def submit_batch_job(job_id: int, model_folder: str = "production") -> str:
                 "INPUT_CSV_PATH": input_csv,
                 "OUTPUT_DIR": output_dir,
                 "MODEL_PATH": model_path,
-                "LABELS_CSV_PATH": labels_csv,
-                "CASE_PRESENCE_CLASSIFIER_PATH": case_presence_ckpt,
-                "GROUP_CLASSIFIER_PATH": group_ckpt,
-                "LP_THRESHOLDS_JSON_PATH": lp_thresholds,
-                "UNCOMMON_GROUPS_PATH": uncommon_groups_file,
             },
         ),
     )
 
-    # Post-task: upload predictions back to GCS
+    # Post-task: upload predictions back to GCS. batch_predict.py writes only
+    # predictions.json — the old scan_output/ diagnostics directory belonged to
+    # the retired per-file pipeline and is never produced any more.
     upload_container = batch_v1.Runnable.Container(
         image_uri="gcr.io/google.com/cloudsdktool/google-cloud-cli:slim",
         commands=[

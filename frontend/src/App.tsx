@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, AuditWorklist, UserManagement, ResetPasswordModal, Settings } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
-import type { TabType, FilterState } from './types';
+import { useSessionStorageState } from './hooks/useSessionStorageState';
+import type { TabType, FilterState, AgeGroup } from './types';
 import {
   VET_ICD_O_CATEGORIES,
   classifyCancerType,
@@ -12,16 +13,32 @@ import {
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
+  // Sub-tab within "Diagnosis Review": the per-diagnosis correction queue, or
+  // the audit-list worklist (case-level gold review) — same page, same
+  // Diagnosis Review nav entry, since they're two views onto the same
+  // reviewer's work rather than separate features.
+  const [reviewSubTab, setReviewSubTab] = useState<'queue' | 'audit-worklist'>('queue');
   const [hoveredCounty, setHoveredCounty] = useState<string | null>(null);
   const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
+  // Persisted so the selection survives switching tabs and refreshing
+  // within the session, not just remaining mounted while switching tabs.
+  const [ageDisparitiesSelection, setAgeDisparitiesSelection] = useSessionStorageState<AgeGroup | ''>(
+    'ageDisparities.selectedAgeGroup',
+    '',
+  );
+  const [breedDisparitiesSelection, setBreedDisparitiesSelection] = useSessionStorageState(
+    'breedDisparities.selectedBreed',
+    '',
+  );
   const [filters, setFilters] = useState<FilterState>({
-    rateType: 'incidence',
+    rateType: 'pccp',
     sex: 'all',
+    ageGroup: 'all',
     cancerType: 'All Types',
     breed: 'All Breeds',
   });
 
-  const { countyData, regionSummary, countRange, loading, error } = useFilteredData(filters);
+  const { countyData, regionSummary, loading, error, overallPccp, overallCancerPatients, overallTotalPatients } = useFilteredData(filters);
   const cancerTypesState = useCancerTypesData(filters);
   const { passwordRecovery } = useAuth();
   const [cancerCategory, setCancerCategory] = useState<VetIcdOCategoryId | 'all'>('all');
@@ -57,15 +74,56 @@ function AppContent() {
         ) : activeTab === 'review-queue' ? (
           <AdminQueue />
         ) : activeTab === 'diagnosis-review' ? (
-          <DiagnosisReview />
+          <div className="space-y-4">
+            <div className="flex gap-1">
+              {([
+                { id: 'queue', label: 'Review Queue' },
+                { id: 'audit-worklist', label: 'Audit Worklist' },
+              ] as const).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setReviewSubTab(t.id)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+                    reviewSubTab === t.id
+                      ? 'border-blue-600 text-blue-700'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {reviewSubTab === 'queue' ? <DiagnosisReview /> : <AuditWorklist />}
+          </div>
         ) : activeTab === 'user-management' ? (
           <UserManagement />
+        ) : activeTab === 'settings' ? (
+          <Settings />
         ) : activeTab === 'breed-disparities' ? (
-          <BreedDisparitiesView />
+          <BreedDisparitiesView
+            selectedBreed={breedDisparitiesSelection}
+            onSelectedBreedChange={setBreedDisparitiesSelection}
+          />
+        ) : activeTab === 'cancer-by-age' ? (
+          <AgeDisparitiesView
+            selectedAgeGroup={ageDisparitiesSelection}
+            onSelectedAgeGroupChange={setAgeDisparitiesSelection}
+          />
         ) : activeTab === 'analysis' ? (
           <AnalysisView />
         ) : activeTab === 'cancer-types' ? (
           <div className="space-y-6">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3">
+              <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                <span className="font-semibold">PCCP (Pathology-Confirmed Cancer Proportion)</span> — percentage of all pathology-tested animals diagnosed with each cancer type.
+                The denominator is all petbert-tested animals regardless of cancer type.
+                Figures for rare cancer types (fewer than 10 cases) may be statistically unstable and should be interpreted with caution.
+              </p>
+            </div>
             <div className="bg-white rounded-lg border border-gray-200 p-4">
               <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
                 This view shows the distribution of cancer types across all ingested PetBERT cases.
@@ -139,7 +197,12 @@ function AppContent() {
                   No cancer types in this category for the selected filters.
                 </p>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-4">
+                    <span className="w-48 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Cancer Type</span>
+                    <span className="flex-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right pr-1">PCCP</span>
+                    <span className="w-20 text-[10px] font-medium text-gray-400 uppercase tracking-wider text-right">Numerator</span>
+                  </div>
                   {(() => {
                     const sorted = filteredCancerTypes.slice().sort((a, b) => b.count - a.count).slice(0, 10);
                     const maxCount = sorted[0]?.count || 1;
@@ -147,7 +210,7 @@ function AppContent() {
                       const width = Math.max(5, (record.count / maxCount) * 100);
                       return (
                         <div key={record.cancer_type} className="flex items-center gap-4">
-                          <span className="w-48 text-sm text-[var(--color-text-primary)]">
+                          <span className="w-48 text-sm text-[var(--color-text-primary)] truncate" title={record.cancer_type}>
                             {record.cancer_type}
                           </span>
                           <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
@@ -156,10 +219,13 @@ function AppContent() {
                               style={{ width: `${width}%` }}
                             >
                               <span className="text-xs font-semibold text-white">
-                                {record.count.toLocaleString()}
+                                {record.pccp != null ? `${record.pccp.toFixed(1)}%` : record.count.toLocaleString()}
                               </span>
                             </div>
                           </div>
+                          <span className="w-20 text-xs text-[var(--color-text-secondary)] text-right tabular-nums">
+                            {record.count.toLocaleString()}
+                          </span>
                         </div>
                       );
                     });
@@ -179,6 +245,18 @@ function AppContent() {
             regions. Use the filters on the right to explore data by cancer type, breed, and sex.
         </p>
       </div>
+
+        {/* PCCP disclaimer */}
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3">
+          <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          <p className="text-xs text-amber-800 leading-relaxed">
+            <span className="font-semibold">PCCP (Pathology-Confirmed Cancer Proportion)</span> — percentage of pathology-tested animals with a confirmed cancer diagnosis, per county.
+            The numerator is tested animals in that county with a confirmed cancer diagnosis; the denominator is all tested animals in that county regardless of diagnosis.
+            Figures for small cohorts (fewer than 10 tested animals) may be statistically unstable and should be interpreted with caution.
+          </p>
+        </div>
 
         {/* Error banner */}
         {error && (
@@ -207,12 +285,12 @@ function AppContent() {
               </div>
             ) : (
               <>
-                <SummaryTable data={regionSummary} />
+                <SummaryTable data={regionSummary} rateType={filters.rateType} />
                 <CountyTable
                   data={countyData}
-                  countRange={countRange}
                   onCountyHover={setHoveredCounty}
                   selectedCounty={selectedCounty}
+                  rateType={filters.rateType}
                 />
               </>
             )}
@@ -222,12 +300,25 @@ function AppContent() {
           <div className="space-y-6" id="filters-panel">
             <Filters filters={filters} onFilterChange={setFilters} />
             <ChoroplethMap
+              filters={filters}
               data={countyData}
-              countRange={countRange}
               hoveredCounty={hoveredCounty}
               onCountyHover={setHoveredCounty}
               onCountyClick={handleCountyClick}
             />
+            {overallTotalPatients > 0 && (
+              <div
+                title={`Overall PCCP: ${overallPccp.toFixed(1)}% — ${overallCancerPatients} cancer patients out of ${overallTotalPatients} tested`}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 cursor-help"
+              >
+                <svg className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                <span className="text-[11px] font-medium text-blue-700">
+                  Overall PCCP: {overallPccp.toFixed(1)}% · {overallCancerPatients} cancer / {overallTotalPatients} tested
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

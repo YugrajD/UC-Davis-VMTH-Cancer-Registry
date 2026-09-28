@@ -73,6 +73,7 @@ class Patient(Base):
     anon_id = Column(String(100), nullable=True, unique=True, index=True)
     zip_code = Column(String(10), nullable=True)
     data_source = Column(String(20), nullable=True, default="mock")
+    birth_date = Column(Date, nullable=True)
     diagnosis_date = Column(Date, nullable=True)
     outcome = Column(String(20), nullable=True)
 
@@ -94,9 +95,12 @@ class CaseDiagnosis(Base):
     predicted_term = Column(Text, nullable=True)
     pathology_report_id = Column(Integer, ForeignKey("pathology_reports.id"), nullable=True)
     confidence = Column(Numeric(4, 2), nullable=True)
-    prediction_method = Column(String(20), nullable=True)
+    prediction_method = Column(String(50), nullable=True)
     source_row_index = Column(Integer, nullable=True)
     diagnosis_index = Column(Integer, nullable=True)
+    # The report-mapping generation_id that produced this code (e.g. "gen-20260927T003905Z"),
+    # from the worker's source_version — see database/migrations/032_case_diagnosis_source_version.sql
+    source_version = Column(String(80), nullable=True)
 
     # Review workflow — see database/migrations/010_diagnosis_review.sql
     review_status = Column(String(20), nullable=False, server_default="confirmed")
@@ -163,6 +167,7 @@ class PathologyReport(Base):
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
     gcs_path = Column(String(1000), nullable=True)
     report_date = Column(Date, nullable=True)
+    source_diagnosis = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     patient = relationship("Patient", back_populates="reports")
@@ -235,6 +240,8 @@ class IngestionJob(Base):
     processing_stage = Column(String(50), nullable=True)
     result_summary = Column(JSONB, nullable=True)
     model_folder = Column(String(255), nullable=True)
+    clinic_name = Column(String(255), nullable=True)
+    upload_duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
 
@@ -280,3 +287,104 @@ class ExportRequest(Base):
     resolved_by_email = Column(String(255), nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+# --- Audit-list / gold review — see database/migrations/033_gold_review.sql ---
+# and ml/documentation/audit-list-change-request.md.
+
+
+class TaxonomyTerm(Base):
+    """A (group, term) pair from ml/taxonomy/labels.csv, seeded once (not read
+    live — production has no /ml mount). Backs the review screen's code picker
+    and validates case_review_codes rows before they're saved or exported."""
+    __tablename__ = "taxonomy_terms"
+
+    id = Column(Integer, primary_key=True)
+    vet_icd_o_code = Column(String(20), nullable=True)
+    taxonomy_group = Column(String(255), nullable=False)
+    taxonomy_term = Column(String(255), nullable=False)
+
+
+class AuditList(Base):
+    """One imported audit_list_<list_id>.txt. Only one is ever active — the
+    specialist's current worklist; loading a new list flips this one off."""
+    __tablename__ = "audit_lists"
+
+    id = Column(Integer, primary_key=True)
+    list_id = Column(String(100), nullable=False, unique=True)
+    imported_by_email = Column(String(255), nullable=False)
+    imported_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    sha256 = Column(String(64), nullable=False)
+    case_count = Column(Integer, nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default="false")
+
+    cases = relationship("AuditListCase", back_populates="audit_list", cascade="all, delete-orphan")
+
+
+class AuditListCase(Base):
+    """case_id + position within a list, exactly as ML sent it (never
+    normalized — the gold export echoes it back verbatim). Kept across every
+    list ever imported: export eligibility checks this table's full history,
+    since ML refuses the whole gold file if a case_id was never on any list."""
+    __tablename__ = "audit_list_cases"
+
+    id = Column(Integer, primary_key=True)
+    audit_list_id = Column(Integer, ForeignKey("audit_lists.id", ondelete="CASCADE"), nullable=False)
+    case_id = Column(String(100), nullable=False)
+    position = Column(Integer, nullable=False)
+
+    audit_list = relationship("AuditList", back_populates="cases")
+
+
+class GoldExport(Base):
+    """One admin-triggered export batch — a gold_<export_id>.csv for one
+    reviewer's completed, unlocked reviews."""
+    __tablename__ = "gold_exports"
+
+    id = Column(Integer, primary_key=True)
+    export_id = Column(String(100), nullable=False, unique=True)
+    reviewer_email = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    case_count = Column(Integer, nullable=False)
+
+
+class CaseReview(Base):
+    """One row per case ever reviewed from the audit-list worklist: either
+    no_cancer or a complete code set in case_review_codes, never both
+    (enforced in the router, not here).
+
+    Editable while locked = false. Exporting sets locked = true and records
+    the export in gold_export_id/exported_at — the most recent export this
+    case was part of, not a version history; ML's own audit_list_ledger.csv
+    is the system of record for prior gold versions. An admin can explicitly
+    reopen a locked review; re-exporting after an edit replaces ML's copy
+    (audit-list-change-request.md: "re-sending a case replaces its earlier
+    review on ML's side")."""
+    __tablename__ = "case_reviews"
+
+    id = Column(Integer, primary_key=True)
+    case_id = Column(String(100), nullable=False, unique=True)
+    no_cancer = Column(Boolean, nullable=False, server_default="false")
+    reviewed_by_email = Column(String(255), nullable=False)
+    reviewed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    locked = Column(Boolean, nullable=False, server_default="false")
+    gold_export_id = Column(Integer, ForeignKey("gold_exports.id", ondelete="SET NULL"), nullable=True)
+    exported_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    codes = relationship("CaseReviewCode", back_populates="case_review", cascade="all, delete-orphan")
+    gold_export = relationship("GoldExport")
+
+
+class CaseReviewCode(Base):
+    """One code in a case's complete set (only when case_reviews.no_cancer is
+    false). (group, term) must exist in taxonomy_terms — validated when the
+    review is saved and again at export time, in case the taxonomy changed."""
+    __tablename__ = "case_review_codes"
+
+    id = Column(Integer, primary_key=True)
+    case_review_id = Column(Integer, ForeignKey("case_reviews.id", ondelete="CASCADE"), nullable=False)
+    taxonomy_group = Column(String(255), nullable=False)
+    taxonomy_term = Column(String(255), nullable=False)
+
+    case_review = relationship("CaseReview", back_populates="codes")

@@ -119,6 +119,7 @@ GCP_BATCH_IMAGE_URI=us-central1-docker.pkg.dev/your-project/vmth/petbert-batch:l
 GCP_BATCH_MACHINE_TYPE=n1-standard-4
 GCP_BATCH_POLL_INTERVAL=60
 GCP_BATCH_TIMEOUT_HOURS=12
+GCP_BATCH_CLEANUP_JOB_FILES=false
 GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp-sa-key.json
 ```
 
@@ -128,6 +129,9 @@ GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp-sa-key.json
 2. **GCP Batch**: Set `USE_GCP_BATCH=true`, approve an upload, then monitor:
    - Backend logs for periodic `Batch status = RUNNING` messages
    - GCP Console → Batch → Jobs for the running job
+   - `gs://$GCS_BUCKET/uploads/{job_id}/predictions.json`
+     for PetBERT method counts such as `low_confidence`,
+     `unidentified_cancer`, `embedding`, and `label_presence`
 3. **Failure handling**: Kill the Batch job in GCP Console → backend detects `FAILED` → job marked failed with error.
 4. **Restart recovery**: Restart backend during a Batch run → stale job marked failed with `batch_job_name` logged.
 5. **DB check**: `SELECT id, status, batch_job_name FROM ingestion_jobs;`

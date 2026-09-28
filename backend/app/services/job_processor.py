@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,6 +69,17 @@ def _safe_error_message(e: Exception) -> str:
         return str(e)[:500]
     return type(e).__name__
 
+
+def _compact_petbert_summary(summary: dict) -> dict:
+    """Keep only diagnostic PetBERT fields worth storing on ingestion_jobs."""
+    if not summary:
+        return {}
+    return {
+        "input_rows": summary.get("input_rows"),
+        "prediction_method_counts": summary.get("prediction_method_counts", {}),
+        "predicted_group_counts": summary.get("predicted_group_counts", {}),
+        "thresholds": summary.get("thresholds", {}),
+    }
 
 
 async def _mark_failed(job_id: int, error_msg: str) -> None:
@@ -154,6 +166,9 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
         await db.commit()
 
     try:
+        t_job_start = time.perf_counter()
+        timings: dict[str, float] = {}
+
         # --- Phase 2: read file from disk (no DB needed) ----------------
         dataset_a_path = f"{storage_path}/dataset_a.csv"
 
@@ -164,11 +179,13 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
         await _update_job(job_id, processing_stage="running_ml_worker")
 
         ml_worker_url = f"{settings.ML_WORKER_URL}/predict"
+        _t = time.perf_counter()
         async with httpx.AsyncClient(timeout=ML_WORKER_TIMEOUT) as client:
             response = await client.post(
                 ml_worker_url,
                 files={"file": ("dataset_a.csv", dataset_a_bytes, "text/csv")},
             )
+        timings["ml_worker_s"] = round(time.perf_counter() - _t, 2)
 
         if response.status_code != 200:
             detail = "ML worker error"
@@ -181,6 +198,7 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
 
         ml_result = response.json()
         predictions = ml_result.get("predictions", [])
+        petbert_summary = _compact_petbert_summary(ml_result.get("petbert_summary") or {})
 
         if not predictions:
             raise RuntimeError("ML worker returned no predictions")
@@ -191,6 +209,7 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
             return
 
         await _update_job(job_id, processing_stage="ingesting")
+        _t = time.perf_counter()
 
         async with async_session() as db:
             ingestion_result = await ingest_upload(
@@ -201,6 +220,15 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
                 ingestion_job_id=job_id,
             )
 
+            timings["db_ingest_s"] = round(time.perf_counter() - _t, 2)
+            timings["total_s"] = round(time.perf_counter() - t_job_start, 2)
+            logger.info("Job %d timings: %s", job_id, timings)
+
+            summary = ingestion_result.result_summary or {}
+            summary["timings_seconds"] = timings
+            if petbert_summary:
+                summary["petbert"] = petbert_summary
+
             result = await db.execute(
                 select(IngestionJob).where(IngestionJob.id == job_id)
             )
@@ -209,18 +237,16 @@ async def _process_via_local_ml_worker(job_id: int) -> None:
                 job.status = "completed"
                 job.processing_stage = None
                 job.ingestion_log_id = ingestion_result.ingestion_log_id
-                job.result_summary = ingestion_result.result_summary
+                job.result_summary = summary
                 job.updated_at = datetime.now(timezone.utc)
                 await db.commit()
 
         logger.info("Job %d completed: %d inserted", job_id, ingestion_result.inserted)
         clear_all_caches()
-        _delete_upload_dir(storage_path)
 
     except Exception as e:
         logger.exception("Job %d failed", job_id)
         await _mark_failed(job_id, _safe_error_message(e))
-        _delete_upload_dir(storage_path)
 
 
 # ---------------------------------------------------------------------------
@@ -233,12 +259,13 @@ async def _process_via_gcp_batch(job_id: int) -> None:
     1. Upload dataset_a.csv to GCS
     2. Submit a Batch job
     3. Poll until SUCCEEDED/FAILED, updating processing_stage from GCP Batch state
-    4. Download predictions.json from GCS
+    4. Download predictions.json and PetBERT diagnostics from GCS
     5. Ingest into database
-    6. Cleanup GCS files
+    6. Optionally cleanup GCS files
     """
     from app.services.gcp_batch_service import (
         cleanup_gcs_job_files,
+        download_petbert_summary_from_gcs,
         download_predictions_from_gcs,
         get_batch_job_status,
         submit_batch_job,
@@ -267,6 +294,9 @@ async def _process_via_gcp_batch(job_id: int) -> None:
         await db.commit()
 
     try:
+        t_job_start = time.perf_counter()
+        timings: dict[str, float] = {}
+
         # --- Phase 2: read file and upload to GCS (no long DB hold) -----
         dataset_a_path = f"{storage_path}/dataset_a.csv"
 
@@ -274,16 +304,20 @@ async def _process_via_gcp_batch(job_id: int) -> None:
             dataset_a_bytes = f.read()
 
         logger.info("Job %d: uploading dataset_a.csv to GCS", job_id)
+        _t = time.perf_counter()
         await loop.run_in_executor(
             None, upload_csv_to_gcs, job_id, "dataset_a.csv", dataset_a_bytes
         )
+        timings["gcs_upload_s"] = round(time.perf_counter() - _t, 2)
 
         # --- Phase 3: submit Batch job ----------------------------------
         await _update_job(job_id, processing_stage="submitting_batch_job")
         logger.info("Job %d: submitting GCP Batch job (model_folder=%s)", job_id, model_folder)
+        _t = time.perf_counter()
         batch_job_name = await loop.run_in_executor(
             None, submit_batch_job, job_id, model_folder
         )
+        timings["batch_submit_s"] = round(time.perf_counter() - _t, 2)
 
         await _update_job(
             job_id,
@@ -295,6 +329,7 @@ async def _process_via_gcp_batch(job_id: int) -> None:
         logger.info("Job %d: polling Batch job %s", job_id, batch_job_name)
         terminal_states = {"SUCCEEDED", "FAILED", "DELETION_IN_PROGRESS"}
         poll_interval = settings.GCP_BATCH_POLL_INTERVAL
+        _t = time.perf_counter()
 
         while True:
             await asyncio.sleep(poll_interval)
@@ -314,6 +349,8 @@ async def _process_via_gcp_batch(job_id: int) -> None:
                 logger.info("Job %d was cancelled during Batch polling", job_id)
                 return
 
+        timings["batch_run_s"] = round(time.perf_counter() - _t, 2)
+
         if state != "SUCCEEDED":
             raise RuntimeError(
                 f"GCP Batch job {batch_job_name} ended with state {state}: "
@@ -323,15 +360,22 @@ async def _process_via_gcp_batch(job_id: int) -> None:
         # --- Phase 5: download predictions ------------------------------
         await _update_job(job_id, processing_stage="downloading_predictions")
         logger.info("Job %d: downloading predictions from GCS", job_id)
+        _t = time.perf_counter()
         predictions = await loop.run_in_executor(
             None, download_predictions_from_gcs, job_id
         )
+        petbert_summary_raw = await loop.run_in_executor(
+            None, download_petbert_summary_from_gcs, job_id
+        )
+        petbert_summary = _compact_petbert_summary(petbert_summary_raw)
+        timings["gcs_download_s"] = round(time.perf_counter() - _t, 2)
 
         if not predictions:
             raise RuntimeError("Batch job produced no predictions")
 
         # --- Phase 6: ingest into database (fresh session) --------------
         await _update_job(job_id, processing_stage="ingesting")
+        _t = time.perf_counter()
 
         async with async_session() as db:
             ingestion_result = await ingest_upload(
@@ -342,6 +386,15 @@ async def _process_via_gcp_batch(job_id: int) -> None:
                 ingestion_job_id=job_id,
             )
 
+            timings["db_ingest_s"] = round(time.perf_counter() - _t, 2)
+            timings["total_s"] = round(time.perf_counter() - t_job_start, 2)
+            logger.info("Job %d timings: %s", job_id, timings)
+
+            summary = ingestion_result.result_summary or {}
+            summary["timings_seconds"] = timings
+            if petbert_summary:
+                summary["petbert"] = petbert_summary
+
             result = await db.execute(
                 select(IngestionJob).where(IngestionJob.id == job_id)
             )
@@ -350,21 +403,23 @@ async def _process_via_gcp_batch(job_id: int) -> None:
                 job.status = "completed"
                 job.processing_stage = None
                 job.ingestion_log_id = ingestion_result.ingestion_log_id
-                job.result_summary = ingestion_result.result_summary
+                job.result_summary = summary
                 job.updated_at = datetime.now(timezone.utc)
                 await db.commit()
 
         logger.info("Job %d completed via GCP Batch: %d inserted", job_id, ingestion_result.inserted)
         clear_all_caches()
-        _delete_upload_dir(storage_path)
 
-        # Cleanup GCS files (best-effort)
-        try:
-            await loop.run_in_executor(None, cleanup_gcs_job_files, job_id)
-        except Exception:
-            logger.warning("Job %d: GCS cleanup failed (non-fatal)", job_id, exc_info=True)
+        # Cleanup GCS files (best-effort). Disabled by default so scan_output
+        # diagnostics remain available after a suspicious successful run.
+        if settings.GCP_BATCH_CLEANUP_JOB_FILES:
+            try:
+                await loop.run_in_executor(None, cleanup_gcs_job_files, job_id)
+            except Exception:
+                logger.warning("Job %d: GCS cleanup failed (non-fatal)", job_id, exc_info=True)
+        else:
+            logger.info("Job %d: preserving GCS Batch files for diagnostics", job_id)
 
     except Exception as e:
         logger.exception("Job %d failed (GCP Batch path)", job_id)
         await _mark_failed(job_id, _safe_error_message(e))
-        _delete_upload_dir(storage_path)

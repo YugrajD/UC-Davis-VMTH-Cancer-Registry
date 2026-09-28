@@ -87,7 +87,7 @@ jobs:
             # exports, and incompatible peer deps introduced by the update.
             if npm run build 2>&1; then
               git add package.json package-lock.json
-              git commit -m "chore: updated ${pkg} from ${OLD_VER} to ${NEW_VER}"
+              git commit -m "chore(deps): updated ${pkg} from ${OLD_VER} to ${NEW_VER}"
               echo "Committed: ${pkg} ${OLD_VER} -> ${NEW_VER}"
             else
               echo "Build failed after updating ${pkg}; reverting and continuing."

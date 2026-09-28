@@ -11,7 +11,12 @@ import sys
 
 import pandas as pd
 
-sys.path.insert(0, "/ml")
+for ml_path in (
+    "/ml",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ml")),
+):
+    if os.path.isdir(ml_path) and ml_path not in sys.path:
+        sys.path.insert(0, ml_path)
 
 import io_utils
 from handoff import worker_format

@@ -22,12 +22,12 @@ describe('CANCER_TYPES', () => {
     expect(specific.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('includes Lymphoma', () => {
-    expect(CANCER_TYPES).toContain('Lymphoma');
+  it('includes a lymphoma group', () => {
+    expect(CANCER_TYPES).toContain('Malignant lymphomas, NOS or diffuse');
   });
 
-  it('includes Osteosarcoma', () => {
-    expect(CANCER_TYPES).toContain('Osteosarcoma');
+  it('includes an osseous/bone tumor group', () => {
+    expect(CANCER_TYPES).toContain('Osseous and chondromatous neoplasms');
   });
 
   it('all entries are non-empty strings', () => {
@@ -115,10 +115,11 @@ describe('SEX_OPTIONS', () => {
 // ---------------------------------------------------------------------------
 
 describe('RATE_OPTIONS', () => {
-  it('contains incidence and mortality options', () => {
+  it('contains pccp, numerator, and denominator options', () => {
     const values = RATE_OPTIONS.map(o => o.value);
-    expect(values).toContain('incidence');
-    expect(values).toContain('mortality');
+    expect(values).toContain('pccp');
+    expect(values).toContain('numerator');
+    expect(values).toContain('denominator');
   });
 
   it('every option has a non-empty label', () => {
@@ -186,6 +187,7 @@ describe('TABS', () => {
     expect(ids).toContain('overview');
     expect(ids).toContain('breed-disparities');
     expect(ids).toContain('cancer-types');
+    expect(ids).toContain('cancer-by-age');
     expect(ids).toContain('analysis');
   });
 
@@ -201,8 +203,13 @@ describe('TABS', () => {
     expect(ids).toContain('user-management');
   });
 
-  it('contains exactly 8 tabs', () => {
-    expect(TABS.length).toBe(8);
+  it('contains the settings tab', () => {
+    const ids = TABS.map(t => t.id);
+    expect(ids).toContain('settings');
+  });
+
+  it('contains exactly 10 tabs', () => {
+    expect(TABS.length).toBe(10);
   });
 
   it('every tab has a non-empty label', () => {

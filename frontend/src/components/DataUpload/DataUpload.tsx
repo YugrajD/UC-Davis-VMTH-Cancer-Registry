@@ -188,15 +188,22 @@ const REQUIRED_COLUMNS = [
   'Sex',
   'Species',
   'Breed',
-  'Zipcode Zipcode',
-  'RfrrVtrn Zipcode Zipcode',
-  'DtOfRq',
-  'Text',
+  'Owner Zip Code',
+  'Veterinary Clinic Zipcode',
+  'Date of Request',
+  'Pathology Text',
 ];
+
+// Human-readable labels shown in the UI for required column names
+const COLUMN_DISPLAY_NAMES: Record<string, string> = {};
 
 // Aliases that map alternate column names to their canonical required name
 const COLUMN_ALIASES: Record<string, string> = {
-  'text (pathology report)': 'Text',
+  'text (pathology report)': 'Pathology Text',
+  'text': 'Pathology Text',                               // old canonical
+  'zipcode zipcode': 'Owner Zip Code',                    // old canonical
+  'rfrrvrtn zipcode zipcode': 'Veterinary Clinic Zipcode', // old canonical
+  'dtofrq': 'Date of Request',                            // old canonical
 };
 
 /**
@@ -333,6 +340,7 @@ export function DataUpload() {
   const { user, isUploader, isReviewer, isAdmin, getAccessToken } = useAuth();
   const [subTab, setSubTab] = useState<SubTab>('dataset');
   const [file, setFile] = useState<File | null>(null);
+  const [clinicName, setClinicName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
@@ -404,7 +412,7 @@ export function DataUpload() {
 
   useEffect(() => {
     if (user) {
-      loadMyJobs(); // eslint-disable-line react-hooks/set-state-in-effect
+      loadMyJobs();
       loadRoleRequests();
       loadExportRequests();
     }
@@ -466,6 +474,10 @@ export function DataUpload() {
       setError('Please select a dataset file.');
       return;
     }
+    if (!clinicName.trim()) {
+      setError('Please enter a clinic name.');
+      return;
+    }
 
     // Re-validate before upload
     const missing = await validateFile(file);
@@ -484,7 +496,7 @@ export function DataUpload() {
         setError('Not signed in');
         return;
       }
-      await uploadCSV(file, token);
+      await uploadCSV(file, token, clinicName.trim());
       setSubmitted(true);
       await loadMyJobs();
     } catch (err) {
@@ -496,6 +508,7 @@ export function DataUpload() {
 
   const handleReset = () => {
     setFile(null);
+    setClinicName('');
     setSubmitted(false);
     setError(null);
     if (fileRef.current) fileRef.current.value = '';
@@ -568,8 +581,18 @@ export function DataUpload() {
   const handleCombinedDownload = async () => {
     setCombinedDownloading(true);
     try {
+      // Pass the same filters the user set for the patient export.
+      // zipCode and breed are not supported by the county-level incidence
+      // endpoint so they are intentionally omitted here.
+      const incidenceFilters = {
+        ...(exportCancerType && { cancerTypes: [exportCancerType] }),
+        ...(exportCounty && { counties: [exportCounty] }),
+        ...(exportSex && { sex: exportSex }),
+        ...(exportYearStart && { yearStart: Number(exportYearStart) }),
+        ...(exportYearEnd && { yearEnd: Number(exportYearEnd) }),
+      };
       const [incidenceRes, cesData] = await Promise.all([
-        fetchIncidence(),
+        fetchIncidence(incidenceFilters),
         fetchCalEnviroScreen(),
       ]);
 
@@ -687,7 +710,7 @@ export function DataUpload() {
             <div className="flex flex-wrap gap-1.5 mb-3">
               {REQUIRED_COLUMNS.map(col => (
                 <code key={col} className="bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded text-xs">
-                  {col}
+                  {COLUMN_DISPLAY_NAMES[col] ?? col}
                 </code>
               ))}
             </div>
@@ -701,6 +724,18 @@ export function DataUpload() {
               </svg>
               Download template CSV
             </a>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Clinic name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={clinicName}
+                onChange={(e) => setClinicName(e.target.value)}
+                placeholder="e.g. UC Davis VMTH"
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)] focus:border-transparent"
+              />
+            </div>
             <label className="block">
               <span className="sr-only">Choose dataset file</span>
               <input
@@ -727,7 +762,7 @@ export function DataUpload() {
           <div className="flex items-center gap-4">
             <button
               onClick={handleUpload}
-              disabled={loading || !file}
+              disabled={loading || !file || !clinicName.trim()}
               className="px-6 py-2.5 bg-[var(--color-teal)] text-white text-sm font-semibold rounded-md
                 hover:bg-[var(--color-teal-dark)] disabled:opacity-50 disabled:cursor-not-allowed
                 transition-colors"
@@ -1102,4 +1137,3 @@ export function DataUpload() {
     </div>
   );
 }
-

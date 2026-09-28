@@ -12,13 +12,15 @@ from app.schemas.schemas import DashboardSummary, SpeciesBreakdown, TopCancer, F
 from app.models.models import (
     Species, Breed, CancerType, County, Patient, CaseDiagnosis
 )
-from app.services.review_filter import apply_review_filter
+from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 
-# Only count ingested (PetBERT) data; exclude mock/seed data
-_PETBERT_FILTER = Patient.data_source == "petbert"
+# Only count ingested (PetBERT) data from California zip codes.
+# Patients with a non-CA zip have county_id = NULL — they are excluded from all stats.
+# Patients with no zip at all have zip_code = NULL — included (we can't confirm non-CA).
+_PETBERT_FILTER = (Patient.data_source == "petbert") & CALIFORNIA_PATIENT_FILTER
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -83,7 +85,9 @@ async def get_summary(request: Request, db: AsyncSession = Depends(get_db)):
         .order_by(func.count(CaseDiagnosis.id).desc())
         .limit(8)
     )
-    result = await db.execute(apply_review_filter(top_cancers_query))
+    result = await db.execute(apply_review_filter(
+        top_cancers_query.where(CancerType.name != NON_CANCER_TYPE_NAME)
+    ))
     top_cancers = [TopCancer(cancer_type=name, count=cnt) for name, cnt in result.all()]
 
     # Top county (ingested only)
@@ -117,9 +121,22 @@ async def get_summary(request: Request, db: AsyncSession = Depends(get_db)):
 @cached_response("dashboard_filters", ttl=settings.CACHE_TTL_CALENVIRO)
 async def get_filter_options(request: Request, db: AsyncSession = Depends(get_db)):
     species = (await db.execute(select(Species).order_by(Species.name))).scalars().all()
-    cancer_types = (await db.execute(select(CancerType).order_by(CancerType.name))).scalars().all()
+    cancer_types = (await db.execute(
+        select(CancerType).where(CancerType.name != NON_CANCER_TYPE_NAME).order_by(CancerType.name)
+    )).scalars().all()
     counties = (await db.execute(select(County).order_by(County.name))).scalars().all()
-    breeds = (await db.execute(select(Breed).order_by(Breed.name))).scalars().all()
+    breeds = (await db.execute(
+        apply_review_filter(
+            select(Breed)
+            .join(Patient, Patient.breed_id == Breed.id)
+            .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
+            .join(CancerType, CancerType.id == CaseDiagnosis.cancer_type_id)
+            .where(CancerType.name != NON_CANCER_TYPE_NAME)
+            .where(CALIFORNIA_PATIENT_FILTER)
+            .group_by(Breed.id)
+            .order_by(Breed.name)
+        )
+    )).scalars().all()
 
     result = await db.execute(
         select(

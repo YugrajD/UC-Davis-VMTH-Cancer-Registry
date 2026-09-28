@@ -6,12 +6,13 @@ import logging
 import os
 import pathlib
 import re
+import time
 from datetime import datetime, timezone
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, get_current_user, require_admin, require_reviewer
@@ -71,9 +72,90 @@ def _ensure_csv(raw_bytes: bytes, filename: str) -> bytes:
     )
 
 
-# Column name mapping: uploaded name → name expected by GCP Batch image
+# Matches |H| or |B| section heading markers in pathology reports.
+_SECTION_HEADING_RE = re.compile(r"\|[HB]\|([^|:]+)[^|]*\|\|", re.IGNORECASE)
+# Strips sub-section markers (|U|..||, etc.) from section body content.
+_SUBSECTION_MARKER_RE = re.compile(r"\|[A-Za-z]\|[^|]*\|\|")
+
+# Maps known section name variants to the canonical names the pipeline expects.
+_SECTION_NAME_MAP: dict[str, str] = {
+    "HISTOPATHOLOGY SUMMARY": "HISTOPATHOLOGICAL SUMMARY",
+    "HISTOPATHOLOGIC SUMMARY": "HISTOPATHOLOGICAL SUMMARY",
+    "HISTOLOGICAL SUMMARY": "HISTOPATHOLOGICAL SUMMARY",
+    "HISTOPATHOLOGICAL DESCRIPTION": "HISTOPATHOLOGICAL SUMMARY",
+    "HISTOLOGIC DESCRIPTION": "HISTOPATHOLOGICAL SUMMARY",
+    "FINAL COMMENTS": "FINAL COMMENT",
+    "ANCILLARY TESTING": "ANCILLARY TESTS",
+    "ANCILLARY TEST": "ANCILLARY TESTS",
+    "ANCILLARY DIAGNOSTICS": "ANCILLARY TESTS",
+    "ADDITIONAL TESTS": "ANCILLARY TESTS",
+    "ANCILLARY": "ANCILLARY TESTS",
+    "COMMENTS": "COMMENT",
+    "ORIGINAL COMMENT": "COMMENT",
+}
+
+# The four columns the GCP Batch pipeline reads to build its CONCAT_3 embeddings.
+_PIPELINE_SECTION_COLS = ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "COMMENT", "ANCILLARY TESTS")
+
+
+def _parse_pathology_sections(text: str) -> dict[str, str]:
+    """Split a merged pipe-delimited pathology report into named sections."""
+    matches = list(_SECTION_HEADING_RE.finditer(text))
+    sections: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        raw = m.group(1).strip().upper()
+        name = _SECTION_NAME_MAP.get(raw, raw)
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        content = _SUBSECTION_MARKER_RE.sub("", text[start:end]).strip().lstrip(":").strip()
+        if content:
+            sections[name] = content
+    return sections
+
+
+def _add_pipeline_section_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Pre-parse Pathology Text into the four section columns the GCP Batch pipeline expects.
+
+    batch_predict.py skips its own inline extraction when these columns are
+    already present, so pre-parsing here ensures the GCP job uses the same
+    section boundaries as report_conversion.py rather than its own approximation.
+    """
+    if "Pathology Text" not in df.columns:
+        return df
+
+    for col in _PIPELINE_SECTION_COLS:
+        if col not in df.columns:
+            df[col] = ""
+
+    for idx in df.index:
+        text = str(df.at[idx, "Pathology Text"] or "")
+        if not text:
+            continue
+        secs = _parse_pathology_sections(text)
+        hist = secs.get("HISTOPATHOLOGICAL SUMMARY", text)
+        final = secs.get("FINAL COMMENT", "")
+        comment = secs.get("COMMENT") or final
+        anc = secs.get("ANCILLARY TESTS", "")
+        df.at[idx, "HISTOPATHOLOGICAL SUMMARY"] = hist
+        df.at[idx, "FINAL COMMENT"] = final
+        df.at[idx, "COMMENT"] = comment
+        df.at[idx, "ANCILLARY TESTS"] = anc
+
+    return df
+
+
+# Column name mapping: uploaded name (lowercase) → canonical name
+# Old canonical names are included so files saved before the rename remain readable.
 _COLUMN_RENAMES = {
-    "text (pathology report)": "Text",
+    "text (pathology report)": "Pathology Text",
+    "pathology text": "Pathology Text",
+    "text": "Pathology Text",                            # old canonical
+    "owner zip code": "Owner Zip Code",
+    "zipcode zipcode": "Owner Zip Code",                 # old canonical
+    "veterinary clinic zipcode": "Veterinary Clinic Zipcode",
+    "rfrrvrtn zipcode zipcode": "Veterinary Clinic Zipcode",  # old canonical
+    "date of request": "Date of Request",
+    "dtofrq": "Date of Request",                         # old canonical
 }
 
 
@@ -186,10 +268,27 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
     # Merge continuation rows into one record per patient.
     df = _merge_continuation_rows(df)
 
-    # Add anon_id if missing — one sequential ID per merged patient record.
-    if "anon_id" not in df.columns:
-        df.insert(0, "anon_id", [f"VMTH_{i}" for i in range(len(df))])
+    # Pre-parse pathology sections so the GCP Batch job receives clean columns.
+    df = _add_pipeline_section_columns(df)
 
+    return df.to_csv(index=False).encode("utf-8")
+
+
+async def _assign_case_ids(csv_bytes: bytes, db: AsyncSession) -> bytes:
+    """Inject CASE-#### anon_ids if the CSV has none, continuing from the DB max.
+
+    Clinics that provide their own anon_id column are left untouched.
+    """
+    df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
+    if "anon_id" in df.columns:
+        return csv_bytes
+    result = await db.execute(
+        text("SELECT COALESCE(MAX(CAST(substring(anon_id FROM 6) AS INTEGER)), 0) "
+             "FROM patients WHERE anon_id ~ '^CASE-[0-9]+$'")
+    )
+    current_max = result.scalar() or 0
+    ids = [f"CASE-{current_max + i + 1:04d}" for i in range(len(df))]
+    df.insert(0, "anon_id", ids)
     return df.to_csv(index=False).encode("utf-8")
 
 
@@ -226,6 +325,7 @@ async def ingestion_status():
 async def upload_datasets(
     request: Request,
     dataset_a: UploadFile = File(...),
+    clinic_name: str = Form(..., min_length=1, max_length=255),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -235,6 +335,10 @@ async def upload_datasets(
     """
     if not dataset_a.filename:
         raise HTTPException(status_code=400, detail="Dataset file is required")
+
+    # Start timing the server-side upload processing (file receive →
+    # normalization → job created in the review queue) for pipeline analysis.
+    t0 = time.perf_counter()
 
     dataset_a_bytes = await dataset_a.read()
 
@@ -268,6 +372,7 @@ async def upload_datasets(
         uploaded_by_email=user.email,
         uploaded_by_sub=user.sub,
         dataset_a_filename=_sanitize_filename(dataset_a.filename),
+        clinic_name=clinic_name.strip(),
         storage_path="",  # will update after we know the ID
         status="pending_review",
         created_at=datetime.now(timezone.utc),
@@ -275,6 +380,9 @@ async def upload_datasets(
     )
     db.add(job)
     await db.flush()
+
+    # Assign CASE-#### anon_ids now that we have DB access and a job ID.
+    dataset_a_bytes = await _assign_case_ids(dataset_a_bytes, db)
 
     # Save file to disk
     storage_path = os.path.join(settings.UPLOAD_DIR, str(job.id))
@@ -284,6 +392,7 @@ async def upload_datasets(
         f.write(dataset_a_bytes)
 
     job.storage_path = storage_path
+    job.upload_duration_ms = int((time.perf_counter() - t0) * 1000)
     await db.commit()
     await db.refresh(job)
 
@@ -383,7 +492,7 @@ async def preview_job_dataset(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="Upload file not available")
 
     def iter_file():
         with open(filepath, "rb") as f:
@@ -455,6 +564,7 @@ async def review_job(
             rejection_reason=review.rejection_reason if is_reject else None,
             processing_stage=None if is_reject else "queued",
             model_folder=None if is_reject else (review.model_folder or "production"),
+            clinic_name=None if is_reject else (review.clinic_name.strip() if review.clinic_name else None),
             reviewed_by_email=reviewer.email,
             reviewed_at=now,
             updated_at=now,
@@ -506,6 +616,7 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "id": job.id,
         "uploaded_by_email": job.uploaded_by_email,
         "dataset_a_filename": job.dataset_a_filename,
+        "clinic_name": job.clinic_name,
         "status": job.status,
         "processing_stage": job.processing_stage,
         "model_folder": job.model_folder,
@@ -516,6 +627,7 @@ def _job_to_dict(job: IngestionJob) -> dict:
         "processing_error": job.processing_error,
         "batch_job_name": job.batch_job_name,
         "result_summary": job.result_summary,
+        "upload_duration_ms": job.upload_duration_ms,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }

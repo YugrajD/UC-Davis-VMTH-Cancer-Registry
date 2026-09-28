@@ -12,8 +12,10 @@ import pytest
 from app.services.gcp_batch_service import (
     _LEGACY_MODEL_DIRS,
     _REPORTS_PREFIX,
+    download_petbert_summary_from_gcs,
     download_report_text_from_gcs,
     list_model_folders,
+    submit_batch_job,
     upload_report_text_to_gcs,
 )
 
@@ -148,3 +150,78 @@ def test_download_report_text_from_gcs_decodes_utf8(mock_get_bucket):
     download_report_text_from_gcs("reports/1/ID_1.txt")
 
     mock_blob.download_as_text.assert_called_once_with(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# submit_batch_job — one-shot bundle download, MODEL_PATH wiring
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.gcp_batch_service._get_batch_client")
+def test_submit_batch_job_downloads_bundle_in_one_recursive_copy(mock_get_client, monkeypatch):
+    import app.services.gcp_batch_service as svc
+
+    mock_get_client.return_value.create_job.return_value = SimpleNamespace(name="jobs/test")
+    monkeypatch.setattr(svc.settings, "GCS_BUCKET", "bucket")
+    monkeypatch.setattr(svc.settings, "GCP_PROJECT_ID", "project")
+    monkeypatch.setattr(svc.settings, "GCP_REGION", "us-central1")
+    monkeypatch.setattr(svc.settings, "GCP_BATCH_IMAGE_URI", "image")
+
+    submit_batch_job(job_id=42, model_folder="production")
+
+    created_job = mock_get_client.return_value.create_job.call_args.kwargs["job"]
+    setup_commands = created_job.task_groups[0].task_spec.runnables[0].container.commands
+    setup_script = setup_commands[2]
+    assert "gcloud storage cp -r 'gs://bucket/models/production' /tmp/batch_data/models/" in setup_script
+    # No optional-file fallbacks — a partial bundle must fail the job, not degrade silently.
+    assert "|| echo" not in setup_script
+
+
+@patch("app.services.gcp_batch_service._get_batch_client")
+def test_submit_batch_job_sets_only_model_path_env(mock_get_client, monkeypatch):
+    import app.services.gcp_batch_service as svc
+
+    mock_get_client.return_value.create_job.return_value = SimpleNamespace(name="jobs/test")
+    monkeypatch.setattr(svc.settings, "GCS_BUCKET", "bucket")
+    monkeypatch.setattr(svc.settings, "GCP_PROJECT_ID", "project")
+    monkeypatch.setattr(svc.settings, "GCP_REGION", "us-central1")
+    monkeypatch.setattr(svc.settings, "GCP_BATCH_IMAGE_URI", "image")
+
+    submit_batch_job(job_id=42, model_folder="production")
+
+    created_job = mock_get_client.return_value.create_job.call_args.kwargs["job"]
+    env = created_job.task_groups[0].task_spec.runnables[1].environment.variables
+    assert env["MODEL_PATH"] == "/tmp/batch_data/models/production/petbert"
+    assert set(env.keys()) == {"JOB_ID", "INPUT_CSV_PATH", "OUTPUT_DIR", "MODEL_PATH"}
+
+
+@patch("app.services.gcp_batch_service._get_batch_client")
+def test_submit_batch_job_upload_step_only_sends_predictions_json(mock_get_client, monkeypatch):
+    import app.services.gcp_batch_service as svc
+
+    mock_get_client.return_value.create_job.return_value = SimpleNamespace(name="jobs/test")
+    monkeypatch.setattr(svc.settings, "GCS_BUCKET", "bucket")
+    monkeypatch.setattr(svc.settings, "GCP_PROJECT_ID", "project")
+    monkeypatch.setattr(svc.settings, "GCP_REGION", "us-central1")
+    monkeypatch.setattr(svc.settings, "GCP_BATCH_IMAGE_URI", "image")
+
+    submit_batch_job(job_id=42, model_folder="production")
+
+    created_job = mock_get_client.return_value.create_job.call_args.kwargs["job"]
+    upload_commands = created_job.task_groups[0].task_spec.runnables[2].container.commands
+    assert "predictions.json" in upload_commands[2]
+    assert "scan_output" not in upload_commands[2]
+
+
+@patch("app.services.gcp_batch_service._get_bucket")
+def test_download_petbert_summary_from_gcs_uses_scan_output_path(mock_get_bucket):
+    mock_blob = MagicMock()
+    mock_blob.download_as_bytes.return_value = b'{"prediction_method_counts": {"low_confidence": 2}}'
+    mock_get_bucket.return_value.blob.return_value = mock_blob
+
+    result = download_petbert_summary_from_gcs(job_id=9)
+
+    mock_get_bucket.return_value.blob.assert_called_once_with(
+        "uploads/9/scan_output/petbert_summary.json"
+    )
+    assert result["prediction_method_counts"] == {"low_confidence": 2}

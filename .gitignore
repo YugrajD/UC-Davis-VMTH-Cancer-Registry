@@ -21,6 +21,7 @@ lerna-debug.log*
 # Build output
 frontend/dist/
 frontend/.vite/
+frontend/coverage/
 dist-ssr/
 *.local
 
@@ -31,6 +32,9 @@ logs/
 # Environment
 .env
 .env.local
+
+# GCP service account keys
+secrets/
 
 # Claude Code
 CLAUDE.md
@@ -80,8 +84,9 @@ ml/data/*
 
 # Database
 pgdata/
-!database/migrations/*.sql
-!database/scripts/*.sql
+
+# Upload staging area — files are patient data and must never be committed
+backend/uploads/
 
 # Ingestion data (real patient data — never commit)
 database/data/**
@@ -186,3 +191,21 @@ _archive/
 .stfolder/
 .stversions/
 *.sync-conflict-*
+
+# Local implementation plans (never commit — working drafts only)
+plans/
+
+# Database migrations and scripts are schema, never patient data — this must stay
+# last so it wins over every blanket/PHI pattern above (e.g. *_review*, *spot_check*).
+!database/migrations/*.sql
+!database/scripts/*.sql
+
+# Source code is never patient data — same reasoning, same fix. A filename like
+# audit_review.py or case_sample_utils.py can otherwise get silently swallowed
+# by a PHI catch-all pattern above (e.g. *_review*, *case_sample*) forever,
+# with git status giving no sign anything is wrong. Directory-level ignores
+# (node_modules/, .venv/, ml-*/, dist/, etc.) still win over these — a bare
+# filename negation can't pull a file out of an already-ignored directory.
+!*.py
+!*.ts
+!*.tsx

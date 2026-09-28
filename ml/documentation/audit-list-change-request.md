@@ -26,20 +26,22 @@ pending_diagnoses ──► ML ──► combined_predictions + review_queue ─
 ### What ML sends
 
 `combined_predictions_<run>.csv`, plus a sidecar `combined_predictions_<run>.csv.manifest.json`
-(`{"kind": "combined_predictions", "schema_version": 1, "sha256": ..., "written_at": ...}`). UTF-8,
+(`{"kind": "combined_predictions", "schema_version": 2, "sha256": ..., "written_at": ...}`). UTF-8,
 header row, no report or diagnosis text:
 
 ```
-case_id,code,term,group,code_source,source_version,source_confidence,review_status
-CASE-0123,9740.2/1,Cutaneous mast cell tumor grade Patnaik II,Mast cell neoplasms,diagnosis,silver-0-legacy,tier1_exact,auto_accepted
-CASE-0123,8810/3,"Fibrosarcoma, NOS",Fibromatous neoplasms,diagnosis,silver-0-legacy,tier1_exact,auto_accepted
-CASE-0456,NO_CANCER,,,diagnosis,silver-0-legacy,no_signal,auto_accepted
-CASE-0789,8810/3,"Fibrosarcoma, NOS",Fibromatous neoplasms,report,gen-0-legacy,0.74,auto_accepted
-CASE-0999,8050/3,Papillary adenocarcinoma,"Epithelial neoplasms, NOS",manual,eval_batch:2026-10-01-1,,confirmed
+case_id,code,term,group,code_source,source_version,source_confidence,review_status,n_codes
+CASE-0123,9740.2/1,Cutaneous mast cell tumor grade Patnaik II,Mast cell neoplasms,diagnosis,silver-0-legacy,tier1_exact,auto_accepted,2
+CASE-0123,8810/3,"Fibrosarcoma, NOS",Fibromatous neoplasms,diagnosis,silver-0-legacy,tier1_exact,auto_accepted,2
+CASE-0456,NO_CANCER,,,diagnosis,silver-0-legacy,no_signal,auto_accepted,1
+CASE-0789,8810/3,"Fibrosarcoma, NOS",Fibromatous neoplasms,report,gen-0-legacy,0.74,auto_accepted,1
+CASE-0999,8050/3,Papillary adenocarcinoma,"Epithelial neoplasms, NOS",manual,eval_batch:2026-10-01-1,,confirmed,1
 ```
 
 - **One row per code**; a case with several cancers has several rows. A non-cancer case has exactly
   one row with `code` = `NO_CANCER` and empty `term`/`group`.
+- **`n_codes`** — how many rows the case has, repeated on each of them (1 for a `NO_CANCER` case), so
+  a multi-code case is visible from any of its rows and a load can check it received them all.
 - **`code_source`** — where the case's codes came from, one value per case:
 
   | `code_source` | Means | `source_version` | `source_confidence` |

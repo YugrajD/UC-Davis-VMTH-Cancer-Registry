@@ -102,6 +102,8 @@ def test_bronze_high_confidence_takes_all_its_codes_auto_accepted(scenario):
     assert set(rows["code"]) == {"B001", "B002"}
     assert (rows["code_source"] == "report").all()
     assert (rows["review_status"] == "auto_accepted").all()
+    assert (rows["n_codes"] == 2).all()
+    assert (_rows_for(df, C.DECISIVE_NONCANCER)["n_codes"] == 1).all()
 
 
 def test_bronze_low_confidence_by_threshold_is_queued(scenario):

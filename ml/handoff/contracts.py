@@ -60,7 +60,7 @@ SILVER_EXPORT_COLUMNS = [c for c in ANNOTATION_COLUMNS if c != TEXT_COL] + ["sil
 # text-free (coding.combine / coding.queue never carry report or diagnosis text).
 # ---------------------------------------------------------------------------
 COMBINED_PREDICTIONS_EXPORT_KIND = "combined_predictions"
-COMBINED_PREDICTIONS_EXPORT_SCHEMA_VERSION = 1
+COMBINED_PREDICTIONS_EXPORT_SCHEMA_VERSION = 2  # v2: n_codes
 COMBINED_PREDICTIONS_EXPORT_COLUMNS = COMBINED_PREDICTIONS_COLUMNS
 
 REVIEW_QUEUE_EXPORT_KIND = "review_queue"

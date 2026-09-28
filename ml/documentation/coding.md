@@ -65,7 +65,8 @@ ml/.venv/Scripts/python.exe ml/scripts/code_cases.py combine --silver silver-0-l
 ```
 
 `COMBINED_PREDICTIONS_COLUMNS`: `case_id, code, term, group, code_source, source_version,
-source_confidence, review_status`.
+source_confidence, review_status, n_codes`. One row per code; `n_codes` is the case's row count,
+repeated on each of its rows (1 for a `NO_CANCER` case).
 
 ## Corrected annotations (`corrected.py`)
 

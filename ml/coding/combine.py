@@ -40,7 +40,7 @@ from manual_audit.gold import NO_CANCER, load_gold
 
 COMBINED_PREDICTIONS_COLUMNS = [
     "case_id", "code", "term", "group", "code_source",
-    "source_version", "source_confidence", "review_status",
+    "source_version", "source_confidence", "review_status", "n_codes",
 ]
 
 # ---------------------------------------------------------------------------
@@ -243,7 +243,10 @@ def combine_predictions(
             # else: an unidentified_cancer bronze-only case — no combined row;
             # it is queued instead (coding.queue).
 
-    return pd.DataFrame(rows, columns=COMBINED_PREDICTIONS_COLUMNS)
+    df = pd.DataFrame(rows, columns=COMBINED_PREDICTIONS_COLUMNS)
+    # Rows per case (a NO_CANCER case has 1), on every row, so a multi-code case is visible from any of its rows.
+    df["n_codes"] = df.groupby("case_id")["code"].transform("size")
+    return df
 
 
 def write_combined_predictions(

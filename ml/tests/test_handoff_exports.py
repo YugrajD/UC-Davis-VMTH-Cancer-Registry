@@ -7,7 +7,7 @@ import pytest
 
 import config
 import io_utils
-from coding.combine import COMBINED_CODES_COLUMNS
+from coding.combine import COMBINED_PREDICTIONS_COLUMNS
 from coding.queue import REVIEW_QUEUE_COLUMNS
 from handoff import contracts, exports
 
@@ -52,10 +52,10 @@ def test_export_silver_drops_diagnosis_text(handoff_root):
 
 
 def test_export_coding_writes_both_files(handoff_root):
-    combined = pd.DataFrame([{c: "" for c in COMBINED_CODES_COLUMNS}])
+    combined = pd.DataFrame([{c: "" for c in COMBINED_PREDICTIONS_COLUMNS}])
     combined.loc[0, ["case_id", "code"]] = ["CASE-A", "1001/3"]
-    config.COMBINED_CODES_CSV.parent.mkdir(parents=True, exist_ok=True)
-    io_utils.write_csv(combined, config.COMBINED_CODES_CSV)
+    config.COMBINED_PREDICTIONS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    io_utils.write_csv(combined, config.COMBINED_PREDICTIONS_CSV)
 
     queue = pd.DataFrame([{c: "" for c in REVIEW_QUEUE_COLUMNS}])
     queue.loc[0, ["case_id", "reason"]] = ["CASE-B", "vague_silver"]
@@ -64,17 +64,17 @@ def test_export_coding_writes_both_files(handoff_root):
 
     result = exports.export_coding("run1")
 
-    assert result["combined_codes_path"] == config.HANDOFF_OUTBOX_DIR / "combined_codes_run1.csv"
+    assert result["combined_predictions_path"] == config.HANDOFF_OUTBOX_DIR / "combined_predictions_run1.csv"
     assert result["review_queue_path"] == config.HANDOFF_OUTBOX_DIR / "review_queue_run1.csv"
     assert result["combined_rows"] == 1 and result["review_queue_rows"] == 1
-    contracts.verify_sidecar(result["combined_codes_path"], expected_kind=contracts.COMBINED_CODES_EXPORT_KIND)
+    contracts.verify_sidecar(result["combined_predictions_path"], expected_kind=contracts.COMBINED_PREDICTIONS_EXPORT_KIND)
     contracts.verify_sidecar(result["review_queue_path"], expected_kind=contracts.REVIEW_QUEUE_EXPORT_KIND)
 
 
 def test_export_coding_missing_column_refused(handoff_root):
     bad = pd.DataFrame([{"case_id": "CASE-A"}])  # missing every other required column
-    config.COMBINED_CODES_CSV.parent.mkdir(parents=True, exist_ok=True)
-    io_utils.write_csv(bad, config.COMBINED_CODES_CSV)
+    config.COMBINED_PREDICTIONS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    io_utils.write_csv(bad, config.COMBINED_PREDICTIONS_CSV)
     config.REVIEW_QUEUE_CSV.parent.mkdir(parents=True, exist_ok=True)
     io_utils.write_csv(pd.DataFrame([{c: "" for c in REVIEW_QUEUE_COLUMNS}]), config.REVIEW_QUEUE_CSV)
 

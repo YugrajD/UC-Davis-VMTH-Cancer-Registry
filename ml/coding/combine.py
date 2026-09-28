@@ -1,4 +1,4 @@
-"""The combination rule: gold > silver > bronze, one combined code set per case.
+"""The combination rule: gold > silver > bronze, one combined prediction per case.
 
 Per icd-mapping-strategy.md ("Coding a case") and ml-rewrite-plan.md's
 Artefacts:
@@ -38,7 +38,7 @@ from coding.rule import case_is_vague
 from diagnosis_mapping.silver import load_silver
 from manual_audit.gold import NO_CANCER, load_gold
 
-COMBINED_CODES_COLUMNS = [
+COMBINED_PREDICTIONS_COLUMNS = [
     "case_id", "code", "term", "group", "code_source",
     "source_version", "source_confidence", "review_status",
 ]
@@ -194,19 +194,19 @@ def _bronze_case_codes(case_id: str, rows: pd.DataFrame, generation_id: str) -> 
     return combined
 
 
-def combine_codes(
+def combine_predictions(
     silver_id: str,
     split_id: str,
     predictions_csv: str | Path,
     *,
     generation_id: str | None = None,
 ) -> pd.DataFrame:
-    """Build the combined-codes table for every case in silver ∪ bronze ∪ gold.
+    """Build the combined-predictions table for every case in silver ∪ bronze ∪ gold.
 
     Gold beats silver beats bronze; a vague silver case contributes no row
     here at all (see the module docstring). ``split_id`` is accepted (and
     required) for CLI/API symmetry with ``coding.corrected``/``coding.queue``,
-    which both need a split to resolve partitions; ``combine_codes`` itself
+    which both need a split to resolve partitions; ``combine_predictions`` itself
     doesn't currently need one (gold rows are now provenance-stamped from
     their own origin, not a split-scoped gold snapshot — see
     ``_gold_source_version``).
@@ -243,10 +243,10 @@ def combine_codes(
             # else: an unidentified_cancer bronze-only case — no combined row;
             # it is queued instead (coding.queue).
 
-    return pd.DataFrame(rows, columns=COMBINED_CODES_COLUMNS)
+    return pd.DataFrame(rows, columns=COMBINED_PREDICTIONS_COLUMNS)
 
 
-def write_combined_codes(
+def write_combined_predictions(
     silver_id: str,
     split_id: str,
     predictions_csv: str | Path,
@@ -254,8 +254,8 @@ def write_combined_codes(
     generation_id: str | None = None,
     out_csv: str | Path | None = None,
 ) -> Path:
-    out_path = Path(out_csv) if out_csv is not None else config.COMBINED_CODES_CSV
-    df = combine_codes(silver_id, split_id, predictions_csv, generation_id=generation_id)
+    out_path = Path(out_csv) if out_csv is not None else config.COMBINED_PREDICTIONS_CSV
+    df = combine_predictions(silver_id, split_id, predictions_csv, generation_id=generation_id)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     io_utils.write_csv(df, out_path)
     return out_path

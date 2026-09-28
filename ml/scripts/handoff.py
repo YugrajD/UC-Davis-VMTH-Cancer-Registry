@@ -44,7 +44,7 @@ def _cmd_export_silver(args: argparse.Namespace) -> int:
 
 def _cmd_export_coding(args: argparse.Namespace) -> int:
     result = exports.export_coding(args.run_id)
-    print(f"wrote {result['combined_codes_path']} ({result['combined_rows']} rows)")
+    print(f"wrote {result['combined_predictions_path']} ({result['combined_rows']} rows)")
     print(f"wrote {result['review_queue_path']} ({result['review_queue_rows']} rows)")
     return 0
 
@@ -82,7 +82,7 @@ def main() -> int:
     p = sub.add_parser("export-silver", help="Write silver_codes_<silver_id>.csv to the outbox.")
     p.add_argument("--silver-id", required=True)
 
-    p = sub.add_parser("export-coding", help="Write combined_codes_<run>.csv + review_queue_<run>.csv to the outbox.")
+    p = sub.add_parser("export-coding", help="Write combined_predictions_<run>.csv + review_queue_<run>.csv to the outbox.")
     p.add_argument("--run-id", required=True)
 
     p = sub.add_parser("export-bundle", help="Tar a report-mapping generation + sha256 for ml-worker.")

@@ -64,7 +64,7 @@ pipeline's own data.
 ml/.venv/Scripts/python.exe ml/scripts/code_cases.py combine --silver silver-0-legacy --split three-way-v1 --predictions PATH
 ```
 
-`COMBINED_CODES_COLUMNS`: `case_id, code, term, group, code_source, source_version,
+`COMBINED_PREDICTIONS_COLUMNS`: `case_id, code, term, group, code_source, source_version,
 source_confidence, review_status`.
 
 ## Corrected annotations (`corrected.py`)

@@ -20,7 +20,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from coding.combine import COMBINED_CODES_COLUMNS
+from coding.combine import COMBINED_PREDICTIONS_COLUMNS
 from coding.queue import REVIEW_QUEUE_COLUMNS
 from diagnosis_mapping.silver import ANNOTATION_COLUMNS, DIAG_NUM_COL, ID_COL, TEXT_COL
 from generations.manifest import sha256_file
@@ -56,12 +56,12 @@ SILVER_EXPORT_SCHEMA_VERSION = 1
 SILVER_EXPORT_COLUMNS = [c for c in ANNOTATION_COLUMNS if c != TEXT_COL] + ["silver_generation"]
 
 # ---------------------------------------------------------------------------
-# Outbox: combined codes + review queue (ML -> cloud). Both are already
+# Outbox: combined predictions + review queue (ML -> cloud). Both are already
 # text-free (coding.combine / coding.queue never carry report or diagnosis text).
 # ---------------------------------------------------------------------------
-COMBINED_CODES_EXPORT_KIND = "combined_codes"
-COMBINED_CODES_EXPORT_SCHEMA_VERSION = 1
-COMBINED_CODES_EXPORT_COLUMNS = COMBINED_CODES_COLUMNS
+COMBINED_PREDICTIONS_EXPORT_KIND = "combined_predictions"
+COMBINED_PREDICTIONS_EXPORT_SCHEMA_VERSION = 1
+COMBINED_PREDICTIONS_EXPORT_COLUMNS = COMBINED_PREDICTIONS_COLUMNS
 
 REVIEW_QUEUE_EXPORT_KIND = "review_queue"
 REVIEW_QUEUE_EXPORT_SCHEMA_VERSION = 1

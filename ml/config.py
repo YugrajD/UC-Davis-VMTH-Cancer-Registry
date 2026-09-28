@@ -70,11 +70,11 @@ AUDIT_LIST_LEDGER_CSV = MANUAL_AUDIT_DIR / "audit_list_ledger.csv"
 EVAL_BATCH_DIR = MANUAL_AUDIT_DIR / "eval_batch"
 
 # ---------------------------------------------------------------------------
-# Coding: corrected annotations, combined codes, review queue
+# Coding: corrected annotations, combined predictions, review queue
 # ---------------------------------------------------------------------------
 CODING_DIR = OUTPUT_DIR / "coding"
 CORRECTED_ANNOTATIONS_CSV = CODING_DIR / "corrected_annotations.csv"
-COMBINED_CODES_CSV = CODING_DIR / "combined_codes.csv"
+COMBINED_PREDICTIONS_CSV = CODING_DIR / "combined_predictions.csv"
 REVIEW_QUEUE_CSV = CODING_DIR / "review_queue.csv"
 
 # ---------------------------------------------------------------------------

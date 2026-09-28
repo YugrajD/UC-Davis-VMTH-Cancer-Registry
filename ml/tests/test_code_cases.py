@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from coding.combine import COMBINED_CODES_COLUMNS
+from coding.combine import COMBINED_PREDICTIONS_COLUMNS
 from coding.corrected import CORRECTED_COLUMNS
 from coding.queue import REVIEW_QUEUE_COLUMNS
 
@@ -38,7 +38,7 @@ def _run(monkeypatch, argv: list[str]) -> int:
     return code_cases_script.main()
 
 
-def test_combine_subcommand_writes_combined_codes_csv(scenario, monkeypatch, tmp_path):
+def test_combine_subcommand_writes_combined_predictions_csv(scenario, monkeypatch, tmp_path):
     out_path = tmp_path / "combined.csv"
     rc = _run(monkeypatch, [
         "combine", "--silver", scenario["silver_id"], "--split", scenario["split_id"],
@@ -46,7 +46,7 @@ def test_combine_subcommand_writes_combined_codes_csv(scenario, monkeypatch, tmp
     ])
     assert rc == 0
     df = pd.read_csv(out_path, dtype=str, keep_default_na=False)
-    assert list(df.columns) == COMBINED_CODES_COLUMNS
+    assert list(df.columns) == COMBINED_PREDICTIONS_COLUMNS
     assert fx.CodingCaseIDs.G_DIAG in set(df["case_id"])
 
 

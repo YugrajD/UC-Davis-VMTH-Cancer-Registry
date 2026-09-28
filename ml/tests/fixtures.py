@@ -670,7 +670,7 @@ def point_coding_config_at(monkeypatch, root: Path) -> None:
     coding_dir = root / "output" / "coding"
     monkeypatch.setattr(config, "CODING_DIR", coding_dir)
     monkeypatch.setattr(config, "CORRECTED_ANNOTATIONS_CSV", coding_dir / "corrected_annotations.csv")
-    monkeypatch.setattr(config, "COMBINED_CODES_CSV", coding_dir / "combined_codes.csv")
+    monkeypatch.setattr(config, "COMBINED_PREDICTIONS_CSV", coding_dir / "combined_predictions.csv")
     monkeypatch.setattr(config, "REVIEW_QUEUE_CSV", coding_dir / "review_queue.csv")
 
 
@@ -825,7 +825,7 @@ def build_coding_scenario(monkeypatch, root: Path) -> dict:
 def point_evaluation_config_at(monkeypatch, root: Path) -> None:
     """Redirect every config path evaluation/ reads or writes into ``root``
     (builds on ``point_coding_config_at``: splits, silver, gold, ledger, cause and
-    audit stores, combined codes)."""
+    audit stores, combined predictions)."""
     import config
 
     point_coding_config_at(monkeypatch, root)
@@ -844,7 +844,7 @@ def point_handoff_config_at(monkeypatch, root: Path) -> None:
     """Redirect every config path handoff/ reads or writes into ``root``.
 
     Builds on ``point_coding_config_at`` (silver dir, gold store, eval-batch
-    ledger, combined codes, review queue) and adds the inbox/outbox dirs and
+    ledger, combined predictions, review queue) and adds the inbox/outbox dirs and
     the report-mapping generation dirs (``export_bundle``'s source).
     """
     import config

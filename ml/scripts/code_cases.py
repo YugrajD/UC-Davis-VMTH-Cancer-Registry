@@ -1,4 +1,4 @@
-"""Coding-rule outputs: combined codes, corrected annotations, the review queue.
+"""Coding-rule outputs: combined predictions, corrected annotations, the review queue.
 
 Usage:
   python ml/scripts/code_cases.py combine   --silver SID --split SPLIT --predictions PATH [--generation-id ID] [--out PATH]
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from coding.combine import write_combined_codes
+from coding.combine import write_combined_predictions
 from coding.corrected import write_corrected_annotations
 from coding.queue import write_review_queue
 
@@ -20,7 +20,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    combine = sub.add_parser("combine", help="Write the combined-codes table.")
+    combine = sub.add_parser("combine", help="Write the combined-predictions table.")
     combine.add_argument("--silver", required=True)
     combine.add_argument("--split", required=True)
     combine.add_argument("--predictions", required=True)
@@ -42,7 +42,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "combine":
-        out_path = write_combined_codes(
+        out_path = write_combined_predictions(
             args.silver, args.split, args.predictions,
             generation_id=args.generation_id, out_csv=args.out,
         )

@@ -1,4 +1,4 @@
-"""The coding rule, combined codes, corrected annotations and the review queue.
+"""The coding rule, combined predictions, corrected annotations and the review queue.
 
 Implements "Coding a case" in ml/documentation/icd-mapping-strategy.md:
 gold > silver > bronze precedence, a vagueness table read from the diagnosis

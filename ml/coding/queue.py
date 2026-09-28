@@ -14,7 +14,7 @@ overrides silver"):
   prediction at all (WP9 fix 2: e.g. an upload whose report never made it
   into ``report.csv``). ``coding.combine`` has nothing to code for such a
   case either, so without this reason it would silently vanish from both
-  the combined-codes table and the review queue. Always the lowest priority
+  the combined-predictions table and the review queue. Always the lowest priority
   (``NO_EVIDENCE_PRIORITY``, below any real bronze probability): there is no
   signal at all to rank it by, and it must never crowd out a case bronze or
   silver actually ran on.

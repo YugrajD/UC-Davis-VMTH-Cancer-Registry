@@ -83,7 +83,7 @@ All under `output/` (gitignored). Paths below are the `config.py` constants, rel
 | `output/manual_audit/audit_list_ledger.csv` | Every case put on a universal audit list, with the gold origin it must come back under. |
 | `output/manual_audit/eval_batch/` | Case-level eval-batch review sheets. |
 | `output/coding/corrected_annotations.csv` | The report mapping's training labels (train partition only). |
-| `output/coding/combined_codes.csv` | The best current code set per case: gold > silver > bronze. |
+| `output/coding/combined_predictions.csv` | The best current code set per case: gold > silver > bronze. |
 | `output/coding/review_queue.csv` | Cases the specialist needs to look at. |
 | `output/report_mapping/current/`, `output/report_mapping/candidate/` | Report-mapping generations (production / being trained). Layout in [report-mapping.md](report-mapping.md). |
 | `output/report_mapping/embedding_cache/<key>.npz` | Content-hash keyed PetBERT embedding cache. Never bundled into a generation. |
@@ -161,7 +161,7 @@ ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
 | [training-guide.md](training-guide.md) | You're retraining and need exact commands + expected runtimes. |
 | [ml-rewrite-plan.md](ml-rewrite-plan.md) | You're working on the rewrite itself: contract, work packages, parity runbook, status. |
 | [ml-worker-change-request.md](ml-worker-change-request.md) | You're deploying the worker or changing the backend's model-upload path. |
-| [audit-list-change-request.md](audit-list-change-request.md) | You're wiring the combined codes, the dashboard review worklist or the gold export on the backend. |
+| [audit-list-change-request.md](audit-list-change-request.md) | You're wiring the combined predictions, the dashboard review worklist or the gold export on the backend. |
 | [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer. |
 | [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) | Proposed (not implemented) Box + rclone layout for sharing data and weights. |
 | [archive/](archive/) | Historical docs — the pre-rewrite tree, the annotation-redesign plan, phase logs. Do not consult for current behavior. |

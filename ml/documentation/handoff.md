@@ -19,7 +19,7 @@ know about. Column lists are read from their owning module's own constants
 | `pending_diagnoses` | inbox (cloud → ML) | `case_id, diagnosis_number, diagnosis` | Yes — inbox-only, never committed |
 | `gold` (v2) | inbox (cloud → ML) | `case_id, term/code, ...`; `origin` optional for a listed case | No |
 | `silver_codes` | outbox (ML → cloud) | annotation columns minus `diagnosis`, plus `silver_generation` | No |
-| `combined_codes` | outbox (ML → cloud) | `coding.combine.COMBINED_CODES_COLUMNS` | No |
+| `combined_predictions` | outbox (ML → cloud) | `coding.combine.COMBINED_PREDICTIONS_COLUMNS` | No |
 | `review_queue` | outbox (ML → cloud) | `coding.queue.REVIEW_QUEUE_COLUMNS` | No |
 | `audit_list` | outbox (ML → cloud) | a `.txt`, one case_id per line, in review order | No |
 | `report_mapping_bundle` | outbox (ML → cloud) | a whole generation directory, tarred | No |
@@ -56,7 +56,7 @@ ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-audit-list --list-id 20
 
 - **`export_silver`** — `silver_codes_<silver_id>.csv`. No diagnosis text (the cloud already holds
   it — it sent it as `pending_diagnoses`).
-- **`export_coding`** — `combined_codes_<run>.csv` + `review_queue_<run>.csv`, the already-computed
+- **`export_coding`** — `combined_predictions_<run>.csv` + `review_queue_<run>.csv`, the already-computed
   `coding.combine`/`coding.queue` outputs, re-stamped with a schema version. Both are already
   text-free.
 - **`export_bundle`** — tars a report-mapping generation directory + a `.sha256` sidecar, for

@@ -1,14 +1,14 @@
-# Change request for the backend: combined codes and the review worklist (audit list)
+# Change request for the backend: combined predictions and the review worklist (audit list)
 
 **From:** ML. **To:** the backend developer.
 
 Two files from ML complete the picture:
 
-- **`combined_codes_<run>.csv`** — the best code set ML currently has for every case, combining
+- **`combined_predictions_<run>.csv`** — the best code set ML currently has for every case, combining
   gold (specialist reviews), silver (the diagnosis-text mapping) and bronze (the report model). The
   backend loads it as the registry's code of record.
 - **`audit_list_<list_id>.txt`** — the cases ML needs a specialist to review, as a worklist on the
-  dashboard. The reviews come back to ML as a gold export, and the next combined-codes file carries
+  dashboard. The reviews come back to ML as a gold export, and the next combined-predictions file carries
   them.
 
 **The Audit Worklist replaces the Review Queue.** There is one place to review: a case-level
@@ -16,17 +16,17 @@ worklist on the dashboard. It replaces the Review Queue's per-row confirm/correc
 backend's own review gate at ingest, and the review sheets (the Tier-3 audit and eval-batch CSVs).
 
 ```
-pending_diagnoses ──► ML ──► combined_codes + review_queue ──► registry codes
+pending_diagnoses ──► ML ──► combined_predictions + review_queue ──► registry codes
                        ▲  └─► audit_list ──► dashboard worklist ──┐
                        └──────────── gold export ◄────────────────┘
 ```
 
-## 1. Combined codes: the registry's code of record
+## 1. Combined predictions: the registry's code of record
 
 ### What ML sends
 
-`combined_codes_<run>.csv`, plus a sidecar `combined_codes_<run>.csv.manifest.json`
-(`{"kind": "combined_codes", "schema_version": 1, "sha256": ..., "written_at": ...}`). UTF-8,
+`combined_predictions_<run>.csv`, plus a sidecar `combined_predictions_<run>.csv.manifest.json`
+(`{"kind": "combined_predictions", "schema_version": 1, "sha256": ..., "written_at": ...}`). UTF-8,
 header row, no report or diagnosis text:
 
 ```
@@ -66,9 +66,9 @@ CASE-0999,8050/3,Papillary adenocarcinoma,"Epithelial neoplasms, NOS",manual,eva
    `report`; for `diagnosis` it names the mapping stage.
 4. **Record no cancer at the case level**, not as a code row: a `NO_CANCER` case is coded and
    cancer-free, which is different from a case with no codes yet.
-5. **Mark cases awaiting review with `review_queue_<run>.csv`** (sent with every combined-codes
+5. **Mark cases awaiting review with `review_queue_<run>.csv`** (sent with every combined-predictions
    file, same `<run>`; only its `case_id` column matters here). A case on the review queue that has
-   no row in the combined codes has no code yet: show it as *awaiting review*, with no codes, and
+   no row in the combined predictions has no code yet: show it as *awaiting review*, with no codes, and
    leave it out of the registry's counts. A case in neither file hasn't reached ML yet; leave it as
    it is.
 6. **Retire the backend's own review gate at ingest** (`REVIEW_AUTO_ACCEPT_CONFIDENCE`/`MARGIN`) for
@@ -76,14 +76,14 @@ CASE-0999,8050/3,Papillary adenocarcinoma,"Epithelial neoplasms, NOS",manual,eva
    thresholds (0.23 confidence, 0.15 margin).
 7. **Retire the Review Queue** (per-row confirm/correct/reject); the Audit Worklist (section 2)
    replaces it. The dashboard may show a reviewer's answer straight away, but it is not the code of
-   record until it comes back from ML as `code_source=manual` in the next combined-codes file.
+   record until it comes back from ML as `code_source=manual` in the next combined-predictions file.
 
 ### When ML sends it
 
-A new `combined_codes_<run>` + `review_queue_<run>` pair after every pending-diagnoses import and
+A new `combined_predictions_<run>` + `review_queue_<run>` pair after every pending-diagnoses import and
 every gold import. A newer `<run>` replaces the older one.
 
-**Current file: `combined_codes_2026-09-27.csv`**, 59,763 rows across 54,103 cases:
+**Current file: `combined_predictions_2026-09-27.csv`**, 59,763 rows across 54,103 cases:
 
 | `code_source` | `review_status` | Cancer cases | No-cancer cases |
 |---|---|---:|---:|
@@ -133,11 +133,11 @@ review queue is left off the worklist for now and will come back, smaller, in a 
    - the patient's demographics;
    - the report text;
    - the clinical diagnosis line(s), if the case has any;
-   - the case's combined codes (section 1): each code with its taxonomy term and group, and where it
+   - the case's combined predictions (section 1): each code with its taxonomy term and group, and where it
      came from (`code_source`: an earlier review, the diagnosis text, or the report model).
 
    The reviewer then either:
-   - **approves** the combined codes, confirming they are the case's **complete** set: every
+   - **approves** the combined predictions, confirming they are the case's **complete** set: every
      reportable cancer in the case, or none (`NO_CANCER`). Approving is a statement about the whole
      case, not only that the codes shown are plausible; or
    - **corrects** them: adds, removes or replaces codes, each a term chosen from the taxonomy
@@ -148,7 +148,7 @@ review queue is left off the worklist for now and will come back, smaller, in a 
    - Never codes and no cancer together on one case.
    - **One case at a time; no bulk approve.** Approving means the reviewer opened the record and
      checked it.
-   - A case with no combined code yet (awaiting review) opens with nothing to approve; the reviewer
+   - A case with no combined prediction yet (awaiting review) opens with nothing to approve; the reviewer
      codes it from scratch.
    - The review can be edited until it is exported.
 
@@ -184,7 +184,7 @@ review queue is left off the worklist for now and will come back, smaller, in a 
 5. **Send the file to ML** the same way the pending-diagnoses exports travel today.
 6. **Before switching off the Review Queue, send ML the case IDs of every case with a row that was
    corrected or rejected there.** Those corrections are per-row, so they aren't gold, and the first
-   combined-codes load would overwrite them. ML puts those cases at the top of the next audit list,
+   combined-predictions load would overwrite them. ML puts those cases at the top of the next audit list,
    so they are reviewed again as whole cases and nothing is lost.
 
 ML refuses the whole file, and imports nothing from it, if any row: has a term that isn't in the
@@ -196,7 +196,7 @@ list. The error names the case IDs.
 
 - `pending_diagnoses_<export>.csv` (cloud → ML) and `silver_codes_<silver_id>.csv` (ML → cloud) are
   unchanged.
-- `review_queue_<run>.csv` still comes with every combined-codes file, but only to mark cases
+- `review_queue_<run>.csv` still comes with every combined-predictions file, but only to mark cases
   awaiting review (section 1). It is not a worklist, and there is no separate Review Queue on the
   dashboard any more; its cases join the audit list when ML adds them to it.
 - The worker bundle is a separate request: [ml-worker-change-request.md](ml-worker-change-request.md).

@@ -6,7 +6,7 @@ Four outbox kinds (ml-rewrite-plan.md Artefacts, "Handoff"):
   cascade's codes for a silver generation, so the backend can apply the coding
   rule. No diagnosis text (the cloud already has it — it sent it as
   pending_diagnoses).
-- ``export_coding`` — ``combined_codes_<run>.csv`` + ``review_queue_<run>.csv``:
+- ``export_coding`` — ``combined_predictions_<run>.csv`` + ``review_queue_<run>.csv``:
   the already-computed ``coding.combine`` / ``coding.queue`` outputs, re-stamped
   with a schema version and copied to the outbox. Both are already free of
   report/diagnosis text.
@@ -72,19 +72,19 @@ def export_coding(
     queue_csv: str | Path | None = None,
     out_dir: str | Path | None = None,
 ) -> dict:
-    """Write ``combined_codes_<run_id>.csv`` and ``review_queue_<run_id>.csv``
+    """Write ``combined_predictions_<run_id>.csv`` and ``review_queue_<run_id>.csv``
     from the already-built ``coding.combine`` / ``coding.queue`` outputs."""
-    combined_src = Path(combined_csv) if combined_csv is not None else config.COMBINED_CODES_CSV
+    combined_src = Path(combined_csv) if combined_csv is not None else config.COMBINED_PREDICTIONS_CSV
     queue_src = Path(queue_csv) if queue_csv is not None else config.REVIEW_QUEUE_CSV
     out_dir = Path(out_dir) if out_dir is not None else config.HANDOFF_OUTBOX_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
     combined = io_utils.read_csv(combined_src, encoding="utf-8", dtype=str, keep_default_na=False)
-    _check_required_columns(combined_src, combined.columns, contracts.COMBINED_CODES_EXPORT_COLUMNS)
-    combined_out = out_dir / f"combined_codes_{run_id}.csv"
+    _check_required_columns(combined_src, combined.columns, contracts.COMBINED_PREDICTIONS_EXPORT_COLUMNS)
+    combined_out = out_dir / f"combined_predictions_{run_id}.csv"
     io_utils.write_csv(combined, combined_out)
     contracts.write_sidecar(
-        combined_out, kind=contracts.COMBINED_CODES_EXPORT_KIND, schema_version=contracts.COMBINED_CODES_EXPORT_SCHEMA_VERSION,
+        combined_out, kind=contracts.COMBINED_PREDICTIONS_EXPORT_KIND, schema_version=contracts.COMBINED_PREDICTIONS_EXPORT_SCHEMA_VERSION,
     )
 
     queue = io_utils.read_csv(queue_src, encoding="utf-8", dtype=str, keep_default_na=False)
@@ -96,7 +96,7 @@ def export_coding(
     )
 
     return {
-        "combined_codes_path": combined_out, "review_queue_path": queue_out,
+        "combined_predictions_path": combined_out, "review_queue_path": queue_out,
         "combined_rows": len(combined), "review_queue_rows": len(queue),
     }
 

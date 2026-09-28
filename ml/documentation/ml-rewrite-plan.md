@@ -296,7 +296,7 @@ ml/
   term = no cancer. Old `annotation.csv` qualifies unchanged. Corrected annotations add
   `label_source (gold|silver), silver_generation, gold_snapshot`; train partition only; vague-without-gold
   excluded.
-- **Combined codes**: `case_id, code, term, group, code_source (manual|diagnosis|report), source_version,
+- **Combined predictions**: `case_id, code, term, group, code_source (manual|diagnosis|report), source_version,
   source_confidence, review_status (auto_accepted|queued|confirmed)`.
 - **Review queue**: `case_id, reason (vague_silver|low_conf_bronze|random_slice|no_evidence), priority,
   partition, silver_generation, bronze_generation`. `no_evidence` (WP9 fix 2, lowest priority) covers a
@@ -311,7 +311,7 @@ ml/
   {partition, objective, values}; file sha256s; scores; status). The embedding cache sits beside it, never
   bundled.
 - **Handoff**: inbox `pending_diagnoses_<export>.csv`, `gold_<export>.csv`; outbox
-  `silver_codes_<silver_id>.csv`, `combined_codes_<run>.csv`, `review_queue_<run>.csv`, bundle tarball; each
+  `silver_codes_<silver_id>.csv`, `combined_predictions_<run>.csv`, `review_queue_<run>.csv`, bundle tarball; each
   with a sidecar manifest (schema_version, sha256).
 
 ## Entry points (`scripts/`)

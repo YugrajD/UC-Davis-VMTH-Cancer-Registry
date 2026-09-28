@@ -17,7 +17,7 @@ import pytest
 
 import config
 import io_utils
-from coding.combine import COMBINED_CODES_COLUMNS
+from coding.combine import COMBINED_PREDICTIONS_COLUMNS
 from coding.queue import REVIEW_QUEUE_COLUMNS
 
 from . import fixtures as fx
@@ -72,13 +72,13 @@ def test_export_silver_cli(monkeypatch, handoff_root):
 
 
 def test_export_coding_cli(monkeypatch, handoff_root):
-    config.COMBINED_CODES_CSV.parent.mkdir(parents=True, exist_ok=True)
-    io_utils.write_csv(pd.DataFrame([{c: "" for c in COMBINED_CODES_COLUMNS}]), config.COMBINED_CODES_CSV)
+    config.COMBINED_PREDICTIONS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    io_utils.write_csv(pd.DataFrame([{c: "" for c in COMBINED_PREDICTIONS_COLUMNS}]), config.COMBINED_PREDICTIONS_CSV)
     config.REVIEW_QUEUE_CSV.parent.mkdir(parents=True, exist_ok=True)
     io_utils.write_csv(pd.DataFrame([{c: "" for c in REVIEW_QUEUE_COLUMNS}]), config.REVIEW_QUEUE_CSV)
 
     assert _run(monkeypatch, ["export-coding", "--run-id", "run1"]) == 0
-    assert (config.HANDOFF_OUTBOX_DIR / "combined_codes_run1.csv").is_file()
+    assert (config.HANDOFF_OUTBOX_DIR / "combined_predictions_run1.csv").is_file()
     assert (config.HANDOFF_OUTBOX_DIR / "review_queue_run1.csv").is_file()
 
 

@@ -77,7 +77,7 @@ def _gold_rows(case_id: str, rows: pd.DataFrame) -> list[dict]:
         {
             "case_id": case_id, "matched_term": r["term"], "matched_group": r["group"],
             # A gold NO_CANCER row carries the literal sentinel in "code" (the
-            # combined-codes table's own convention); the labels-table
+            # combined-predictions table's own convention); the labels-table
             # contract instead reads an empty matched_term as non-cancer (see
             # report_mapping.training.labels), same as a silver non-cancer row
             # (which already has matched_code == ""). Normalise here so gold

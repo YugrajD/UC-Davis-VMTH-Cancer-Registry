@@ -40,7 +40,6 @@ function job(overrides: Partial<IngestionJob>): IngestionJob {
     id: 1,
     uploaded_by_email: 'uploader@example.com',
     dataset_a_filename: 'pending-a.csv',
-    dataset_b_filename: 'pending-b.csv',
     status: 'pending_review',
     created_at: '2026-01-01T00:00:00.000Z',
     ...overrides,

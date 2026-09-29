@@ -29,7 +29,6 @@ const completedJob: IngestionJob = {
   id: 1,
   uploaded_by_email: 'user@example.com',
   dataset_a_filename: 'clinical.csv',
-  dataset_b_filename: 'demo.csv',
   status: 'completed',
   created_at: '2026-01-02T10:00:00.000Z',
 };

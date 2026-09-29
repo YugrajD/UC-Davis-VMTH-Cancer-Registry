@@ -13,7 +13,7 @@
 | Auth | Supabase Auth | **Amazon Cognito** |
 | Database | Supabase Postgres 16 + PostGIS 3.4 | **RDS for PostgreSQL 16 + PostGIS** |
 | Backend compute | Cloud Run | **ECS Fargate + ALB** |
-| ML inference | GCP Batch + GCS | **AWS Batch + S3** |
+| ML inference | GCP Batch + GCS | **ECS Fargate RunTask + S3** |
 | File/report storage | GCS | **S3** |
 | Container images | Artifact Registry | **ECR** |
 | Admin data browsing | Supabase Table Editor | pgAdmin / RDS Query Editor (new) |
@@ -39,7 +39,7 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
    - **Amplify Hosting app**: connect the frontend's GitHub repo, configure the build (Vite build settings), and set up the custom domain and managed SSL cert ahead of DNS cutover.
    - **ECR repository** for the backend image and the PetBERT batch image (replaces Artifact Registry).
    - **ECS Fargate service** (cluster, task definition, service, ALB + target group) pointed at the ECR image, sized to match `backend/service.yaml`'s current resource limits (0.5–1 vCPU, 256–512Mi).
-   - **AWS Batch compute environment + job queue + job definition** for PetBERT inference (replaces GCP Batch). Job definition mirrors the 3-runnable structure in `gcp_batch_service.py`: pull model/CSV from S3, run PetBERT container, push predictions back to S3 — but AWS Batch typically does this with one container plus S3-mounted volumes or explicit `aws s3 cp` steps in the entrypoint rather than GCP Batch's runnable list, so the ml-worker entrypoint script needs rework, not just a job-spec swap.
+   - **ECS Fargate ML task definition** (no Service) for PetBERT inference (replaces GCP Batch), started on demand by the backend via `ecs:RunTask` — see `infra/lib/app-stack.ts`. AWS Batch was considered and dropped: no GPU is used today (GCP runs `n1-standard-4`, CPU-only, ~10 h/run), and RunTask avoids the extra compute-environment/queue resources. The container entrypoint (`ml-worker/s3_batch_entrypoint.py`) downloads inputs from S3, runs PetBERT, and uploads results back.
 2. Build the full cutover checklist by inventorying every touchpoint:
    - **Vercel**: no `vercel.json` in the repo — build settings, env vars, and domain are configured entirely via the Vercel dashboard. Nothing to port from-repo; must be manually replicated into Amplify Hosting's build settings and env var config.
    - **Supabase — env vars**: `DATABASE_URL`, `DATABASE_URL_SYNC`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
@@ -73,15 +73,17 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
 3. **Frontend**: replace `@supabase/supabase-js` in `lib/supabase.ts` with `amazon-cognito-identity-js` or AWS Amplify Auth; rewrite sign-in/sign-out/Google OAuth/password-reset calls in `AuthContext.tsx` and `LoginModal.tsx`. Re-verify the password-reset flow preserves the same email-prefetch-safety property the current PKCE flow provides (see `docs/handoff/HANDOFF.md` password-reset section) — Cognito's default confirmation-code flow needs a manual check against this requirement.
 4. `user_roles` table logic (`backend/app/models/models.py`, role checks in `auth.py`) is unaffected — it's keyed by email and independent of the JWT issuer.
 
-## Phase 3 — Storage & ML batch migration (GCS + GCP Batch → S3 + AWS Batch)
+## Phase 3 — Storage & ML batch migration (GCS + GCP Batch → S3 + ECS Fargate RunTask)
 
-1. **Storage (`backend/app/services/gcp_batch_service.py`)**: rewrite as an S3-backed service using `boto3`. Map GCS prefixes 1:1 — `uploads/{job_id}/` (CSV uploads), `reports/{job_id}/{anon_id}.txt` (pathology report text), `models/` (PetBERT model bundles). Rename `gcs_path` column on `pathology_reports` (`backend/app/models/models.py:165`) to a generic `storage_path` or `s3_key` and add a migration; update all readers/writers (`ingestion_service.py`, `job_processor.py`, `ingest.py`).
-   - **Local dev — S3 via Floci**: local dev now provisions RDS + Cognito through Floci (see `docs/floci-local-dev-migration.md`), which also emulates S3 behind the same `:4566` endpoint — no separate MinIO container needed. `boto3`'s client takes an `endpoint_url` override — point it at Floci in dev (`AWS_S3_ENDPOINT_URL=http://floci:4566`) and leave it unset in prod so `boto3` talks to real AWS S3. Bucket creation can fold into `floci-init.sh`'s existing one-shot provisioning step. This covers the storage half of Phase 3 only — S3 emulation doesn't cover AWS Batch, so local ML inference keeps running the `ml-worker` container directly (as it does today) rather than through a Batch emulator, unless Floci's Batch support (also mentioned as in-scope) is verified and wired in later.
-2. **Batch job image**: rebuild `ml-worker/Dockerfile.batch` for AWS Batch — model weights still fetched from S3 at runtime rather than baked into the image (~12 GB). AWS Batch job definitions don't support GCP Batch's multi-runnable (setup/main/upload) pattern natively; either use a single container whose entrypoint script does `aws s3 cp` before/after the PetBERT run, or split into a multi-container job definition if AWS Batch's version supports it — needs a decision during Phase 0 provisioning.
-3. **Config (`backend/app/config.py:32-42`)**: replace `USE_GCP_BATCH`/`GCP_PROJECT_ID`/`GCP_REGION`/`GCS_BUCKET`/`GCP_BATCH_*` with `USE_AWS_BATCH`, `AWS_REGION`, `S3_BUCKET`, `AWS_BATCH_JOB_QUEUE`, `AWS_BATCH_JOB_DEFINITION`, `AWS_BATCH_POLL_INTERVAL`, `AWS_BATCH_TIMEOUT_HOURS`. Update `.env.example` and `docker-compose.yml` accordingly (currently pass `GCS_BUCKET`/`GOOGLE_APPLICATION_CREDENTIALS`).
-4. **Packages**: `backend/requirements.txt` — drop `google-cloud-batch`, `google-cloud-storage`; add `boto3`.
-5. **Orchestration (`backend/app/services/job_processor.py`)**: swap `submit_batch_job`/`get_batch_job_status`/`cancel_batch_job` calls for AWS Batch's `submit_job`/`describe_jobs`/`terminate_job` equivalents; map AWS Batch job states (`SUBMITTED`/`RUNNABLE`/`STARTING`/`RUNNING`/`SUCCEEDED`/`FAILED`) to the existing `processing_stage` values.
-6. Retire `docs/GCP_BATCH_SETUP.md`, write `docs/AWS_BATCH_SETUP.md` covering: IAM role for the Batch job (S3 read/write, ECR pull), compute environment sizing (equivalent to `n1-standard-4`), and the ECR push flow for the batch image.
+Status: **code implemented** (see `docs/AWS_ML_TASK_SETUP.md`); remaining work is the one-time data copy and a staging run.
+
+1. **Storage (`backend/app/services/s3_service.py`)**: `boto3`-backed replacement for the GCS helpers, same prefixes — `uploads/{job_id}/` (CSV uploads + ML outputs), `reports/{job_id}/{anon_id}.txt` (pathology report text), `models/` (PetBERT bundles). Uploaded CSVs now go straight to S3 (local `UPLOAD_DIR` is gone, so multiple backend tasks are safe). `pathology_reports.gcs_path` was renamed to `storage_path` (`database/migrations/032_pathology_reports_storage_path.sql`).
+   - **Local dev — S3 via Floci**: `AWS_S3_ENDPOINT_URL=http://floci:4566` (path-style addressing); the bucket is created in `floci-init.sh`. Local ML inference still uses the `ml-worker` HTTP container (`USE_ECS_ML=false`).
+2. **ML task image**: `ml-worker/Dockerfile.batch` now uses `s3_batch_entrypoint.py` — a single container that downloads the CSV and model bundle (~12 GB) from S3, runs `batch_predict.py`, and uploads `predictions.json` + `scan_output/*`. The Fargate task has 50 GiB ephemeral storage.
+3. **Config (`backend/app/config.py`)**: `S3_BUCKET`, `AWS_REGION`, `AWS_S3_ENDPOINT_URL`, `USE_ECS_ML`, `ECS_CLUSTER_ARN`, `ML_TASK_DEFINITION_ARN`, `ML_TASK_CONTAINER_NAME`, `ML_TASK_SUBNET_IDS`, `ML_TASK_SECURITY_GROUP_ID`, `ML_POLL_INTERVAL`, `ML_TIMEOUT_HOURS`, `ML_CLEANUP_JOB_FILES`. `.env.example` and `docker-compose.yml` updated.
+4. **Packages**: dropped `google-cloud-*`; added `boto3` and `tenacity`.
+5. **Orchestration (`job_processor.py`, `ml_task_service.py`)**: `_process_via_ecs_task` calls `run_task`, polls `describe_tasks` (AWS calls wrapped with `tenacity` retries on transient errors), maps ECS states to `processing_stage` (`batch_queued` → `batch_scheduled` → `batch_running`), enforces `ML_TIMEOUT_HOURS` itself (ECS has no max run time), and cancels via `stop_task`. The task ARN is stored in the existing `ingestion_jobs.batch_job_name` column.
+6. **Docs**: `docs/GCP_BATCH_SETUP.md` retired; `docs/AWS_ML_TASK_SETUP.md` covers image push, model upload, the GCS → S3 data copy, and IAM.
 
 ## Phase 4 — Backend compute migration (Cloud Run → ECS Fargate)
 
@@ -105,15 +107,15 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
 
 1. Freeze writes (uploads, ingestion, role/export requests).
 2. Run a final delta `pg_dump`/restore from Supabase → RDS to capture anything written since the Phase 1 snapshot.
-3. Deploy simultaneously: backend to App Runner (new `DATABASE_URL`, Cognito config, S3/AWS Batch config), frontend to Amplify Hosting, DNS flip.
-4. Smoke test: sign-in (password + Google OAuth), `GET /api/v1/auth/me`, upload → review → diagnosis-review flow (exercises S3 + AWS Batch), choropleth map load (PostGIS-backed `geo` endpoints), export-request download.
+3. Deploy simultaneously: backend to App Runner (new `DATABASE_URL`, Cognito config, S3/ECS ML task config), frontend to Amplify Hosting, DNS flip.
+4. Smoke test: sign-in (password + Google OAuth), `GET /api/v1/auth/me`, upload → review → diagnosis-review flow (exercises S3 + the ECS ML task), choropleth map load (PostGIS-backed `geo` endpoints), export-request download.
 5. Keep the Supabase project, Vercel project, and GCP project intact but idle for a rollback window (1–2 weeks) before decommissioning.
 
 ## Phase 7 — Decommission & cleanup
 
 1. Stand up a replacement for the Supabase Table Editor workflow (pgAdmin or RDS Query Editor) for non-technical staff before removing Supabase access.
 2. After the rollback window passes with no issues: delete the Supabase project, delete the Vercel project, delete the GCP project (Cloud Run service, GCS buckets, Artifact Registry repos, Batch job definitions), confirm none are still billing.
-3. Update documentation to remove Supabase/Vercel/GCP references and reflect the new stack: `README.md`, `docs/current-architecture.md`, `docs/handoff/HANDOFF.md`, `.env.example`, `docs/GCP_BATCH_SETUP.md` (delete, replaced by `docs/AWS_BATCH_SETUP.md`).
+3. Update documentation to remove Supabase/Vercel/GCP references and reflect the new stack: `README.md`, `docs/current-architecture.md`, `docs/handoff/HANDOFF.md`, `.env.example`, `docs/handoff/HANDOFF.md` / `doc-site/src/handoff.md` (still describe `USE_GCP_BATCH`, `gcs_path`) (`docs/GCP_BATCH_SETUP.md` is already replaced by `docs/AWS_ML_TASK_SETUP.md`).
 
 ---
 
@@ -121,11 +123,11 @@ All replacements (DB, Auth, Frontend hosting, backend compute, ML batch, storage
 
 - **PostGIS version parity** on RDS — confirm exact version match to avoid `ST_*` function behavior drift.
 - **Password migration approach** — decide between forced mass password-reset vs. a Cognito migration Lambda trigger; affects Phase 2 timeline and user communications.
-- **AWS Batch job definition shape** — single container with entrypoint-script S3 transfers, vs. multi-container, to replace GCP Batch's 3-runnable (setup/main/upload) structure.
+- **ML task shape — resolved**: single Fargate container whose entrypoint does the S3 transfers (`ml-worker/s3_batch_entrypoint.py`). Open: whether 16 GB RAM is enough (GCP's 15 GB worked) and whether Fargate platform patching interrupting a ~10 h task is acceptable.
 - **CI service containers** — confirm whether GitHub Actions tests use a real ephemeral Postgres or a mocked Supabase client, and update fixtures accordingly.
 - **Cognito password-reset flow** — verify it preserves the anti-email-prefetch property that Supabase's PKCE `verifyOtp(token_hash)` flow provides (see `docs/handoff/HANDOFF.md`).
 
 ## Cleanup opportunities while touching this code (not blocking, but cheap to fold in)
 
 - **`backend/app/auth.py:46-96`** — a hand-rolled, per-process in-memory brute-force limiter (`_failed_attempts`) duplicates `slowapi`, which is already wired up elsewhere in the app (`app/rate_limit.py`, `app/main.py`). Worth consolidating onto `slowapi` while Phase 2 is already touching `auth.py` — avoids maintaining two rate-limiting mechanisms and fixes the noted single-worker limitation.
-- **AWS Batch job polling (Phase 3)** — the GCP-era `job_processor.py` poll loop (`_process_via_gcp_batch`, fixed-interval `while True: sleep; poll`, no backoff/jitter) and `gcp_batch_service.py`'s GCP API calls (no retry on transient errors) should not be ported as-is to the AWS Batch replacement. Add `tenacity` (not currently in `requirements.txt`) for both the job-status polling and the AWS API calls when writing the new AWS Batch orchestration code in Phase 3.
+- **ML task polling (Phase 3) — done**: `tenacity` retries wrap the ECS calls in `ml_task_service.py`. The fixed-interval poll loop is kept; a backend restart mid-job still loses the watcher (startup recovery marks the job failed). EventBridge task-state events would fix that if it becomes a problem.

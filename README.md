@@ -6,7 +6,7 @@ A full-stack veterinary cancer registry for UC Davis VMTH researchers. Pathology
 > - `docs/handoff/HANDOFF.md` — project handoff guide (architecture, what's implemented, remaining work)
 > - `docs/handoff/future_plans.md` — scaling plan and deferred-feature roadmap
 > - `docs/current-architecture.md` — security layers, data flow, API endpoint summary
-> - `docs/GCP_BATCH_SETUP.md` — GCP Batch ML pipeline setup
+> - `docs/AWS_ML_TASK_SETUP.md` — ECS Fargate ML task and S3 setup
 > - `docs/DATA_PIPELINE.md` — ingestion + PetBERT classification details
 
 ## Tech Stack

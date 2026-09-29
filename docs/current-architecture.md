@@ -80,7 +80,7 @@ patients (id, species_id, breed_id, sex, birth_date, county_id, zip_code, anon_i
 case_diagnoses (id, patient_id, cancer_type_id, predicted_term, predicted_group,
                 icd_o_code, confidence, prediction_method, review_status,
                 pathology_report_id, ingestion_job_id, ...)
-pathology_reports (id, patient_id, gcs_path, report_date, created_at)
+pathology_reports (id, patient_id, storage_path, report_date, created_at)
 ingestion_jobs (id, status, uploaded_by_sub, storage_path, batch_job_name, ...)
 user_roles (email, is_admin, is_uploader, is_reviewer)
 role_requests (id, email, requested_role, status, reason, ...)

@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # Fine-tuned PetBERT Training Log
 
 Two distinct fine-tuning approaches exist in this codebase:
@@ -683,7 +685,7 @@ comparable to Phase 17–22 training evaluations (all used keyword annotation).
 **Bug fixed:** `run_categorization_group_keyword` (and `run_categorization_group`) could return
 the same predicted term multiple times for a single case. When multiple Stage-1 top-k labels
 belong to the same group, Stage-2 keyword resolution maps them all to the same group winner —
-producing duplicate rows (e.g. CASE-0216 had 4× "Hemangiosarcoma, NOS"). Fixed by tracking
+producing duplicate rows (one case had the same term 4 times). Fixed by tracking
 `seen_winners` per case in both functions.
 
 **Impact on previous metrics:** Entries #1 and #2 in the evaluation history were run on
@@ -713,7 +715,7 @@ good verdicts. This is the correct baseline for evaluating future improvements.
 ### Problem
 
 826 cases (1.4% of 58,313) were silently absent from `petbert_predictions.csv`. Investigation
-triggered by CASE-0192: the pipeline found no content in `HISTOPATHOLOGICAL SUMMARY`, `FINAL COMMENT`,
+triggered by one such case: the pipeline found no content in `HISTOPATHOLOGICAL SUMMARY`, `FINAL COMMENT`,
 or `ANCILLARY TESTS` — the only three columns the pipeline read. These are necropsy and gross-only
 cases whose diagnostic text lives in other columns.
 

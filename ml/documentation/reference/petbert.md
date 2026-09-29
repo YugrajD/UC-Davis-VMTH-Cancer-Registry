@@ -1,10 +1,13 @@
 # PetBERT Reference
 
+Background on the PetBERT language model and how this project uses it as its embedding backbone.
+
 ## Overview
 
 PetBERT is a large language model pre-trained on veterinary electronic health records (EHRs)
-from the UK. It serves as the embedding backbone for this project's production pipeline,
-generating 768-dimensional vector representations of pathology report text.
+from the UK. It is the starting point for this project's embedding backbone, which produces
+768-dimensional vector representations of pathology report text. Production runs a copy of it
+adapted to this project (see "How it is used here").
 
 ---
 
@@ -44,15 +47,28 @@ containing over 500 million words.
 Standard BERT was pre-trained on Wikipedia and BookCorpus. PetBERT was further pre-trained
 on veterinary clinical language, giving tokens like "carcinoma", "lymph node", "excision",
 "grade II", and "IHC" richer, domain-appropriate representations. This improves the quality
-of embedding-space similarity comparisons between report text and taxonomy labels.
+of the embeddings that the classifier heads are trained on.
 
 ### How it is used here
 
-Each report column (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) is passed
-through PetBERT's transformer body (not the MLM head). Tokens are mean-pooled over
-non-padding positions to produce one 768-dim vector per column per case. Taxonomy labels
-are embedded the same way. The embedding model runs once and results are cached in
-`ml/data/embedding_cache.npz`.
+Each report is split into three sections (`ml/report_mapping/sections.py`): HISTOPATHOLOGICAL
+SUMMARY; FINAL COMMENT and COMMENT together; and ANCILLARY TESTS. Each section is passed through
+PetBERT's transformer body (not the MLM head), and tokens are mean-pooled over non-padding
+positions to give one 768-dimensional vector per section. The three vectors are concatenated into
+one 2304-dimensional vector per case, the input to the classifier heads. Taxonomy label texts are
+embedded the same way.
+
+Production does not use base PetBERT unchanged. Its backbone starts from `SAVSNET/PetBERT` and is
+adapted with per-section contrastive training (each section text paired with its label text). The
+adapted backbone is stored with each generation, in `ml/output/report_mapping/current/petbert/` for
+the production one. The classifiers on top form a pipeline: a case-presence gate, then a group
+classifier, then per-group label-presence heads
+([report-mapping.md](../concepts/report-mapping.md)).
+
+Embedding is the slow step, so results are cached in
+`ml/output/report_mapping/embedding_cache/<key>.npz`. The key is a hash of the report file, the
+labels file and the backbone fingerprint, so a changed backbone or input file is a cache miss and
+nothing stale is ever reused ([run-inference.md](../how-to/run-inference.md)).
 
 ---
 
@@ -94,7 +110,7 @@ is one of them. These are chapter-level labels, not specific cancer types.
 #### The classifier head is incompatible
 
 The output label space (20 ICD-11 chapters) is completely incompatible with the
-Vet-ICD-O-canine-1 taxonomy (~857 terms across 44 groups). There is no mapping between
+Vet-ICD-O-canine-1 taxonomy (845 terms across 52 groups). There is no mapping between
 the two systems that would allow the head to be reused or adapted.
 
 #### A two-stage ICD-11 → Vet-ICD-O approach does not work
@@ -104,20 +120,20 @@ then use a second classifier to map from ICD-11 chapters to Vet-ICD-O groups:
 
 ```
 Stage 1: PetBERT-ICD  →  one of 20 ICD-11 chapters
-Stage 2: second classifier  →  one of 44 Vet-ICD-O groups
+Stage 2: second classifier  →  one of 52 Vet-ICD-O groups
 ```
 
-This would only be valid if the 44 Vet-ICD-O groups were distributed across multiple
+This would only be valid if the 52 Vet-ICD-O groups were distributed across multiple
 ICD-11 chapters. They are not. Every group in the Vet-ICD-O-canine-1 taxonomy
 (Adenomas, Mast cell neoplasms, Gliomas, Lymphoid leukemias, Blood vessel tumors, etc.)
 is a type of neoplasm — they all fall under **ICD-11 Chapter 2** (Neoplasms, 2A00–2F9Z).
 
 ```
-44 Vet-ICD-O groups  ⊂  ICD-11 Chapter 2  ⊂  ICD-11 (20 chapters)
+52 Vet-ICD-O groups  ⊂  ICD-11 Chapter 2  ⊂  ICD-11 (20 chapters)
 ```
 
 PetBERT-ICD's output for any cancer case would be "Chapter 2: Neoplasms". This is a
-binary cancer/non-cancer signal that provides no discrimination between the 44 groups —
+binary cancer/non-cancer signal that provides no discrimination between the 52 groups —
 which is the hard part of the problem.
 
 #### The backbone is also not ideal
@@ -141,3 +157,5 @@ embedding source for this use case.
 Farrell S, Appleton C, Noble P-JM, Al Moubayed N. "PetBERT: automated ICD-11 syndromic
 disease coding for outbreak detection in first opinion veterinary electronic health records."
 *Scientific Reports* 13, 18015 (2023).
+
+_Last verified against code: 2026-09-29_

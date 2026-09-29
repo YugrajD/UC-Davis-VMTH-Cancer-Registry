@@ -1,5 +1,5 @@
 """report_mapping/training/recipe.py: pins production hyperparameters/seeds
-against ml/documentation/training-guide.md and the old trainers (see
+against ml/documentation/history/legacy-tree/training-guide.md and the old trainers (see
 recipe.py's own per-field docstrings for each value's source), and checks
 ``seed_all`` actually makes python/numpy/torch reproducible.
 """

@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # GroupClassifier Training Log
 
 All experiments use the same dataset: 12,620 total reports, 5,788 keyword-confirmed
@@ -35,7 +37,7 @@ pathologist's conclusion — the most directly group-discriminating column. Use 
 as the 768-dim input if present, fall back to HISTOPATHOLOGICAL SUMMARY, then ANCILLARY TESTS.
 
 **Rationale:** No architecture change (still 768-dim input), so no increased overfitting risk.
-FINAL COMMENT contains direct group-level language ("consistent with hemangiosarcoma") while
+FINAL COMMENT contains direct group-level language (synthetic example: "consistent with example sarcoma") while
 other columns contain procedural or microscopic detail.
 
 **Implementation:** In `build_training_data.py` and `pipeline.py`, replace `mean_embeddings`

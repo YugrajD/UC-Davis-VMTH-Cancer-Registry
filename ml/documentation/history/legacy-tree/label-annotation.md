@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # Label Annotation
 
 Maps free-text pathology diagnoses to Vet-ICD-O-canine-1 labels. Produces `ml/output/annotation/llm_annotation.csv` (raw cascade) plus a cleaned `llm_annotation_cleaned.csv` in the same directory; the cleaned file is then promoted by the user to the canonical training-supervision path `ml/output/annotation/annotation.csv` (`config.ANNOTATION_CSV`), which every training and evaluation script reads by default. Annotation does not run at inference time — production sees only report text, not the structured diagnosis field.
@@ -6,7 +8,7 @@ Entry point: `ml/scripts/run_annotation.py`.
 
 ## Purpose
 
-The database stores free-text diagnoses written by pathologists (e.g. `"Hemangiosarcoma, NOS"`, `"Mast cell tumor, grade II"`). To train the classifiers we need each diagnosis mapped to a standardized `(term, group, code)` triple from the Vet-ICD-O taxonomy. The annotation pipeline does that mapping. Cases with no match are treated as non-cancer negatives.
+The database stores free-text diagnoses written by pathologists (synthetic examples: `"mass, left flank - suspect lipoma"`, `"spleen, sample - example sarcoma"`). To train the classifiers we need each diagnosis mapped to a standardized `(term, group, code)` triple from the Vet-ICD-O taxonomy. The annotation pipeline does that mapping. Cases with no match are treated as non-cancer negatives.
 
 Inputs:
 - `ml/data/diagnoses.csv` — columns: `case_id`, `diagnosis_number`, `diagnosis` (free text).
@@ -77,7 +79,7 @@ A request failure and a genuine "no match" reply are both counted as `tier3_no_m
 `tier3_llm` on a `No Match` row is an **upper bound** on real declines.
 
 This is what makes the silently-dropped rows measurable, and it is the basis of the
-row-level Tier-3 audit in [annotation-redesign-plan.md](../annotation-redesign-plan.md).
+row-level Tier-3 audit in [annotation-redesign-plan.md](../plans/annotation-redesign-plan.md).
 
 **Backfilling an older corpus.** Every gate ahead of the LLM call is deterministic, so the
 stage a row reached is recoverable from its diagnosis text alone — no LLM calls, no re-run:
@@ -94,8 +96,8 @@ original and swaps the new file in atomically.
 
 ## Known limitations
 
-- **Metastasis maps to primary or generic.** Diagnoses like `"LYMPH NODE: METASTASIS (SEE COMMENT)"` typically resolve to `Neoplasm, metastatic`. The LLM occasionally chooses this even when a primary type appears in the text.
-- **Hedged language sometimes leaks through.** Parenthetical hedges (`"(SUSPECT METASTASIS)"`) are occasionally matched rather than flagged `Uncertain`.
+- **Metastasis maps to primary or generic.** Diagnoses like `"EXAMPLE SITE: METASTASIS (SEE COMMENT)"` (synthetic) typically resolve to `Neoplasm, metastatic`. The LLM occasionally chooses this even when a primary type appears in the text.
+- **Hedged language sometimes leaks through.** Parenthetical hedges (for example a synthetic `"(SUSPECT EXAMPLE)"`) are occasionally matched rather than flagged `Uncertain`.
 - **Group identification can mis-scope candidates.** If the Tier-3 group token index picks the wrong group, the correct term never enters the LLM's candidate list.
 - **Speed.** Tier 3 takes ~1–2 s per LLM call. A full 188k-row corpus runs ~30–60 minutes plus the cleanup pass.
 - **No behavior-code disambiguation at Tier 1.** Tier 1 uses regex match only; if the diagnosis lacks an explicit modifier and the taxonomy term has none either, behavior code is whatever the matched label carries.

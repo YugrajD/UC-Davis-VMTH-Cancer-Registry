@@ -1,7 +1,9 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md). Completed: the rewrite was cut over in commit 46708f6; see [decision 0005](../decisions/0005-ml-rewrite-and-cutover.md).
+
 # ML Rewrite Plan — implementing the ICD mapping strategy
 
 **Status:** Approved 2026-09-25 (all recommended defaults accepted). Implements
-[icd-mapping-strategy.md](icd-mapping-strategy.md) as a clean-slate rewrite of `ml/` and `ml-worker/`.
+[icd-mapping-strategy.md](../../concepts/icd-mapping-strategy.md) as a clean-slate rewrite of `ml/` and `ml-worker/`.
 This is the working contract for the Part B agent team and for any later session picking the work up.
 
 ## Status and next steps (2026-09-26, Windows session)
@@ -118,7 +120,7 @@ Work is committed on `Revised-ICD-Mapping`. The suite passes with 493 tests afte
    `import-gold` fills a blank origin from it. New gold origins: `diagnosis_mapping_audit` (neither
    eval nor train) and `report_mapping_audit` (gold-train). Backend request:
    [audit-list-change-request.md](audit-list-change-request.md). Details in
-   [manual-audit.md](manual-audit.md).
+   [manual-audit.md](../../concepts/manual-audit.md).
 5. **Next, when real gold arrives:** draw eval batch 1 and the first Report-Mapping audit batch (needs
    `train.py --stage oof` on silver), export an audit list, and ingest the dashboard's gold; then
    `promote.py` the WP14 fork (it needs a trigger) and rerun WP15 on real gold with `retrain_cycle.py`.
@@ -456,7 +458,7 @@ ml/.venv/bin/python ml/next/scripts/parity.py l2 --predictions <gen-0 prediction
 ```
 
 **Windows + CUDA** (PowerShell from the repo root). Code arrives through git (push on the Mac, pull on Windows);
-`report.csv` arrives through the S3 sync ([s3-sync.md](s3-sync.md)). The parity reference pack
+`report.csv` arrives through the S3 sync ([sync-with-s3.md](../../how-to/sync-with-s3.md)). The parity reference pack
 (`ml/output/parity_reference/`) is in no sync set — carry it by hand. The embedding cache is machine-local and
 rebuilds (~9 min), so L3 re-embeds once. `ml/output/report_mapping/candidate` must not exist before L3, and L3 must
 run before L4.

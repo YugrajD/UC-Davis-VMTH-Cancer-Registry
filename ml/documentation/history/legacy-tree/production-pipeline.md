@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # Production Pipeline
 
 What `ml/scripts/run_production.py` does today. Authoritative reference for runtime behavior.

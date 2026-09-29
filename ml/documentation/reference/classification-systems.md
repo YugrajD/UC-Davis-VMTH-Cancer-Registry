@@ -1,5 +1,7 @@
 # Cancer Classification Systems Reference
 
+Background on the coding systems behind this project's labels (ICD-11, ICD-O-3.2 and Vet-ICD-O-Canine-1) and how the project uses them.
+
 Covers the three classification systems relevant to this project:
 - **ICD-11** — what PetBERT-ICD was trained on
 - **ICD-O-3.2** — the human oncology coding standard this project's taxonomy derives from
@@ -135,22 +137,30 @@ equivalents do not exist.
 
 ### How this project uses it
 
-The `ml/ICD-labels/labels.csv` file contains the Vet-ICD-O-Canine-1 taxonomy as used by
-this project. It has 846 term rows organized across 44 cancer groups. Each row has:
+`ml/taxonomy/labels.csv` (`config.LABELS_CSV`) holds the Vet-ICD-O-Canine-1 taxonomy as this project
+uses it: 845 terms in 52 groups, covering 534 distinct morphology codes (counted with
+`taxonomy.load_labels_taxonomy`, which drops duplicate rows). The file has a title row above its
+header row. Each row has:
 
 | Column | Example | Description |
-|--------|---------|-------------|
+|---|---|---|
 | `Vet-ICD-O-canine-1 code` | `8000/3` | Morphology code (cell type / behaviour) |
-| `Group` | `Neoplasms, NOS` | Broader cancer category (44 groups) |
+| `Group` | `Neoplasms, NOS` | Broader cancer category (52 groups) |
 | `Term` | `Neoplasm, malignant` | Specific diagnostic label |
 | `level` | `Preferred` | Preferred vs. synonym |
-| `Topography` | — | Anatomical site (where specified) |
+| `Topography` | none | Anatomical site (where specified) |
 
-The pipeline embeds each term (as a short text string) through PetBERT and matches report
-embeddings against them via cosine similarity or the trained PresenceClassifier.
+Several terms can share one code (186 of the 534 codes map to more than one term, always within the
+same group), so results and reviews are recorded as taxonomy terms, not bare codes.
 
-The 44 groups in this project's taxonomy map to varying depths of Vet-ICD-O-Canine-1.
-Only groups with ≥100 keyword-confirmed training cases (17 of 44) are usable by the
-GroupClassifier; the binary PresenceClassifier can reach all 846 terms.
+Production predicts these terms in four stages plus a post-step: a case-presence gate decides whether
+a report describes a cancer, a group classifier (with a tail gate) picks the group or groups, a
+per-group label-presence head picks the terms inside each group, and a keyword correction filters
+those terms; a lipoma rescue runs last. Groups with too few training cases share one `Uncommon` head, so
+every term stays reachable. The design and recipe are in
+[report-mapping.md](../concepts/report-mapping.md); the strategy for labels and review is in
+[icd-mapping-strategy.md](../concepts/icd-mapping-strategy.md).
 
 **GIVCS:** https://www.givcs.org/
+
+_Last verified against code: 2026-09-29_

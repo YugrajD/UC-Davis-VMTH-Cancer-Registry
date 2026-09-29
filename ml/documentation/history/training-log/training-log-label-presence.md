@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # Per-Group LabelPresenceClassifier Training Log
 
 Stage 3a of the 4-stage pipeline. One binary classifier per ICD group: given a report

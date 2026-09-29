@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md). Implemented in commit b03619c (2026-09-27, "wire the backend to the ml-worker bundle contract").
+
 # Change request for the backend: ml-worker reads one report-mapping bundle
 
 **From:** ML. **To:** the backend developer. **When:** deploy together with the ML cutover (WP13 of

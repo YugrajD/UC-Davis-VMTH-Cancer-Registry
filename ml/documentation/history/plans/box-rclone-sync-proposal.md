@@ -1,4 +1,4 @@
-> **Superseded** by the S3 sync — see [../s3-sync.md](../s3-sync.md). Kept for history; nothing here was implemented.
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md). Superseded by the S3 sync ([decision 0006](../decisions/0006-s3-sync-replaces-syncthing.md), [how to](../../how-to/sync-with-s3.md)); nothing here was implemented.
 
 # Proposal: Box + rclone sync for per-person ML pipelines
 

@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # Binary Classifier Training Log
 
 > **Historical reference only.** This log documents Phases 1–22 using the
@@ -152,7 +154,7 @@ Cycle 7 → 8: all metrics improved again with no regression. The oscillation is
 - CLI: `--enrich-labels-csv <path_to_keyword_annotation.csv>` on `petbert_scan` and `run_training_cycle.py`.
 - Cache invalidation: passing `--enrich-labels-csv` sets `require_enriched=True` in `load_cache`; cache is rebuilt automatically if enriched embeddings are missing.
 
-**Why it had minimal impact:** The `diagnosis` column in `keyword_annotation.csv` contains short anatomic phrases (e.g. `"SKIN DORSUM: SQUAMOUS CELL CARCINOMA"`), which live in nearly the same region of PetBERT's embedding space as the label texts (`"Squamous cell carcinoma NOS Squamous cell neoplasms"`). Blending two vectors that are already close together barely moves the label embedding. Meanwhile the classifier matches against `mean_embeddings` — mean PetBERT embeddings of full clinical report columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) — which are in a very different part of the embedding space. The enrichment never bridged that gap.
+**Why it had minimal impact:** The `diagnosis` column in `keyword_annotation.csv` contains short anatomic phrases (synthetic example: `"SKIN, FLANK: EXAMPLE CARCINOMA"`), which live in nearly the same region of PetBERT's embedding space as the label texts (`"Squamous cell carcinoma NOS Squamous cell neoplasms"`). Blending two vectors that are already close together barely moves the label embedding. Meanwhile the classifier matches against `mean_embeddings` — mean PetBERT embeddings of full clinical report columns (HISTOPATHOLOGICAL SUMMARY, FINAL COMMENT, ANCILLARY TESTS) — which are in a very different part of the embedding space. The enrichment never bridged that gap.
 
 **Bug found and fixed (2026-03-03):** In the first enriched cycle, `score_matrix()` was still receiving the original `label_embeddings` instead of `active_label_embeddings`. The classifier trained on enriched embeddings but scored with original ones — garbage presence probabilities. Fixed by passing `active_label_embeddings` consistently to both `run_categorization` and `classifier.score_matrix`.
 
@@ -250,7 +252,7 @@ enriched[label] = (label_emb + mean_report) / 2
 - `ml/labels/enrichment.py` — complete rewrite: removed `tokenizer`/`model`/`device` params, added `case_ids` and `mean_report_embeddings` params; reads cache row indices instead of embedding text
 - `ml/petbert_scan/pipeline.py` — updated call site to pass `ids` and `embeddings` (already computed at that point)
 
-**Requires cold start:** The embedding cache and CO bank must be reset before the first cycle. The cache's `enriched_label_embeddings` will now be computed from report embeddings instead of diagnosis text, so the old cache is stale. See the [Cold Start](#cold-start-after-resetting-embeddings-or-classifier) section.
+**Requires cold start:** The embedding cache and CO bank must be reset before the first cycle. The cache's `enriched_label_embeddings` will now be computed from report embeddings instead of diagnosis text, so the old cache is stale. Cold start here means deleting the embedding cache, the CO bank and the classifier checkpoint before the first cycle.
 
 ### Phase 10 — Cache-based enrichment (in progress)
 

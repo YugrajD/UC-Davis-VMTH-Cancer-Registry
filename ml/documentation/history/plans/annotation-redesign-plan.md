@@ -1,6 +1,8 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md). Superseded; see [decision 0005](../decisions/0005-ml-rewrite-and-cutover.md) and [manual audit](../../concepts/manual-audit.md).
+
 # Annotation Pipeline Redesign — Gold/Silver Bootstrap Plan
 
-**Status:** Approved 2026-06-17. **Phase 0 tooling delivered & verified** (2026-06-17); revised to 200-case batches, then revised again on 2026-08-05 to a **plain-CSV review surface** (the Excel workbook and the self-consistency duplicates were both dropped — see "Review surface" below), then re-cut on 2026-08-12 as a **row-level Tier-3 audit** now that `decision_stage` exists (see "Row-level Tier-3 audit" below). Batch 1 is ready: `ml/output/annotation/tier3_audit_review.csv` (200 rows across 198 cases, 100% Tier-2/Tier-3 decisions, zero padding) + the `tier3_audit_instructions.md` and `tier3_audit_taxonomy.csv` sidecars + ledger `tier3_audit_batch1_cases.txt`. The handoff path was **round-trip verified on 2026-08-26** against a 200-row mock fill (see "Handoff verification" below), which surfaced and fixed three defects in `ingest` and added the missing `rates` step. Batch 1 is now split into a **30-row pilot** (`tier3_audit_pilot_review.csv`) and a 170-row remainder (see Step 1b). Next real-world step: a veterinary professional fills in the pilot, `ingest` → `check-split`, we read it together, then they take the remainder and `rates` says where the Tier-3 cascade is actually broken. **This batch is a diagnostic, not the accuracy number** — the per-case gold-eval batch that feeds `run_evaluation.py` comes after the problems it surfaces are fixed. Phases 1–3 to be re-brainstormed after that.
+**Status:** Superseded; see [manual audit](../../concepts/manual-audit.md) and [icd-mapping-strategy](../../concepts/icd-mapping-strategy.md). Last written status: Approved 2026-06-17. **Phase 0 tooling delivered & verified** (2026-06-17); revised to 200-case batches, then revised again on 2026-08-05 to a **plain-CSV review surface** (the Excel workbook and the self-consistency duplicates were both dropped — see "Review surface" below), then re-cut on 2026-08-12 as a **row-level Tier-3 audit** now that `decision_stage` exists (see "Row-level Tier-3 audit" below). Batch 1 is ready: `ml/output/annotation/tier3_audit_review.csv` (200 rows across 198 cases, 100% Tier-2/Tier-3 decisions, zero padding) + the `tier3_audit_instructions.md` and `tier3_audit_taxonomy.csv` sidecars + ledger `tier3_audit_batch1_cases.txt`. The handoff path was **round-trip verified on 2026-08-26** against a 200-row mock fill (see "Handoff verification" below), which surfaced and fixed three defects in `ingest` and added the missing `rates` step. Batch 1 is now split into a **30-row pilot** (`tier3_audit_pilot_review.csv`) and a 170-row remainder (see Step 1b). Next real-world step: a veterinary professional fills in the pilot, `ingest` → `check-split`, we read it together, then they take the remainder and `rates` says where the Tier-3 cascade is actually broken. **This batch is a diagnostic, not the accuracy number** — the per-case gold-eval batch that feeds `run_evaluation.py` comes after the problems it surfaces are fixed. Phases 1–3 to be re-brainstormed after that.
 
 ## Motivation
 
@@ -94,7 +96,7 @@ Two gold pools, kept disjoint:
 
 ---
 
-## Phase 0 — Measurement + review surface *(no model; the immediate win)* — EXECUTING
+## Phase 0 — Measurement + review surface *(no model; the immediate win)* — superseded (was EXECUTING)
 
 **What & why:** Define the `gold_annotation.csv` schema. Carve a stratified-random
 **gold-EVAL** sample (~300–500 cases) from `test_cases.txt`, stratified by group to force

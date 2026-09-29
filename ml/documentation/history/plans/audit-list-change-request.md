@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md). Implemented in commit 83262de (2026-09-28) and the worklist commits 90d5334..6f91e9a; item 2.6 (send ML the IDs of rows corrected or rejected in the old Review Queue before switching it off) has no evidence of completion in the repo.
+
 # Change request for the backend: combined predictions and the review worklist (audit list)
 
 **From:** ML. **To:** the backend developer.
@@ -213,7 +215,7 @@ ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-audit-list --list-id <i
 ml/.venv/Scripts/python.exe ml/scripts/handoff.py import-gold --csv gold_<export_id>.csv --export-id <export_id> --reviewer "<name>"
 ```
 
-The combination rule is in [coding.md](coding.md). ML keeps the origin of every listed case in
+The combination rule is in [coding.md](../../concepts/coding.md). ML keeps the origin of every listed case in
 `audit_list_ledger.csv`. Imported reviews become gold: evaluation-batch cases measure accuracy,
 Report-Mapping audit cases correct training labels, and Diagnosis-Mapping audit cases score the
-diagnosis-text mapping. See [manual-audit.md](manual-audit.md).
+diagnosis-text mapping. See [manual-audit.md](../../concepts/manual-audit.md).

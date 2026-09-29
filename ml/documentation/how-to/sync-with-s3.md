@@ -1,27 +1,35 @@
-# S3 Sync
+# Sync with S3
 
-How the private data, stores and model generations move between machines. It replaces Syncthing
-(see [Migrating off Syncthing](#migrating-off-syncthing)) and the never-built Box/rclone proposal
-([archive/box-rclone-sync-proposal.md](archive/box-rclone-sync-proposal.md)). Package: `ml/s3sync/`.
-Entry point: `scripts/sync.py`. Everything here holds patient records — nothing is ever committed,
-and every object is written with server-side encryption (`AES256`).
+How the private data, stores and model generations move between machines, and the commands to do it.
+For anyone working on the ML side on more than one machine. Package: `ml/s3sync/`. Entry point:
+`ml/scripts/sync.py` (every flag in [scripts-and-flags.md](../reference/scripts-and-flags.md)). The
+paths and set names are in [paths.md](../reference/paths.md). Everything here holds patient records:
+nothing is ever committed, and every object is written with server-side encryption (`AES256`).
+Setting up a machine for the first time is in [new-machine-setup.md](new-machine-setup.md).
+
+```mermaid
+sequenceDiagram
+    participant A as Machine A
+    participant S as S3 bucket
+    participant B as Machine B
+    A->>S: push (dry run, then apply)
+    Note over S: blobs, set manifests, HEAD pointer
+    A->>S: publish-model (dry run, then apply)
+    Note over S: generation files, CURRENT pointer
+    B->>S: pull (dry run, then apply)
+    S-->>B: files that changed since last sync
+    B->>S: pull-model (dry run, then apply)
+    S-->>B: current generation, adopted after checks
+```
+
+Every command prints a plan and changes nothing until you add `--apply`. `push` and `publish-model`
+move a pointer only if nobody moved it since this machine last synced (fast-forward only); `pull`
+and `pull-model` verify every download before touching a local file.
 
 ## What syncs
 
-**File sets** — mutable directories synced as a unit (`config.S3_SYNC_SETS`):
-
-| Set | Local directory |
-|---|---|
-| `data` | `ml/data/` |
-| `manual_audit` | `ml/output/manual_audit/` |
-| `silver` | `ml/output/silver/` |
-| `splits` | `ml/output/splits/` |
-| `coding` | `ml/output/coding/` |
-| `predictions` | `ml/output/predictions/` |
-| `eval` | `ml/output/eval/` |
-| `oof` | `ml/output/report_mapping/oof/` |
-| `diagnosis_mapping_stats` | `ml/output/diagnosis_mapping_stats/` |
-| `handoff` | `ml/output/handoff/` (inbox + outbox, **minus** `outbox/bundles/`) |
+**File sets** are mutable directories synced as a unit (`config.S3_SYNC_SETS`); the set names and
+the directory each maps to are in [paths.md](../reference/paths.md).
 
 **Model generation** — only `ml/output/report_mapping/current/`, published as one immutable
 generation directory (`sync.py publish-model` / `pull-model`).
@@ -43,16 +51,14 @@ Inside any set, junk is skipped: `.DS_Store`, `*.s3sync-partial` (unfinished dow
 
 ## Bucket and layout
 
-Bucket `ucd-canine-registy-storage-231161110555-us-west-2-an` (the "registy" spelling **is** the
-real name), region `us-west-2`. Every key this tool writes sits under `ml-Revised-ICD-Mapping/`.
-The bucket's `database/` and `ml/` prefixes belong to other people: the key builder
-(`s3sync/remote.py`) refuses them, and any key outside our prefix. For a smoke run, narrow with
+The bucket, region, key prefix (`S3_PREFIX`) and the protected prefixes the key builder
+(`s3sync/remote.py`) refuses are in [paths.md](../reference/paths.md). For a smoke run, narrow with
 `--prefix`, a top-level flag that goes before the subcommand
-(`ml/scripts/sync.py --prefix ml-Revised-ICD-Mapping/_scratch/x/ push data`); state is kept per
-prefix, so a scratch run cannot disturb the real sync.
+(`ml/scripts/sync.py --prefix <S3_PREFIX>_scratch/x/ push data`); state is kept per prefix, so a
+scratch run cannot disturb the real sync.
 
 ```
-ml-Revised-ICD-Mapping/
+<S3_PREFIX>/
   blobs/<sha256>                       file contents, immutable
   sets/<set>/manifests/<id>.json       {set, created_at, created_by, parent, files{relpath: sha256,size}}, immutable
   sets/<set>/HEAD.json                 {"manifest": "<id>"}  -- the only mutable object of a set
@@ -70,7 +76,7 @@ which is what makes sync fast-forward-only.
 
 **Rollback** is repointing a pointer to an older manifest or generation. There is no rollback
 command yet; do it by hand with a recent AWS CLI v2. The pointers' full keys are
-`ml-Revised-ICD-Mapping/sets/<set>/HEAD.json` and `ml-Revised-ICD-Mapping/generations/CURRENT.json`.
+`<S3_PREFIX>/sets/<set>/HEAD.json` and `<S3_PREFIX>/generations/CURRENT.json`.
 
 1. Find the older id — manifest ids and generation ids are timestamps.
 2. Write the **whole** pointer document to `pointer.json`: `{"manifest": "<older id>"}` for a set,
@@ -79,9 +85,9 @@ command yet; do it by hand with a recent AWS CLI v2. The pointers' full keys are
    double quotes, which `--output text` preserves):
 
    ```bash
-   BUCKET=ucd-canine-registy-storage-231161110555-us-west-2-an
-   KEY=ml-Revised-ICD-Mapping/sets/<set>/HEAD.json   # or ml-Revised-ICD-Mapping/generations/CURRENT.json
-   aws s3 ls "s3://$BUCKET/ml-Revised-ICD-Mapping/sets/<set>/manifests/"   # or .../generations/
+   BUCKET=<S3_BUCKET>
+   KEY=<S3_PREFIX>/sets/<set>/HEAD.json   # or <S3_PREFIX>/generations/CURRENT.json
+   aws s3 ls "s3://$BUCKET/<S3_PREFIX>/sets/<set>/manifests/"   # or .../generations/
    ETAG=$(aws s3api head-object --bucket "$BUCKET" --key "$KEY" --query ETag --output text)
    aws s3api put-object --bucket "$BUCKET" --key "$KEY" --body pointer.json --if-match "$ETAG" --server-side-encryption AES256
    ```
@@ -151,7 +157,8 @@ was not attempted (it stops at the first failure) and the `sync.py` command that
   Safety copies go to `config.S3_SYNC_BACKUP_DIR` (`output/s3sync_backup/<UTC stamp>/<set>/<relpath>`).
 - **Per-machine state**, `config.S3_SYNC_STATE_JSON` (`output/s3sync_state.json`), records per
   prefix and set the manifest, HEAD etag and file hashes this machine last synced. Delete it and the
-  machine is "never synced": the next push is refused until it pulls.
+  machine is "never synced": the next push is refused until it pulls. Never copy it, or
+  `s3sync_backup/`, between machines by any other tool: a copied state corrupts the 3-way base.
 - **Model.** `publish-model` publishes `current/` only after `generations.promote.check_candidate`
   passes (manifest, embedding fingerprint, calibrated), and moves `CURRENT.json` by the same rule.
   `pull-model` downloads into `candidate/`, verifies it, and calls `generations.promote.adopt`,
@@ -167,24 +174,21 @@ was not attempted (it stops at the first failure) and the `sync.py` command that
   If a `--publish` finds the remote model moved, run `pull-model --apply`, then re-run the promotion
   against the new `current/` if the candidate should still win.
 
-## Setting up a new machine
+## New machines and the first upload
 
-1. Install **AWS CLI v2** and run `aws configure` (region `us-west-2`) with the access key you were
-   issued. The tool uses boto3's default credential chain, so `AWS_PROFILE` works; no keys are
-   stored in the repo or by the tool.
-2. `git clone`, create the venv and install requirements (boto3 is in `ml/requirements.txt`) — see
-   [resume-on-new-machine.md](resume-on-new-machine.md).
-3. `sync.py pull --apply` (all sets), then `sync.py pull-model --apply`. The embedding cache rebuilds
-   itself on first use. If the machine already holds any of these files, follow
-   [Joining with existing files](#joining-with-existing-files) instead.
+A new machine installs the environment, sets up credentials and runs a first pull: the steps are in
+[new-machine-setup.md](new-machine-setup.md). If the machine already holds any of these files, follow
+[Joining with existing files](#joining-with-existing-files) before pushing.
 
 The **first-ever upload**, from the machine that holds the data (~0.8 GB): `sync.py push --apply`,
 then `sync.py publish-model --apply`. Run these yourself; dry-run first.
 
 ### Access
 
-Keys come from the bucket owner (ask them; this project does not manage IAM). The identity needs,
-on `ml-Revised-ICD-Mapping/*`: `s3:GetObject` and `s3:PutObject` (conditional writes are part of
+Keys come from the bucket owner (ask them; this project does not manage IAM). The tool uses boto3's
+default credential chain, so `AWS_PROFILE` works; no keys are stored in the repo or by the tool. The
+identity needs,
+on `<S3_PREFIX>/*`: `s3:GetObject` and `s3:PutObject` (conditional writes are part of
 `PutObject`); and on the bucket: `s3:ListBucket` — without it S3 answers a missing key with 403
 instead of 404, and every first push or pull is REFUSED as access denied. Delete and version
 permissions are not needed. `aws sts get-caller-identity` shows which identity you are using.
@@ -197,7 +201,7 @@ A machine that has never synced has no merge base, so its first `pull` treats ev
   `s3sync_backup/` first);
 - a file that exists **only locally** is kept — and the next `push` uploads it into the shared set.
 
-So before the first push from a machine that already had data (an old Syncthing copy, a USB copy):
+So before the first push from a machine that already had data (a USB copy, an older checkout):
 
 1. Run `sync.py pull` (dry run), then `sync.py pull --apply`.
 2. Run `sync.py push` (dry run): after that pull, its `added:` lines are exactly the files that
@@ -220,15 +224,6 @@ generations are the exception: `generations/<id>/` keeps the real file names.
 - After a promotion: `promote.py --apply --publish`.
 - If a push says "remote moved, pull first": pull, check the conflicts it lists, push again.
 
-## Migrating off Syncthing
-
-Done on 2026-09-28: Syncthing was disabled on every machine, then `.stignore` and the `.gitignore`
-Syncthing block were removed. **Do not re-enable Syncthing on this repo** — without `.stignore` it
-would sync `.git/` and the venv, and it would also sync each machine's `s3sync_state.json` and
-`s3sync_backup/`, corrupting the 3-way base. Any leftover `.stfolder/`, `.stversions/` or
-`*.sync-conflict-*` files on a machine can be deleted. Root `CLAUDE.md` is copied between machines by
-hand.
-
 ## Known limits
 
 - One `put_object` per file: a single file over 5 GB cannot be uploaded (no multipart yet).
@@ -239,3 +234,5 @@ hand.
 - No delete or rollback command (see above).
 - The backend and ml-worker still run on GCS. Once ported to AWS they can read
   `generations/<id>/...` directly — the layout keeps the generation's own file names for that.
+
+_Last verified against code: 2026-09-29_

@@ -1,118 +1,167 @@
 # Diagnosis mapping (silver)
 
-Maps the clinic's free-text `diagnosis` field to a Vet-ICD-O-canine-1 `(term, group, code)` triple.
-Package: `ml/diagnosis_mapping/` (`keyword_tiers.py`, `llm_tier.py`, `llm_client.py`, `cleanup.py`,
-`silver.py`, `stats.py`). Entry point: `scripts/map_diagnoses.py`.
+How the clinic's free-text `diagnosis` line becomes a Vet-ICD-O-canine-1 `(term, group, code)`
+triple. This page is the single home for the cascade, its `decision_stage` and `method` values, the
+ensemble cleanup pass and silver generations. It is for anyone reading or changing
+`ml/diagnosis_mapping/` (`keyword_tiers.py`, `llm_tier.py`, `llm_client.py`, `cleanup.py`,
+`silver.py`, `stats.py`); the entry point is `ml/scripts/map_diagnoses.py`.
 
 This is one of the three coding methods in [icd-mapping-strategy.md](icd-mapping-strategy.md)
-("silver") — it never reads report text (that's [report-mapping.md](report-mapping.md), "bronze"),
-only the diagnosis line.
+("silver"). It reads only the diagnosis line, never report text (that is the report mapping,
+"bronze": [report-mapping.md](report-mapping.md)).
 
 ## The cascade
 
-`match_diagnosis` (in `silver.py`) runs each diagnosis through, in order, the first tier that
-matches:
+`match_diagnosis` (in `silver.py`) sends each diagnosis line through the tiers in order. The first
+tier that matches decides the row.
 
-1. **Normalize + mask negation** (`keyword_tiers.py`) — lowercase, collapse hyphens/underscores/
-   slashes to spaces, strip punctuation, expand abbreviations (`GIST`, `HSA`, `MCT`, `DLBCL`, ...),
-   `neoplasia → neoplasm`; a negation masker blanks `no evidence of`, `negative for`, `rule out`,
-   `not consistent with` and the following tokens, plus `non-X` compounds.
-2. **Tier 1 — exact match** (`tier1_exact`) — a longest-first regex index built from the taxonomy
-   (full normalized term + qualifier-stripped core form + 2–3 word permutations). `method=Exact,
-   confidence=1.0`.
-3. **Tier 2 — fuzzy token overlap** (`tier2_fuzzy`) — score = fraction of a label's core tokens
-   present in the diagnosis; match at ≥85%. An explicit behavior modifier (`benign`/`malignant`/
-   `metastatic`/`in situ`) first restricts candidates to that behavior digit. `method=Fuzzy,
-   confidence ∈ [0.85, 1.0]`.
-4. **Tier 3 — local LLM** (`llm_tier.py`) — only reached when `has_signal` finds a cancer-signal
-   token (`-oma`/`-emia` suffix, or `tumor`/`leukemia`/`neoplasm`/`cancer`/`malignant`/`carcinoid`/
-   etc.) and neither Tier 1 nor Tier 2 matched. A group token index (or an `-oma`/`-emia` suffix
-   index as fallback) picks the likely group; up to 30 candidate terms from that group, plus
-   detected anatomic-site keywords, go to a local OpenAI-compatible LLM (LM Studio/Ollama, via
-   `llm_client.py` — local only, diagnosis text never leaves the machine). `method=LLM` on a match
-   (`confidence=1.0` exact, `0.9` difflib near-match), else `No Match` (declined) or `Uncertain`
-   (hedged).
+```mermaid
+flowchart TD
+    txt["Diagnosis line"] --> norm["Normalize +<br>negation mask"]
+    norm --> t1{"Tier 1<br>exact match?"}
+    t1 -->|"yes: tier1_exact"| ann["Silver annotation row"]
+    t1 -->|no| t2{"Tier 2<br>fuzzy match?"}
+    t2 -->|"yes: tier2_fuzzy"| ann
+    t2 -->|no| sig{"has_signal?"}
+    sig -->|"no: no_signal"| ann
+    sig -->|yes| t3{"Tier 3<br>candidates?"}
+    t3 -->|"none: tier3_no_candidates"| ann
+    t3 -->|"some: tier3_llm"| llm["Local LLM picks,<br>hedges or declines"]
+    llm --> ann
+```
 
-`decision_stage` records *which gate* produced the row, since `method="No Match"` is otherwise
-ambiguous (declined vs never asked):
+1. **Normalize and mask negation** (`keyword_tiers.py`). Lowercase; turn hyphens, underscores and
+   slashes into spaces; drop commas, parentheses, semicolons and colons; `neoplasia` becomes `neoplasm`, `plasma cell tumor`
+   becomes `plasmacytoma`, `metastasis` becomes `metastatic neoplasm`; expand abbreviations (`GIST`,
+   `HSA`, `MCT`, `DLBCL`, `SCC` and others). A negation masker then blanks phrases such as `no
+   evidence of`, `negative for`, `absence of`, `rule out`, `not consistent with` and up to six
+   following tokens, plus `non-X` compounds. Tiers 1 and 2 and the signal check see the masked text;
+   Tier 3 gets the original text and its prompt carries its own negation rules.
+2. **Tier 1, exact match** (`tier1_exact`). A longest-first regex index built from the taxonomy: the
+   full normalized term, its qualifier-stripped core form, and 2 to 3 word permutations (keywords
+   shorter than 6 characters are skipped). `method=Exact`, `confidence=1.0`.
+3. **Tier 2, fuzzy token overlap** (`tier2_fuzzy`). The score is the fraction of a label's core
+   tokens present in the diagnosis. The match threshold is **0.85**, or **0.70 when the diagnosis
+   carries an explicit behavior modifier**: `benign` (behavior digit 0), `in situ` (2) or
+   `malignant`/`metastatic` (3). With a modifier the scan first keeps only labels whose code has
+   that behavior digit and compares full normalized terms; if nothing clears 0.70 it falls back to
+   the unfiltered 0.85 scan. `method=Fuzzy`, `confidence` is the score (0.70 to 1.0).
+4. **Signal check** (`has_signal`). If neither tier matched, the masked text must still contain a
+   cancer-signal token (an `-oma` or `-emia` word, or `tumor`, `leukemia`, `neoplasm`, `cancer`,
+   `malignant`, `carcinoid` and similar) to go further. Without one the row is `no_signal`.
+5. **Tier 3, local LLM** (`llm_tier.py`). A group token index picks the likely group (an
+   `-oma`/`-emia` suffix index is the fallback). Up to 30 of that group's terms (`LLM_MAX_CANDIDATES`),
+   plus any detected anatomic site, go to a local OpenAI-compatible server (LM Studio by default, via
+   `llm_client.py`). The server is local only: diagnosis text never leaves the machine.
+   - The model replies with a candidate term, `no match` or `uncertain`. A term is `method=LLM`
+     (`confidence=1.0` for an exact string match, `0.9` for a difflib near-match of 0.8 or better).
+     `no match`, or an unparsable reply, is `No Match`; a hedge is `Uncertain`.
+   - A failed request (timeout, connection error) is recorded as a declined answer, the same as
+     `no match`. So `tier3_llm` with `No Match` is an upper bound on real declines.
+   - If no candidate list can be built the LLM is never asked (`tier3_no_candidates`).
 
-| `decision_stage` | Meaning |
-|---|---|
-| `no_signal` | No cancer vocabulary at all; Tier 3 never reached. |
-| `tier1_exact` | Keyword index matched. |
-| `tier2_fuzzy` | Token-overlap matched. |
-| `tier3_llm` | The LLM was called — matched, hedged, or declined. |
-| `tier3_no_candidates` | Cancer signal present, but the candidate build came back empty; the LLM was never asked. |
+### `decision_stage` and `method`
+
+`decision_stage` records which gate produced the row. `method` alone is ambiguous: a `No Match` row
+may mean the LLM declined, or that it was never consulted.
+
+| `decision_stage` | Meaning | `method` values it can carry |
+|---|---|---|
+| `no_signal` | No cancer vocabulary; Tier 3 never reached. | No Match |
+| `tier1_exact` | Keyword index matched. | Exact |
+| `tier2_fuzzy` | Token overlap matched. | Fuzzy |
+| `tier3_llm` | The LLM was called: matched, hedged or declined. | LLM, Uncertain, No Match |
+| `tier3_no_candidates` | Cancer signal present, but the candidate list came back empty; the LLM was never asked. | No Match |
+
+`method` values overall: `Exact`, `Fuzzy`, `LLM`, `No Match`, `Uncertain`. The cleanup pass (below)
+can rewrite an `Exact`, `Fuzzy` or `LLM` row to `No Match` or `Uncertain`, so `tier1_exact` and
+`tier2_fuzzy` rows can carry them too (and a `tier3_llm` `No Match` may be an overturned answer, not
+a decline). [coding.md](coding.md)
+maps every `(decision_stage, method)` pair to decisive or vague; that table is the single home for
+the mapping.
 
 ## Ensemble cleanup
 
-`cleanup.py::clean` — optional, runs by default. For every confirmed positive (Exact/Fuzzy/LLM),
-sends the row to two diverse local LLMs (default `google/gemma-4-31b` + `qwen/qwen3.6-27b`, selected
-from a 6-model bake-off for best calibration and architectural diversity), each returning `CORRECT`,
-`WRONG_should_be:<term>`, `WRONG_no_cancer`, or `UNCERTAIN`:
+`cleanup.py::clean` verifies every confirmed positive (`method` of Exact, Fuzzy or LLM) with two
+independent local LLMs, with an optional third model as tiebreaker. It runs by default; the flags
+and default models are in [scripts-and-flags.md](../reference/scripts-and-flags.md). Each verifier
+returns `CORRECT`, `WRONG_should_be:<term>`, `WRONG_no_cancer` or `UNCERTAIN`.
 
-| Both models say | Action |
+| Verifiers say | Result |
 |---|---|
-| `CORRECT` | Keep original match |
-| `WRONG_no_cancer` | Demote to `No Match` |
-| `WRONG_should_be:<X>` (same X) | Replace match with X |
-| Anything else (disagreement) | Optional tiebreaker model, else demote to `Uncertain` |
+| Both `CORRECT` | Keep the match. |
+| Both `WRONG_no_cancer` | Blank term, group and code; `method` becomes `No Match`. |
+| Both `WRONG_should_be` with the same term | Replace term, group and code with that term; `method` is kept. |
+| Anything else | Blank term, group and code; `method` becomes `Uncertain`. |
 
-Cleanup never touches `decision_stage`, only `method` — so it can produce four
-`(decision_stage, method)` pairs the cascade alone never would (`tier1_exact`/"No Match",
-`tier1_exact`/"Uncertain", `tier2_fuzzy`/"No Match", `tier2_fuzzy`/"Uncertain"). See
-[coding.md](coding.md) for how every pair maps to decisive/vague.
-
-LM Studio connection settings come from `diagnosis_mapping/.env` (gitignored):
-
-```ini
-LLM_HOST=127.0.0.1
-API_PORT=1234
-LLM_MODEL=google/gemma-4-e4b
-```
-
-`LLM_MODEL` is the Tier-3 default (a 6-model bake-off winner for calibration among fast models);
-override with `--model`. The cleanup pass's verifier models are independent, set with
-`--cleanup-models`.
+- A verifier whose request fails or whose reply cannot be parsed drops out of the vote; the
+  remaining verdict then decides alone. A `WRONG_should_be` term that is not in the group's
+  candidate list counts as `UNCERTAIN`.
+- The resolution needs every verdict, tiebreaker included, to agree. A tiebreaker therefore only
+  settles a row when both verifiers returned nothing parsable; a real disagreement between the two
+  stays `Uncertain`.
+- Cleanup never edits `decision_stage`. That is why `tier1_exact` and `tier2_fuzzy` can end up with
+  `No Match` or `Uncertain`.
 
 ## Silver generations
 
-A silver generation is a versioned, **immutable** output: `output/silver/<silver_id>/annotation.csv`
-+ `manifest.json` (cascade constants sha256, LLM model, cleanup on/off, input CSV sha256,
-`decision_stage` counts). `silver.py::run` refuses to write into an existing `<silver_id>/`;
-`load_silver` verifies the manifest before reading.
+A silver generation is a versioned, **immutable** output under `config.SILVER_DIR/<silver_id>/`:
+`annotation.csv` plus `manifest.json`. The manifest holds the cascade-constants sha256 (a hash of
+every regex, threshold and the taxonomy-derived keyword index), the taxonomy and input CSV hashes,
+the LLM model, whether cleanup ran and which models, and the `decision_stage` counts.
+`silver.run` refuses to write into an existing `<silver_id>/`; `load_silver` verifies the manifest
+before reading.
+
+`ANNOTATION_COLUMNS`: `case_id, diagnosis_number, diagnosis, matched_term, matched_group,
+matched_code, matched_keyword, method, confidence, decision_stage`. The file also carries a
+`silver_generation` column. It holds diagnosis text, so it stays local.
 
 ```
 ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
-ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1-no-llm --no-llm
-ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py stats --silver silver-0-legacy
+ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py stats --silver silver-1
 ```
 
-- `run --id <new>` runs the cascade (and cleanup, unless `--skip-cleanup`) over
-  `config.DIAGNOSES_CSV` and writes a new generation.
-- `--no-llm` records every Tier-3-eligible row as a declined LLM match. That generation is refused
-  by `load_silver` (and by the coding rule / Tier-3 sampler) unless `allow_no_llm=True` is passed
-  explicitly — it must never be adopted as an authoritative silver source.
-- `silver-0-legacy` is the pre-rewrite cleaned `annotation.csv`, imported once before cutover: rows
-  unchanged, only a `silver_generation` column added. This is the silver generation every
-  pre-cutover parity comparison used.
-- `stats` (replaces `run_data_analysis.py`) writes coverage statistics
-  (`config.DIAGNOSIS_MAPPING_STATS_DIR/<silver_id>/`): a combined report, per-analysis CSVs, and PNG
-  plots (skip with `--no-plots`).
+- `run --id <new>` runs the cascade over `config.DIAGNOSES_CSV`, then cleanup, and writes a new
+  generation. Tier-3 model: `--model`, else `LLM_MODEL` from `ml/diagnosis_mapping/.env`
+  (gitignored; also `LLM_HOST`, default `127.0.0.1`, and `API_PORT`, default `1234`). Cleanup
+  models are independent of it.
+- `--no-llm` never calls the model: every Tier-3-eligible row is recorded as a declined LLM answer
+  (`tier3_llm`, `No Match`). `load_silver` refuses such a generation, and so do the coding rule and
+  the Diagnosis-Mapping audit sampler, unless `allow_no_llm=True` is passed. It must not be used as
+  an authoritative silver source.
+- `stats` writes coverage statistics to `config.DIAGNOSIS_MAPPING_STATS_DIR/<silver_id>/`: a
+  combined report (`annotation_distribution.txt`), per-analysis CSVs and PNG plots (`--no-plots`
+  skips them).
 
-`ANNOTATION_COLUMNS`: `case_id, diagnosis_number, diagnosis, matched_term, matched_group,
-matched_code, matched_keyword, method, confidence, decision_stage`.
+Every flag is in [reference/scripts-and-flags.md](../reference/scripts-and-flags.md).
+
+### The silver generation in use: `silver-0-legacy`
+
+`silver-0-legacy` is the only silver generation on disk and the one production `current/` was
+trained against. Its manifest records `llm_model` and `cleanup_enabled` as null, so those two
+settings are unknown for it. It holds 188,774 diagnosis rows:
+
+| `decision_stage` | Rows |
+|---|---:|
+| `no_signal` | 143,432 |
+| `tier1_exact` | 34,784 |
+| `tier3_llm` | 6,279 |
+| `tier3_no_candidates` | 3,813 |
+| `tier2_fuzzy` | 466 |
+
+How much of Tier 2 and Tier 3 is right is what the Diagnosis-Mapping audit measures
+([manual-audit.md](manual-audit.md)). Its rows are drawn from these strata.
 
 ## Known limitations
 
-Carried over from the pre-rewrite cascade (unchanged by this rewrite):
-
-- Metastasis diagnoses sometimes resolve to `Neoplasm, metastatic` even when a primary type appears
-  in the text.
-- Hedged parenthetical language (`"(SUSPECT METASTASIS)"`) occasionally matches rather than being
-  flagged `Uncertain`.
+- `metastasis` is expanded to `metastatic neoplasm` before matching, so a metastasis diagnosis can
+  resolve to the generic metastatic term even when a primary type is named.
+- Only negation is masked. Hedged wording (for example a parenthetical "suspect ...") is handled
+  only by the Tier-3 prompt and by cleanup, so Tier 1 and Tier 2 can still match it as a confirmed
+  term.
 - If the Tier-3 group token index picks the wrong group, the correct term never enters the LLM's
-  candidate list (this is the `tier3_no_candidates` failure mode the Diagnosis-Mapping audit in
-  [manual-audit.md](manual-audit.md) measures).
-- Tier 3 takes ~1–2s per LLM call; a full corpus run is tens of minutes plus the cleanup pass.
-- No behavior-code disambiguation at Tier 1 (regex match only).
+  candidate list. This is the `tier3_no_candidates` and wrong-group failure mode that the
+  Diagnosis-Mapping audit measures.
+- Tier 3 makes one local LLM call per eligible row and cleanup makes at least two per confirmed row,
+  so a full-corpus run is far slower than the keyword tiers alone.
+- Tier 1 is a plain regex match and does not use the behavior digit.

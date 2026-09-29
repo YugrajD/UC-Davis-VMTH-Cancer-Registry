@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # Training Guide
 
 Step-by-step instructions for cold-start training and retraining cycles. For architecture rationale see [model-training.md](model-training.md); for the head-by-head reference see [classifiers.md](classifiers.md).

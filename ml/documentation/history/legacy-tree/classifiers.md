@@ -1,3 +1,5 @@
+> **Archived** — historical record, not maintained. Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # Classifiers
 
 Architecture reference for the three trainable heads plus the keyword-correction stage. The pipeline runs them in order: Stage 1 gate → Stage 2 group → Stage 3a per-group label → Stage 3b keyword filter.

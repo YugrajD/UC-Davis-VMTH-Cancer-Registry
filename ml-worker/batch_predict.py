@@ -1,4 +1,4 @@
-"""Standalone PetBERT batch prediction script for GCP Batch.
+"""Standalone PetBERT batch prediction script (run by s3_batch_entrypoint.py).
 
 Reads env vars for paths, runs the 4-stage PetBERT pipeline, and writes
 predictions.json to the output directory. No web server — runs once and exits.

@@ -1,16 +1,16 @@
-# Dockerfile for GCP Batch PetBERT inference.
+# Dockerfile for the on-demand ECS Fargate PetBERT inference task.
 # Build from the repo root:
 #   docker build -f ml-worker/Dockerfile.batch -t petbert-batch .
 #
-# Model weights come from GCS (downloaded by the setup runnable),
-# NOT baked into the image.
+# Model weights come from S3 (downloaded by s3_batch_entrypoint.py at task
+# start), NOT baked into the image.
 
 FROM python:3.11-slim
 
 WORKDIR /worker
 
 COPY ml-worker/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt boto3
 
 # Pipeline package and its sibling dependencies (model, ICD_labels, utils, config)
 COPY ml/production /ml/production
@@ -19,6 +19,6 @@ COPY ml/ICD_labels /ml/ICD_labels
 COPY ml/utils /ml/utils
 COPY ml/config.py /ml/config.py
 
-COPY ml-worker/batch_predict.py .
+COPY ml-worker/batch_predict.py ml-worker/s3_batch_entrypoint.py ./
 
-ENTRYPOINT ["python", "batch_predict.py"]
+ENTRYPOINT ["python", "s3_batch_entrypoint.py"]

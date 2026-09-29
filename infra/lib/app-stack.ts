@@ -2,6 +2,7 @@ import { CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, StackProps } fr
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as ecsPatterns from "aws-cdk-lib/aws-ecs-patterns";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -26,6 +27,8 @@ import {
 
 export interface AppStackProps extends StackProps {
   envConfig: EnvConfig;
+  /** FQDN for the backend API, e.g. api-dev.example.edu. Gets an ACM cert and an HTTPS listener. */
+  apiDomainName: string;
   vpc: ec2.IVpc;
   backendRepo: ecr.IRepository;
   mlWorkerRepo: ecr.IRepository;
@@ -40,7 +43,7 @@ export class AppStack extends Stack {
   constructor(scope: Construct, id: string, props: AppStackProps) {
     super(scope, id, props);
 
-    const { envConfig, vpc, backendRepo, mlWorkerRepo, dbSg, dbInstance, bucket, userPool, userPoolClient } = props;
+    const { envConfig, apiDomainName, vpc, backendRepo, mlWorkerRepo, dbSg, dbInstance, bucket, userPool, userPoolClient } = props;
 
     // backendServiceSg/mlTaskSg are created here (not FoundationStack)
     // because ecs_patterns.ApplicationLoadBalancedFargateService wires an
@@ -106,6 +109,15 @@ export class AppStack extends Stack {
     // does all DB writes after RunTask completes and results are read back
     // from S3 - so no DB secret/security-group rule is granted here.
 
+    // DNS-validated cert for the API name. The zone isn't in Route53, so the
+    // deploy pauses at "Certificate CREATE_IN_PROGRESS" until you add the
+    // validation CNAME shown in the ACM console (Certificate Manager > the
+    // new certificate > "Create records in Route 53" / copy the CNAME).
+    const apiCertificate = new acm.Certificate(this, "ApiCertificate", {
+      domainName: apiDomainName,
+      validation: acm.CertificateValidation.fromDns(),
+    });
+
     // --- Backend service: always-on ApplicationLoadBalancedFargateService ---
     const backendService = new ecsPatterns.ApplicationLoadBalancedFargateService(
       this,
@@ -119,11 +131,11 @@ export class AppStack extends Stack {
         publicLoadBalancer: true,
         taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
         securityGroups: [backendServiceSg],
-        // Plain HTTP for now: an HTTPS listener needs an ACM certificate,
-        // which needs a domain name that hasn't been chosen yet. Once one
-        // is registered, add `certificate`/`redirectHTTP: true` and switch
-        // this to listenerPort: 443.
-        listenerPort: 80,
+        // HTTPS-only: HTTP (80) redirects to 443. The DNS name must be CNAMEd
+        // to the ALB (BackendAlbDnsName output) after deploy.
+        certificate: apiCertificate,
+        redirectHTTP: true,
+        listenerPort: 443,
         taskImageOptions: {
           image: ecs.ContainerImage.fromEcrRepository(backendRepo, "latest"),
           containerPort: BACKEND_CONTAINER_PORT,
@@ -214,7 +226,7 @@ export class AppStack extends Stack {
         },
       }),
       environmentVariables: {
-        VITE_API_URL: `http://${backendService.loadBalancer.loadBalancerDnsName}`,
+        VITE_API_URL: `https://${apiDomainName}`,
         VITE_COGNITO_USER_POOL_ID: userPool.userPoolId,
         VITE_COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
         VITE_AWS_REGION: this.region,

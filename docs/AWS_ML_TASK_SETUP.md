@@ -33,10 +33,15 @@ is deployed (the backend service and ML task definition both reference `:latest`
 app stack only after both images exist):
 
 ```bash
-cdk deploy cancer-registry-prod-foundation cancer-registry-prod-data   # creates the repos
+cdk deploy cancer-registry-prod-foundation cancer-registry-prod-data   # creates the repos (no domain needed)
 scripts/push-images.sh all prod                                         # or: backend | ml-worker
-cdk deploy cancer-registry-prod-app
+cdk deploy -c apiDomainName=api-dev.<your-domain> cancer-registry-prod-app
 ```
+
+The app stack is skipped unless `apiDomainName` is set: the API is HTTPS-only (ACM certificate,
+port 443, HTTP redirects to HTTPS). During the app deploy the certificate stays in
+`CREATE_IN_PROGRESS` until you add its DNS validation CNAME (ACM console → the new certificate)
+at your DNS provider. Afterwards CNAME `apiDomainName` to the `BackendAlbDnsName` stack output.
 
 The script builds `linux/amd64` (Fargate's default architecture, so Apple Silicon builds work) and
 tags `:<git-sha>` and `:latest`. The ML image is built from the repo root with

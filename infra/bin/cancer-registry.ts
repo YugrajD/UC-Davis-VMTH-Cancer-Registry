@@ -29,15 +29,25 @@ const data = new DataStack(app, resourceName(envConfig, "data"), {
   dbSg: foundation.dbSg,
 });
 
-new AppStack(app, resourceName(envConfig, "app"), {
-  env,
-  envConfig,
-  vpc: foundation.vpc,
-  backendRepo: foundation.backendRepo,
-  mlWorkerRepo: foundation.mlWorkerRepo,
-  dbSg: foundation.dbSg,
-  dbInstance: data.dbInstance,
-  bucket: data.bucket,
-  userPool: data.userPool,
-  userPoolClient: data.userPoolClient,
-});
+// The app stack needs a DNS name for the API's ACM certificate / HTTPS
+// listener, so it is only synthesized once one is provided:
+//   cdk deploy <foundation> <data>            (no domain needed; push images next)
+//   cdk deploy -c apiDomainName=api-dev.example.edu <app>
+const apiDomainName = app.node.tryGetContext("apiDomainName") as string | undefined;
+if (!apiDomainName) {
+  console.warn("apiDomainName context not set - skipping AppStack (pass -c apiDomainName=<fqdn>).");
+} else {
+  new AppStack(app, resourceName(envConfig, "app"), {
+    env,
+    envConfig,
+    apiDomainName,
+    vpc: foundation.vpc,
+    backendRepo: foundation.backendRepo,
+    mlWorkerRepo: foundation.mlWorkerRepo,
+    dbSg: foundation.dbSg,
+    dbInstance: data.dbInstance,
+    bucket: data.bucket,
+    userPool: data.userPool,
+    userPoolClient: data.userPoolClient,
+  });
+}

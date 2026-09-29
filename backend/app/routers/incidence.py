@@ -19,7 +19,7 @@ from app.schemas.schemas import (
     BreedDetailOut, BreedCancerTypeCount, BreedCountyCount, BreedSexCount,
     AgeDetailOut, AgeCancerTypeCount, AgeCountyCount, AgeSexCount,
 )
-from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
+from app.services.review_filter import apply_review_filter, tested_patient_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
 
 router = APIRouter(prefix="/api/v1/incidence", tags=["incidence"])
 
@@ -170,15 +170,14 @@ async def get_incidence_by_cancer_type(
     Denominator: distinct petbert patients with any confirmed/corrected diagnosis.
     Numerator: distinct petbert patients per cancer type (non-Non-Cancer).
     """
-    # Denominator: all patients with any confirmed/corrected diagnosis
+    # Denominator: all tested patients (visible diagnosis, or coded NO_CANCER)
     denom_stmt = (
         select(func.count(distinct(Patient.id)))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
+        .where(tested_patient_filter())
     )
-    denom_stmt = apply_review_filter(denom_stmt)
     if species:
         denom_stmt = denom_stmt.join(Species, Patient.species_id == Species.id).where(Species.name.in_(species))
     if county:
@@ -275,17 +274,15 @@ async def get_pccp_by_county(
             stmt = stmt.join(Breed, Patient.breed_id == Breed.id).where(Breed.name == breed)
         return stmt
 
-    # Denominator: patients with any confirmed/corrected diagnosis, grouped by county.
+    # Denominator: all tested patients, grouped by county.
     # cancer_type intentionally excluded — denominator is always all tested animals.
-    denom_stmt = apply_review_filter(
-        _add_demo(
-            select(Patient.county_id, func.count(distinct(Patient.id)).label("n"))
-            .select_from(Patient)
-            .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
-            .where(Patient.data_source == "petbert")
-            .where(Patient.county_id.is_not(None))
-            .group_by(Patient.county_id)
-        )
+    denom_stmt = _add_demo(
+        select(Patient.county_id, func.count(distinct(Patient.id)).label("n"))
+        .select_from(Patient)
+        .where(Patient.data_source == "petbert")
+        .where(Patient.county_id.is_not(None))
+        .where(tested_patient_filter())
+        .group_by(Patient.county_id)
     )
     denom_rows = {r.county_id: r.n for r in (await db.execute(denom_stmt)).all()}
 
@@ -376,19 +373,17 @@ async def get_pccp_by_zip(
 
     zip_expr = func.substring(func.trim(Patient.zip_code), 1, 5).label("zip_code")
 
-    # Denominator: patients with any confirmed/corrected diagnosis, grouped by zip.
+    # Denominator: all tested patients, grouped by zip.
     # cancer_type intentionally excluded — denominator is always all tested animals.
-    denom_stmt = apply_review_filter(
-        _add_demo(
-            select(zip_expr, func.count(distinct(Patient.id)).label("n"))
-            .select_from(Patient)
-            .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
-            .where(Patient.data_source == "petbert")
-            .where(Patient.zip_code.is_not(None))
-            .where(Patient.county_id.is_not(None))
-            .where(func.length(func.trim(Patient.zip_code)) >= 5)
-            .group_by(zip_expr)
-        )
+    denom_stmt = _add_demo(
+        select(zip_expr, func.count(distinct(Patient.id)).label("n"))
+        .select_from(Patient)
+        .where(Patient.data_source == "petbert")
+        .where(Patient.zip_code.is_not(None))
+        .where(Patient.county_id.is_not(None))
+        .where(func.length(func.trim(Patient.zip_code)) >= 5)
+        .where(tested_patient_filter())
+        .group_by(zip_expr)
     )
     denom_rows = {r.zip_code: r.n for r in (await db.execute(denom_stmt)).all()}
 
@@ -576,24 +571,24 @@ async def get_breed_detail(
     - Eq 6 (pccp_within_breed): numerator / tested dogs of this breed
     """
     # --- Eq 5 denominator: all petbert tested dogs ---
-    global_denom_stmt = apply_review_filter(
+    global_denom_stmt = (
         select(func.count(distinct(Patient.id)))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
+        .where(tested_patient_filter())
     )
     global_total_patients = (await db.execute(global_denom_stmt)).scalar() or 0
 
     # --- Eq 6 denominator: tested dogs of this breed ---
-    breed_denom_stmt = apply_review_filter(
+    breed_denom_stmt = (
         select(func.count(distinct(Patient.id)))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .where(Patient.data_source == "petbert")
         .where(Breed.name == breed)
         .where(CALIFORNIA_PATIENT_FILTER)
+        .where(tested_patient_filter())
     )
     breed_total_patients = (await db.execute(breed_denom_stmt)).scalar() or 0
 
@@ -677,26 +672,26 @@ async def get_breed_detail(
     county_rows = (await db.execute(county_stmt)).all()
 
     # --- per-county denominators for map toggle ---
-    county_all_tested_stmt = apply_review_filter(
+    county_all_tested_stmt = (
         select(County.name.label("county_name"), func.count(distinct(Patient.id)).label("n"))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(County, Patient.county_id == County.id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
+        .where(tested_patient_filter())
         .group_by(County.name)
     )
     county_all_tested_map = {r.county_name: r.n for r in (await db.execute(county_all_tested_stmt)).all()}
 
-    county_breed_tested_stmt = apply_review_filter(
+    county_breed_tested_stmt = (
         select(County.name.label("county_name"), func.count(distinct(Patient.id)).label("n"))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(Breed, Patient.breed_id == Breed.id)
         .join(County, Patient.county_id == County.id)
         .where(Patient.data_source == "petbert")
         .where(Breed.name == breed)
         .where(CALIFORNIA_PATIENT_FILTER)
+        .where(tested_patient_filter())
         .group_by(County.name)
     )
     county_breed_tested_map = {r.county_name: r.n for r in (await db.execute(county_breed_tested_stmt)).all()}
@@ -770,23 +765,23 @@ async def get_age_detail(
     age_filter = _age_group_case(Patient.diagnosis_date, Patient.birth_date) == age_group
 
     # --- Eq 5 denominator: all petbert tested dogs ---
-    global_denom_stmt = apply_review_filter(
+    global_denom_stmt = (
         select(func.count(distinct(Patient.id)))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
+        .where(tested_patient_filter())
     )
     global_total_patients = (await db.execute(global_denom_stmt)).scalar() or 0
 
     # --- Eq 6 denominator: tested dogs of this age group ---
-    age_denom_stmt = apply_review_filter(
+    age_denom_stmt = (
         select(func.count(distinct(Patient.id)))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
         .where(age_filter)
+        .where(tested_patient_filter())
     )
     age_total_patients = (await db.execute(age_denom_stmt)).scalar() or 0
 
@@ -866,25 +861,25 @@ async def get_age_detail(
     county_rows = (await db.execute(county_stmt)).all()
 
     # --- per-county denominators for map toggle ---
-    county_all_tested_stmt = apply_review_filter(
+    county_all_tested_stmt = (
         select(County.name.label("county_name"), func.count(distinct(Patient.id)).label("n"))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(County, Patient.county_id == County.id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
+        .where(tested_patient_filter())
         .group_by(County.name)
     )
     county_all_tested_map = {r.county_name: r.n for r in (await db.execute(county_all_tested_stmt)).all()}
 
-    county_age_tested_stmt = apply_review_filter(
+    county_age_tested_stmt = (
         select(County.name.label("county_name"), func.count(distinct(Patient.id)).label("n"))
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .join(County, Patient.county_id == County.id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
         .where(age_filter)
+        .where(tested_patient_filter())
         .group_by(County.name)
     )
     county_age_tested_map = {r.county_name: r.n for r in (await db.execute(county_age_tested_stmt)).all()}

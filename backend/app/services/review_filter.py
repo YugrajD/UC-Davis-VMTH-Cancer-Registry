@@ -15,8 +15,8 @@ view).
 
 from typing import Iterable
 
-from sqlalchemy import or_
-from sqlalchemy.sql import Select
+from sqlalchemy import or_, select
+from sqlalchemy.sql import ColumnElement, Select
 
 from app.models.models import CaseDiagnosis, Patient
 
@@ -53,6 +53,27 @@ def apply_review_filter(
         VISIBLE_REVIEW_STATUSES_WITH_PENDING if include_pending else VISIBLE_REVIEW_STATUSES
     )
     return query.where(column.in_(statuses))
+
+
+def tested_patient_filter(*, include_pending: bool = False) -> ColumnElement[bool]:
+    """True for a petbert patient counted as "tested" in a PCCP-style denominator.
+
+    A patient counts as tested either because it has at least one visible
+    case_diagnoses row, or because ML coded the case cancer-free
+    (`Patient.registry_no_cancer` — a NO_CANCER case is recorded case-level
+    with zero case_diagnoses rows, see migration 035). Use this instead of
+    `.join(CaseDiagnosis, ...)` for a denominator query: an inner join to
+    CaseDiagnosis silently drops every registry_no_cancer patient, which
+    inflates PCCP because true negatives vanish from the denominator instead
+    of only being excluded from the numerator.
+    """
+    statuses: Iterable[str] = (
+        VISIBLE_REVIEW_STATUSES_WITH_PENDING if include_pending else VISIBLE_REVIEW_STATUSES
+    )
+    return or_(
+        Patient.registry_no_cancer.is_(True),
+        Patient.id.in_(select(CaseDiagnosis.patient_id).where(CaseDiagnosis.review_status.in_(statuses))),
+    )
 
 
 def review_status_sql_in(*, include_pending: bool = False) -> str:

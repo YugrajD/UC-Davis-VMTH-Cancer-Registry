@@ -37,6 +37,12 @@ from app.services.ingestion_service import normalize_anon_id
 
 router = APIRouter(prefix="/api/v1/registry", tags=["registry-import"])
 
+# asyncpg hard limit: 32 767 bind parameters per statement. Use 1 000 per
+# chunk (mirrors app.services.ingestion_service._IN_CHUNK) to stay well
+# under the cap for both large IN(...) lists and the case_diagnoses bulk
+# insert (11 columns/row).
+_CHUNK = 1_000
+
 # Matches ml/handoff/contracts.py's kind/schema_version constants —
 # duplicated here since production has no /ml to import them from.
 _COMBINED_PREDICTIONS_KIND = "combined_predictions"
@@ -196,10 +202,14 @@ async def import_combined_predictions(
         if normalized:
             normalized_to_raw.setdefault(normalized, []).append(raw_id)
 
-    patient_rows = (
-        await db.execute(select(Patient.id, Patient.anon_id).where(Patient.anon_id.in_(normalized_to_raw.keys())))
-    ).all() if normalized_to_raw else []
-    patient_id_by_normalized = {row.anon_id: row.id for row in patient_rows}
+    normalized_ids = list(normalized_to_raw.keys())
+    patient_id_by_normalized: dict[str, int] = {}
+    for i in range(0, len(normalized_ids), _CHUNK):
+        chunk = normalized_ids[i : i + _CHUNK]
+        rows = (
+            await db.execute(select(Patient.id, Patient.anon_id).where(Patient.anon_id.in_(chunk)))
+        ).all()
+        patient_id_by_normalized.update({row.anon_id: row.id for row in rows})
 
     not_found = sorted({
         raw_id
@@ -227,10 +237,13 @@ async def import_combined_predictions(
         cancer_type_map = {row.name: row.id for row in cancer_type_rows}
 
     resolved_patient_ids = list(patient_id_by_normalized.values())
-    report_rows = (
-        await db.execute(select(PathologyReport.patient_id, PathologyReport.id).where(PathologyReport.patient_id.in_(resolved_patient_ids)))
-    ).all() if resolved_patient_ids else []
-    report_id_by_patient = {row.patient_id: row.id for row in report_rows}
+    report_id_by_patient: dict[int, int] = {}
+    for i in range(0, len(resolved_patient_ids), _CHUNK):
+        chunk = resolved_patient_ids[i : i + _CHUNK]
+        rows = (
+            await db.execute(select(PathologyReport.patient_id, PathologyReport.id).where(PathologyReport.patient_id.in_(chunk)))
+        ).all()
+        report_id_by_patient.update({row.patient_id: row.id for row in rows})
 
     coded_patient_ids: list[int] = []
     no_cancer_patient_ids: list[int] = []
@@ -275,31 +288,35 @@ async def import_combined_predictions(
         if patient_id is not None:
             awaiting_patient_ids.append(patient_id)
 
-    if coded_patient_ids:
-        await db.execute(delete(CaseDiagnosis).where(CaseDiagnosis.patient_id.in_(coded_patient_ids)))
-    if new_rows:
-        await db.execute(insert(CaseDiagnosis.__table__), new_rows)
+    for i in range(0, len(coded_patient_ids), _CHUNK):
+        chunk = coded_patient_ids[i : i + _CHUNK]
+        await db.execute(delete(CaseDiagnosis).where(CaseDiagnosis.patient_id.in_(chunk)))
+    for i in range(0, len(new_rows), _CHUNK):
+        await db.execute(insert(CaseDiagnosis.__table__), new_rows[i : i + _CHUNK])
 
     if no_cancer_patient_ids:
         by_source_version: dict[Optional[str], list[int]] = {}
         for pid in no_cancer_patient_ids:
             by_source_version.setdefault(no_cancer_source_version_by_patient[pid], []).append(pid)
         for source_version, pids in by_source_version.items():
-            await db.execute(
-                update(Patient)
-                .where(Patient.id.in_(pids))
-                .values(registry_no_cancer=True, registry_no_cancer_source_version=source_version, registry_awaiting_review=False)
-            )
+            for i in range(0, len(pids), _CHUNK):
+                await db.execute(
+                    update(Patient)
+                    .where(Patient.id.in_(pids[i : i + _CHUNK]))
+                    .values(registry_no_cancer=True, registry_no_cancer_source_version=source_version, registry_awaiting_review=False)
+                )
     coded_non_no_cancer = [pid for pid in coded_patient_ids if pid not in no_cancer_patient_ids]
-    if coded_non_no_cancer:
+    for i in range(0, len(coded_non_no_cancer), _CHUNK):
+        chunk = coded_non_no_cancer[i : i + _CHUNK]
         await db.execute(
             update(Patient)
-            .where(Patient.id.in_(coded_non_no_cancer))
+            .where(Patient.id.in_(chunk))
             .values(registry_no_cancer=False, registry_no_cancer_source_version=None, registry_awaiting_review=False)
         )
-    if awaiting_patient_ids:
+    for i in range(0, len(awaiting_patient_ids), _CHUNK):
+        chunk = awaiting_patient_ids[i : i + _CHUNK]
         await db.execute(
-            update(Patient).where(Patient.id.in_(awaiting_patient_ids)).values(registry_awaiting_review=True)
+            update(Patient).where(Patient.id.in_(chunk)).values(registry_awaiting_review=True)
         )
 
     if coded_patient_ids or awaiting_patient_ids:

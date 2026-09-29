@@ -12,7 +12,7 @@ from app.rate_limit import limiter
 from app.models.models import CancerType, Patient, Species, County, CaseDiagnosis
 from app.models.views import mv_yearly_trends
 from app.schemas.schemas import TrendsResponse, TrendSeries, TrendPoint
-from app.services.review_filter import apply_review_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
+from app.services.review_filter import apply_review_filter, tested_patient_filter, CALIFORNIA_PATIENT_FILTER, NON_CANCER_TYPE_NAME
 
 router = APIRouter(prefix="/api/v1/trends", tags=["trends"])
 
@@ -116,19 +116,18 @@ async def get_trends_by_cancer_type(
     Denominator per year: distinct petbert patients with any confirmed/corrected diagnosis in that year.
     Numerator per year per cancer type: distinct petbert patients with that cancer type in that year.
     """
-    # Denominator by year: patients with any confirmed/corrected diagnosis
+    # Denominator by year: all tested patients (visible diagnosis, or coded NO_CANCER)
     denom_stmt = (
         select(
             func.extract("year", Patient.diagnosis_date).label("year"),
             func.count(func.distinct(Patient.id)).label("total"),
         )
         .select_from(Patient)
-        .join(CaseDiagnosis, CaseDiagnosis.patient_id == Patient.id)
         .where(Patient.data_source == "petbert")
         .where(CALIFORNIA_PATIENT_FILTER)
         .where(Patient.diagnosis_date.is_not(None))
+        .where(tested_patient_filter())
     )
-    denom_stmt = apply_review_filter(denom_stmt)
     if species:
         denom_stmt = denom_stmt.join(Species, Patient.species_id == Species.id).where(Species.name.in_(species))
     if county:

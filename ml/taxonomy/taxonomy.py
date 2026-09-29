@@ -25,6 +25,9 @@ class TaxonomyLabel:
     code: str
     group: str
     term: str
+    # "Preferred" / "Synonym" / "Related", from labels.csv's `level` column.
+    # Defaults to "" since ~40 test fixtures build labels without it.
+    level: str = ""
 
 
 def load_labels_taxonomy(labels_csv_path: str) -> list[TaxonomyLabel]:
@@ -68,6 +71,7 @@ def load_labels_taxonomy(labels_csv_path: str) -> list[TaxonomyLabel]:
         code = record["Vet-ICD-O-canine-1 code"].strip()
         group = record["Group"].strip()
         term = record["Term"].strip()
+        level = record["level"].strip()
         if not code or not group or not term:
             continue
         dedupe_key = (code, group, term)
@@ -79,6 +83,7 @@ def load_labels_taxonomy(labels_csv_path: str) -> list[TaxonomyLabel]:
                 code=code,
                 group=group,
                 term=term,
+                level=level,
             )
         )
     return records

@@ -15,6 +15,7 @@ import {
   type AuditCaseDetail,
   type GoldExportSummary,
 } from '../../api/client';
+import { CodePicker } from './CodePicker';
 
 function friendlyError(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -66,59 +67,6 @@ function StatusBadge({ status }: { status: WorklistCase['review_status'] }) {
 interface CodeIn {
   taxonomy_group: string;
   taxonomy_term: string;
-}
-
-function CodePicker({ terms, onAdd }: { terms: TaxonomyTermOut[]; onAdd: (group: string, term: string) => void }) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const pool = q
-      ? terms.filter((t) => t.taxonomy_term.toLowerCase().includes(q) || t.taxonomy_group.toLowerCase().includes(q))
-      : terms;
-    return pool.slice(0, 25);
-  }, [terms, query]);
-
-  return (
-    <div className="relative">
-      <input
-        type="text"
-        placeholder={terms.length === 0 ? 'Loading taxonomy…' : 'Search taxonomy terms…'}
-        value={query}
-        disabled={terms.length === 0}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-50"
-      />
-      {open && filtered.length > 0 && (
-        <ul
-          role="listbox"
-          className="absolute z-10 mt-1 w-full max-h-56 overflow-auto bg-white border border-gray-200 rounded shadow-lg"
-        >
-          {filtered.map((t) => (
-            <li
-              key={`${t.taxonomy_group}::${t.taxonomy_term}`}
-              role="option"
-              aria-selected={false}
-              onMouseDown={() => {
-                onAdd(t.taxonomy_group, t.taxonomy_term);
-                setQuery('');
-                setOpen(false);
-              }}
-              className="px-2 py-1.5 text-sm hover:bg-blue-50 cursor-pointer"
-            >
-              <span className="text-gray-500">{t.taxonomy_group}:</span> {t.taxonomy_term}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
 }
 
 export function AuditWorklist() {
@@ -582,6 +530,7 @@ export function AuditWorklist() {
                     <div className="space-y-2">
                       <CodePicker
                         terms={terms}
+                        codes={codes}
                         onAdd={(group, term) => {
                           setCodes((prev) =>
                             prev.some((c) => c.taxonomy_group === group && c.taxonomy_term === term)

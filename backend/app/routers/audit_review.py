@@ -316,6 +316,7 @@ class TaxonomyTermOut(BaseModel):
     vet_icd_o_code: Optional[str]
     taxonomy_group: str
     taxonomy_term: str
+    term_level: Optional[str]
 
 
 @router.get("/taxonomy-terms")
@@ -336,6 +337,7 @@ async def list_taxonomy_terms(
             vet_icd_o_code=r.vet_icd_o_code,
             taxonomy_group=r.taxonomy_group,
             taxonomy_term=r.taxonomy_term,
+            term_level=r.term_level,
         )
         for r in rows
     ]

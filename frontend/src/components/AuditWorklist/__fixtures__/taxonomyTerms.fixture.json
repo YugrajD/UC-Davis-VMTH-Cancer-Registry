@@ -1,0 +1,5072 @@
+[
+  {
+    "vet_icd_o_code": "8000/0",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Neoplasm, benign",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8000/1",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Neoplasm, uncertain whether benign or malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8000/3",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Neoplasm, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8000/6",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Neoplasm, metastatic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8000/9",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Neoplasm, malignant, uncertain whether primary or metastatic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8001/0",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Tumor cells, benign",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8001/1",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Tumor cells, uncertain whether benign or malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8001/3",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Tumor cells, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8002/3",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Malignant tumor, small cell type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8003/3",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Malignant tumor, giant cell type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8004/3",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Malignant tumor, spindle cell type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8005/0",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Clear cell tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8005/3",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Malignant tumor, clear cell type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8006.1/1",
+    "taxonomy_group": "Neoplasms, NOS",
+    "taxonomy_term": "Round cell tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8010/2",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Carcinoma in situ, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8010/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8010/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Epithelial tumor, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8010/6",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Carcinoma, metastatic, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8010/9",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Carcinomatosis",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8012/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Large cell carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8013/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Large cell neuroendocrine carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8020/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Carcinoma, undifferentiated, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8020/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Carcinoma, poorly differentiated",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8020/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Carcinoma, dedifferentiated",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8021/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Carcinoma, anaplastic, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8031/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Giant cell carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8032/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Spindle cell carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8032/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Spindle cell squamous cell carcinoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8041/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Small cell neuroendocrine carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8041/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Small cell carcinoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8050/0",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Papilloma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8050/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Papillary adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8051/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Verrucous squamous cell carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8051/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Verrucous carcinoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8052/0",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Squamous papilloma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8052/0",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Squamous cell papilloma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8052/0",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Reactive papilloma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8052/3",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Papillary squamous cell carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8053/0",
+    "taxonomy_group": "Epithelial neoplasms, NOS",
+    "taxonomy_term": "Squamous cell papilloma, inverted",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8070/2",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma in situ, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8070/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8070/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Conventional squamous cell carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8071/0",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Infundibular keratinizing acanthoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8071/0",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Keratoacanthoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8071/0",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Intracutaneous cornifying epithelioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8071.1/0",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Nailbed keratoacanthoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8071.1/0",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Subungueal keratoacanthoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8071/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma, keratinizing, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8072/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma, nonkeratinizing, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8074/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma, spindle cell",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8074/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma, sarcomatoid",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8075/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma, acantholytic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8075/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma, adenoid",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8075/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Pseudoangiomatous adenoid squamous cell carcinoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8083/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Basaloid squamous cell carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8084/3",
+    "taxonomy_group": "Squamous cell neoplasms",
+    "taxonomy_term": "Squamous cell carcinoma, clear cell type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8090/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Basal cell tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8090/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Basal cell carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8090.1/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Basal cell carcinoma, solid cell type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8090.2/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Basal cell carcinoma, clear cell type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8094/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Basosquamous carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8100/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoepitelioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8100/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoepithelioma, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8101/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichofolliculoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8102/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Tricholemmoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8102.1/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Tricholemmoma, isthmic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8102.2/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Tricholemmoma, inferior",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8105.1/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoblastoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8105.2/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoblastoma, ribbon",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8105.3/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoblastoma, medusoid",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8105.4/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoblastoma, granular cell",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8105.5/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoblastoma, trabecular",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8105.6/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoblastoma, spindle cell",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8105.7/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Trichoblastoma, solid/cystic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8110/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Pilomatricoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8110/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Pilomatrixoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8110/0",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Necrotizing and calcifying epithelioma of Malherbe",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8110/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Pilomatricoma, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8110/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Pilomatrix carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8110/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Pilomatrical carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8110/3",
+    "taxonomy_group": "Basal cell neoplasms",
+    "taxonomy_term": "Matrical carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8120/0",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Urothelial papilloma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8120/0",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Transitional cell papilloma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8120/0",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Transitional papilloma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8120/2",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Nonpapillary urothelial carcinoma, non infiltrating",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8120/2",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Urothelial carcinoma in situ",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8120/3",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Urothelial carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8120/3",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Transitional cell carcinoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8120/3",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Transitional carcinoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8120.1/3",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Nonpapillary urothelial carcinoma, infiltrating",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8121/0",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Sinonasal papilloma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8130/2",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Papillary urothelial carcinoma, non infiltrating",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8130/3",
+    "taxonomy_group": "Transitional cell papillomas and carcinomas",
+    "taxonomy_term": "Papillary urothelial carcinoma, infiltrating",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8140/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adenoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8140/2",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Bronchioloalveolar adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8140/2",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adenocarcinoma in situ, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8140/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adenocarcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8149/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Canalicular adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8150/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Islet cell adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8150/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Islet cell tumor, benign",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8150/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Pancreatic endocrine tumor, benign",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8150/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Pancreatic endocrine tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8150/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Islet cell tumor, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8150.1/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Pancreatic polypeptidoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8150/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Islet cell carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8150/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Islet cell adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8150/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Pancreatic endocrine tumor, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8151/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Insulinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8151/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Beta cell adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8151/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Insulinoma, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8151/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Beta cell tumor, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8151/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Insulin-producing tumor, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8152/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Glucagonoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8152/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Alpha cell tumor, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8153/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Gastrinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8153/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Gastrin cell tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8153/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Gastrinoma, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8153/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Gastrin cell tumor, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8154/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Mixed neuroendocrine non-neuroendocrine neoplasm (MiNEN), malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8154/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Mixed islet cell and exocrine adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8154/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Mixed acinar-endocrine carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8154/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Mixed acinar-endocrine-ductal carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8154/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Mixed ductal-endocrine carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8154/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Mixed endocrine and exocrine adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8156/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Somatostatinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8156/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Somatostatin cell tumor, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8160/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Cholangiocellular adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8160/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Bile duct adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8160/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Cholangioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8160/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Cholangiocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8160/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Cholangiocellular carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8160/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Biliary carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8160/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Bile duct carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8160/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Bile duct adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8161/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Bile duct cystadenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8161/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Biliary cystadenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8161/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Bile duct cystadenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8170/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocellular adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8170/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Liver cell adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8170/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatoma, benign",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8170/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocellular carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8170/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8170/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatoma, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8170/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Liver cell carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8170.1/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocellular carcinoma, pseudoglandular",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8172/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocellular carcinoma, scirrhous",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8172/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Sclerosing hepatic carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8173/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocellular carcinoma, spindle cell variant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8173/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocellular carcinoma, sarcomatoid",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8174/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocellular carcinoma, clear cell type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8175/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocellular carcinoma, pleomorphic type",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8180/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Combined hepatocellular carcinoma and cholangiocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8180/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Hepatocholangiocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8180/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Mixed hepatocellular and bile duct carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8190/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Trabecular adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8190/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Trabecular adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8190/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Trabecular carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8200/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adenoid cystic carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8201/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Cribriform adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8211/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Tubular adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8211/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Simple adenoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8211/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Tubular carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8211/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Tubular simple carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8211/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Cribriform carcinoma (of the mammary gland)",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8211/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Tubular adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8211/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Simple tubular adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8230/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Solid adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8230/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Solid carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8230.0/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Solid adenocarcinoma with mucin production",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8245/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adenocarcinoid tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8246/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Neuroendocrine carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8246/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Carcinoid",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8247/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Merkel cell tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8250/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Lepidic adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8256/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Minimally invasive adenocarcinoma, non-mucinous",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8257/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Minimally invasive adenocarcinoma, mucinous",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8260/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Papillary adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8260/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Papillary adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8260/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Papillary renal cell carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8260.1/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Thyroglossal duct remnant tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8261/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Villous adenoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8263/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Tubulopapillary adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8263/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Tubulovillous adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8263/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Tubulopapillary carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8263/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Tubulopapillary adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8265/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Micropapillary adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8270/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Chromophobe adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8270.1/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Chromophobe (ACTH-secreting) adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8270.2/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Inactive chromophobe adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8270/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Chromophobe carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8272/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Pituitary adenoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8272/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Pituitary carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8280/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Acidophil adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8280/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Acidophil carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8290/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Oncocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8290/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Oncocytic adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8290/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Oxyphilic adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8300/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Basophilic adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8300/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Basophilic carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8312/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Renal cell carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8312/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Renal cell adenocarcinoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8312/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Renal cell carcinoma, unclassified",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8314/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Lipid-rich carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8316/1",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Multilocular cystic renal neoplasm of low malignant potential",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8318/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Renal cell carcinoma, sarcomatoid",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8318/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Renal cell carcinoma, spindle cell",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8319/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Collecting duct carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8319/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Renal cell carcinoma, collecting duct type",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8330/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Follicular adenoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8330/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Follicular adenocarcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8330/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Follicular carcinoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8330.1/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Compact cellular carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8330.2/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Mixed compact follicular-cellular carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8330.3/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Malignant mixed thyroid tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8345/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "C cell adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8345/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "C cell carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8345/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Medullary carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8345/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Parafollicular cell carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8370/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adrenal cortical adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8370/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adrenal cortical tumor, benign",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8370/0",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adrenal cortical tumor, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8370/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adrenal cortical carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8370/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adrenal cortical adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8370/3",
+    "taxonomy_group": "Adenomas and adenocarcinomas",
+    "taxonomy_term": "Adrenal cortical tumor, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8401/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Apocrine adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8401/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Apocrine adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8401.1/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Complex and mixed apocrine adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8401.1/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Complex and mixed apocrine adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8401.2/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Anal sac adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8401.2/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Adenoma of the apocrine glands of the anal sac",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8401.2/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Anal sac adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8401.2/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Adenocarcinoma of the apocrine glands of the anal sac",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8401.3/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Adenoma of the anal gland",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8402/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Clear cell adnexal carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8402/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Hidradenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Sebaceous adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Sebaceous gland adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Sebaceous ductal adenoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8410.1/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Meibomian adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410.1/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Meibomian gland adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410.1/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Meibomian ductal adenoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8410.1/1",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Meibomian gland epithelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410.1/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Meibomian gland adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410/1",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Sebaceous epithelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410/1",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Sebaceous gland epithelioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Sebaceous adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410.2/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Hepatoid adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410.2/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Hepatoid gland adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410.2/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Perianal gland adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410.2/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Circumanal adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410.2/1",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Hepatoid gland epithelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410.2/1",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Perianal gland epithelioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410.2/1",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Circumanal epithelioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410.2/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Hepatoid gland adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8410.2/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Perianal gland adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8410.2/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Circumanal adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8413/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Eccrine adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8413/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Eccrine adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8420/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Ceruminous adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8420.1/0",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Complex and mixed ceruminous adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8420/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Ceruminous adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8420.1/3",
+    "taxonomy_group": "Adnexal and skin appendage neoplasms",
+    "taxonomy_term": "Complex and mixed ceruminous adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8430/3",
+    "taxonomy_group": "Mucoepidermoid neoplasms",
+    "taxonomy_term": "Mucoepidermoid carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8440/0",
+    "taxonomy_group": "Cystic, mucinous and serous neoplasms",
+    "taxonomy_term": "Cystic adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8440/0",
+    "taxonomy_group": "Cystic, mucinous and serous neoplasms",
+    "taxonomy_term": "Cystadenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8440/3",
+    "taxonomy_group": "Cystic, mucinous and serous neoplasms",
+    "taxonomy_term": "Cystic adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8440/3",
+    "taxonomy_group": "Cystic, mucinous and serous neoplasms",
+    "taxonomy_term": "Cystadenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8480/3",
+    "taxonomy_group": "Cystic, mucinous and serous neoplasms",
+    "taxonomy_term": "Mucinous carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8480/3",
+    "taxonomy_group": "Cystic, mucinous and serous neoplasms",
+    "taxonomy_term": "Mucinous adenocarcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8490/3",
+    "taxonomy_group": "Cystic, mucinous and serous neoplasms",
+    "taxonomy_term": "Signet-ring cell carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8500/0",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Ductal adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8500/0",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Basaloid adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8500/0",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Apocrine ductal adenoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8500/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Ductal carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8500/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Ductal adenocarcinoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8500/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Apocrine ductal adenocarcinoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8500/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Apocrine ductal carcinoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8501/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Comedocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8503/0",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Intraductal papillary adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8503/0",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Duct papilloma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8503/0",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Intraductal papilloma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8503/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Intraductal papillary carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8503/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Intraductal papillary carcinoma with invasion",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8503/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Papillary cystic carcinoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8507/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Invasive micropapillary carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8530/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Inflammatory mammary carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8540/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Carcinoma with epidermal infiltration (Paget\u2010like disease)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8540/3",
+    "taxonomy_group": "Ductal and lobular neoplasms",
+    "taxonomy_term": "Paget disease, mammary",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8550/0",
+    "taxonomy_group": "Acinar cell neoplasms",
+    "taxonomy_term": "Acinar cell adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8550/3",
+    "taxonomy_group": "Acinar cell neoplasms",
+    "taxonomy_term": "Acinar adenocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8550/3",
+    "taxonomy_group": "Acinar cell neoplasms",
+    "taxonomy_term": "Acinar cell carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8550/3",
+    "taxonomy_group": "Acinar cell neoplasms",
+    "taxonomy_term": "Acinar carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8560/3",
+    "taxonomy_group": "Acinar cell neoplasms",
+    "taxonomy_term": "Adenosquamous carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8560/3",
+    "taxonomy_group": "Acinar cell neoplasms",
+    "taxonomy_term": "Mixed adenocarcinoma and squamous cell carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8562/3",
+    "taxonomy_group": "Acinar cell neoplasms",
+    "taxonomy_term": "Carcinoma and malignant myoepithelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8562/3",
+    "taxonomy_group": "Acinar cell neoplasms",
+    "taxonomy_term": "Epithelial-myoepithelial carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8580/3",
+    "taxonomy_group": "Thymic epithelial neoplasms",
+    "taxonomy_term": "Thymoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8590/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Sex cord-gonadal stromal tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8590/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Sex cord tumor, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8594/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Mixed germ cell-sex cord-stromal tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8600/0",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Thecoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8600/0",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Theca cell tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8610/0",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Luteoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8620/3",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Granulosa cell tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8631/0",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Arrenoblastoma, well differentiated",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8631/0",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Sertoli-Leydig cell tumor, well differentiated",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8631/3",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Arrenoblastoma, poorly differentiated",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8631/3",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Sertoli-Leydig cell tumor, poorly differentiated",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8633/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Arrenoblastoma, retiform",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8633/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Sertoli-Leydig cell tumor, retiform",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8640/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Sertoli cell tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8640.1/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Sertoli cell tumor, intratubular",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8640.2/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Sertoli cell tumor, diffuse",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8650/0",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Leydig cell tumor of the ovary, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8650/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Interstitial cell tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8650/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Leydig cell tumor, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8650.1/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Interstitial cell tumor, diffuse-compact",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8650.2/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Interstitial cell tumor, vascular-cystic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8650.2/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Interstitial cell tumor, angiomatoid",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8650.3/1",
+    "taxonomy_group": "Specialized gonadal neoplasms",
+    "taxonomy_term": "Interstitial cell tumor, pseudoadenomatous",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8680/3",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Paraganglioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8690/3",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Middle ear paraganglioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8690/3",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Jugulotympanic paraganglioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8691/0",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Adenoma of the aortic body",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8691/1",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Aortic body tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8691/3",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Carcinoma of the aortic body",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8692/0",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Adenoma of the carotid body",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8692/1",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Carotid body tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8692/3",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Carcinoma of the carotid body",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8693/1",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Extra-adrenal paraganglioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8693/3",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Extra-adrenal paraganglioma, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8700/3",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Pheochromocytoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8711/0",
+    "taxonomy_group": "Paragangliomas and glomus tumors",
+    "taxonomy_term": "Glomus tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8720.0/0",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Melanocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8720.0/0",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Melanoma, benign, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8720.0/0",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Dermal melanocytoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8720/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Melanoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8720/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Melanoma, malignant, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8720/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Melanoma, compound",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8720/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Melanoma, junctional",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8720/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Melanoma, dermal",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8722/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Balloon cell melanoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8722/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Clear cell melanoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8722.1/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Signet ring cell melanoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8726.1/0",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Melanoacanthoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8730/3",
+    "taxonomy_group": "Melanocytoma and Melanomas",
+    "taxonomy_term": "Amelanotic melanoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8800/0",
+    "taxonomy_group": "Soft tissue tumors and sarcomas, NOS",
+    "taxonomy_term": "Soft tissue tumor, benign",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8800/3",
+    "taxonomy_group": "Soft tissue tumors and sarcomas, NOS",
+    "taxonomy_term": "Sarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8800/3",
+    "taxonomy_group": "Soft tissue tumors and sarcomas, NOS",
+    "taxonomy_term": "Mesenchymal tumor, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8800.0/1",
+    "taxonomy_group": "Soft tissue tumors and sarcomas, NOS",
+    "taxonomy_term": "Soft tissue tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8800.1/3",
+    "taxonomy_group": "Soft tissue tumors and sarcomas, NOS",
+    "taxonomy_term": "Sarcoma associated with Spirocerca lupi",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8801/3",
+    "taxonomy_group": "Soft tissue tumors and sarcomas, NOS",
+    "taxonomy_term": "Spindle cell sarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8805/3",
+    "taxonomy_group": "Soft tissue tumors and sarcomas, NOS",
+    "taxonomy_term": "Undifferentiated sarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8810/0",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Fibroma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8810/0",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Fibroma, conventional",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8810/0",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Fibroma, keloidal",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8810/3",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Fibrosarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8810/3",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Fibrosarcoma, conventional",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8810.1/3",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Fibrosarcoma, keloidal",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8810.2/3",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Fibrosarcoma, myofibroblastic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8811/0",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Myxofibroma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8811/0",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Fibromyxoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8812/3",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Periosteal fibrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8812.1/3",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Central fibrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8812.2/3",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Maxillary and mandibular fibrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8815/1",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Hemangiopericytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8815.1/1",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Canine perivascular wall tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8824/1",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Myopericytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8825/1",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Myofibroblastic tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8825/1",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Inflammatory myofibroblastic tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8826/0",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Angiomyofibroblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8830/3",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Malignant fibrous histiocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8832/0",
+    "taxonomy_group": "Fibromatous neoplasms",
+    "taxonomy_term": "Dermatofibroma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8840/0",
+    "taxonomy_group": "Myxomatous neoplasms",
+    "taxonomy_term": "Myxoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8840.0/0",
+    "taxonomy_group": "Myxomatous neoplasms",
+    "taxonomy_term": "Synovial myxoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8840/3",
+    "taxonomy_group": "Myxomatous neoplasms",
+    "taxonomy_term": "Myxosarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8840.0/3",
+    "taxonomy_group": "Myxomatous neoplasms",
+    "taxonomy_term": "Synovial myxosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8841/0",
+    "taxonomy_group": "Myxomatous neoplasms",
+    "taxonomy_term": "Angiomyxoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8850/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Lipoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8850.1/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Lipomatosis",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8850/3",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Liposarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8851/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Fibrolipoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8851/3",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Liposarcoma, well differentiated, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8852/3",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Myxoid liposarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8854/3",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Pleomorphic liposarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8856/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Infiltrative lipoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8856/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Infiltrating lipoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8856/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Infiltrative angiolipoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8856/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Intramuscular lipoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "8857/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Spindle cell lipoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8858/3",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Dedifferentiated liposarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8859.1/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Osteolipoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8859.2/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Chondro-osteoblastic lipoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8861/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Angiolipoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8862/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Chondrolipoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8862/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Chondroid lipoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8870/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Myelolipoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8880/0",
+    "taxonomy_group": "Lipomatous neoplasms",
+    "taxonomy_term": "Hibernoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8890/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Leiomyoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8890.1/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Fibroleiomyoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8890.2/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Piloleiomyoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8890.3/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Deep-seated leiomyoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8890.4/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Lipoleiomyoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8890/3",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Leiomyosarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8894/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Perivascular myoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8894/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Angioleiomyoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8897/1",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Smooth muscle tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8900/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Rhabdomyoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8900/3",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Rhabdomyosarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8901/3",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Pleomorphic rhabdomyosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8903/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Fetal rhabdomyoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8904/0",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Adult rhabdomyoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8910/3",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Embryonal rhabdomyosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8910/3",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Botryoid rhabdomyosarcoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8912/3",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Spindle cell rhabdomyosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8920/3",
+    "taxonomy_group": "Myomatous neoplasms",
+    "taxonomy_term": "Alveolar rhabdomyosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8933/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Adenosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8936/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Gastrointestinal stromal tumor (GIST)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8940/0",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Benign mixed tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8940/0",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Pleomorphic adenoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8940/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Mixed carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8940/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Mixed tumor, malignant, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8941.1/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Carcinoma arising in a complex adenoma/nenign mixed tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8950/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Mullerian mixed tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8960/1",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Mesoblastic nephroma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8960/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Nephroblastoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8960/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Embryonal nephroma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8960.0/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Ectopic nephroblastoma of the canine thoracolumbal spinal cord",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8960.0/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Thoracolumbal spinal cord tumor of young dogs",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8966/0",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Renal interstitial cell tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8966/0",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Renomedullary interstitial cell tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8970/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Hepatoblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8972/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Pulmonary blastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8980/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Carcinosarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8982/0",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Myoepithelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8982/0",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Myoepithelial tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8982/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Malignant myoepithelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8982/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Myoepithelial carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8983/0",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Complex adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8983/0",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Adenomyoepithelioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "8983.1/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Complex carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "8990/3",
+    "taxonomy_group": "Complex mixed and stromal neoplasms",
+    "taxonomy_term": "Mesenchymoma, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9010/0",
+    "taxonomy_group": "Fibroepithelial neoplasms",
+    "taxonomy_term": "Fibroadenoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9040/3",
+    "taxonomy_group": "Synovial-like neoplasms",
+    "taxonomy_term": "Synovial cell sarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9050/0",
+    "taxonomy_group": "Mesothelial neoplasms",
+    "taxonomy_term": "Mesothelioma, benign",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9050/3",
+    "taxonomy_group": "Mesothelial neoplasms",
+    "taxonomy_term": "Mesothelioma, malignant, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9051/3",
+    "taxonomy_group": "Mesothelial neoplasms",
+    "taxonomy_term": "Sarcomatoid mesothelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9052/3",
+    "taxonomy_group": "Mesothelial neoplasms",
+    "taxonomy_term": "Epithelioid mesothelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9053/3",
+    "taxonomy_group": "Mesothelial neoplasms",
+    "taxonomy_term": "Mesothelioma, biphasic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9060/3",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Dysgerminoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9061/1",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Seminoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9061.1/1",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Seminoma, intratubular",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9061.2/1",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Seminoma, diffuse",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9064/3",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Germinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9070/3",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Embryonal carcinoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9073/1",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Gonadoblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9080/0",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Teratoma, benign",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9080/1",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Teratoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9080/3",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Teratocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9080/3",
+    "taxonomy_group": "Germ cell neoplasms",
+    "taxonomy_term": "Teratoma, malignant, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9100/3",
+    "taxonomy_group": "Trophoblastic neoplasms",
+    "taxonomy_term": "Choriocarcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9110/0",
+    "taxonomy_group": "Mesonephromas",
+    "taxonomy_term": "Rete adenoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9110/0",
+    "taxonomy_group": "Mesonephromas",
+    "taxonomy_term": "Adenoma of rete ovarii",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9120/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9120/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Dermal hemangioma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9120/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Solar-induced dermal hemangioma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9120/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Subcutaneous hemangioma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9120.0/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Synovial hemangioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9120.1/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangioma, inflammatory lobular capillary",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9120.1/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Pyogenic granuloma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9120.1/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Granulation tissue type hemangioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9120.2/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Mixed capillary cavernous hemangioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9120.3/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Spindle cell hemangioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9120/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangiosarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9120/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangiosarcoma, conventional",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9120/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangiosarcoma, well differentiated",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9120/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Cutaneous and subcutaneous hemangiosarcoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9120/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Intramuscular hemangiosarcoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9120/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Retroperitoneal hemangiosarcoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9120/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Visceral hemangiosarcoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9120.1/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangiosarcoma, kaposiform",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9120.1/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangiosarcoma, spindle cell",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9120.2/3",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangiosarcoma, epithelioid",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9121/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Cavernous hemangioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9125/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Epithelioid hemangioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9130/1",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangioendothelioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9130.1/1",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangioendothelioma, kaposiform",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9130.1/1",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Hemangioendothelioma, spindle cell",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9130.1/1",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Kaposi-like vascular tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9131/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Capillary hemangioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9131/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Congenital hemangioma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9132/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Infiltrative hemangioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9132/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Intramuscular hemangioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9132/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Mixed infiltrating intramuscular hemangioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9133/1",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Epithelioid hemangioendothelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9136/1",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Retiform hemangioendothelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9141/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Angiokeratoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9160/0",
+    "taxonomy_group": "Blood vessel tumors",
+    "taxonomy_term": "Angiofibroma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9170/0",
+    "taxonomy_group": "Lymphatic vessel tumors",
+    "taxonomy_term": "Lymphangioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9170/3",
+    "taxonomy_group": "Lymphatic vessel tumors",
+    "taxonomy_term": "Lymphangiosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9180/0",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Osteoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9180/0",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Extraskeletal osteoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9180/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Osteosarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9180/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Extraskeletal osteosarcoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9180/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Multicentric osteosarcoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9180.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Osteoblastic osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9180.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Osteoblastic osteosarcoma, productive",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9180.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Osteoblastic osteosarcoma, non-productive",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9180.2/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Giant cell-rich osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9180.3/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Poorly differentiated osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9181/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Chondroblastic osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9182/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Fibroblastic osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9183/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Telangiectatic osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9186/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Central osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9192/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Parosteal osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9192.0/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Peripheral osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9192.0/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Surface osteosarcoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9192.0/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Juxtacortical osteosarcoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9193/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Periosteal osteosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9210/0",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Osteochondroma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Multilobular tumor of bone",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Multilobular osteosarcoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Multilobular sarcoma of bone",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Chondroma rodens",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Calcifying aponeurotic fibroma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Multilobular osteoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Multilobular chondroma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Multilobular osteochondrosarcoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9210.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Cartilage analogue of fibromatosis",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9220/0",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Chondroma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9220/0",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Enchondroma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9220/0",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Ecchondroma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9220/0",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Extraskeletal chondroma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9220/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Chondrosarcoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9220/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Extraskeletal chondrosarcoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9220.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Central chondrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9220.1/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Medullary chondrosarcoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9221/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Periosteal chondrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9231/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Myxoid chondrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9240/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Mesenchymal chondrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9242/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Clear cell chondrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9243/3",
+    "taxonomy_group": "Osseous and chondromatous neoplasms",
+    "taxonomy_term": "Dedifferentiated chondrosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9250/1",
+    "taxonomy_group": "Giant cell tumors",
+    "taxonomy_term": "Giant cell tumor of bone, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9250/1",
+    "taxonomy_group": "Giant cell tumors",
+    "taxonomy_term": "Osteoclastoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9250/1",
+    "taxonomy_group": "Giant cell tumors",
+    "taxonomy_term": "Giant cell sarcoma of bone",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9252/0",
+    "taxonomy_group": "Giant cell tumors",
+    "taxonomy_term": "Giant cell tumor of tendon sheath",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9252/0",
+    "taxonomy_group": "Giant cell tumors",
+    "taxonomy_term": "Tenosynovial giant cell tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9262/0",
+    "taxonomy_group": "Miscellaneous bone tumors",
+    "taxonomy_term": "Ossifying fibroma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9262/0",
+    "taxonomy_group": "Miscellaneous bone tumors",
+    "taxonomy_term": "Fibro-osteoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9262/0",
+    "taxonomy_group": "Miscellaneous bone tumors",
+    "taxonomy_term": "Osteofibroma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9270/3",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Odontogenic tumor, malignant, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9270.1/3",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Ameloblastic carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9270.1/3",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Odontogenic carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9270.2/3",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Odontogenic sarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9280/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Odontoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9281/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Compound odontoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9282/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Complex odontoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9290/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Ameloblastic fibro-odontoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9290/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Fibroameloblastic odontoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9310/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Ameloblastoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9310.1/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Amyloid-producing ameloblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9310.1/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Calcifying epithelial odontogenic tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9310.2/1",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Acanthomatous ameloblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9310.2/1",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Acanthomatous epulis",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9310.2/1",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Peripheral ameloblastoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9310.2/1",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Basal carcinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9310.2/1",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Adamantinoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9311/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Odontoameloblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9320/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Myxoma of the jaw",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9320/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Odontogenic myxoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9330/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Ameloblastic fibroma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9330/0",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Fibroameloblastoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9342/3",
+    "taxonomy_group": "Odontogenic tumors",
+    "taxonomy_term": "Odontogenic carcinosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9350/1",
+    "taxonomy_group": "Miscellaneous tumors",
+    "taxonomy_term": "Craniopharyngioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9370/1",
+    "taxonomy_group": "Miscellaneous tumors",
+    "taxonomy_term": "Chordoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9374.1/0",
+    "taxonomy_group": "Miscellaneous tumors",
+    "taxonomy_term": "Canine transmissible venereal tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9375.1/3",
+    "taxonomy_group": "Miscellaneous tumors",
+    "taxonomy_term": "Combined carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9380/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Glioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9380.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Glioma, low grade",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9380.1/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Glioma, high grade",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9380.1/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Glioma, malignant",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9382/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligoastrocytoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9382/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Mixed glioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9382.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligoastrocytoma, low grade",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9382.1/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Anaplastic oligoastrocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9384/1",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Subependymal giant cell astrocytoma (SEGA)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9390/0",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Choroid plexus papilloma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9390/1",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Atypical choroid plexus papilloma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9390/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Choroid plexus carcinoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9391/1",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Cellular ependymoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9391.0/1",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Clear cell ependymoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9391.1/1",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Tanycytic ependymoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9392/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Anaplastic ependymoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9393/1",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Papillary ependymoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9395/1",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Papillary tumor of pineal region",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9400/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9400/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytic glioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9400/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astroglioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9400.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Diffuse astrocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9400.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytoma, low grade",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9400.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Gliomatosis cerebri",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9400.1/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytoma, low grade, compact",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9400.2/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytoma, low grade, focally infiltrative",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9401/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytoma, anaplastic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9401/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytoma, anaplastic, diffuse",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9401.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytoma, anaplastic, compact",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9401.1/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astrocytoma, anaplastic, focally infiltrative",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9410/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Protoplasmic astrocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9411/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Gemistocytic astrocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9420/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Fibrillary astrocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9420/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Fibrous astrocytoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9421/1",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Pilocytic astrocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9423/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Spongioblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9424/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Pleomorphic xanthoastrocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9424/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Anaplastic pleomorphic xanthoastrocytoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9430/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Astroblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9440/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Glioblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9440/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Glioblastoma multiforme",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9441/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Giant cell glioblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9442/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Gliosarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9442/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Glioblastoma with sarcomatous component",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9450/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9450.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, low grade",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9450.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, low grade, compact",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9450.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, low grade, focally infiltrative",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9450.0/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, low grade, diffusely infiltrative",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9451/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, anaplastic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9451/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, high grade",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9451/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, high grade, compact",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9451/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, high grade, focally infiltrative",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9451/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Oligodendroglioma, high grade, diffusely infiltrative",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9470/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Medulloblastoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9473/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "CNS embryonal tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9473/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Primitive neuroectodermal tumor, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9473/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "PNET, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9473/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "Central primitive neuroectodermal tumor",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9473/3",
+    "taxonomy_group": "Gliomas",
+    "taxonomy_term": "CPNET",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9490/1",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Ganglioneuroma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9490/3",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Ganglioneuroblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9490/3",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "CNS ganglioneuroblastoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9491/0",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Ganglioneuromatosis",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9492/1",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Gangliocytoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9500/3",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Neuroblastoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9500/3",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Central neuroblastoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9500/3",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "CNS neuroblastoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9501/3",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Medulloepithelioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9503/3",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Neuroepithelioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9505/1",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Ganglioglioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9505/3",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Ganglioglioma, anaplastic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9506/1",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Central neurocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9506/1",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Neurocytoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9522/1",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Olfactory neuroblastoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9522/1",
+    "taxonomy_group": "Neuroepitheliomatous neoplasms",
+    "taxonomy_term": "Esthesioneuroblastoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9530.0/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Meningioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9530.1/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Meningioma, NOS, WHO grade I",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9530.2/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Microcystic meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9530.3/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Secretory meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9530/3",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Meningioma, malignant; WHO grade III",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9530/3",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Meningioma, anaplastic",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9530.0/3",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Papillary meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9530.1/3",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Rhabdoid meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9531/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Meningothelial meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9532/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Fibrous meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9532/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Fibroblastic meningioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9533/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Psammomatous meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9534/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Angiomatous meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9534/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Angioblastic meningioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9537/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Transitional meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9537/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Mixed meningioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9539/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Meningioma, WHO grade II",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9539/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Atypical meningioma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9539.1/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Clear cell meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9539.2/1",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Chordoid meningioma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9539/3",
+    "taxonomy_group": "Meningiomas",
+    "taxonomy_term": "Meningeal sarcomatosis",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9540/0",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Neurofibroma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9540.0/0",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Schwannoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9540.1/1",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Uveal Schwannoma of blue-eyed dogs",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9540.1/1",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Spindle cell tumor of blue-eyed dog",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9540.2/3",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Malignant peripheral nerve sheath tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9563/1",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Nerve sheath tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9563/1",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Hybrid nerve sheath tumor",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9571/1",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Perineurioma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9571/1",
+    "taxonomy_group": "Nerve sheath tumors",
+    "taxonomy_term": "Intraneural perineurioma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9580/0",
+    "taxonomy_group": "Granular cell tumors",
+    "taxonomy_term": "Granular cell tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9580/3",
+    "taxonomy_group": "Granular cell tumors",
+    "taxonomy_term": "Granular cell tumor, malignant",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9591/3",
+    "taxonomy_group": "Malignant lymphomas, NOS or diffuse",
+    "taxonomy_term": "Malignant lymphoma (non-Hodgkin), NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9591/3",
+    "taxonomy_group": "Malignant lymphomas, NOS or diffuse",
+    "taxonomy_term": "(Non-Hodgkin) Lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9591/3",
+    "taxonomy_group": "Malignant lymphomas, NOS or diffuse",
+    "taxonomy_term": "Lymphosarcoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9591/3",
+    "taxonomy_group": "Malignant lymphomas, NOS or diffuse",
+    "taxonomy_term": "Reticulum cell sarcoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9591.1/3",
+    "taxonomy_group": "Malignant lymphomas, NOS or diffuse",
+    "taxonomy_term": "B-cell lymphoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9671/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Lymphoplasmacytic lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9673/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Mantle cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9679/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Mediastinal large B-cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9679/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Primary mediastinal (thymic) B-cell lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9679/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Thymic B-cell lymphoma (mediastinal B)",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9679/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "High-grade anaplastic/mediastinal B-cell lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9680/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Diffuse large B\u2010cell lymphoma (DLBCL)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9680/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Diffuse large B-cell (noncleaved, cleaved) lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9680/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "High-grade B-cell lymphoma, centroblastic monomorphic, diffuse subtype",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9680/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "High-grade B-cell lymphoma centroblastic polymorphic",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9684/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Large cell immunoblastic lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9684/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "High-grade B-cell lymphoma, immunoblastic",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9687/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Burkitt\u2019s lymphoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9687/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Burkitt-type lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9687/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "High-grade B-cell lymphoma, Burkitt type",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9687/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "High grade B-cell lymphoma Burkitt's-like",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9688/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "T\u2010cell\u2010rich large B\u2010cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9688/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "T\u2010cell\u2010rich B\u2010cell lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9689/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Splenic marginal zone B-cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9690/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Follicular lymphoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9690/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Follicular (center cell) lymphoma, grade 1",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9690/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Follicular (center cell) lymphoma, grade 2",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9690/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Low-grade B-cell lymphoma, centroblastic-centrocytic, follicular",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9690/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Follicular (center cell) lymphoma, grade 3",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9690/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "High-grade B-cell lymphoma, centroblastic monomorphic, follicular subtype",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9699/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Marginal zone lymphoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9699.1/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Nodal marginal zone lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9699.2/3",
+    "taxonomy_group": "Mature B-cell lymphomas",
+    "taxonomy_term": "Extranodal marginal zone lymphoma of mucosa-associated lymphoid tissue type (MALT)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9700/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Cutaneous epitheliotropic lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9700/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Mycosis fungoides",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9700/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Low-grade, cutaneous T-cell lymphoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9701/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Sezary syndrome",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Peripheral T-cell lymphoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Mature T-cell lymphoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Peripheral T-cell lymphoma, mixed lymphoid type",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Peripheral T-cell lymphoma, mixed inflammatory type",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Low-grade, pleomorphic small cell lymphoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "High-grade, pleomorphic medium and large cell (mixed) lymphoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "High-grade, pleomorphic large cell lymphoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "High-grade, plasmacytoid lymphoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9702/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "High-grade, immunoblastic lymphoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9702.1/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "T\u2010zone lymphoma (TZL), nodal",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9702.1/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Low-grade, small clear cell (T-zone) lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9702.1/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Mature (peripheral) nodal T-cell (T-zone) lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9705/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Angioimmunoblastic T\u2010cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9705/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Angioimmunoblastic lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9708/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Subcutaneous panniculitis\u2013like T\u2010cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9712/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Intravascular large B-cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9712.1/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Intravascular large T-cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9712.2/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Intravascular large cell lymphoma, non-B non-T",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9714/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Anaplastic large cell lymphoma (T-cell and null cell type), systemic",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9714/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Anaplastic large cell lymphoma, CD30 positive",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9716/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "\u03b3\u03b4 T\u2010cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9716/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Hepatosplenic T-cell lymphoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9716/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Hepatocytotropic T-cell lymphoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9717/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Intestinal T\u2010cell lymphoma (enteropathy associated)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9718/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Anaplastic large cell lymphoma (T-cell), cutaneous",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9718/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Non-epitheliotropic cutaneous lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9718/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "High-grade, cutaneous T-cell lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9719/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Angiocentric T-cell lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9719/3",
+    "taxonomy_group": "Mature T- and NK-cell lymphomas",
+    "taxonomy_term": "Intravascular lymphoma (angiocentric)",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9727/3",
+    "taxonomy_group": "Precursor cell lymphoblastic lymphomas",
+    "taxonomy_term": "Precursor cell lymphoblastic lymphoma, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9732/3",
+    "taxonomy_group": "Plasma cell neoplasms",
+    "taxonomy_term": "Plasma cell myeloma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9732/3",
+    "taxonomy_group": "Plasma cell neoplasms",
+    "taxonomy_term": "Multiple myeloma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9734/0",
+    "taxonomy_group": "Plasma cell neoplasms",
+    "taxonomy_term": "Plasmacytoma, extramedullary (cutaneous)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9734/0",
+    "taxonomy_group": "Plasma cell neoplasms",
+    "taxonomy_term": "Indolent plasmacytoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9734/1",
+    "taxonomy_group": "Plasma cell neoplasms",
+    "taxonomy_term": "Plasmacytoma, extramedullary (digestive tract)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9734/3",
+    "taxonomy_group": "Plasma cell neoplasms",
+    "taxonomy_term": "Plasmacytoma, extramedullary (malignant)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9734/3",
+    "taxonomy_group": "Plasma cell neoplasms",
+    "taxonomy_term": "Anaplastic plasmacytoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9735/3",
+    "taxonomy_group": "Plasma cell neoplasms",
+    "taxonomy_term": "Plasmablastic lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Mast cell tumor, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Mastocytoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9740.0/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Subcutaneous mast cell tumor",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.1/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Patnaik I",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.2/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Patnaik II",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.3/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Patnaik III",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.4/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Kiupel low",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.5/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Kiupel high",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.6/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Patnaik I, Kiupel low",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.7/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Patnaik II, Kiupel low",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.8/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Patnaik II, Kiupel high",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9740.9/1",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Cutaneous mast cell tumor grade Patnaik III, Kiupel high",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9741.1/3",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Systemic mastocytosis, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9741.1/3",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Systemic (extracutaneous) mast cell tumor",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9741.1/3",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Visceral mastocytosis",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9741.1/3",
+    "taxonomy_group": "Mast cell neoplasms",
+    "taxonomy_term": "Mast cell leukemia",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9751/1",
+    "taxonomy_group": "Neoplasms of histiocytes and accessory lymphoid cells",
+    "taxonomy_term": "Cutaneous Langerhans cell histiocytosis",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9751.1/0",
+    "taxonomy_group": "Neoplasms of histiocytes and accessory lymphoid cells",
+    "taxonomy_term": "Canine cutaneous histiocytoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9751/3",
+    "taxonomy_group": "Neoplasms of histiocytes and accessory lymphoid cells",
+    "taxonomy_term": "Cutaneous Langerhans cell histiocytosis (disseminated, systemic)",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9755/3",
+    "taxonomy_group": "Neoplasms of histiocytes and accessory lymphoid cells",
+    "taxonomy_term": "Histiocytic sarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9755/3",
+    "taxonomy_group": "Neoplasms of histiocytes and accessory lymphoid cells",
+    "taxonomy_term": "Malignant histiocytosis",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9755/3",
+    "taxonomy_group": "Neoplasms of histiocytes and accessory lymphoid cells",
+    "taxonomy_term": "Hemophagocytic histiocytic sarcoma",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9766/1",
+    "taxonomy_group": "Immunoproliferative diseases",
+    "taxonomy_term": "Lymphomatoid granulomatosis",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9766/1",
+    "taxonomy_group": "Immunoproliferative diseases",
+    "taxonomy_term": "Angiocentric B\u2010cell lymphoma (with reactive T-cells)",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9811/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "B-cell lymphoblastic leukemia/lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9811/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Precursor B-cell lymphoblastic leukemia/lymphoma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9811/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Acute B-cell lymphoblastic leukemia",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9823/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "B-cell chronic lymphocytic leukemia/small (cell) lymphocytic lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9823/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "B-cell lymphocytic lymphoma intermediate type (LLI)",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9831/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "T-cell large granular lymphocytic (LGL) leukemia/lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9831/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "NK-cell large granular lymphocytic leukemia",
+    "term_level": "Related"
+  },
+  {
+    "vet_icd_o_code": "9831.1/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "T-cell chronic lymphocytic leukemia/small (cell) lymphocytic lymphoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9832/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Prolymphocytic leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9833/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "B-cell prolymphocytic leukemia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9834/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "T-cell prolymphocytic leukemia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9835/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Precursor cell lymphoblastic leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9835/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Acute lymphoblastic leukemia, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9835/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Acute lymphoblastic leukemia-lymphoma, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9835/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Lymphoblastic leukemia, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9835/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Acute lymphatic leukemia",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9837/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "T-cell lymphoblastic lymphoma (LBL)/leukemia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9837/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Acute (T-cell) lymphoblastic leukemia",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9837/3",
+    "taxonomy_group": "Lymphoid leukemias",
+    "taxonomy_term": "Precursor T-cell lymphoblastic lymphoma/leukemia",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9840/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute erythroid leukemia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9840/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "(Acute) Erythroleukemia",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9840/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "FAB M6 (M6A or M6B)",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9860/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Myeloid leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9861/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute myeloid leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9863/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Chronic myeloid leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9866/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute promyelocytic leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9866/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "FAB M3",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9867/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute myelomonocytic leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9867/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "FAB M4",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9872/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute myeloid leukemia, minimal differentiation",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9872/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute myeloblastic leukemia",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9872/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "FAB M0",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9873/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute myeloid leukemia without maturation",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9873/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "FAB M1",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9874/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute myeloid leukemia with maturation",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9874/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "FAB M2, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9876/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Atypical chronic myeloid leukemia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9891/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute monocytic leukemia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9891/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Monoblastic leukemia, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9891/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute monoblastic leukemia",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9891/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "FAB M5",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9910/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute megakaryoblastic leukemia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9910/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Megakaryocytic leukemia",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9910/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "FAB M7",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9930/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Myeloid sarcoma",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9930/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Chloroma",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9931/3",
+    "taxonomy_group": "Myeloid leukemias",
+    "taxonomy_term": "Acute panmyelosis with myelofibrosis",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9945/3",
+    "taxonomy_group": "Other leukemias",
+    "taxonomy_term": "Chronic myelomonocytic leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9946/3",
+    "taxonomy_group": "Other leukemias",
+    "taxonomy_term": "Juvenile myelomonocytic leukemia, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9950/3",
+    "taxonomy_group": "Myeloproliferative neoplasms",
+    "taxonomy_term": "Polycythemia vera",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9960/3",
+    "taxonomy_group": "Myeloproliferative neoplasms",
+    "taxonomy_term": "Myeloproliferative neoplasm, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9961/3",
+    "taxonomy_group": "Myeloproliferative neoplasms",
+    "taxonomy_term": "Primary myelofibrosis",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9964/3",
+    "taxonomy_group": "Myeloproliferative neoplasms",
+    "taxonomy_term": "Chronic eosinophilic leukemia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9964/3",
+    "taxonomy_group": "Myeloproliferative neoplasms",
+    "taxonomy_term": "Hypereosinophilic syndrome",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9980/3",
+    "taxonomy_group": "Myelodysplastic syndromes",
+    "taxonomy_term": "Myelodysplastic syndrome with single lineage dysplasia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9980/3",
+    "taxonomy_group": "Myelodysplastic syndromes",
+    "taxonomy_term": "Refractory anemia, NOS",
+    "term_level": "Synonym"
+  },
+  {
+    "vet_icd_o_code": "9982/3",
+    "taxonomy_group": "Myelodysplastic syndromes",
+    "taxonomy_term": "Myelodysplastic syndrome with ring sideroblasts and single lineage dysplasia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9983/3",
+    "taxonomy_group": "Myelodysplastic syndromes",
+    "taxonomy_term": "Refractory anemia with excess blasts, NOS",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9985/3",
+    "taxonomy_group": "Myelodysplastic syndromes",
+    "taxonomy_term": "Refractory cytopenia with multilineage dysplasia",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9989/3",
+    "taxonomy_group": "Myelodysplastic syndromes",
+    "taxonomy_term": "Myelodysplastic syndrome, unclassifiable",
+    "term_level": "Preferred"
+  },
+  {
+    "vet_icd_o_code": "9993/3",
+    "taxonomy_group": "Myelodysplastic syndromes",
+    "taxonomy_term": "Myelodysplastic syndrome with ring sideroblasts and multilineage dysplasia",
+    "term_level": "Preferred"
+  }
+]

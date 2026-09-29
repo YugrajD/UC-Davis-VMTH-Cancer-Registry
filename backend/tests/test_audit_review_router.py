@@ -400,8 +400,14 @@ async def test_taxonomy_terms_returns_rows():
     mock_db = AsyncMock()
     terms_result = MagicMock()
     terms_result.scalars.return_value.all.return_value = [
-        TaxonomyTerm(id=1, vet_icd_o_code="9590/3", taxonomy_group="Malignant lymphomas", taxonomy_term="Malignant lymphoma, NOS"),
-        TaxonomyTerm(id=2, vet_icd_o_code="8050/3", taxonomy_group="Epithelial neoplasms, NOS", taxonomy_term="Papillary adenocarcinoma"),
+        TaxonomyTerm(
+            id=1, vet_icd_o_code="9590/3", taxonomy_group="Malignant lymphomas",
+            taxonomy_term="Malignant lymphoma, NOS", term_level="Preferred",
+        ),
+        TaxonomyTerm(
+            id=2, vet_icd_o_code="8050/3", taxonomy_group="Epithelial neoplasms, NOS",
+            taxonomy_term="Papillary adenocarcinoma", term_level="Preferred",
+        ),
     ]
     mock_db.execute.side_effect = [terms_result]
 
@@ -417,7 +423,7 @@ async def test_taxonomy_terms_returns_rows():
         assert len(body) == 2
         assert body[0] == {
             "vet_icd_o_code": "9590/3", "taxonomy_group": "Malignant lymphomas",
-            "taxonomy_term": "Malignant lymphoma, NOS",
+            "taxonomy_term": "Malignant lymphoma, NOS", "term_level": "Preferred",
         }
     finally:
         _cleanup()

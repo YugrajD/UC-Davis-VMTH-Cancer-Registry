@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuditCaseDetail, TaxonomyTermOut, WorklistResponse } from '../../api/client';
 import { AuditWorklist } from './AuditWorklist';
+import realTaxonomy from './__fixtures__/taxonomyTerms.fixture.json';
 
 const mocks = vi.hoisted(() => ({
   authState: {
@@ -63,7 +64,12 @@ const worklist: WorklistResponse = {
 };
 
 const terms: TaxonomyTermOut[] = [
-  { vet_icd_o_code: '9590/3', taxonomy_group: 'Malignant lymphomas', taxonomy_term: 'Malignant lymphoma, NOS' },
+  {
+    vet_icd_o_code: '9590/3',
+    taxonomy_group: 'Malignant lymphomas',
+    taxonomy_term: 'Malignant lymphoma, NOS',
+    term_level: 'Preferred',
+  },
 ];
 
 function caseDetail(overrides: Partial<AuditCaseDetail> = {}): AuditCaseDetail {
@@ -156,9 +162,14 @@ describe('AuditWorklist', () => {
     // Unmodified from the pre-filled prediction: the button reads Approve.
     expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
 
-    const search = screen.getByPlaceholderText('Search taxonomy terms…');
-    await user.click(search);
+    const termBox = screen.getByRole('combobox', { name: 'Term' });
+    await user.type(termBox, 'Malignant lymphoma');
     await user.click(await screen.findByRole('option'));
+
+    // The code box fills in from the picked term, and the pair isn't added
+    // to the case until Add is clicked.
+    expect(screen.getByRole('combobox', { name: 'ICD-O code' })).toHaveValue('9590/3');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(screen.getByText('Malignant lymphoma, NOS')).toBeInTheDocument();
 
@@ -245,5 +256,180 @@ describe('AuditWorklist', () => {
       expect(mocks.importAuditList).toHaveBeenCalledWith('reviewer-token', listFile, manifestFile);
     });
     expect(await screen.findByText(/Imported 2026-09-28-1/)).toBeInTheDocument();
+  });
+
+  // Code picker acceptance checks, run against the real Vet-ICD-O-canine-1
+  // taxonomy (845 rows, parsed from ml/taxonomy/labels.csv) rather than the
+  // small fixture above, so the literal codes/terms/counts asserted below
+  // are the picker's actual behavior on production data.
+  describe('Code picker', () => {
+    beforeEach(() => {
+      mocks.fetchTaxonomyTerms.mockResolvedValue(realTaxonomy as TaxonomyTermOut[]);
+    });
+
+    async function openCase() {
+      const user = userEvent.setup();
+      render(<AuditWorklist />);
+      await user.click(await screen.findByText('CASE-0001'));
+      await screen.findByText('Full pathology report text.');
+      return user;
+    }
+
+    async function pickOption(user: ReturnType<typeof userEvent.setup>, pattern: RegExp) {
+      const option = await waitFor(() => {
+        const match = screen.getAllByRole('option').find((el) => pattern.test(el.textContent ?? ''));
+        expect(match).toBeTruthy();
+        return match as HTMLElement;
+      });
+      await user.click(option);
+    }
+
+    it('1. resolves a code to its Preferred term and group, enabling Add', async () => {
+      const user = await openCase();
+      const codeBox = screen.getByRole('combobox', { name: 'ICD-O code' });
+      await user.type(codeBox, '8010/3');
+      await pickOption(user, /Carcinoma, NOS/);
+
+      expect(screen.getByRole('combobox', { name: 'Term' })).toHaveValue('Carcinoma, NOS');
+      expect(screen.getByText(/Epithelial neoplasms, NOS/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled();
+    });
+
+    it('2. accepts 80103, "8010 3" and "8010-3" as the same code, listed first', async () => {
+      for (const digits of ['80103', '8010 3', '8010-3']) {
+        const user = await openCase();
+        const codeBox = screen.getByRole('combobox', { name: 'ICD-O code' });
+        await user.type(codeBox, digits);
+        const options = await screen.findAllByRole('option');
+        expect(options[0]).toHaveTextContent('8010/3');
+        cleanup();
+      }
+    });
+
+    it('3. focusing Term after a code-driven pair shows its synonyms, keeping the code', async () => {
+      const user = await openCase();
+      const codeBox = screen.getByRole('combobox', { name: 'ICD-O code' });
+      const termBox = screen.getByRole('combobox', { name: 'Term' });
+      await user.type(codeBox, '8010/3');
+      await pickOption(user, /Carcinoma, NOS/);
+
+      await user.click(termBox);
+      await pickOption(user, /Epithelial tumor, malignant/);
+
+      expect(codeBox).toHaveValue('8010/3');
+      expect(termBox).toHaveValue('Epithelial tumor, malignant');
+    });
+
+    it('4. tolerates a typo in the term and resolves to the right code', async () => {
+      const user = await openCase();
+      const termBox = screen.getByRole('combobox', { name: 'Term' });
+      await user.type(termBox, 'hemangiosarcma');
+
+      const option = await waitFor(() => {
+        const match = screen.getAllByRole('option').find((el) => /Hemangiosarcoma, NOS/.test(el.textContent ?? ''));
+        expect(match).toBeTruthy();
+        return match as HTMLElement;
+      });
+      expect(option).toHaveTextContent('close match');
+      await userEvent.setup().click(option);
+
+      expect(screen.getByRole('combobox', { name: 'ICD-O code' })).toHaveValue('9120/3');
+    });
+
+    it('5. caps results at 25 with a "Showing 25 of 82" footer for a broad term query', async () => {
+      const user = await openCase();
+      const termBox = screen.getByRole('combobox', { name: 'Term' });
+      await user.type(termBox, 'lymphoma');
+
+      expect(await screen.findAllByRole('option')).toHaveLength(25);
+      expect(screen.getByText('Showing 25 of 82. Keep typing to narrow.')).toBeInTheDocument();
+    });
+
+    it('6. flags a term listed under two codes as ambiguous on blur', async () => {
+      const user = await openCase();
+      const termBox = screen.getByRole('combobox', { name: 'Term' });
+      await user.type(termBox, 'Papillary adenocarcinoma');
+      await user.tab();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Papillary adenocarcinoma is listed under 2 codes (8050/3, 8260/3). Pick one from the list.',
+      );
+      expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled();
+    });
+
+    it('7. flags an unknown code on blur', async () => {
+      const user = await openCase();
+      const codeBox = screen.getByRole('combobox', { name: 'ICD-O code' });
+      await user.type(codeBox, '8011/3');
+      await user.tab();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'No code matches ‘8011/3’. Pick one from the list.',
+      );
+      expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled();
+    });
+
+    it('8. editing the code after a pair clears the term until a new code is picked', async () => {
+      const user = await openCase();
+      const codeBox = screen.getByRole('combobox', { name: 'ICD-O code' });
+      const termBox = screen.getByRole('combobox', { name: 'Term' });
+      await user.type(codeBox, '8010/3');
+      await pickOption(user, /Carcinoma, NOS/);
+
+      await user.clear(codeBox);
+      await user.type(codeBox, '9120');
+      expect(termBox).toHaveValue('');
+
+      await pickOption(user, /^9120\/3.*Hemangiosarcoma, NOS/s);
+      expect(termBox).toHaveValue('Hemangiosarcoma, NOS');
+    });
+
+    it('9. Esc while editing the code restores the previous complete pair', async () => {
+      const user = await openCase();
+      const codeBox = screen.getByRole('combobox', { name: 'ICD-O code' });
+      const termBox = screen.getByRole('combobox', { name: 'Term' });
+      await user.type(codeBox, '8010/3');
+      await pickOption(user, /Carcinoma, NOS/);
+
+      await user.type(codeBox, '9');
+      expect(codeBox).toHaveValue('8010/39');
+
+      await user.keyboard('{Escape}');
+
+      expect(codeBox).toHaveValue('8010/3');
+      expect(termBox).toHaveValue('Carcinoma, NOS');
+    });
+
+    it('10. adding the same pair twice shows "Already added" without duplicating the chip', async () => {
+      const user = await openCase();
+      const codeBox = screen.getByRole('combobox', { name: 'ICD-O code' });
+      await user.type(codeBox, '8010/3');
+      await pickOption(user, /Carcinoma, NOS/);
+      await user.click(screen.getByRole('button', { name: 'Add' }));
+
+      await user.type(codeBox, '8010/3');
+      await pickOption(user, /Carcinoma, NOS/);
+      await user.click(screen.getByRole('button', { name: 'Add' }));
+
+      expect(screen.getByText(/Already added: 8010\/3 Carcinoma, NOS/)).toBeInTheDocument();
+      // Only one chip for the pair — plus the case's pre-filled Mast cell
+      // prediction, never duplicated.
+      expect(screen.getAllByText('Carcinoma, NOS')).toHaveLength(1);
+      expect(screen.getAllByRole('button', { name: 'Remove' })).toHaveLength(2);
+    });
+
+    it('shows a hint instead of code results when letters are typed into the Code box', async () => {
+      const user = await openCase();
+      const codeBox = screen.getByRole('combobox', { name: 'ICD-O code' });
+      await user.type(codeBox, 'carc');
+
+      expect(
+        await screen.findByText('Codes are numbers like 8010/3. To search by name, use the Term box.'),
+      ).toBeInTheDocument();
+    });
+
+    // 11. Saving still sends {taxonomy_group, taxonomy_term} per code — see
+    // 'pre-fills from the registry prediction...' above, which asserts the
+    // exact payload shape after a picker-driven Add.
   });
 });

@@ -42,17 +42,17 @@ def run() -> None:
     # (group, term) is unique in the CSV (verified against the live file —
     # no code collides two groups/terms into the same pair), matching
     # taxonomy_terms' UNIQUE(taxonomy_group, taxonomy_term).
-    rows = [(label.code, label.group, label.term) for label in labels]
+    rows = [(label.code, label.group, label.term, label.level or None) for label in labels]
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
     execute_values(
         cur,
-        """INSERT INTO taxonomy_terms (vet_icd_o_code, taxonomy_group, taxonomy_term)
+        """INSERT INTO taxonomy_terms (vet_icd_o_code, taxonomy_group, taxonomy_term, term_level)
            VALUES %s
            ON CONFLICT (taxonomy_group, taxonomy_term)
-           DO UPDATE SET vet_icd_o_code = EXCLUDED.vet_icd_o_code""",
+           DO UPDATE SET vet_icd_o_code = EXCLUDED.vet_icd_o_code, term_level = EXCLUDED.term_level""",
         rows,
     )
     conn.commit()

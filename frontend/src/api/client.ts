@@ -792,6 +792,7 @@ export interface TaxonomyTermOut {
   vet_icd_o_code: string | null;
   taxonomy_group: string;
   taxonomy_term: string;
+  term_level: string | null;
 }
 
 export async function fetchTaxonomyTerms(token: string): Promise<TaxonomyTermOut[]> {

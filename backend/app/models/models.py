@@ -325,6 +325,9 @@ class TaxonomyTerm(Base):
     vet_icd_o_code = Column(String(20), nullable=True)
     taxonomy_group = Column(String(255), nullable=False)
     taxonomy_term = Column(String(255), nullable=False)
+    # "Preferred" / "Synonym" / "Related", from labels.csv's `level` column
+    # (migration 036). Nullable until the seed is re-run against it.
+    term_level = Column(String(20), nullable=True)
 
 
 class AuditList(Base):

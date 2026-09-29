@@ -36,6 +36,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser, require_admin, require_reviewer
 from app.config import settings
@@ -350,6 +351,15 @@ class PredictedCode(BaseModel):
     predicted_term: Optional[str]
     confidence: Optional[float]
     prediction_method: Optional[str]
+    # Provenance from a combined_predictions load (database/migrations/
+    # 035_combined_predictions.sql) — None for a code that predates that
+    # pipeline. code_source: 'manual' (gold) / 'diagnosis' (silver) /
+    # 'report' (bronze). source_confidence is free text (a decision-stage
+    # name for silver, a numeric string for bronze). ml_review_status is
+    # ML's own raw value (confirmed/auto_accepted/queued).
+    code_source: Optional[str]
+    source_confidence: Optional[str]
+    ml_review_status: Optional[str]
 
 
 class ExistingReviewCode(BaseModel):
@@ -361,15 +371,26 @@ class CaseDetail(BaseModel):
     case_id: str
     patient_found: bool
     patient_anon_id: Optional[str]
+    # Demographics, so the review screen shows the full picture per
+    # audit-list-change-request.md section 2 — not just the report.
+    patient_species: Optional[str]
+    patient_breed: Optional[str]
+    patient_sex: Optional[str]
     # The clinic's short "Clinical Diagnoses" text, from pathology_reports.
     source_diagnosis: Optional[str]
     # The full pathology report, fetched from GCS. None if unavailable
     # (GCS not configured, or the fetch failed) — never an error.
     report_text: Optional[str]
     predicted_codes: list[PredictedCode]
+    # True when a combined_predictions load coded this case NO_CANCER (case-
+    # level, no code rows — see migration 035). Distinct from review_no_cancer
+    # below, which is a specialist's own gold judgement.
+    registry_no_cancer: bool
     # The case's existing gold review, if a specialist has already recorded
     # one — lets the review screen pre-fill (editable) or show it read-only
-    # (locked).
+    # (locked). When no review exists yet, the frontend pre-fills from
+    # predicted_codes/registry_no_cancer instead (approve-or-correct, per
+    # ML: "pre-filling is fine... no bulk approve keeps that effect small").
     review_exists: bool
     review_no_cancer: Optional[bool]
     review_codes: list[ExistingReviewCode]
@@ -414,13 +435,22 @@ async def get_case_detail(
     patient = None
     if normalized:
         patient = (
-            await db.execute(select(Patient).where(Patient.anon_id == normalized))
+            await db.execute(
+                select(Patient)
+                .options(selectinload(Patient.breed), selectinload(Patient.species))
+                .where(Patient.anon_id == normalized)
+            )
         ).scalar_one_or_none()
 
     source_diagnosis: Optional[str] = None
     report_text: Optional[str] = None
     predicted_codes: list[PredictedCode] = []
+    patient_breed: Optional[str] = None
+    patient_species: Optional[str] = None
     if patient is not None:
+        patient_breed = patient.breed.name if patient.breed else None
+        patient_species = patient.species.name if patient.species else None
+
         report = (
             await db.execute(select(PathologyReport).where(PathologyReport.patient_id == patient.id))
         ).scalar_one_or_none()
@@ -444,6 +474,9 @@ async def get_case_detail(
                 predicted_term=diag.predicted_term,
                 confidence=float(diag.confidence) if diag.confidence is not None else None,
                 prediction_method=diag.prediction_method,
+                code_source=diag.code_source,
+                source_confidence=diag.source_confidence,
+                ml_review_status=diag.ml_review_status,
             )
             for diag, name in diag_rows
         ]
@@ -465,9 +498,13 @@ async def get_case_detail(
         case_id=case_id,
         patient_found=patient is not None,
         patient_anon_id=patient.anon_id if patient else None,
+        patient_species=patient_species,
+        patient_breed=patient_breed,
+        patient_sex=patient.sex if patient else None,
         source_diagnosis=source_diagnosis,
         report_text=report_text,
         predicted_codes=predicted_codes,
+        registry_no_cancer=bool(patient.registry_no_cancer) if patient else False,
         review_exists=review is not None,
         review_no_cancer=review.no_cancer if review else None,
         review_codes=review_codes,

@@ -98,6 +98,7 @@ directories stay — so repointing to the newer id reverses the rollback.
 ## Commands
 
 Everything is a **dry run** until `--apply`. `SET` is one of the sets above, or `all` (default).
+Paths are written for Windows; on macOS/Linux the interpreter is `ml/.venv/bin/python`.
 
 ```
 ml/.venv/Scripts/python.exe ml/scripts/sync.py status [SET]
@@ -174,10 +175,50 @@ was not attempted (it stops at the first failure) and the `sync.py` command that
 2. `git clone`, create the venv and install requirements (boto3 is in `ml/requirements.txt`) — see
    [resume-on-new-machine.md](resume-on-new-machine.md).
 3. `sync.py pull --apply` (all sets), then `sync.py pull-model --apply`. The embedding cache rebuilds
-   itself on first use.
+   itself on first use. If the machine already holds any of these files, follow
+   [Joining with existing files](#joining-with-existing-files) instead.
 
 The **first-ever upload**, from the machine that holds the data (~0.8 GB): `sync.py push --apply`,
 then `sync.py publish-model --apply`. Run these yourself; dry-run first.
+
+### Access
+
+Keys come from the bucket owner (ask them; this project does not manage IAM). The identity needs,
+on `ml-Revised-ICD-Mapping/*`: `s3:GetObject` and `s3:PutObject` (conditional writes are part of
+`PutObject`); and on the bucket: `s3:ListBucket` — without it S3 answers a missing key with 403
+instead of 404, and every first push or pull is REFUSED as access denied. Delete and version
+permissions are not needed. `aws sts get-caller-identity` shows which identity you are using.
+
+### Joining with existing files
+
+A machine that has never synced has no merge base, so its first `pull` treats every file as new:
+
+- a file that differs from S3 is replaced by the S3 version (the local copy goes to
+  `s3sync_backup/` first);
+- a file that exists **only locally** is kept — and the next `push` uploads it into the shared set.
+
+So before the first push from a machine that already had data (an old Syncthing copy, a USB copy):
+
+1. Run `sync.py pull` (dry run), then `sync.py pull --apply`.
+2. Run `sync.py push` (dry run): after that pull, its `added:` lines are exactly the files that
+   exist only locally. Move them somewhere outside the repo — unless they really should be shared.
+3. `sync.py status` must show 0 added / 0 changed / 0 removed for every set, and a second
+   `sync.py pull` dry run must plan nothing. Then `sync.py pull-model --apply`.
+4. Before any later push, read the dry run's `added:` and `removed:` lines.
+
+### Finding a file in the bucket
+
+The S3 console shows data files as `blobs/<sha256>`, not by name. To locate one: read
+`sets/<set>/HEAD.json` for the manifest id, open `sets/<set>/manifests/<id>.json`, and look the
+file up under `files` — its `sha256` is the blob key. To get files by name, use `sync.py pull`. Model
+generations are the exception: `generations/<id>/` keeps the real file names.
+
+### Day to day
+
+- Before you start: `sync.py pull --apply` (and `pull-model --apply` if someone promoted).
+- After you change a synced set: `sync.py push --apply`, or add `--push` to the `handoff.py` command.
+- After a promotion: `promote.py --apply --publish`.
+- If a push says "remote moved, pull first": pull, check the conflicts it lists, push again.
 
 ## Migrating off Syncthing
 

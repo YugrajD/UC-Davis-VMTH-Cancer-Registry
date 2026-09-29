@@ -55,6 +55,9 @@ def _print_push(result: dict) -> None:
         return
     print(f"{result['set']}: {'pushed' if result['applied'] else 'would push'} "
           f"{len(change['added'])} added, {len(change['changed'])} changed, {len(change['removed'])} removed")
+    for label in ("added", "removed"):
+        for rel in change[label]:
+            print(f"  {label}: {rel}")
 
 
 def _print_pull(result: dict) -> None:

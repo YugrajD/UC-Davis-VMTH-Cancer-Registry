@@ -19,6 +19,7 @@ def _error(code: str, status: int, operation: str) -> ClientError:
 class FakeS3:
     def __init__(self):
         self.objects: dict[str, bytes] = {}
+        self.checksums: dict[str, str] = {}  # base64 sha256, for objects put with ChecksumSHA256
         self.calls: list[tuple[str, dict]] = []  # (method name, kwargs) for every call made
 
     def _etag(self, key: str) -> str:
@@ -30,11 +31,14 @@ class FakeS3:
             raise _error("NoSuchKey", 404, "GetObject")
         return {"Body": io.BytesIO(self.objects[Key]), "ETag": self._etag(Key)}
 
-    def head_object(self, Bucket, Key):
+    def head_object(self, Bucket, Key, ChecksumMode=None):
         self.calls.append(("head_object", {"Key": Key}))
         if Key not in self.objects:
             raise _error("404", 404, "HeadObject")
-        return {"ETag": self._etag(Key)}
+        response = {"ETag": self._etag(Key)}
+        if ChecksumMode == "ENABLED" and Key in self.checksums:
+            response["ChecksumSHA256"] = self.checksums[Key]
+        return response
 
     def put_object(self, Bucket, Key, Body, **kwargs):
         self.calls.append(("put_object", {"Key": Key, **kwargs}))
@@ -49,6 +53,10 @@ class FakeS3:
         if "ChecksumSHA256" in kwargs and kwargs["ChecksumSHA256"] != base64.b64encode(hashlib.sha256(body).digest()).decode():
             raise _error("BadDigest", 400, "PutObject")
         self.objects[Key] = body
+        if "ChecksumSHA256" in kwargs:
+            self.checksums[Key] = kwargs["ChecksumSHA256"]
+        else:
+            self.checksums.pop(Key, None)
         return {"ETag": self._etag(Key)}
 
     def writes(self) -> list[dict]:

@@ -341,3 +341,31 @@ def test_cycle_backbone_flag_and_refusal_when_a_candidate_exists(cycle, capsys):
     assert [step[2] for step in ran if step[0] == "train.py"] == ["backbone", "heads"]
     assert main("--silver", "silver-B") == 1  # candidate/ now exists
     assert "REFUSED" in capsys.readouterr().err
+
+
+def test_adopt_swaps_a_verified_candidate_in_and_archives_the_incumbent_without_the_rule(env):
+    # No gold-eval, no predictions: the rule is not consulted.
+    outcome = promote.adopt("adopted", today=date(2026, 9, 26))
+    archive = config.ARCHIVE_ROOT / "2026-09-26_adopted"
+    assert outcome == {"action": "adopted", "generation_id": "gen-B", "archive": archive, "archived_caches": 0}
+    assert read_manifest(archive)["generation_id"] == "gen-A" and read_manifest(archive)["status"] == "archived"
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["status"] == "current"
+    verify_manifest(archive)
+    assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+
+
+def test_adopt_on_a_fresh_machine_just_renames_the_candidate(env):
+    shutil.rmtree(config.REPORT_MAPPING_CURRENT_DIR)
+    outcome = promote.adopt()
+    assert outcome["archive"] is None and outcome["archived_caches"] == 0
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["status"] == "current"
+    assert not config.ARCHIVE_ROOT.exists() and not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+
+
+def test_adopt_refuses_an_uncalibrated_candidate(env, tiny_bert_dir):
+    shutil.rmtree(config.REPORT_MAPPING_CANDIDATE_DIR)
+    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_bert_dir, "gen-B", "silver-B", status="pending")
+    with pytest.raises(promote.PromotionError, match="calibration.status"):
+        promote.adopt()
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"

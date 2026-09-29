@@ -16,18 +16,16 @@ from pathlib import Path
 
 import config
 from generations.manifest import sha256_file
-from s3sync.remote import ConflictError, GuardError, Remote, S3SyncError
+from s3sync import state
+from s3sync.files import PARTIAL_SUFFIX, check_rel, download_verified
+from s3sync.remote import ConflictError, Remote, S3SyncError
 
 _JUNK_NAMES = {".DS_Store"}
-_PARTIAL_SUFFIX = ".s3sync-partial"  # a download pull has not yet verified
-_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",*(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
-
-
-class VerificationError(S3SyncError):
-    """A downloaded blob does not match the manifest."""
 
 
 def set_names(name: str) -> list[str]:
+    if any(configured.startswith("_") for configured in config.S3_SYNC_SETS):
+        raise S3SyncError("set names starting with '_' are reserved for sync state keys")
     if name == "all":
         return list(config.S3_SYNC_SETS)
     if name not in config.S3_SYNC_SETS:
@@ -38,7 +36,7 @@ def set_names(name: str) -> list[str]:
 def _is_excluded(root: Path, rel: str) -> bool:
     """Junk files and anything under ``config.S3_SYNC_EXCLUDED_DIRS`` are never part of a set."""
     parts = Path(rel).parts
-    if parts[-1] in _JUNK_NAMES or parts[-1].endswith(_PARTIAL_SUFFIX) or "__pycache__" in parts:
+    if parts[-1] in _JUNK_NAMES or parts[-1].endswith(PARTIAL_SUFFIX) or "__pycache__" in parts:
         return True
     return any((root / rel).is_relative_to(Path(d)) for d in config.S3_SYNC_EXCLUDED_DIRS)
 
@@ -66,26 +64,6 @@ def _diff(old: dict[str, str], new: dict[str, str]) -> dict[str, list[str]]:
     }
 
 
-def _load_state() -> dict:
-    path = Path(config.S3_SYNC_STATE_JSON)
-    return json.loads(path.read_text()) if path.exists() else {}
-
-
-def _synced(remote: Remote, set_name: str) -> dict | None:
-    # Keyed by prefix so a scratch --prefix run never touches production state.
-    return _load_state().get(remote.prefix, {}).get(set_name)
-
-
-def _save_state(remote: Remote, set_name: str, manifest: str, etag: str, files: dict[str, str]) -> None:
-    state = _load_state()
-    state.setdefault(remote.prefix, {})[set_name] = {"manifest": manifest, "etag": etag, "files": files}
-    path = Path(config.S3_SYNC_STATE_JSON)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + _PARTIAL_SUFFIX)
-    temp.write_text(json.dumps(state, indent=1, sort_keys=True))
-    os.replace(temp, path)
-
-
 def _remote_head(remote: Remote, set_name: str):
     """(manifest id, manifest files {rel: {sha256, size}}, HEAD etag), or None if the set was never pushed."""
     head = remote.get_json(remote.key("sets", set_name, "HEAD.json"))
@@ -105,7 +83,7 @@ def _remote_moved(head, synced) -> bool:
 
 
 def status(remote: Remote, set_name: str) -> dict:
-    synced = _synced(remote, set_name)
+    synced = state.synced(remote, set_name)
     head = _remote_head(remote, set_name)
     return {
         "set": set_name,
@@ -117,7 +95,7 @@ def status(remote: Remote, set_name: str) -> dict:
 
 
 def push(remote: Remote, set_name: str, apply: bool = False) -> dict:
-    synced = _synced(remote, set_name)
+    synced = state.synced(remote, set_name)
     head = _remote_head(remote, set_name)
     if _remote_moved(head, synced):
         raise ConflictError(f"{set_name}: remote moved, pull first")
@@ -144,21 +122,9 @@ def push(remote: Remote, set_name: str, apply: bool = False) -> dict:
                                    head[2] if head else None)
     except ConflictError as error:  # the orphan manifest and blobs are harmless
         raise ConflictError(f"{set_name}: remote moved, pull first") from error
-    _save_state(remote, set_name, manifest_id, etag, _shas(local))
+    state.save(remote, set_name, {"manifest": manifest_id, "etag": etag, "files": _shas(local)})
     result["applied"] = True
     return result
-
-
-def _safe_rel(rel: str) -> None:
-    # The manifest is remote data: never let it write outside the set directory (or to a Windows device).
-    segments = rel.split("/")
-    unsafe = (
-        "\\" in rel or ":" in rel or rel.startswith("/")
-        or any(s in ("", ".", "..") or s.endswith((".", " ")) or s.split(".")[0].upper() in _RESERVED_NAMES
-               for s in segments)
-    )
-    if unsafe:
-        raise GuardError(f"manifest holds an unsafe path {rel!r}")
 
 
 def _backup(source: Path, set_name: str, rel: str, stamp: str, move: bool) -> str:
@@ -190,7 +156,7 @@ def _plan_pull(set_name: str, wanted: dict[str, str], base: dict[str, str]) -> d
 
 
 def pull(remote: Remote, set_name: str, apply: bool = False) -> dict:
-    synced = _synced(remote, set_name)
+    synced = state.synced(remote, set_name)
     head = _remote_head(remote, set_name)
     result = {"set": set_name, "applied": False, "fetch": [], "conflicts": [], "kept_modified": [],
               "remove": [], "skipped_excluded": [], "backed_up": []}
@@ -201,7 +167,7 @@ def pull(remote: Remote, set_name: str, apply: bool = False) -> dict:
 
     wanted = {}
     for rel, info in remote_files.items():
-        _safe_rel(rel)
+        check_rel(rel)
         if _is_excluded(root, rel):
             result["skipped_excluded"].append(rel)
         else:
@@ -216,12 +182,10 @@ def pull(remote: Remote, set_name: str, apply: bool = False) -> dict:
     try:
         for rel in result["fetch"] + result["conflicts"]:
             info = remote_files[rel]
-            temp = (root / rel).with_name((root / rel).name + _PARTIAL_SUFFIX)
+            temp = (root / rel).with_name((root / rel).name + PARTIAL_SUFFIX)
             temp.parent.mkdir(parents=True, exist_ok=True)
             temps[rel] = temp
-            remote.download(remote.key("blobs", info["sha256"]), temp)
-            if temp.stat().st_size != info["size"] or sha256_file(temp) != info["sha256"]:
-                raise VerificationError(f"{set_name}/{rel}: downloaded blob does not match the manifest")
+            download_verified(remote, remote.key("blobs", info["sha256"]), temp, info["sha256"], info["size"])
     except Exception:
         for temp in temps.values():
             temp.unlink(missing_ok=True)
@@ -241,6 +205,6 @@ def pull(remote: Remote, set_name: str, apply: bool = False) -> dict:
     finally:
         for temp in temps.values():
             temp.unlink(missing_ok=True)
-    _save_state(remote, set_name, manifest_id, etag, wanted)
+    state.save(remote, set_name, {"manifest": manifest_id, "etag": etag, "files": wanted})
     result["applied"] = True
     return result

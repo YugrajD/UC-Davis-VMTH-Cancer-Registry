@@ -13,7 +13,9 @@ with its own generation's uncommon groups. Promote only if
 ``recommend`` computes this and changes nothing; ``trigger_status`` computes (a)
 alone, before any challenger exists. ``apply`` carries it out: a winning
 candidate is swapped in after the incumbent is archived; a losing one is
-deleted.
+deleted. ``adopt`` does the same swap without the rule, for a generation that
+was already promoted on another machine (s3sync/models.py pulls it into
+``candidate/`` first).
 
 **Swap safety.** The candidate is re-verified (manifest, embedding fingerprint,
 ``calibration.status == "calibrated"``) and the incumbent's manifest verified
@@ -165,8 +167,37 @@ def apply(result: dict, description: str | None = None, today: date | None = Non
     verify_manifest(current)
     if read_manifest(current)["generation_id"] != result["incumbent_id"]:
         raise PromotionError("current/ changed since the recommendation; re-run it")
-    name = f"{(today or date.today()).isoformat()}_{description or result['incumbent_id']}"
-    archive = config.ARCHIVE_ROOT / name
+    archive = archive_path(result["incumbent_id"], description, today)
+    moved = _archive_and_swap(archive)
+    return {"action": "promoted", "generation_id": result["challenger_id"], "archive": archive,
+            "archived_caches": len(moved)}
+
+
+def archive_path(incumbent_id: str, description: str | None = None, today: date | None = None) -> Path:
+    """Where ``apply`` / ``adopt`` archive the incumbent."""
+    return config.ARCHIVE_ROOT / f"{(today or date.today()).isoformat()}_{description or incumbent_id}"
+
+
+def adopt(description: str | None = None, today: date | None = None) -> dict:
+    """Swap a verified ``candidate/`` in without the scoring rule: it was already promoted where it was
+    published. Archives the incumbent as ``apply`` does; a machine with no ``current/`` just takes it."""
+    candidate, current = config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR
+    generation_id = check_candidate(candidate)["generation_id"]
+    if not current.exists():
+        current.parent.mkdir(parents=True, exist_ok=True)
+        os.rename(candidate, current)
+        update_manifest(current, {"status": "current"})
+        return {"action": "adopted", "generation_id": generation_id, "archive": None, "archived_caches": 0}
+
+    verify_manifest(current)
+    archive = archive_path(read_manifest(current)["generation_id"], description, today)
+    moved = _archive_and_swap(archive)
+    return {"action": "adopted", "generation_id": generation_id, "archive": archive, "archived_caches": len(moved)}
+
+
+def _archive_and_swap(archive: Path) -> list[str]:
+    """Archive current/ into ``archive``, put candidate/ in its place; return the cache files archived too."""
+    candidate, current = config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR
     if archive.exists():
         raise PromotionError(f"{archive} already exists; pass another description")
     archive.parent.mkdir(parents=True, exist_ok=True)
@@ -182,8 +213,7 @@ def apply(result: dict, description: str | None = None, today: date | None = Non
     # The archive's manifest lists the moved cache files too, so the archive still verifies.
     files = {**read_manifest(archive)["files"], **{rel: sha256_file(archive / rel) for rel in moved}}
     update_manifest(archive, {"status": "archived", "files": files})
-    return {"action": "promoted", "generation_id": result["challenger_id"], "archive": archive,
-            "archived_caches": len(moved)}
+    return moved
 
 
 def _archive_stale_caches(archive: Path) -> list[str]:

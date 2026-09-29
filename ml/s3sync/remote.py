@@ -65,13 +65,17 @@ class Remote:
                 return None
             raise
 
-    def head_etag(self, key: str) -> str | None:
+    def _head(self, key: str) -> dict | None:
         try:
-            return self.client.head_object(Bucket=self.bucket, Key=key)["ETag"]
+            return self.client.head_object(Bucket=self.bucket, Key=key, ChecksumMode="ENABLED")
         except ClientError as error:
             if error.response["Error"]["Code"] in _MISSING_CODES:
                 return None
             raise
+
+    def head_etag(self, key: str) -> str | None:
+        head = self._head(key)
+        return None if head is None else head["ETag"]
 
     def get_json(self, key: str) -> tuple[dict, str] | None:
         """(document, etag), or None when the key does not exist."""
@@ -109,20 +113,24 @@ class Remote:
         return True
 
     def put_file_if_absent(self, key: str, path: Path, sha256: str) -> bool:
-        """Upload ``path`` as the blob ``sha256``; S3 rejects the write if the bytes read now do not hash to it."""
-        if self.head_etag(key) is not None:
-            return False
-        checksum = base64.b64encode(bytes.fromhex(sha256)).decode()
-        try:
-            with open(path, "rb") as file:
-                self._put(key, file, IfNoneMatch="*", ChecksumSHA256=checksum)
-        except ConflictError:
-            return False
-        except ClientError as error:
-            if error.response["Error"]["Code"] == "BadDigest":
-                raise S3SyncError(f"{path} changed during push; re-run push") from error
-            raise
-        return True
+        """Upload ``path`` unless ``key`` exists; True if written. S3 rejects the write if the bytes read now do
+        not hash to ``sha256``, and an object already there must carry that checksum or the call refuses."""
+        expected = base64.b64encode(bytes.fromhex(sha256)).decode()
+        existing = self._head(key)
+        if existing is None:
+            try:
+                with open(path, "rb") as file:
+                    self._put(key, file, IfNoneMatch="*", ChecksumSHA256=expected)
+                return True
+            except ConflictError:  # lost a race, or a retried partial upload got there first
+                existing = self._head(key)
+            except ClientError as error:
+                if error.response["Error"]["Code"] == "BadDigest":
+                    raise S3SyncError(f"{path} changed during push; re-run push") from error
+                raise
+        if existing is None or existing.get("ChecksumSHA256") != expected:
+            raise S3SyncError(f"{key} already exists with a different checksum; refusing to trust it")
+        return False
 
     def move_pointer(self, key: str, document: dict, etag: str | None) -> str:
         """Write the mutable pointer: only if absent (etag None) or unchanged since ``etag``. Returns the new etag."""

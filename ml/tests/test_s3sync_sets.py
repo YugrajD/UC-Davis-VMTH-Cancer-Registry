@@ -10,6 +10,7 @@ import pytest
 import config
 from generations.manifest import sha256_file
 from s3sync import sets
+from s3sync.files import VerificationError
 from s3sync.remote import ConflictError, GuardError, Remote, S3SyncError
 
 from .s3fake import FakeS3, use_machine
@@ -126,7 +127,7 @@ def test_pull_rejects_corrupt_blob_and_leaves_local_file(monkeypatch, tmp_path, 
 
     b = use_machine(monkeypatch, tmp_path / "b")
     _put(b["data"], "f.csv", "mine")
-    with pytest.raises(sets.VerificationError):
+    with pytest.raises(VerificationError):
         sets.pull(remote, "data", apply=True)
     assert (b["data"] / "f.csv").read_text() == "mine"
     assert not list(b["data"].glob("*.s3sync-partial"))
@@ -291,14 +292,14 @@ def test_push_refuses_missing_or_emptied_local_set(monkeypatch, tmp_path, fake, 
 def test_blob_changed_between_hash_and_upload_is_rejected(monkeypatch, tmp_path, fake, remote):
     a = use_machine(monkeypatch, tmp_path)
     path = _put(a["data"], "f.csv", "before")
-    real_head = remote.head_etag
+    real_head = remote._head
 
     def mutate_then_head(key):
         if "/blobs/" in key:  # runs after local_files() hashed the file, before the upload reads it
             path.write_text("after!")
         return real_head(key)
 
-    monkeypatch.setattr(remote, "head_etag", mutate_then_head)
+    monkeypatch.setattr(remote, "_head", mutate_then_head)
     with pytest.raises(S3SyncError, match="changed during push"):
         sets.push(remote, "data", apply=True)
     assert not any("/blobs/" in k for k in fake.objects)
@@ -324,3 +325,10 @@ def test_set_names(monkeypatch, tmp_path):
     assert sets.set_names("data") == ["data"]
     with pytest.raises(S3SyncError, match="unknown set"):
         sets.set_names("nope")
+
+
+def test_set_names_starting_with_underscore_are_reserved(monkeypatch, tmp_path):
+    use_machine(monkeypatch, tmp_path)
+    monkeypatch.setitem(config.S3_SYNC_SETS, "_generations", tmp_path)
+    with pytest.raises(S3SyncError, match="reserved"):
+        sets.set_names("all")

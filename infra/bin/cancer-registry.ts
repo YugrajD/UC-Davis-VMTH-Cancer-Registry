@@ -14,7 +14,7 @@ const envConfig: EnvConfig = {
 
 const env = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
-  region: process.env.CDK_DEFAULT_REGION ?? "us-east-1",
+  region: process.env.CDK_DEFAULT_REGION ?? "us-west-2",
 };
 
 const foundation = new FoundationStack(app, resourceName(envConfig, "foundation"), {

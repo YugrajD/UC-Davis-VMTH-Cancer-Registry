@@ -86,6 +86,25 @@ def test_disagreement_resolved_by_tiebreaker(monkeypatch):
     assert counters["tiebreaker_used"] == 1
 
 
+@pytest.mark.xfail(strict=True, reason="_resolve requires every verdict, tiebreaker included, to agree")
+def test_tiebreaker_settles_a_real_disagreement(monkeypatch):
+    responses = iter(["CORRECT", "WRONG_no_cancer", "CORRECT"])
+    monkeypatch.setattr(llm_client, "chat", lambda *a, **k: next(responses))
+    df = pd.DataFrame([_row("CASE-0010", "ambiguous finding, two to one", "Mast cell tumor, malignant", "Round Cell Tumors", "8000/3")])
+    out_df, _diff_df, counters = clean(df, LABELS, _config(["model-a", "model-b"], tiebreaker="model-c"))
+    assert counters["tiebreaker_used"] == 1
+    assert out_df.loc[0, "matched_code"] == "8000/3"  # 2-of-3 CORRECT keeps the match
+
+
+def test_tiebreaker_decides_only_when_both_verifiers_fail(monkeypatch):
+    responses = iter(["gibberish", "gibberish", "CORRECT"])
+    monkeypatch.setattr(llm_client, "chat", lambda *a, **k: next(responses))
+    df = pd.DataFrame([_row("CASE-0011", "odd phrasing, both verifiers unparsable", "Mast cell tumor, malignant", "Round Cell Tumors", "8000/3")])
+    out_df, _diff_df, counters = clean(df, LABELS, _config(["model-a", "model-b"], tiebreaker="model-c"))
+    assert counters["tiebreaker_used"] == 1
+    assert out_df.loc[0, "matched_code"] == "8000/3"  # the tiebreaker's lone verdict decides
+
+
 def test_rows_outside_methods_to_verify_pass_through(monkeypatch):
     called = []
     monkeypatch.setattr(llm_client, "chat", lambda *a, **k: called.append(1) or "CORRECT")

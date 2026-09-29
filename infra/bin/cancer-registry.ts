@@ -41,6 +41,7 @@ if (!apiDomainName) {
     env,
     envConfig,
     apiDomainName,
+    deployFrontend: app.node.tryGetContext("deployFrontend") === "true",
     vpc: foundation.vpc,
     backendRepo: foundation.backendRepo,
     mlWorkerRepo: foundation.mlWorkerRepo,

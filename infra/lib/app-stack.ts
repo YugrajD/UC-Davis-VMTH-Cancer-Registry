@@ -19,6 +19,8 @@ import {
   BACKEND_TASK_CPU,
   BACKEND_TASK_MEMORY_MIB,
   EnvConfig,
+  GITHUB_OWNER,
+  GITHUB_REPO,
   ML_TASK_CPU,
   ML_TASK_EPHEMERAL_STORAGE_GIB,
   ML_TASK_MEMORY_MIB,
@@ -29,6 +31,8 @@ export interface AppStackProps extends StackProps {
   envConfig: EnvConfig;
   /** FQDN for the backend API, e.g. api-dev.example.edu. Gets an ACM cert and an HTTPS listener. */
   apiDomainName: string;
+  /** Create the Amplify frontend. Needs the <env>-github-token secret to exist first. */
+  deployFrontend: boolean;
   vpc: ec2.IVpc;
   backendRepo: ecr.IRepository;
   mlWorkerRepo: ecr.IRepository;
@@ -43,7 +47,7 @@ export class AppStack extends Stack {
   constructor(scope: Construct, id: string, props: AppStackProps) {
     super(scope, id, props);
 
-    const { envConfig, apiDomainName, vpc, backendRepo, mlWorkerRepo, dbSg, dbInstance, bucket, userPool, userPoolClient } = props;
+    const { envConfig, apiDomainName, deployFrontend, vpc, backendRepo, mlWorkerRepo, dbSg, dbInstance, bucket, userPool, userPoolClient } = props;
 
     // backendServiceSg/mlTaskSg are created here (not FoundationStack)
     // because ecs_patterns.ApplicationLoadBalancedFargateService wires an
@@ -199,43 +203,46 @@ export class AppStack extends Stack {
     );
     bucket.grantReadWrite(backendService.taskDefinition.taskRole);
 
-    // --- Frontend: Amplify Hosting, git-connected ---
+    // --- Frontend: Amplify Hosting, git-connected (opt-in: -c deployFrontend=true) ---
     // The GitHub OAuth token must be created out-of-band (a fine-grained PAT
     // or the Amplify GitHub App install) and stored in Secrets Manager under
     // this name before first deploy - CDK can't provision the GitHub
     // connection itself.
-    const amplifyApp = new amplify.App(this, "FrontendApp", {
-      appName: resourceName(envConfig, "frontend"),
-      sourceCodeProvider: new amplify.GitHubSourceCodeProvider({
-        owner: "REPLACE_WITH_GITHUB_OWNER",
-        repository: "REPLACE_WITH_GITHUB_REPO",
-        oauthToken: SecretValue.secretsManager(resourceName(envConfig, "github-token")),
-      }),
-      buildSpec: codebuild.BuildSpec.fromObjectToYaml({
-        version: 1,
-        frontend: {
-          phases: {
-            preBuild: { commands: ["cd frontend", "npm ci"] },
-            build: { commands: ["npm run build"] },
+    if (deployFrontend) {
+      const amplifyApp = new amplify.App(this, "FrontendApp", {
+        appName: resourceName(envConfig, "frontend"),
+        sourceCodeProvider: new amplify.GitHubSourceCodeProvider({
+          owner: GITHUB_OWNER,
+          repository: GITHUB_REPO,
+          oauthToken: SecretValue.secretsManager(resourceName(envConfig, "github-token")),
+        }),
+        buildSpec: codebuild.BuildSpec.fromObjectToYaml({
+          version: 1,
+          frontend: {
+            phases: {
+              preBuild: { commands: ["cd frontend", "npm ci"] },
+              build: { commands: ["npm run build"] },
+            },
+            artifacts: {
+              baseDirectory: "frontend/dist",
+              files: ["**/*"],
+            },
+            cache: { paths: ["frontend/node_modules/**/*"] },
           },
-          artifacts: {
-            baseDirectory: "frontend/dist",
-            files: ["**/*"],
-          },
-          cache: { paths: ["frontend/node_modules/**/*"] },
+        }),
+        environmentVariables: {
+          VITE_API_URL: `https://${apiDomainName}`,
+          VITE_COGNITO_USER_POOL_ID: userPool.userPoolId,
+          VITE_COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+          VITE_AWS_REGION: this.region,
         },
-      }),
-      environmentVariables: {
-        VITE_API_URL: `https://${apiDomainName}`,
-        VITE_COGNITO_USER_POOL_ID: userPool.userPoolId,
-        VITE_COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
-        VITE_AWS_REGION: this.region,
-      },
-    });
-    amplifyApp.addBranch("main", { autoBuild: true, stage: "PRODUCTION" });
+      });
+      amplifyApp.addBranch("main", { autoBuild: true, stage: "PRODUCTION" });
+
+      new CfnOutput(this, "AmplifyDefaultDomain", { value: amplifyApp.defaultDomain });
+    }
 
     new CfnOutput(this, "BackendAlbDnsName", { value: backendService.loadBalancer.loadBalancerDnsName });
-    new CfnOutput(this, "AmplifyDefaultDomain", { value: amplifyApp.defaultDomain });
     new CfnOutput(this, "MlTaskDefinitionArn", { value: mlTaskDefinition.taskDefinitionArn });
   }
 }

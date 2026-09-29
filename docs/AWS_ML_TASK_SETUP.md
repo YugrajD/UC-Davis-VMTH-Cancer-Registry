@@ -43,6 +43,10 @@ port 443, HTTP redirects to HTTPS). During the app deploy the certificate stays 
 `CREATE_IN_PROGRESS` until you add its DNS validation CNAME (ACM console → the new certificate)
 at your DNS provider. Afterwards CNAME `apiDomainName` to the `BackendAlbDnsName` stack output.
 
+The Amplify frontend is opt-in (`-c deployFrontend=true`). Before using it, store a GitHub token
+(fine-grained PAT with repo read access) in Secrets Manager as plain text under
+`cancer-registry-<env>-github-token`. The GitHub owner/repo are set in `infra/config/constants.ts`.
+
 The script builds `linux/amd64` (Fargate's default architecture, so Apple Silicon builds work) and
 tags `:<git-sha>` and `:latest`. The ML image is built from the repo root with
 `ml-worker/Dockerfile.batch`; model weights are not baked in (see below).

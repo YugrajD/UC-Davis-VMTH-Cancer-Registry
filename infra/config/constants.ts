@@ -40,3 +40,7 @@ export const S3_MODELS_PREFIX = "models/";
 export const DB_NAME = "cancer_registry";
 export const DB_PORT = 5432;
 export const POSTGRES_ENGINE_MAJOR_VERSION = "16";
+
+// GitHub repo Amplify builds the frontend from (git@github.com:<owner>/<repo>.git).
+export const GITHUB_OWNER = "YugrajD";
+export const GITHUB_REPO = "UC-Davis-VMTH-Cancer-Registry";

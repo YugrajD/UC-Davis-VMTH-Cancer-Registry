@@ -42,6 +42,11 @@ if (!apiDomainName) {
     envConfig,
     apiDomainName,
     deployFrontend: app.node.tryGetContext("deployFrontend") === "true",
+    // Comma-separated, e.g. -c corsOrigins=https://main.d123.amplifyapp.com,http://localhost:5173
+    corsOrigins: String(app.node.tryGetContext("corsOrigins") ?? "")
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean),
     vpc: foundation.vpc,
     backendRepo: foundation.backendRepo,
     mlWorkerRepo: foundation.mlWorkerRepo,

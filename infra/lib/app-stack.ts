@@ -33,6 +33,8 @@ export interface AppStackProps extends StackProps {
   apiDomainName: string;
   /** Create the Amplify frontend. Needs the <env>-github-token secret to exist first. */
   deployFrontend: boolean;
+  /** Browser origins allowed by the backend's CORS config (e.g. the Amplify URL). Empty keeps the backend default. */
+  corsOrigins: string[];
   vpc: ec2.IVpc;
   backendRepo: ecr.IRepository;
   mlWorkerRepo: ecr.IRepository;
@@ -47,7 +49,7 @@ export class AppStack extends Stack {
   constructor(scope: Construct, id: string, props: AppStackProps) {
     super(scope, id, props);
 
-    const { envConfig, apiDomainName, deployFrontend, vpc, backendRepo, mlWorkerRepo, dbSg, dbInstance, bucket, userPool, userPoolClient } = props;
+    const { envConfig, apiDomainName, deployFrontend, corsOrigins, vpc, backendRepo, mlWorkerRepo, dbSg, dbInstance, bucket, userPool, userPoolClient } = props;
 
     // backendServiceSg/mlTaskSg are created here (not FoundationStack)
     // because ecs_patterns.ApplicationLoadBalancedFargateService wires an
@@ -149,6 +151,7 @@ export class AppStack extends Stack {
           },
           environment: {
             AWS_REGION: this.region,
+            ...(corsOrigins.length > 0 && { CORS_ORIGINS: JSON.stringify(corsOrigins) }),
             S3_BUCKET: bucket.bucketName,
             COGNITO_USER_POOL_ID: userPool.userPoolId,
             COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,

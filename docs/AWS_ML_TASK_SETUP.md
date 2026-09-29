@@ -47,6 +47,10 @@ The Amplify frontend is opt-in (`-c deployFrontend=true`). Before using it, stor
 (fine-grained PAT with repo read access) in Secrets Manager as plain text under
 `cancer-registry-<env>-github-token`. The GitHub owner/repo are set in `infra/config/constants.ts`.
 
+CORS: the backend only allows `http://localhost:5173` unless you pass origins. After the first deploy
+with Amplify on, read the `AmplifyDefaultDomain` output and redeploy with
+`-c corsOrigins=https://main.<that-domain>` (comma-separate multiple origins).
+
 The script builds `linux/amd64` (Fargate's default architecture, so Apple Silicon builds work) and
 tags `:<git-sha>` and `:latest`. The ML image is built from the repo root with
 `ml-worker/Dockerfile.batch`; model weights are not baked in (see below).

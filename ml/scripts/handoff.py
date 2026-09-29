@@ -7,6 +7,10 @@ Usage:
   python ml/scripts/handoff.py export-coding   --run-id RUN
   python ml/scripts/handoff.py export-bundle   [--generation current]
   python ml/scripts/handoff.py export-audit-list --list-id 2026-09-27 [--no-review-queue]
+
+Every subcommand except export-bundle takes --push: after it succeeds, push the S3 sync sets it wrote
+(see PUSH_SETS; needs AWS credentials). export-bundle has none — bundles are not synced; the generation
+itself is published with sync.py publish-model or promote.py --publish.
 """
 
 import argparse
@@ -16,6 +20,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from handoff import exports, imports
+
+# The S3 sync sets (config.S3_SYNC_SETS) each subcommand writes into: the inbox/outbox files land in
+# "handoff"; a gold import also writes the gold store, and an audit list also records its ledger, both
+# in "manual_audit". export-bundle writes only the excluded bundles dir, so it has no entry.
+PUSH_SETS = {
+    "import-pending": ("handoff",),
+    "import-gold": ("manual_audit", "handoff"),
+    "export-silver": ("handoff",),
+    "export-coding": ("handoff",),
+    "export-audit-list": ("manual_audit", "handoff"),
+}
 
 
 def _cmd_import_pending(args: argparse.Namespace) -> int:
@@ -64,6 +79,12 @@ def _cmd_export_audit_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _push(command: str) -> int:
+    from s3sync import hooks  # only when --push is given: no boto3 or credentials otherwise
+
+    return hooks.push_sets(command, PUSH_SETS[command])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -85,12 +106,16 @@ def main() -> int:
     p = sub.add_parser("export-coding", help="Write combined_predictions_<run>.csv + review_queue_<run>.csv to the outbox.")
     p.add_argument("--run-id", required=True)
 
-    p = sub.add_parser("export-bundle", help="Tar a report-mapping generation + sha256 for ml-worker.")
+    p = sub.add_parser("export-bundle", help="Tar a report-mapping generation + sha256 for ml-worker (not S3-synced; no --push).")
     p.add_argument("--generation", default="current")
 
     p = sub.add_parser("export-audit-list", help="Write audit_list_<id>.txt (every case awaiting review) to the outbox.")
     p.add_argument("--list-id", required=True)
     p.add_argument("--no-review-queue", action="store_true", help="Leave the review queue off the list.")
+
+    for name in PUSH_SETS:
+        sub.choices[name].add_argument("--push", action="store_true",
+                                       help=f"Then push the S3 sets this writes: {', '.join(PUSH_SETS[name])}.")
 
     args = parser.parse_args()
     dispatch = {
@@ -101,7 +126,10 @@ def main() -> int:
         "export-coding": _cmd_export_coding,
         "export-bundle": _cmd_export_bundle,
     }
-    return dispatch[args.command](args)
+    status = dispatch[args.command](args)
+    if status == 0 and getattr(args, "push", False):
+        return _push(args.command)
+    return status
 
 
 if __name__ == "__main__":

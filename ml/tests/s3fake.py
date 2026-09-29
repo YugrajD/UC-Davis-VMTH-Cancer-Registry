@@ -73,3 +73,27 @@ def use_machine(monkeypatch, root: Path) -> dict[str, Path]:
     monkeypatch.setattr(config, "S3_SYNC_STATE_JSON", root / "state" / "s3sync_state.json")
     monkeypatch.setattr(config, "S3_SYNC_BACKUP_DIR", root / "backup")
     return dirs
+
+
+def use_fake_s3(monkeypatch, root: Path, sets: dict[str, Path] | None = None) -> FakeS3:
+    """Make the scripts' lazily imported ``s3sync.client.make_client`` return one in-memory bucket, with
+    per-machine state under ``root`` and ``sets`` as ``config.S3_SYNC_SETS``."""
+    fake = FakeS3()
+    monkeypatch.setattr("s3sync.client.make_client", lambda: fake)
+    monkeypatch.setattr(config, "S3_SYNC_SETS", sets or {})
+    monkeypatch.setattr(config, "S3_SYNC_EXCLUDED_DIRS", (config.HANDOFF_BUNDLES_DIR,))
+    monkeypatch.setattr(config, "S3_SYNC_STATE_JSON", root / "s3sync_state.json")
+    monkeypatch.setattr(config, "S3_SYNC_BACKUP_DIR", root / "s3sync_backup")
+    return fake
+
+
+def forbid_s3(monkeypatch) -> None:
+    """Fail the test if anything asks for an S3 client."""
+    def refuse():
+        raise AssertionError("S3 client requested without --push / --publish")
+    monkeypatch.setattr("s3sync.client.make_client", refuse)
+
+
+def pushed_sets(fake: FakeS3) -> set[str]:
+    """Names of the file sets that have a HEAD pointer in the fake bucket."""
+    return {key.split("/sets/")[1].split("/")[0] for key in fake.objects if key.endswith("/HEAD.json") and "/sets/" in key}

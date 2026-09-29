@@ -3,7 +3,9 @@
 All the work lives in ``generations.promote``. Prints counts and percentages only.
 
   ml/.venv/bin/python ml/scripts/promote.py --candidate-predictions PATH --incumbent-predictions PATH
-  ml/.venv/bin/python ml/scripts/promote.py ... --apply [--description short-desc]
+  ml/.venv/bin/python ml/scripts/promote.py ... --apply [--description short-desc] [--publish]
+
+--publish (with --apply) then publishes the promoted generation to S3 (sync.py publish-model; needs AWS credentials).
 """
 
 from __future__ import annotations
@@ -33,7 +35,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Promote a winning candidate (archive current/ first) or delete a losing one.")
     parser.add_argument("--description", default=None,
                         help="Archive folder suffix (default: the incumbent's generation_id).")
+    parser.add_argument("--publish", action="store_true",
+                        help="After a promotion, publish the new current/ to S3 (requires --apply).")
     return parser
+
+
+def _publish() -> int:
+    from s3sync import hooks  # only when --publish is given: no boto3 or credentials otherwise
+
+    return hooks.publish_current()
 
 
 def _pp(x: float) -> str:
@@ -41,7 +51,10 @@ def _pp(x: float) -> str:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.publish and not args.apply:
+        parser.error("--publish requires --apply")
     try:
         result = promote.recommend(args.candidate_predictions, args.incumbent_predictions, split_id=args.split,
                                    n_boot=args.n_boot, seed=args.seed)
@@ -67,8 +80,12 @@ def main() -> int:
         outcome = promote.apply(result, args.description)
         if outcome["action"] == "promoted":
             print(f"Promoted {outcome['generation_id']}; incumbent archived to {outcome['archive']}")
+            if args.publish:
+                return _publish()
         else:
             print(f"Deleted losing candidate {outcome['generation_id']}")
+            if args.publish:
+                print("(--publish ignored: nothing promoted)")
     return 0
 
 

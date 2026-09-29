@@ -369,3 +369,92 @@ def test_adopt_refuses_an_uncalibrated_candidate(env, tiny_bert_dir):
     with pytest.raises(promote.PromotionError, match="calibration.status"):
         promote.adopt()
     assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+
+
+# ---- --publish (opt-in S3 hook) ----
+
+from .s3fake import forbid_s3, use_fake_s3  # noqa: E402
+
+
+def _run_promote(monkeypatch, env, *extra, wrong=0):
+    monkeypatch.setattr(sys, "argv", ["promote.py", "--candidate-predictions", str(_predictions(env / "b.csv", "gen-B", wrong)),
+                                      "--incumbent-predictions", str(_predictions(env / "a.csv", "gen-A")),
+                                      "--split", SPLIT, "--n-boot", "50", *extra])
+    return promote_script.main()
+
+
+def test_publish_without_apply_is_rejected(env, monkeypatch, capsys):
+    forbid_s3(monkeypatch)
+    with pytest.raises(SystemExit) as exit_info:
+        _run_promote(monkeypatch, env, "--publish")
+    assert exit_info.value.code == 2 and "--publish requires --apply" in capsys.readouterr().err
+    assert config.REPORT_MAPPING_CANDIDATE_DIR.exists()  # nothing was promoted
+
+
+def test_promote_publish_lands_the_generation_in_s3(env, monkeypatch, capsys):
+    _eval_batch_gold()
+    fake = use_fake_s3(monkeypatch, env)
+    assert _run_promote(monkeypatch, env, "--apply", "--publish") == 0
+    assert "Published gen-B to S3" in capsys.readouterr().out
+    prefix = config.S3_PREFIX + "generations/"
+    assert json.loads(fake.objects[prefix + "CURRENT.json"]) == {"generation_id": "gen-B"}
+    assert prefix + "gen-B/manifest.json" in fake.objects
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+
+
+def test_discarded_candidate_is_not_published(env, monkeypatch, capsys):
+    _eval_batch_gold()
+    forbid_s3(monkeypatch)
+    assert _run_promote(monkeypatch, env, "--apply", "--publish", wrong=8) == 0
+    out = capsys.readouterr().out
+    assert "Deleted losing candidate" in out and "(--publish ignored: nothing promoted)" in out
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+
+
+def test_publish_failure_keeps_the_local_promotion_and_exits_1(env, monkeypatch, capsys):
+    _eval_batch_gold()
+    fake = use_fake_s3(monkeypatch, env)
+    fake.objects[config.S3_PREFIX + "generations/CURRENT.json"] = b'{"generation_id": "elsewhere"}'
+    assert _run_promote(monkeypatch, env, "--apply", "--publish") == 1
+    err = capsys.readouterr().err
+    assert "PROMOTED locally, but the remote model moved" in err
+    assert "ml/scripts/sync.py pull-model --apply (archives this promotion locally)" in err
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+    assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+
+
+def test_publish_transient_failure_says_to_rerun_publish_model(env, monkeypatch, capsys):
+    from botocore.exceptions import ClientError
+
+    _eval_batch_gold()
+    fake = use_fake_s3(monkeypatch, env)
+
+    def denied(**kwargs):
+        raise ClientError({"Error": {"Code": "AccessDenied"}, "ResponseMetadata": {"HTTPStatusCode": 403}}, "PutObject")
+
+    fake.put_object = denied
+    assert _run_promote(monkeypatch, env, "--apply", "--publish") == 1
+    err = capsys.readouterr().err
+    assert "PROMOTED locally, but publish failed" in err and "ml/scripts/sync.py publish-model --apply" in err
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+
+
+def test_publish_with_a_bad_aws_profile_is_a_clean_failure(env, monkeypatch, capsys):
+    from botocore.exceptions import ProfileNotFound
+
+    _eval_batch_gold()
+
+    def no_profile():
+        raise ProfileNotFound(profile="nope")
+
+    monkeypatch.setattr("s3sync.client.make_client", no_profile)
+    assert _run_promote(monkeypatch, env, "--apply", "--publish") == 1
+    assert "PROMOTED locally, but publish failed" in capsys.readouterr().err
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+
+
+def test_apply_without_publish_never_touches_s3(env, monkeypatch):
+    _eval_batch_gold()
+    forbid_s3(monkeypatch)
+    assert _run_promote(monkeypatch, env, "--apply") == 0
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"

@@ -31,19 +31,26 @@ class Settings(BaseSettings):
     ADMIN_EMAILS: str = ""
     UPLOADER_EMAILS: str = ""
     REVIEWER_EMAILS: str = ""
-    UPLOAD_DIR: str = "/app/uploads"
 
-    # GCP Batch — set USE_GCP_BATCH=true to route ML inference through GCP
-    USE_GCP_BATCH: bool = False
-    GCP_PROJECT_ID: str = ""
-    GCP_REGION: str = "us-central1"
-    GCS_BUCKET: str = ""
-    GCP_BATCH_IMAGE_URI: str = ""
-    GCP_BATCH_MACHINE_TYPE: str = "n1-standard-4"
-    GCP_BATCH_POLL_INTERVAL: int = 60
-    GCP_BATCH_TIMEOUT_HOURS: int = 12
-    GCP_BATCH_SERVICE_ACCOUNT: str = ""
-    GCP_BATCH_CLEANUP_JOB_FILES: bool = False
+    # S3 blob storage — uploaded CSVs (uploads/), report text (reports/) and
+    # model bundles (models/). Set AWS_S3_ENDPOINT_URL to point at Floci in
+    # local dev; leave empty in AWS.
+    S3_BUCKET: str = ""
+    AWS_REGION: str = "us-east-1"
+    AWS_S3_ENDPOINT_URL: str = ""
+
+    # ECS Fargate ML task — set USE_ECS_ML=true to run PetBERT inference as an
+    # on-demand Fargate task instead of the local ml-worker container.
+    USE_ECS_ML: bool = False
+    ECS_CLUSTER_ARN: str = ""
+    ML_TASK_DEFINITION_ARN: str = ""
+    ML_TASK_CONTAINER_NAME: str = "ml-worker"
+    # Comma-separated subnet IDs for the ML task's network configuration.
+    ML_TASK_SUBNET_IDS: str = ""
+    ML_TASK_SECURITY_GROUP_ID: str = ""
+    ML_POLL_INTERVAL: int = 60
+    ML_TIMEOUT_HOURS: int = 12
+    ML_CLEANUP_JOB_FILES: bool = False
 
     # PetBERT runtime thresholds. Case presence is Stage 1: rows below this
     # become method=low_confidence / Uncategorized before review thresholds run.
@@ -102,6 +109,10 @@ class Settings(BaseSettings):
         if not self.FORWARDED_ALLOW_IPS:
             return set()
         return {ip.strip() for ip in self.FORWARDED_ALLOW_IPS.split(",") if ip.strip()}
+
+    @property
+    def ml_task_subnet_ids_list(self) -> List[str]:
+        return [s.strip() for s in self.ML_TASK_SUBNET_IDS.split(",") if s.strip()]
 
     @property
     def cors_origins_list(self) -> List[str]:

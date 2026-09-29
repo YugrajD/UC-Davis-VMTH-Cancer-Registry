@@ -4,7 +4,6 @@ import asyncio
 import io
 import logging
 import os
-import pathlib
 import re
 import time
 from datetime import datetime, timezone
@@ -22,6 +21,8 @@ from app.rate_limit import limiter
 from app.models.models import IngestionJob
 from app.schemas.schemas import IngestionJobOut, IngestionJobReview
 from app.services.job_processor import process_approved_job
+from app.services.ml_task_service import stop_ml_task
+from app.services.s3_service import csv_exists, job_prefix, list_model_folders, stream_csv, upload_csv
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ _SECTION_NAME_MAP: dict[str, str] = {
     "ORIGINAL COMMENT": "COMMENT",
 }
 
-# The four columns the GCP Batch pipeline reads to build its CONCAT_3 embeddings.
+# The four columns the ML pipeline reads to build its CONCAT_3 embeddings.
 _PIPELINE_SECTION_COLS = ("HISTOPATHOLOGICAL SUMMARY", "FINAL COMMENT", "COMMENT", "ANCILLARY TESTS")
 
 
@@ -114,10 +115,10 @@ def _parse_pathology_sections(text: str) -> dict[str, str]:
 
 
 def _add_pipeline_section_columns(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Pre-parse Pathology Text into the four section columns the GCP Batch pipeline expects.
+    """Pre-parse Pathology Text into the four section columns the ML pipeline expects.
 
     batch_predict.py skips its own inline extraction when these columns are
-    already present, so pre-parsing here ensures the GCP job uses the same
+    already present, so pre-parsing here ensures the ML task uses the same
     section boundaries as report_conversion.py rather than its own approximation.
     """
     if "Pathology Text" not in df.columns:
@@ -248,7 +249,7 @@ def _merge_continuation_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalize_columns(csv_bytes: bytes) -> bytes:
-    """Normalize CSV columns to match the deployed GCP Batch image expectations.
+    """Normalize CSV columns to match the deployed ML image expectations.
 
     - Merges HTML-like continuation rows into single patient records
     - Renames known variant column names to canonical forms
@@ -268,7 +269,7 @@ def _normalize_columns(csv_bytes: bytes) -> bytes:
     # Merge continuation rows into one record per patient.
     df = _merge_continuation_rows(df)
 
-    # Pre-parse pathology sections so the GCP Batch job receives clean columns.
+    # Pre-parse pathology sections so the ML task receives clean columns.
     df = _add_pipeline_section_columns(df)
 
     return df.to_csv(index=False).encode("utf-8")
@@ -348,7 +349,7 @@ async def upload_datasets(
     if len(dataset_a_bytes) > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
 
-    # Convert XLSX → CSV if needed, then normalize columns for GCP Batch image
+    # Convert XLSX → CSV if needed, then normalize columns for the ML image
     dataset_a_bytes = _normalize_columns(_ensure_csv(dataset_a_bytes, dataset_a.filename))
 
     # Rate limit: 3 uploads per day. Admins and uploader-role users bypass.
@@ -384,14 +385,11 @@ async def upload_datasets(
     # Assign CASE-#### anon_ids now that we have DB access and a job ID.
     dataset_a_bytes = await _assign_case_ids(dataset_a_bytes, db)
 
-    # Save file to disk
-    storage_path = os.path.join(settings.UPLOAD_DIR, str(job.id))
-    os.makedirs(storage_path, exist_ok=True)
+    # Save file to S3 (uploads/{job_id}/dataset_a.csv)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, upload_csv, job.id, "dataset_a.csv", dataset_a_bytes)
 
-    with open(os.path.join(storage_path, "dataset_a.csv"), "wb") as f:
-        f.write(dataset_a_bytes)
-
-    job.storage_path = storage_path
+    job.storage_path = job_prefix(job.id)
     job.upload_duration_ms = int((time.perf_counter() - t0) * 1000)
     await db.commit()
     await db.refresh(job)
@@ -403,19 +401,18 @@ async def upload_datasets(
 async def list_models(
     _reviewer: CurrentUser = Depends(require_reviewer),
 ):
-    """Return the top-level model folder names available in GCS.
+    """Return the top-level model folder names available in S3.
 
-    Falls back to ["production"] when GCP Batch is disabled (local dev).
+    Falls back to ["production"] when the ECS ML task is disabled (local dev).
     """
-    if not settings.USE_GCP_BATCH:
+    if not settings.USE_ECS_ML:
         return {"models": ["production"]}
 
     loop = asyncio.get_running_loop()
     try:
-        from app.services.gcp_batch_service import list_model_folders
         folders = await loop.run_in_executor(None, list_model_folders)
     except Exception:
-        logger.warning("Failed to list model folders from GCS", exc_info=True)
+        logger.warning("Failed to list model folders from S3", exc_info=True)
         folders = []
 
     if not folders:
@@ -480,28 +477,14 @@ async def preview_job_dataset(
 ):
     """Stream the stored CSV file for reviewer preview."""
     job = await _get_job_or_404(db, job_id)
-    filepath = os.path.join(job.storage_path, "dataset_a.csv")
-
-    # Defense-in-depth: ensure the resolved path stays inside UPLOAD_DIR.
-    # Use pathlib.relative_to() instead of startswith() to prevent symlink
-    # bypass and off-by-one issues with path separator matching.
-    allowed_base = pathlib.Path(settings.UPLOAD_DIR).resolve()
-    try:
-        pathlib.Path(filepath).resolve().relative_to(allowed_base)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    if not os.path.exists(filepath):
+    loop = asyncio.get_running_loop()
+    if not await loop.run_in_executor(None, csv_exists, job.id):
         raise HTTPException(status_code=404, detail="Upload file not available")
 
-    def iter_file():
-        with open(filepath, "rb") as f:
-            yield from f
-
     return StreamingResponse(
-        iter_file(),
+        stream_csv(job.id),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="dataset_a.csv"'},
+        headers={"Content-Disposition": 'attachment; filename="dataset_a.csv"'},
     )
 
 
@@ -530,15 +513,13 @@ async def cancel_job(
     await db.commit()
     await db.refresh(job)
 
-    # Best-effort: cancel the GCP Batch job if one was submitted
+    # Best-effort: stop the ECS ML task if one was started
     if job.batch_job_name:
         try:
-            from app.services.gcp_batch_service import cancel_batch_job
-            import asyncio
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, cancel_batch_job, job.batch_job_name)
+            await loop.run_in_executor(None, stop_ml_task, job.batch_job_name)
         except Exception:
-            logger.warning("Failed to cancel GCP Batch job for job %d", job_id, exc_info=True)
+            logger.warning("Failed to stop ML task for job %d", job_id, exc_info=True)
 
     return _job_to_dict(job)
 

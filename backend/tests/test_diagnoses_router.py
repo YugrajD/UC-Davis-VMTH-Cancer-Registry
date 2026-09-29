@@ -74,34 +74,34 @@ async def test_fetch_report_text_returns_none_when_no_pathology_report():
 
 
 @pytest.mark.asyncio
-async def test_fetch_report_text_returns_none_when_gcs_path_missing():
+async def test_fetch_report_text_returns_none_when_storage_path_missing():
     from app.routers.diagnoses_review import _fetch_report_text
 
-    diag = SimpleNamespace(pathology_report=SimpleNamespace(gcs_path=None))
+    diag = SimpleNamespace(pathology_report=SimpleNamespace(storage_path=None))
     result = await _fetch_report_text(diag)
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_fetch_report_text_returns_none_when_gcs_bucket_not_configured(monkeypatch):
+async def test_fetch_report_text_returns_none_when_s3_bucket_not_configured(monkeypatch):
     from app.routers.diagnoses_review import _fetch_report_text
     from app.config import settings
 
-    monkeypatch.setattr(settings, "GCS_BUCKET", "")
-    diag = SimpleNamespace(pathology_report=SimpleNamespace(gcs_path="reports/1/ID_1.txt"))
+    monkeypatch.setattr(settings, "S3_BUCKET", "")
+    diag = SimpleNamespace(pathology_report=SimpleNamespace(storage_path="reports/1/ID_1.txt"))
     result = await _fetch_report_text(diag)
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_fetch_report_text_downloads_from_gcs(monkeypatch):
+async def test_fetch_report_text_downloads_from_s3(monkeypatch):
     from app.routers.diagnoses_review import _fetch_report_text
     from app.config import settings
 
-    monkeypatch.setattr(settings, "GCS_BUCKET", "my-bucket")
-    diag = SimpleNamespace(pathology_report=SimpleNamespace(gcs_path="reports/1/ID_1.txt"))
+    monkeypatch.setattr(settings, "S3_BUCKET", "my-bucket")
+    diag = SimpleNamespace(pathology_report=SimpleNamespace(storage_path="reports/1/ID_1.txt"))
 
-    with patch("app.services.gcp_batch_service.download_report_text_from_gcs", return_value="report body") as mock_dl:
+    with patch("app.services.s3_service.download_report_text", return_value="report body") as mock_dl:
         result = await _fetch_report_text(diag)
 
     assert result == "report body"
@@ -109,14 +109,14 @@ async def test_fetch_report_text_downloads_from_gcs(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fetch_report_text_returns_none_on_gcs_error(monkeypatch):
+async def test_fetch_report_text_returns_none_on_s3_error(monkeypatch):
     from app.routers.diagnoses_review import _fetch_report_text
     from app.config import settings
 
-    monkeypatch.setattr(settings, "GCS_BUCKET", "my-bucket")
-    diag = SimpleNamespace(pathology_report=SimpleNamespace(gcs_path="reports/1/ID_1.txt"))
+    monkeypatch.setattr(settings, "S3_BUCKET", "my-bucket")
+    diag = SimpleNamespace(pathology_report=SimpleNamespace(storage_path="reports/1/ID_1.txt"))
 
-    with patch("app.services.gcp_batch_service.download_report_text_from_gcs", side_effect=Exception("GCS error")):
+    with patch("app.services.s3_service.download_report_text", side_effect=Exception("S3 error")):
         result = await _fetch_report_text(diag)
 
     assert result is None

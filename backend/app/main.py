@@ -199,8 +199,8 @@ async def lifespan(app: FastAPI):
     # Mark any stale 'processing' jobs as 'failed' on startup
     try:
         async with async_session() as db:
-            # Log any stale jobs that had a GCP Batch job running so the
-            # admin can check GCP Console manually.
+            # Log any stale jobs that had an ML task running so the admin
+            # can check the ECS console manually.
             stale_result = await db.execute(
                 select(IngestionJob).where(IngestionJob.status == "processing")
             )
@@ -208,7 +208,7 @@ async def lifespan(app: FastAPI):
             for sj in stale_jobs:
                 if sj.batch_job_name:
                     logger.warning(
-                        "Stale job %d had GCP Batch job %s — check GCP Console",
+                        "Stale job %d had ML task %s — check ECS console",
                         sj.id,
                         sj.batch_job_name,
                     )

@@ -172,16 +172,16 @@ async def _resolve_or_create_cancer_type(
 
 
 async def _fetch_report_text(diag: CaseDiagnosis) -> str | None:
-    """Fetch pathology report text from GCS if available, else return None."""
-    if not diag.pathology_report or not diag.pathology_report.gcs_path:
+    """Fetch pathology report text from S3 if available, else return None."""
+    if not diag.pathology_report or not diag.pathology_report.storage_path:
         return None
-    if not settings.GCS_BUCKET:
+    if not settings.S3_BUCKET:
         return None
     try:
-        from app.services.gcp_batch_service import download_report_text_from_gcs
+        from app.services.s3_service import download_report_text
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, download_report_text_from_gcs, diag.pathology_report.gcs_path
+            None, download_report_text, diag.pathology_report.storage_path
         )
     except Exception:
         return None

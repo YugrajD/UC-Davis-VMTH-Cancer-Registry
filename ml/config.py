@@ -120,3 +120,31 @@ HANDOFF_BUNDLES_DIR = HANDOFF_OUTBOX_DIR / "bundles"
 # Archive — written only by generations/ (promote.py); nothing loads from it.
 # ---------------------------------------------------------------------------
 ARCHIVE_ROOT = OUTPUT_DIR / "archive"
+
+# ---------------------------------------------------------------------------
+# S3 sync (s3sync/) — replaces Syncthing. Everything we write lives under
+# S3_PREFIX; the protected prefixes hold other people's files and are never
+# read or written (s3sync/remote.py refuses them).
+# ---------------------------------------------------------------------------
+S3_BUCKET = "ucd-canine-registy-storage-231161110555-us-west-2-an"  # "registy" is the real bucket name
+S3_REGION = "us-west-2"
+S3_PREFIX = "ml-Revised-ICD-Mapping/"
+S3_PROTECTED_PREFIXES = ("database/", "ml/")
+# Mutable file sets: set name -> local directory synced as a unit.
+S3_SYNC_SETS = {
+    "data": DATA_DIR,
+    "manual_audit": MANUAL_AUDIT_DIR,
+    "silver": SILVER_DIR,
+    "splits": SPLITS_DIR,
+    "coding": CODING_DIR,
+    "predictions": PREDICTIONS_DIR,
+    "eval": EVAL_DIR,
+    "oof": OOF_DIR,
+    "diagnosis_mapping_stats": DIAGNOSIS_MAPPING_STATS_DIR,
+    "handoff": HANDOFF_DIR,
+}
+# Never part of a set: bundles duplicate the model generation.
+S3_SYNC_EXCLUDED_DIRS = (HANDOFF_BUNDLES_DIR,)
+# Per-machine state and the safety copies pull makes; outside every set dir.
+S3_SYNC_STATE_JSON = OUTPUT_DIR / "s3sync_state.json"
+S3_SYNC_BACKUP_DIR = OUTPUT_DIR / "s3sync_backup"

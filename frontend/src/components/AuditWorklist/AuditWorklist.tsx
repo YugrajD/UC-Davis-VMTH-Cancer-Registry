@@ -39,6 +39,12 @@ function formatTs(iso: string): string {
   }
 }
 
+const CODE_SOURCE_LABELS: Record<string, string> = {
+  manual: 'a specialist',
+  diagnosis: 'diagnosis text',
+  report: 'the report model',
+};
+
 function StatusBadge({ status }: { status: WorklistCase['review_status'] }) {
   const styles: Record<WorklistCase['review_status'], string> = {
     unreviewed: 'bg-gray-100 text-gray-600 border-gray-200',
@@ -131,6 +137,12 @@ export function AuditWorklist() {
 
   const [noCancer, setNoCancer] = useState(false);
   const [codes, setCodes] = useState<CodeIn[]>([]);
+  // The pre-filled baseline (from an existing review, or from the registry's
+  // current combined-predictions codes when there's no review yet) — used
+  // only to tell "Approve" (submitting this unchanged) from "Save correction"
+  // (the reviewer edited it) in the button label. Never sent to the server.
+  const [baselineNoCancer, setBaselineNoCancer] = useState(false);
+  const [baselineCodes, setBaselineCodes] = useState<CodeIn[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -211,14 +223,34 @@ export function AuditWorklist() {
   );
 
   useEffect(() => {
-    if (detail) {
-      setNoCancer(detail.review_no_cancer ?? false);
-      setCodes(detail.review_codes.map((c) => ({ taxonomy_group: c.taxonomy_group, taxonomy_term: c.taxonomy_term })));
-    } else {
+    if (!detail) {
       setNoCancer(false);
       setCodes([]);
+      setBaselineNoCancer(false);
+      setBaselineCodes([]);
+      return;
     }
+    // A prior review takes precedence (editing the specialist's own earlier
+    // answer). Otherwise pre-fill from the registry's current codes — the
+    // reviewer approves them as-is or corrects them, rather than starting
+    // blank. ML has accepted this makes review non-blind for the evaluation
+    // batch; that's a deliberate tradeoff on their side, not a bug here.
+    const initialNoCancer = detail.review_exists ? (detail.review_no_cancer ?? false) : detail.registry_no_cancer;
+    const initialCodes: CodeIn[] = detail.review_exists
+      ? detail.review_codes.map((c) => ({ taxonomy_group: c.taxonomy_group, taxonomy_term: c.taxonomy_term }))
+      : detail.predicted_codes.map((c) => ({ taxonomy_group: c.cancer_type_name, taxonomy_term: c.predicted_term ?? '' }));
+    setNoCancer(initialNoCancer);
+    setCodes(initialCodes);
+    setBaselineNoCancer(initialNoCancer);
+    setBaselineCodes(initialCodes);
   }, [detail]);
+
+  const isUnmodifiedFromBaseline = useMemo(() => {
+    if (noCancer !== baselineNoCancer) return false;
+    if (codes.length !== baselineCodes.length) return false;
+    const baselineSet = new Set(baselineCodes.map((c) => `${c.taxonomy_group}::${c.taxonomy_term}`));
+    return codes.every((c) => baselineSet.has(`${c.taxonomy_group}::${c.taxonomy_term}`));
+  }, [noCancer, codes, baselineNoCancer, baselineCodes]);
 
   const handleSave = useCallback(async () => {
     if (!detail) return;
@@ -469,10 +501,16 @@ export function AuditWorklist() {
             <div className="p-4 space-y-4">
               <div>
                 <h3 className="text-sm font-semibold text-gray-900">{detail.case_id}</h3>
-                {!detail.patient_found && (
+                {!detail.patient_found ? (
                   <p className="text-xs text-red-600 mt-1">
                     No matching patient record — report text and predictions unavailable.
                   </p>
+                ) : (
+                  (detail.patient_species || detail.patient_breed || detail.patient_sex) && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {[detail.patient_species, detail.patient_breed, detail.patient_sex].filter(Boolean).join(' · ')}
+                    </p>
+                  )
                 )}
               </div>
 
@@ -492,7 +530,7 @@ export function AuditWorklist() {
                 </div>
               )}
 
-              {detail.predicted_codes.length > 0 && (
+              {detail.predicted_codes.length > 0 ? (
                 <div>
                   <p className="text-xs font-medium text-gray-500 mb-1">Current predictions</p>
                   <ul className="text-sm text-gray-700 space-y-0.5">
@@ -503,11 +541,16 @@ export function AuditWorklist() {
                         {p.confidence != null && (
                           <span className="text-gray-400"> ({(p.confidence * 100).toFixed(0)}%)</span>
                         )}
+                        {p.code_source && (
+                          <span className="text-gray-400"> · {CODE_SOURCE_LABELS[p.code_source] ?? p.code_source}</span>
+                        )}
                       </li>
                     ))}
                   </ul>
                 </div>
-              )}
+              ) : detail.registry_no_cancer ? (
+                <p className="text-xs text-gray-500">Registry: no reportable cancer.</p>
+              ) : null}
 
               <div className="border-t border-gray-100 pt-3">
                 <p className="text-xs font-medium text-gray-500 mb-2">Gold review</p>
@@ -577,7 +620,7 @@ export function AuditWorklist() {
                     disabled={saving || (!noCancer && codes.length === 0)}
                     className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {saving ? 'Saving…' : 'Save review'}
+                    {saving ? 'Saving…' : isUnmodifiedFromBaseline ? 'Approve' : 'Save correction'}
                   </button>
                 </fieldset>
 

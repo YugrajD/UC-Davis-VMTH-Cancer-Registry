@@ -84,7 +84,7 @@ export const TABS: Tab[] = [
   { id: 'analysis', label: 'Analysis' },
   { id: 'data-upload', label: 'Data Upload' },
   { id: 'review-queue', label: 'Review Queue' },
-  { id: 'diagnosis-review', label: 'Diagnosis Review' },
+  { id: 'diagnosis-review', label: 'Audit Worklist' },
   { id: 'user-management', label: 'User Management' },
   { id: 'settings', label: 'Settings' },
 ] as const;

@@ -71,6 +71,9 @@ function caseDetail(overrides: Partial<AuditCaseDetail> = {}): AuditCaseDetail {
     case_id: 'CASE-0001',
     patient_found: true,
     patient_anon_id: 'CASE-0001',
+    patient_species: 'Dog',
+    patient_breed: 'Labrador Retriever',
+    patient_sex: 'Spayed Female',
     source_diagnosis: 'Skin mass',
     report_text: 'Full pathology report text.',
     predicted_codes: [
@@ -81,8 +84,12 @@ function caseDetail(overrides: Partial<AuditCaseDetail> = {}): AuditCaseDetail {
         predicted_term: 'Mast cell tumor, NOS',
         confidence: 0.91,
         prediction_method: 'embedding',
+        code_source: 'report',
+        source_confidence: '0.91',
+        ml_review_status: 'auto_accepted',
       },
     ],
+    registry_no_cancer: false,
     review_exists: false,
     review_no_cancer: null,
     review_codes: [],
@@ -124,7 +131,7 @@ describe('AuditWorklist', () => {
     expect(await screen.findByText('No active audit list.')).toBeInTheDocument();
   });
 
-  it('loads a case detail on selection and shows its report and predictions', async () => {
+  it('loads a case detail on selection and shows its report, demographics, and predictions', async () => {
     const user = userEvent.setup();
     render(<AuditWorklist />);
 
@@ -132,16 +139,22 @@ describe('AuditWorklist', () => {
 
     expect(await screen.findByText('Full pathology report text.')).toBeInTheDocument();
     expect(screen.getByText('Skin mass')).toBeInTheDocument();
-    expect(screen.getByText(/Mast cell tumor, NOS/)).toBeInTheDocument();
+    expect(screen.getByText('Dog · Labrador Retriever · Spayed Female')).toBeInTheDocument();
+    // Appears twice: once in the read-only "Current predictions" list, once
+    // pre-filled into the editable code set (approve-or-correct).
+    expect(screen.getAllByText(/Mast cell tumor, NOS/)).toHaveLength(2);
     expect(mocks.fetchAuditCaseDetail).toHaveBeenCalledWith('reviewer-token', 'CASE-0001');
   });
 
-  it('adds a taxonomy code via the picker and saves the review', async () => {
+  it('pre-fills from the registry prediction, offering Approve, and lets a correction be saved', async () => {
     const user = userEvent.setup();
     render(<AuditWorklist />);
 
     await user.click(await screen.findByText('CASE-0001'));
     await screen.findByText('Full pathology report text.');
+
+    // Unmodified from the pre-filled prediction: the button reads Approve.
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
 
     const search = screen.getByPlaceholderText('Search taxonomy terms…');
     await user.click(search);
@@ -149,12 +162,16 @@ describe('AuditWorklist', () => {
 
     expect(screen.getByText('Malignant lymphoma, NOS')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Save review' }));
+    // Adding a code changes it from an approval to a correction.
+    await user.click(screen.getByRole('button', { name: 'Save correction' }));
 
     await waitFor(() => {
       expect(mocks.saveCaseReview).toHaveBeenCalledWith('reviewer-token', 'CASE-0001', {
         no_cancer: false,
-        codes: [{ taxonomy_group: 'Malignant lymphomas', taxonomy_term: 'Malignant lymphoma, NOS' }],
+        codes: [
+          { taxonomy_group: 'Mast cell neoplasms', taxonomy_term: 'Mast cell tumor, NOS' },
+          { taxonomy_group: 'Malignant lymphomas', taxonomy_term: 'Malignant lymphoma, NOS' },
+        ],
       });
     });
     expect(await screen.findByText('Saved.')).toBeInTheDocument();
@@ -171,13 +188,37 @@ describe('AuditWorklist', () => {
     await user.click(await screen.findByText('CASE-0001'));
 
     expect(await screen.findByText(/Locked — exported by dr.smith@ucdavis.edu/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save review' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
 
     mocks.reopenCaseReview.mockResolvedValue({ case_id: 'CASE-0001', locked: false });
     await user.click(screen.getByRole('button', { name: 'Reopen' }));
 
     await waitFor(() => {
       expect(mocks.reopenCaseReview).toHaveBeenCalledWith('reviewer-token', 'CASE-0001');
+    });
+  });
+
+  it('pre-fills the no-cancer checkbox and lets it be approved when the registry already coded the case cancer-free', async () => {
+    mocks.fetchAuditCaseDetail.mockResolvedValue(
+      caseDetail({ predicted_codes: [], registry_no_cancer: true }),
+    );
+    const user = userEvent.setup();
+    render(<AuditWorklist />);
+
+    await user.click(await screen.findByText('CASE-0001'));
+    await screen.findByText('Registry: no reportable cancer.');
+
+    const checkbox = screen.getByRole('checkbox', { name: 'No reportable cancer' }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => {
+      expect(mocks.saveCaseReview).toHaveBeenCalledWith('reviewer-token', 'CASE-0001', {
+        no_cancer: true,
+        codes: [],
+      });
     });
   });
 

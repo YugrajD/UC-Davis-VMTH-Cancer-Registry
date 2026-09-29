@@ -76,6 +76,14 @@ class Patient(Base):
     birth_date = Column(Date, nullable=True)
     diagnosis_date = Column(Date, nullable=True)
     outcome = Column(String(20), nullable=True)
+    # Set when a combined_predictions load codes this case NO_CANCER — a case
+    # with zero case_diagnoses rows and this false just hasn't been coded yet.
+    # See database/migrations/035_combined_predictions.sql.
+    registry_no_cancer = Column(Boolean, nullable=False, server_default="false")
+    registry_no_cancer_source_version = Column(String(80), nullable=True)
+    # Set when a review_queue load lists this case with no combined_predictions
+    # row yet (queued, not coded).
+    registry_awaiting_review = Column(Boolean, nullable=False, server_default="false")
 
     species = relationship("Species", back_populates="patients")
     breed = relationship("Breed", back_populates="patients")
@@ -101,6 +109,20 @@ class CaseDiagnosis(Base):
     # The report-mapping generation_id that produced this code (e.g. "gen-20260927T003905Z"),
     # from the worker's source_version — see database/migrations/032_case_diagnosis_source_version.sql
     source_version = Column(String(80), nullable=True)
+
+    # Provenance from a combined_predictions load — see
+    # database/migrations/035_combined_predictions.sql and ml/coding/combine.py.
+    # code_source: 'manual' (gold) / 'diagnosis' (silver) / 'report' (bronze).
+    # source_confidence is free text: a decision-stage name for silver (e.g.
+    # "tier1_exact"), a numeric string for bronze, empty for gold — never a
+    # column read as a number; the existing `confidence` column above still
+    # holds bronze's numeric value for anything that sorts/displays by it.
+    # ml_review_status is ML's own raw value (confirmed/auto_accepted/queued),
+    # kept alongside our mapped `review_status` below so the UI can tell a
+    # specialist's code from a machine's.
+    code_source = Column(String(20), nullable=True)
+    source_confidence = Column(Text, nullable=True)
+    ml_review_status = Column(String(20), nullable=True)
 
     # Review workflow — see database/migrations/010_diagnosis_review.sql
     review_status = Column(String(20), nullable=False, server_default="confirmed")

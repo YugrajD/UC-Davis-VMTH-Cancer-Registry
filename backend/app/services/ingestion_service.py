@@ -27,7 +27,6 @@ from app.models.models import (
     CancerType,
     CaseDiagnosis,
     County,
-    DiagnosisReviewEvent,
     IngestionLog,
     PathologyReport,
     Patient,
@@ -575,21 +574,15 @@ async def ingest_upload(
             method = diag["method"]
             rank = diag["diagnosis_index"]
 
-            # Review gate: flag pending when confidence is below the auto-
-            # accept threshold OR (rank-1 only) the margin to the next
-            # candidate is too tight OR the pipeline already labelled the
-            # row low_confidence.
+            # top2_margin is kept as informational metadata (top1-top2
+            # confidence spread on the rank-1 row). It no longer gates
+            # review_status — per ml/documentation/audit-list-change-
+            # request.md section 1.6, the backend's own ingest-time review
+            # gate is retired: the Audit Worklist (backend/app/routers/
+            # audit_review.py) plus ML's own review_status on the next
+            # combined-predictions run are the only review path now, and
+            # there is no Review Queue left to act on a 'pending' row.
             row_margin = margin if rank == 1 else None
-            margin_too_tight = (
-                row_margin is not None
-                and row_margin < settings.REVIEW_AUTO_ACCEPT_MARGIN
-            )
-            needs_review = (
-                method == "low_confidence"
-                or conf < settings.REVIEW_AUTO_ACCEPT_CONFIDENCE
-                or margin_too_tight
-            )
-            review_status = "pending" if needs_review else "confirmed"
 
             report = report_by_anon_id.get(anon_id)
             diagnosis = CaseDiagnosis(
@@ -603,25 +596,12 @@ async def ingest_upload(
                 source_row_index=diag["row_index"],
                 diagnosis_index=rank,
                 source_version=diag.get("source_version"),
-                review_status=review_status,
+                review_status="confirmed",
                 top2_margin=round(row_margin, 2) if row_margin is not None else None,
                 ingestion_job_id=ingestion_job_id,
             )
             db.add(diagnosis)
             diagnoses_inserted += 1
-
-            if needs_review:
-                # Audit-log the auto-flag so the queue can show "flagged at
-                # ingest" alongside subsequent reviewer actions.
-                db.add(DiagnosisReviewEvent(
-                    case_diagnosis=diagnosis,
-                    actor_email="system",
-                    action="flagged",
-                    from_status=None,
-                    to_status="pending",
-                    cancer_type_id_after=cancer_type_id,
-                    icd_o_code_after=diag["icd_o_code"] or None,
-                ))
 
             row_results.append(IngestionRowResult(
                 row_number=diag["row_index"],

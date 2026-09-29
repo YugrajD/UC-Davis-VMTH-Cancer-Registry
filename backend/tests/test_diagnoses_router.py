@@ -1,11 +1,9 @@
-"""Unit tests for the diagnoses-review router.
-
-Covers _fetch_report_text fallback behaviour and the list_diagnoses
-endpoint (status filter, role-based scoping).
+"""Unit tests for the retraining CSV exports — the only thing left in
+diagnoses_review.py now that the Review Queue is retired (the Audit Worklist
+replaces it; see backend/app/routers/audit_review.py).
 """
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -15,25 +13,12 @@ from app.database import get_db
 from app.main import app
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _admin() -> CurrentUser:
+    return CurrentUser(sub="sub-a", email="admin@ucdavis.edu", is_admin=True, is_uploader=True, is_reviewer=True)
 
 
-def _uploader(sub: str = "sub-u", email: str = "uploader@ucdavis.edu") -> CurrentUser:
-    return CurrentUser(sub=sub, email=email, is_admin=False, is_uploader=True, is_reviewer=False)
-
-
-def _reviewer(email: str = "reviewer@ucdavis.edu") -> CurrentUser:
-    return CurrentUser(sub="sub-r", email=email, is_admin=False, is_uploader=True, is_reviewer=True)
-
-
-def _admin(email: str = "admin@ucdavis.edu") -> CurrentUser:
-    return CurrentUser(sub="sub-a", email=email, is_admin=True, is_uploader=True, is_reviewer=True)
-
-
-def _non_uploader() -> CurrentUser:
-    return CurrentUser(sub="sub-n", email="nobody@ucdavis.edu", is_admin=False, is_uploader=False, is_reviewer=False)
+def _uploader() -> CurrentUser:
+    return CurrentUser(sub="sub-u", email="uploader@ucdavis.edu", is_admin=False, is_uploader=True, is_reviewer=False)
 
 
 def _override_user(user: CurrentUser):
@@ -42,146 +27,102 @@ def _override_user(user: CurrentUser):
     app.dependency_overrides[get_current_user] = _f
 
 
-def _override_db(rows):
-    mock_db = AsyncMock()
-    result = MagicMock()
-    result.all.return_value = rows
-    mock_db.execute.return_value = result
-
-    async def override():
-        yield mock_db
-
-    app.dependency_overrides[get_db] = override
-    return mock_db
-
-
 def _cleanup():
     app.dependency_overrides.clear()
 
 
-# ---------------------------------------------------------------------------
-# _fetch_report_text — unit tests (import the helper directly)
-# ---------------------------------------------------------------------------
+def _row(anon_id="CASE-0001", diagnosis_index=1, source_diagnosis="Skin mass", cancer_type="Mast cell neoplasms", icd_o_code="9740/3"):
+    return MagicMock(
+        anon_id=anon_id, diagnosis_index=diagnosis_index, source_diagnosis=source_diagnosis,
+        cancer_type=cancer_type, icd_o_code=icd_o_code,
+    )
 
 
 @pytest.mark.asyncio
-async def test_fetch_report_text_returns_none_when_no_pathology_report():
-    from app.routers.diagnoses_review import _fetch_report_text
-
-    diag = SimpleNamespace(pathology_report=None)
-    result = await _fetch_report_text(diag)
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_fetch_report_text_returns_none_when_gcs_path_missing():
-    from app.routers.diagnoses_review import _fetch_report_text
-
-    diag = SimpleNamespace(pathology_report=SimpleNamespace(gcs_path=None))
-    result = await _fetch_report_text(diag)
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_fetch_report_text_returns_none_when_gcs_bucket_not_configured(monkeypatch):
-    from app.routers.diagnoses_review import _fetch_report_text
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "GCS_BUCKET", "")
-    diag = SimpleNamespace(pathology_report=SimpleNamespace(gcs_path="reports/1/ID_1.txt"))
-    result = await _fetch_report_text(diag)
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_fetch_report_text_downloads_from_gcs(monkeypatch):
-    from app.routers.diagnoses_review import _fetch_report_text
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "GCS_BUCKET", "my-bucket")
-    diag = SimpleNamespace(pathology_report=SimpleNamespace(gcs_path="reports/1/ID_1.txt"))
-
-    with patch("app.services.gcp_batch_service.download_report_text_from_gcs", return_value="report body") as mock_dl:
-        result = await _fetch_report_text(diag)
-
-    assert result == "report body"
-    mock_dl.assert_called_once_with("reports/1/ID_1.txt")
-
-
-@pytest.mark.asyncio
-async def test_fetch_report_text_returns_none_on_gcs_error(monkeypatch):
-    from app.routers.diagnoses_review import _fetch_report_text
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "GCS_BUCKET", "my-bucket")
-    diag = SimpleNamespace(pathology_report=SimpleNamespace(gcs_path="reports/1/ID_1.txt"))
-
-    with patch("app.services.gcp_batch_service.download_report_text_from_gcs", side_effect=Exception("GCS error")):
-        result = await _fetch_report_text(diag)
-
-    assert result is None
-
-
-# ---------------------------------------------------------------------------
-# GET /api/v1/diagnoses — list_diagnoses endpoint
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_list_diagnoses_requires_uploader_role():
-    _override_user(_non_uploader())
-    _override_db([])
+async def test_export_audited_requires_admin():
+    _override_user(_uploader())
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            r = await client.get("/api/v1/diagnoses")
+            r = await client.get("/api/v1/diagnoses/export/audited.csv")
         assert r.status_code == 403
     finally:
         _cleanup()
 
 
 @pytest.mark.asyncio
-async def test_list_diagnoses_returns_200_for_uploader():
+async def test_export_all_requires_admin():
     _override_user(_uploader())
-    _override_db([])
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            r = await client.get("/api/v1/diagnoses")
-        assert r.status_code == 200
-        assert r.json() == []
+            r = await client.get("/api/v1/diagnoses/export/all.csv")
+        assert r.status_code == 403
     finally:
         _cleanup()
 
 
 @pytest.mark.asyncio
-async def test_list_diagnoses_ignores_invalid_status_filter():
-    """An unrecognised status value should not be applied as a filter (silently ignored)."""
-    _override_user(_uploader())
-    _override_db([])
+async def test_export_audited_returns_expected_csv():
+    _override_user(_admin())
+    mock_db = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = [_row()]
+    mock_db.execute.return_value = result
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            r = await client.get("/api/v1/diagnoses?status=invalid_status")
-        # Should still return 200 — the invalid status is dropped, not rejected.
+            r = await client.get("/api/v1/diagnoses/export/audited.csv")
         assert r.status_code == 200
-    finally:
-        _cleanup()
-
-
-@pytest.mark.parametrize("status", ["pending", "confirmed", "corrected", "rejected"])
-@pytest.mark.asyncio
-async def test_list_diagnoses_accepts_valid_status_filters(status):
-    _override_user(_uploader())
-    _override_db([])
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            r = await client.get(f"/api/v1/diagnoses?status={status}")
-        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/csv")
+        assert "audited_diagnoses.csv" in r.headers["content-disposition"]
+        lines = r.text.strip("\r\n").split("\r\n")
+        assert lines[0] == "case_id,diagnosis_index,clinical_diagnosis,cancer_type,icd_o_code"
+        assert lines[1] == "CASE-0001,1,Skin mass,Mast cell neoplasms,9740/3"
     finally:
         _cleanup()
 
 
 @pytest.mark.asyncio
-async def test_list_diagnoses_requires_auth():
-    """Without overriding get_current_user the call should fail auth."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        r = await client.get("/api/v1/diagnoses")
-    assert r.status_code in (401, 403)
+async def test_export_all_returns_expected_csv():
+    _override_user(_admin())
+    mock_db = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = [_row(anon_id="CASE-0002")]
+    mock_db.execute.return_value = result
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/diagnoses/export/all.csv")
+        assert r.status_code == 200
+        assert "all_diagnoses.csv" in r.headers["content-disposition"]
+        assert "CASE-0002" in r.text
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_export_defuses_csv_formula_injection():
+    _override_user(_admin())
+    mock_db = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = [_row(source_diagnosis="=cmd|'/c calc'!A1")]
+    mock_db.execute.return_value = result
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/diagnoses/export/all.csv")
+        assert r.status_code == 200
+        assert "\t=cmd" in r.text
+    finally:
+        _cleanup()

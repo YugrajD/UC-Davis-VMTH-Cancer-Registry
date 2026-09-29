@@ -3,7 +3,7 @@ import type { TabType } from '../../types';
 import { TABS } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginModal } from '../LoginModal/LoginModal';
-import { fetchPendingCount, fetchPendingRoleRequestCount, fetchPendingExportRequestCount } from '../../api/client';
+import { fetchPendingRoleRequestCount, fetchPendingExportRequestCount } from '../../api/client';
 
 const PENDING_POLL_MS = 30_000;
 
@@ -17,32 +17,8 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
   // Open modal immediately if the app loaded with an auth error in the URL
   // (e.g. an expired password reset link) so the user can act right away.
   const [showLogin, setShowLogin] = useState(!!authError);
-  const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [pendingRoleCount, setPendingRoleCount] = useState<number | null>(null);
   const [pendingExportCount, setPendingExportCount] = useState<number | null>(null);
-
-  // Poll pending diagnosis count for the badge (admins + reviewers). Users
-  // without review access never see the tab so we leave stale state alone.
-  useEffect(() => {
-    if (!(isAdmin || isReviewer)) return;
-    let cancelled = false;
-    const tick = async () => {
-      const token = await getAccessToken();
-      if (!token || cancelled) return;
-      try {
-        const r = await fetchPendingCount(token);
-        if (!cancelled) setPendingCount(r.count);
-      } catch {
-        // Silent — badge is non-critical UI.
-      }
-    };
-    tick();
-    const id = window.setInterval(tick, PENDING_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [isAdmin, isReviewer, getAccessToken]);
 
   // Poll pending role request count for the User Management badge (admin-only).
   useEffect(() => {
@@ -164,18 +140,13 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
         <div className="max-w-[1400px] mx-auto">
           <div className="flex gap-1">
             {visibleTabs.map((tab) => {
-              const showDiagnosisBadge =
-                (isAdmin || isReviewer) &&
-                tab.id === 'diagnosis-review' &&
-                pendingCount !== null &&
-                pendingCount > 0;
               const userMgmtTotal = (pendingRoleCount ?? 0) + (pendingExportCount ?? 0);
               const showRoleBadge =
                 isAdmin &&
                 tab.id === 'user-management' &&
                 userMgmtTotal > 0;
-              const showBadge = showDiagnosisBadge || showRoleBadge;
-              const badgeCount = showDiagnosisBadge ? pendingCount : showRoleBadge ? userMgmtTotal : null;
+              const showBadge = showRoleBadge;
+              const badgeCount = showRoleBadge ? userMgmtTotal : null;
               return (
                 <button
                   key={tab.id}

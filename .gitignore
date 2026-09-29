@@ -180,6 +180,7 @@ local_dump.sql
 
 # Local restructure/legacy ML directories (never committed)
 ml-*/
+!ml-worker/
 
 # Local archive (gitignored experimental/legacy artifacts moved out of ml/)
 _archive/

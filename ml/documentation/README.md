@@ -46,6 +46,9 @@ ml/
   generations/           manifest.py; splits.py; guards.py (leakage checks); promote.py; triggers.py
   handoff/               contracts.py; imports.py; exports.py; worker_format.py (shared with
                         ml-worker)
+  s3sync/                S3 sync of the private data/stores and model generations: remote.py
+                        (guarded keys), sets.py (push/pull file sets), models.py (publish/pull
+                        current/), hooks.py (--push/--publish); see s3-sync.md
   scripts/               Thin entry points — see "Entry points" below
   tests/                 pytest, synthetic fixtures only (a tiny random-init BERT saved locally)
 ```
@@ -60,6 +63,7 @@ ml/
 | `evaluation/` | Verdict scoring, confidence intervals, silver-eval and the four gold-eval results. See [evaluation.md](evaluation.md). |
 | `generations/` | Manifests, splits, leakage guards, promotion and retraining triggers — shared by every versioned artefact. See [generations.md](generations.md). |
 | `handoff/` | File contracts with the cloud (registry app / backend) and the worker bundle contract. See [handoff.md](handoff.md). |
+| `s3sync/` | Cross-machine sync through S3 (replaces Syncthing): mutable file sets plus the `current/` model generation. See [s3-sync.md](s3-sync.md). |
 | `scripts/` | The only Python entry points. |
 | `tests/` | pytest; synthetic fixtures only — never reads `ml/data/` or `ml/output/`. |
 
@@ -92,6 +96,7 @@ All under `output/` (gitignored). Paths below are the `config.py` constants, rel
 | `output/eval/silver_eval_history.csv` | One line per `evaluate.py silver` run. |
 | `output/handoff/inbox/`, `output/handoff/outbox/` | Cloud file contracts (pending diagnoses, gold imports; silver/coding exports, `audit_list_<id>.txt`; worker bundle tarballs). |
 | `output/archive/YYYY-MM-DD_<desc>/` | An archived (superseded) report-mapping generation. Written only by `generations/promote.py`; nothing loads from it. |
+| `output/s3sync_state.json`, `output/s3sync_backup/` | Per-machine S3-sync state and the safety copies `sync.py pull` makes. Not synced. See [s3-sync.md](s3-sync.md). |
 
 ---
 
@@ -107,9 +112,10 @@ All under `output/` (gitignored). Paths below are the `config.py` constants, rel
 | `calibrate.py` | — | Fit every inference threshold on the calibration partition. |
 | `predict.py` | — | Stamped report-mapping predictions (`--embed-only` to just build the cache). |
 | `evaluate.py` | `silver \| gold \| audit-rates` | Verdicts, the four gold-eval results, Diagnosis-Mapping audit rates. |
-| `promote.py` | `[--apply]` | The promotion recommendation, or carrying it out. |
+| `promote.py` | `[--apply [--publish]]` | The promotion recommendation, or carrying it out (`--publish`: then publish `current/` to S3). |
 | `generations.py` | `status` | current/candidate status + trigger check. |
-| `handoff.py` | `import-pending \| import-gold \| export-silver \| export-coding \| export-bundle \| export-audit-list` | Cloud file contracts. |
+| `handoff.py` | `import-pending \| import-gold \| export-silver \| export-coding \| export-bundle \| export-audit-list` | Cloud file contracts (`--push` on all but `export-bundle`: then push the S3 sets it wrote). |
+| `sync.py` | `status \| push \| pull \| publish-model \| pull-model` | S3 sync of the private data/stores and model generations (dry run unless `--apply`). |
 | `retrain_cycle.py` | — | The strategy's local retraining lane, end to end (recommend-only). |
 
 `split.py check` also runs automatically inside `train.py`, `calibrate.py`, `evaluate.py gold` and
@@ -163,5 +169,5 @@ ml/.venv/Scripts/python.exe ml/scripts/map_diagnoses.py run --id silver-1
 | [ml-worker-change-request.md](ml-worker-change-request.md) | You're deploying the worker or changing the backend's model-upload path. |
 | [audit-list-change-request.md](audit-list-change-request.md) | You're wiring the combined predictions, the dashboard review worklist or the gold export on the backend. |
 | [resume-on-new-machine.md](resume-on-new-machine.md) | You're setting this project up on a different computer. |
-| [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) | Proposed (not implemented) Box + rclone layout for sharing data and weights. |
-| [archive/](archive/) | Historical docs — the pre-rewrite tree, the annotation-redesign plan, phase logs. Do not consult for current behavior. |
+| [s3-sync.md](s3-sync.md) | You're moving data, stores or a model generation between machines (or migrating off Syncthing). |
+| [archive/](archive/) | Historical docs — the pre-rewrite tree, the annotation-redesign plan, phase logs, the superseded Box + rclone sync proposal. Do not consult for current behavior. |

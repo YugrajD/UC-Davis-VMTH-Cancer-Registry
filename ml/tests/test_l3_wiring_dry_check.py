@@ -11,7 +11,7 @@ report_mapping.inference.predict.build_fresh_cache), it must hit the SAME
 cache key predict.py would use for "current" — so re-running heads for a
 second and third seed, then calibrating and predicting each seed's candidate,
 never re-embeds. This is exactly what lets Windows run the L3 3-seed cycle
-without touching the (Syncthing-shared) imported legacy cache a second time.
+without touching the (machine-local) imported legacy cache a second time.
 
 Chain per seed: train.py --stage heads -> calibrate.py -> predict.py. Reads
 scripts/train.py and report_mapping/training/calibrate.py

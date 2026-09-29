@@ -96,7 +96,7 @@ def test_embed_only_allowed_on_a_pending_candidate(wired_config, report_mapping_
 
 def test_cache_dir_override_reembeds_into_a_separate_directory(wired_config, report_mapping_bundle: Path):
     # L2b's own need: re-embed into a scratch directory without ever reading
-    # from or writing to the real (Syncthing-shared) config.EMBEDDING_CACHE_DIR.
+    # from or writing to the real (machine-local) config.EMBEDDING_CACHE_DIR.
     run_predict(generation_dir=report_mapping_bundle, local_only=True, device_arg="cpu", embed_only=True)
     default_files = list(wired_config.EMBEDDING_CACHE_DIR.glob("*.npz"))
     assert len(default_files) == 1

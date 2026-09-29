@@ -70,6 +70,16 @@ ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-audit-list --list-id 20
   under stays in `config.AUDIT_LIST_LEDGER_CSV`, and `import_gold` fills it in. See
   [manual-audit.md](manual-audit.md), "Universal audit list".
 
+## Transport
+
+The inbox and outbox live in `ml/output/handoff/`, the S3 sync set `handoff`
+([s3-sync.md](s3-sync.md)). Add `--push` to any import or export except `export-bundle` and the
+sets it wrote (`handoff`, plus `manual_audit` for `import-gold` and `export-audit-list`) are pushed
+once it succeeds; or run `sync.py push handoff --apply` yourself. Bundles are **not** synced
+(`outbox/bundles/` is excluded, a bundle duplicates the model): the generation itself is
+published with `sync.py publish-model` or `promote.py --apply --publish`, and ml-worker can read
+`generations/<id>/` directly once it moves to AWS.
+
 ## The worker bundle contract (`worker_format.py`)
 
 A bundle is just a report-mapping generation directory — `report_mapping.model.generation`'s own

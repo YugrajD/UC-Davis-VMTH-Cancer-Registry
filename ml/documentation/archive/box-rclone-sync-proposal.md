@@ -1,3 +1,5 @@
+> **Superseded** by the S3 sync — see [../s3-sync.md](../s3-sync.md). Kept for history; nothing here was implemented.
+
 # Proposal: Box + rclone sync for per-person ML pipelines
 
 **Status:** Planning / for team review — nothing implemented.

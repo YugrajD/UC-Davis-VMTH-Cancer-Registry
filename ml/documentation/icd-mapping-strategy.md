@@ -411,10 +411,11 @@ Nothing in Phase 4 is promoted until it beats the method it replaces on gold-eva
 1. **Reviewer capacity** (under debate). Sets the random-slice percentage, whether the review queue
    needs a cap, and how fast gold-train grows. The historical vague queue alone runs to thousands
    of cases.
-2. **Handoff cadence and transport.** How often each export runs, how long a case may stay pending
-   silver, and how files move between machines
-   ([box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) is a candidate).
+2. **Handoff cadence.** How often each export runs and how long a case may stay pending silver.
+   *(Transport is resolved: files move between machines through the S3 sync — see
+   [s3-sync.md](s3-sync.md).)*
 3. **The Admin's machine.** Which GPU machine runs the local lane, and whether IT support may hold
-   the reports, silver and gold exports, all of which contain private case data.
+   the reports, silver and gold exports, all of which contain private case data. *(How the data
+   reaches that machine is resolved: [s3-sync.md](s3-sync.md).)*
 4. **Retraining trigger thresholds.** The ~200-code and confidence-interval values in the proposed
    trigger are placeholders until real gold exists.

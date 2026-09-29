@@ -210,7 +210,7 @@ def run_predict(
 
     ``cache_dir`` overrides ``config.EMBEDDING_CACHE_DIR`` for both the lookup
     and the write — e.g. an L2b re-embed run on a scratch directory that must
-    never read or overwrite the real (Syncthing-shared) cache; default
+    never read or overwrite the real (machine-local) cache; default
     (``None``) resolves to ``config.EMBEDDING_CACHE_DIR`` inside
     ``embedding_cache.cache_path``. An empty/new ``cache_dir`` always misses,
     so this always re-embeds and writes the fresh cache there.

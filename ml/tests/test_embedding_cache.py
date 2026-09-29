@@ -92,7 +92,7 @@ def test_save_then_load_round_trips_a_hit():
 def test_cache_dir_override_reads_and_writes_a_separate_directory(tmp_path):
     # An explicit cache_dir must never touch config.EMBEDDING_CACHE_DIR (the
     # autouse fixture's tmp_path/embedding_cache) -- e.g. an L2b scratch dir
-    # that must not read or overwrite the real (Syncthing-shared) cache.
+    # that must not read or overwrite the real (machine-local) cache.
     scratch_dir = tmp_path / "scratch"
     cache = _sample_cache()
     ec.save("some-key", cache, scratch_dir)

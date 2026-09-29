@@ -3,7 +3,8 @@
 Git carries the code and these docs. It carries **none** of the data, weights, or generated
 artifacts — `.gitignore` blocks `ml/data/`, `ml/output/`, `.venv/`, and every `*.csv` / `*.npz` /
 `*.pt` / `*.safetensors` in the tree, because they contain patient records or are hundreds of MB. A
-fresh `git clone` therefore gives you a pipeline that imports cleanly and cannot run.
+fresh `git clone` therefore gives you a pipeline that imports cleanly and cannot run. The S3 sync
+([s3-sync.md](s3-sync.md)) carries the data, stores and model.
 
 This page is the checklist for closing that gap.
 
@@ -15,21 +16,29 @@ This page is the checklist for closing that gap.
 |---|---|---|---|
 | All Python code, `config.py`, docs | `ml/**.py`, `ml/documentation/` | yes | `git clone` / `git pull` |
 | Taxonomy | `ml/taxonomy/labels.csv` | yes (in-tree asset) | comes with the clone |
-| Raw patient input | `ml/data/` | **no** | copy from the old machine or re-export from the client's Box |
-| Silver generations | `ml/output/silver/` | **no** | copy — expensive to regenerate (an LLM cascade run) |
-| Manual-audit stores | `ml/output/manual_audit/` | **no** | copy — these are specialist review results, not reproducible |
-| Splits | `ml/output/splits/` | **no** | **copy — do not regenerate.** A new split reshuffles which cases are held out and silently invalidates every published number |
-| Report-mapping generations | `ml/output/report_mapping/current/`, `candidate/` | **no** | copy — regenerating means a full retrain |
+| Raw patient input | `ml/data/` | **no** | `sync.py pull data --apply` (S3 sync), or re-export from the client's Box |
+| Silver generations | `ml/output/silver/` | **no** | S3 sync (set `silver`) — expensive to regenerate (an LLM cascade run) |
+| Manual-audit stores | `ml/output/manual_audit/` | **no** | S3 sync (set `manual_audit`) — specialist review results, not reproducible |
+| Splits | `ml/output/splits/` | **no** | **S3 sync (set `splits`) — do not regenerate.** A new split reshuffles which cases are held out and silently invalidates every published number |
+| Report-mapping generation | `ml/output/report_mapping/current/` | **no** | `sync.py pull-model --apply` — regenerating means a full retrain. `candidate/` is unpromoted work and is not synced |
 | Embedding cache | `ml/output/report_mapping/embedding_cache/` | **no** | skip; it auto-rebuilds (content-hash keyed, ~9 min on GPU) and auto-invalidates when the backbone or report/labels files change |
-| Predictions, eval history | `ml/output/predictions/`, `ml/output/eval/` | **no** | skip unless you specifically need a past run |
+| Predictions, eval history | `ml/output/predictions/`, `ml/output/eval/` | **no** | S3 sync (sets `predictions`, `eval`); skip unless you specifically need a past run |
 | Virtualenv | `ml/.venv/` | **no** | rebuild locally (§2) — never copy a venv between machines |
 
 **Minimum transfer to have a working pipeline:** `ml/data/` + `ml/output/{splits,silver,
 report_mapping/current,manual_audit,coding}`. Everything else under `ml/output/` regenerates.
 
-Transfer over an encrypted channel — this is identifiable veterinary patient data. UC Davis SSO Box
-is the approved location; see [box-rclone-sync-proposal.md](box-rclone-sync-proposal.md) for the
-standing (not yet implemented) proposal to automate exactly this.
+**Get it with the S3 sync** (setup, commands and conflict rules in [s3-sync.md](s3-sync.md)):
+
+```bash
+aws configure                                                       # once; region us-west-2
+ml/.venv/Scripts/python.exe ml/scripts/sync.py pull --apply         # every file set (drop --apply to preview)
+ml/.venv/Scripts/python.exe ml/scripts/sync.py pull-model --apply   # the current/ generation
+```
+
+Do this after the environment is built (§2; boto3 is in `requirements.txt`). Root `CLAUDE.md` is
+gitignored and not synced — copy it by hand. This is identifiable veterinary patient data: it only
+travels through the sync (encrypted at rest) or another approved encrypted channel.
 
 ---
 

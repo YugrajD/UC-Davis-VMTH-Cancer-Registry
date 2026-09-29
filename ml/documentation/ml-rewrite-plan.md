@@ -456,11 +456,13 @@ ml/.venv/bin/python ml/next/scripts/parity.py l2 --predictions <gen-0 prediction
 ```
 
 **Windows + CUDA** (PowerShell from the repo root). Code arrives through git (push on the Mac, pull on Windows);
-the reference pack, `report.csv` and the embedding cache arrive through Syncthing. `ml/output/report_mapping/candidate`
-must not exist before L3, and L3 must run before L4.
+`report.csv` arrives through the S3 sync ([s3-sync.md](s3-sync.md)). The parity reference pack
+(`ml/output/parity_reference/`) is in no sync set — carry it by hand. The embedding cache is machine-local and
+rebuilds (~9 min), so L3 re-embeds once. `ml/output/report_mapping/candidate` must not exist before L3, and L3 must
+run before L4.
 
 ```powershell
-# L2b: re-embed report.csv into ml\l2b_cache (outside Syncthing, so the shared cache is never read or overwritten)
+# L2b: re-embed report.csv into ml\l2b_cache (a scratch cache dir, so the real cache is never read or overwritten)
 ml\.venv\Scripts\python.exe ml\next\scripts\predict.py --generation current --device cuda --embed-only --cache-dir ml\l2b_cache
 $emb = (Get-ChildItem ml\l2b_cache\*.npz | Select-Object -First 1).FullName
 New-Item -ItemType Directory -Force -Path ml\output\predictions\parity | Out-Null

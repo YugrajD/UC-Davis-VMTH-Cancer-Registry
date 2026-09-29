@@ -54,7 +54,7 @@ def content_key(report_csv: str | Path, labels_csv: str | Path, fingerprint: dic
 def cache_path(key: str, cache_dir: str | Path | None = None) -> Path:
     """``cache_dir`` overrides ``config.EMBEDDING_CACHE_DIR`` — e.g. a scratch
     directory for an L2b re-embed run that must never touch the real
-    (Syncthing-shared) cache."""
+    (machine-local) cache."""
     directory = Path(cache_dir) if cache_dir is not None else config.EMBEDDING_CACHE_DIR
     return directory / f"{key}.npz"
 

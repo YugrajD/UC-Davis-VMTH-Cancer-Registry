@@ -17,6 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from botocore.exceptions import BotoCoreError, ClientError
+
 from s3sync import models, sets
 from s3sync.client import make_client
 from s3sync.remote import Remote, S3SyncError
@@ -110,7 +112,7 @@ def main() -> int:
                     _print_pull(sets.pull(remote, name, apply))
             if args.command == "status" and args.set == "all":
                 _print_model_status(models.status(remote))
-    except S3SyncError as error:
+    except (S3SyncError, BotoCoreError, ClientError) as error:
         print(f"REFUSED: {error}", file=sys.stderr)
         return 1
     if args.command != "status" and not apply:

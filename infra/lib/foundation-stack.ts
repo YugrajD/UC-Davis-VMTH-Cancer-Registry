@@ -1,7 +1,8 @@
-import { Stack, StackProps } from "aws-cdk-lib";
+import { CfnOutput, RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
+import * as ecr from "aws-cdk-lib/aws-ecr";
 import { Construct } from "constructs";
-import { EnvConfig, resourceName } from "../config/constants";
+import { ECR_MAX_IMAGE_COUNT, EnvConfig, resourceName } from "../config/constants";
 
 export interface FoundationStackProps extends StackProps {
   envConfig: EnvConfig;
@@ -10,6 +11,8 @@ export interface FoundationStackProps extends StackProps {
 export class FoundationStack extends Stack {
   public readonly vpc: ec2.Vpc;
   public readonly dbSg: ec2.SecurityGroup;
+  public readonly backendRepo: ecr.Repository;
+  public readonly mlWorkerRepo: ecr.Repository;
 
   constructor(scope: Construct, id: string, props: FoundationStackProps) {
     super(scope, id, props);
@@ -74,5 +77,26 @@ export class FoundationStack extends Stack {
       description: "RDS for PostgreSQL",
       allowAllOutbound: false,
     });
+
+    // ECR repos live here (not AppStack) so images can be pushed - by hand or
+    // from CI - before the app stack is deployed. The backend service and ML
+    // task definition both reference ":latest", so AppStack can't stabilize
+    // until an image exists.
+    this.backendRepo = new ecr.Repository(this, "BackendRepo", {
+      repositoryName: resourceName(envConfig, "backend"),
+      imageScanOnPush: true,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    this.backendRepo.addLifecycleRule({ maxImageCount: ECR_MAX_IMAGE_COUNT });
+
+    this.mlWorkerRepo = new ecr.Repository(this, "MlWorkerRepo", {
+      repositoryName: resourceName(envConfig, "ml-worker"),
+      imageScanOnPush: true,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    this.mlWorkerRepo.addLifecycleRule({ maxImageCount: ECR_MAX_IMAGE_COUNT });
+
+    new CfnOutput(this, "BackendRepoUri", { value: this.backendRepo.repositoryUri });
+    new CfnOutput(this, "MlWorkerRepoUri", { value: this.mlWorkerRepo.repositoryUri });
   }
 }

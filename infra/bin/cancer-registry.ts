@@ -33,6 +33,8 @@ new AppStack(app, resourceName(envConfig, "app"), {
   env,
   envConfig,
   vpc: foundation.vpc,
+  backendRepo: foundation.backendRepo,
+  mlWorkerRepo: foundation.mlWorkerRepo,
   dbSg: foundation.dbSg,
   dbInstance: data.dbInstance,
   bucket: data.bucket,

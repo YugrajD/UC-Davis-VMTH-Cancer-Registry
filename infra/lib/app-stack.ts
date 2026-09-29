@@ -17,7 +17,6 @@ import {
   BACKEND_MIN_TASK_COUNT,
   BACKEND_TASK_CPU,
   BACKEND_TASK_MEMORY_MIB,
-  ECR_MAX_IMAGE_COUNT,
   EnvConfig,
   ML_TASK_CPU,
   ML_TASK_EPHEMERAL_STORAGE_GIB,
@@ -28,6 +27,8 @@ import {
 export interface AppStackProps extends StackProps {
   envConfig: EnvConfig;
   vpc: ec2.IVpc;
+  backendRepo: ecr.IRepository;
+  mlWorkerRepo: ecr.IRepository;
   dbSg: ec2.ISecurityGroup;
   dbInstance: rds.DatabaseInstance;
   bucket: s3.Bucket;
@@ -39,7 +40,7 @@ export class AppStack extends Stack {
   constructor(scope: Construct, id: string, props: AppStackProps) {
     super(scope, id, props);
 
-    const { envConfig, vpc, dbSg, dbInstance, bucket, userPool, userPoolClient } = props;
+    const { envConfig, vpc, backendRepo, mlWorkerRepo, dbSg, dbInstance, bucket, userPool, userPoolClient } = props;
 
     // backendServiceSg/mlTaskSg are created here (not FoundationStack)
     // because ecs_patterns.ApplicationLoadBalancedFargateService wires an
@@ -74,20 +75,6 @@ export class AppStack extends Stack {
       toPort: 5432,
       description: "Backend service reads/writes Postgres directly",
     });
-
-    const backendRepo = new ecr.Repository(this, "BackendRepo", {
-      repositoryName: resourceName(envConfig, "backend"),
-      imageScanOnPush: true,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-    backendRepo.addLifecycleRule({ maxImageCount: ECR_MAX_IMAGE_COUNT });
-
-    const mlWorkerRepo = new ecr.Repository(this, "MlWorkerRepo", {
-      repositoryName: resourceName(envConfig, "ml-worker"),
-      imageScanOnPush: true,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-    mlWorkerRepo.addLifecycleRule({ maxImageCount: ECR_MAX_IMAGE_COUNT });
 
     const cluster = new ecs.Cluster(this, "Cluster", {
       clusterName: resourceName(envConfig, "cluster"),
@@ -237,8 +224,6 @@ export class AppStack extends Stack {
 
     new CfnOutput(this, "BackendAlbDnsName", { value: backendService.loadBalancer.loadBalancerDnsName });
     new CfnOutput(this, "AmplifyDefaultDomain", { value: amplifyApp.defaultDomain });
-    new CfnOutput(this, "BackendRepoUri", { value: backendRepo.repositoryUri });
-    new CfnOutput(this, "MlWorkerRepoUri", { value: mlWorkerRepo.repositoryUri });
     new CfnOutput(this, "MlTaskDefinitionArn", { value: mlTaskDefinition.taskDefinitionArn });
   }
 }

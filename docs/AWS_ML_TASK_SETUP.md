@@ -26,13 +26,21 @@ Set by CDK on the backend service: `S3_BUCKET`, `AWS_REGION`, `USE_ECS_ML=true`,
 `ML_POLL_INTERVAL` (60), `ML_TIMEOUT_HOURS` (12), `ML_CLEANUP_JOB_FILES` (false — keeps
 `scan_output/` for diagnostics). Leave `AWS_S3_ENDPOINT_URL` unset in AWS.
 
-## Build and push the ML image
+## Build and push the images
+
+The ECR repos are created by the foundation stack, so images can be pushed before the app stack
+is deployed (the backend service and ML task definition both reference `:latest`, so deploy the
+app stack only after both images exist):
 
 ```bash
-aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
-docker build -f ml-worker/Dockerfile.batch -t <account>.dkr.ecr.<region>.amazonaws.com/cancer-registry-<env>-ml-worker:latest .
-docker push <account>.dkr.ecr.<region>.amazonaws.com/cancer-registry-<env>-ml-worker:latest
+cdk deploy cancer-registry-prod-foundation cancer-registry-prod-data   # creates the repos
+scripts/push-images.sh all prod                                         # or: backend | ml-worker
+cdk deploy cancer-registry-prod-app
 ```
+
+The script builds `linux/amd64` (Fargate's default architecture, so Apple Silicon builds work) and
+tags `:<git-sha>` and `:latest`. The ML image is built from the repo root with
+`ml-worker/Dockerfile.batch`; model weights are not baked in (see below).
 
 ## One-time GCS → S3 data copy
 

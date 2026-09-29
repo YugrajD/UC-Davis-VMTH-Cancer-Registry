@@ -69,9 +69,9 @@ def _legacy_grid(start: float, stop: float, step: float) -> list[float]:
 
 
 # The grid that actually produced the legacy lp_thresholds.json: "0.05,0.95,0.05". The script's --grid
-# default and training-guide.md Step 8 say 0.01, but every legacy value is a multiple of 0.05, and on the
+# default and legacy-tree/training-guide.md Step 8 say 0.01, but every legacy value is a multiple of 0.05, and on the
 # three-way-v1 calibration partition the 0.05 grid reproduces all 25 legacy values while 0.01 reproduces 12
-# (WP5b real-data check). ideas-accepted.md ("Per-LP Threshold Calibration") also records 0.05 steps.
+# (WP5b real-data check). history/experiments/2026-05-10-per-lp-thresholds.md also records 0.05 steps.
 LP_GRID = _legacy_grid(0.05, 0.95, 0.05)
 GATE_GRID = (0.50, 0.60, 0.70, 0.75, 0.80, 0.85, 0.90)
 GROUP_GRID = (0.50, 0.60, 0.70, 0.75, 0.80, 0.85, 0.90)  # all > 0: the gate-after-stages shortcut needs it

@@ -1,6 +1,6 @@
 """The single source of production hyperparameters and seeds.
 
-Every value here is verified against ``ml/documentation/training-guide.md``
+Every value here is verified against ``ml/documentation/history/legacy-tree/training-guide.md``
 (the exact production commands) and the old trainers it drives
 (``ml/training/{binary,group,label_presence,contrastive}/*``,
 ``ml/scripts/run_training.py``). Where the guide and the old code's own
@@ -67,7 +67,7 @@ def seed_all(seed: int) -> None:
 class GateRecipe:
     """CasePresenceClassifier (Stage 1 gate).
 
-    Sources: ``training-guide.md`` Step 5 (``--epochs 20
+    Sources: ``legacy-tree/training-guide.md`` Step 5 (``--epochs 20
     --case-presence-recall-weight 0.7``); ``ml/training/binary/
     train_case_presence.py`` argparse defaults for the rest (``--pos-weight``
     default 1.0, not overridden by the guide). ``dropout`` is
@@ -92,7 +92,7 @@ class GateRecipe:
 class GroupRecipe:
     """GroupClassifier (Stage 2).
 
-    Sources: ``training-guide.md`` Step 6 (``--epochs 300 --lr 5e-5
+    Sources: ``legacy-tree/training-guide.md`` Step 6 (``--epochs 300 --lr 5e-5
     --dropout 0.1 --max-class-weight 50 --weight-decay 1e-3``);
     ``ml/scripts/run_training.py::_train_groups`` hardcodes ``val_frac=0.2,
     threshold=0.3, min_group_cases=10`` in its call to ``train_group`` (not
@@ -123,7 +123,7 @@ class GroupRecipe:
 class LabelPresenceRecipe:
     """Per-group LabelPresenceClassifier (Stage 3a).
 
-    Sources: ``training-guide.md`` Step 7 (``--label-presence-epochs 25
+    Sources: ``legacy-tree/training-guide.md`` Step 7 (``--label-presence-epochs 25
     --label-presence-negs-per-pos 5 --label-presence-recall-weight 0.5
     --label-presence-n-cols 3 --label-presence-col-pair-mode
     --label-presence-col-combine learned``); ``ml/scripts/run_training.py``
@@ -151,7 +151,7 @@ class LabelPresenceRecipe:
 class BackboneRecipe:
     """Contrastive PetBERT backbone adaptation.
 
-    Sources: ``training-guide.md`` Step 2 (``--epochs 3 --batch-size 32
+    Sources: ``legacy-tree/training-guide.md`` Step 2 (``--epochs 3 --batch-size 32
     --lr 2e-5 --temperature 0.07``); ``max_length=256`` is the
     ``run_training.py`` argparse default (never overridden by the guide) and
     is distinct from the 512 used at inference (``report_mapping/model/

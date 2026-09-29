@@ -17,7 +17,7 @@ from diagnosis_mapping import silver, stats
 from diagnosis_mapping.silver import NoLLMGenerationError
 from generations.manifest import ManifestError
 
-# Same default verifier pair as the old pipeline (see ml/documentation/label-annotation.md):
+# Same default verifier pair as the old pipeline (see ml/documentation/history/legacy-tree/label-annotation.md):
 # selected from a 6-model bake-off on 26 Tier-3 rows for highest adjudicated correctness
 # and architectural diversity, so unanimous votes carry signal.
 DEFAULT_CLEANUP_MODELS = ["google/gemma-4-31b", "qwen/qwen3.6-27b"]

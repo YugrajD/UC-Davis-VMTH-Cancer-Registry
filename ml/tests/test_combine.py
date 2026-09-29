@@ -235,6 +235,31 @@ def test_bronze_low_confidence_on_a_non_rank1_row_is_queued(monkeypatch, tmp_pat
     assert (rows["review_status"] == "queued").all()
 
 
+@pytest.mark.xfail(strict=True, reason="a failed Tier-3 request is recorded as tier3_llm/'No Match' (decisive non-cancer)")
+def test_timed_out_tier3_call_is_not_coded_as_no_cancer(monkeypatch, tmp_path):
+    """A Tier-3 request that times out never judged the diagnosis, so the case
+    must be queued, not auto-accepted as NO_CANCER."""
+    import requests
+
+    from diagnosis_mapping import llm_client, silver
+    from taxonomy.taxonomy import TaxonomyLabel
+
+    def _timeout(*a, **k):
+        raise requests.Timeout("read timed out")
+    monkeypatch.setattr(llm_client, "chat", _timeout)
+    labels = [TaxonomyLabel(code="8000/3", group="Round Cell Tumors", term="Mast cell tumor, malignant")]
+    diagnoses = pd.DataFrame([{"case_id": "CASE-TIMEOUT", "diagnosis_number": 1,
+                               "diagnosis": "round cell tumor, cannot specify subtype"}])
+    out_df, _counters = silver.run_cascade(diagnoses, labels)
+
+    fx.point_coding_config_at(monkeypatch, tmp_path)
+    fx.make_three_way_split_generation("timeout-split", train=["CASE-TIMEOUT"], calibration=[], test=[])
+    fx.make_silver_generation("timeout-silver", list(out_df.itertuples(index=False, name=None)))
+    predictions_csv = fx.make_bronze_predictions_csv(tmp_path / "predictions.csv", [])
+    df = combine_predictions("timeout-silver", "timeout-split", predictions_csv)
+    assert df[df["case_id"] == "CASE-TIMEOUT"].empty
+
+
 def test_unknown_decision_pair_raises(monkeypatch, tmp_path):
     """A silver row outside the vagueness table must raise, not silently code or queue."""
     fx.point_coding_config_at(monkeypatch, tmp_path)

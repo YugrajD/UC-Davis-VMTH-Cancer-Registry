@@ -44,17 +44,18 @@ COMBINED_PREDICTIONS_COLUMNS = [
 ]
 
 # ---------------------------------------------------------------------------
-# The bronze review gate. Default = the backend's *current* bronze review
-# gate (backend/app/config.py REVIEW_AUTO_ACCEPT_CONFIDENCE/MARGIN, applied in
-# backend/app/services/ingestion_service.py:512-526): a row is queued when its
-# method is the pipeline's low-confidence rejection, OR its confidence is
+# The bronze review gate — the only one: the backend's ingest-time gate
+# (backend/app/config.py REVIEW_AUTO_ACCEPT_CONFIDENCE/MARGIN) was retired in
+# 83262de, and ingestion_service.py now confirms every ingested row
+# unconditionally. Its defaults were carried over here: a row is queued when
+# its method is the pipeline's low-confidence rejection, OR its confidence is
 # below the threshold, OR (rank-1 only, and only when both ranks exist) the
 # top1-top2 margin is too tight. All three numbers live here together so they
 # can be recalibrated in one place once the random slice (icd-mapping-
 # strategy.md "Improving the methods") gives a real basis — they are backend
 # defaults carried over, not yet validated against this pipeline's own data.
 # ---------------------------------------------------------------------------
-BRONZE_LOW_CONFIDENCE_METHOD = "rejected_by_case_presence"  # this pipeline's name for the backend's "low_confidence"
+BRONZE_LOW_CONFIDENCE_METHOD = "rejected_by_case_presence"  # this pipeline's name for the retired backend gate's "low_confidence"
 BRONZE_LOW_CONFIDENCE_THRESHOLD = 0.23
 BRONZE_LOW_MARGIN_THRESHOLD = 0.15
 
@@ -79,16 +80,17 @@ def _float_or_zero(value: str) -> float:
 
 
 def bronze_case_is_low_confidence(case_rows: pd.DataFrame) -> bool:
-    """Same gate as the backend's ingestion_service, applied to one case's
-    bronze prediction rows (``diagnosis_index`` 1, 2, ...).
+    """The gate the backend's ingestion_service used to apply (retired in
+    83262de), applied to one case's bronze prediction rows
+    (``diagnosis_index`` 1, 2, ...).
 
-    The backend computes ``needs_review`` per row (``ingestion_service.py``:
-    "method == low_confidence OR conf < threshold OR margin_too_tight"), and
-    the margin term is only ever attached to the rank-1 row. Mirrored here at
-    case granularity: the method/confidence checks run over EVERY row (a
-    low-confidence row at rank 2+ must still queue the case), while the
-    margin check stays rank-1-only, since a margin between ranks below 1 was
-    never computed by the backend in the first place.
+    The backend computed ``needs_review`` per row ("method == low_confidence
+    OR conf < threshold OR margin_too_tight"), and the margin term was only
+    ever attached to the rank-1 row. Mirrored here at case granularity: the
+    method/confidence checks run over EVERY row (a low-confidence row at rank
+    2+ must still queue the case), while the margin check stays rank-1-only,
+    since a margin between ranks below 1 was never computed by the backend in
+    the first place.
     """
     rank1 = case_rows[case_rows["diagnosis_index"] == "1"]
     if rank1.empty:

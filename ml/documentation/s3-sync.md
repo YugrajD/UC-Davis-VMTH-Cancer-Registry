@@ -181,21 +181,12 @@ then `sync.py publish-model --apply`. Run these yourself; dry-run first.
 
 ## Migrating off Syncthing
 
-**Never run both at once.** `.stignore` admits all of `ml/output/`, so a running Syncthing would
-sync each machine's `s3sync_state.json` and `s3sync_backup/` (corrupting the 3-way base) and race the
-S3 pulls in the same directories. And do not delete `.stignore` or the `.gitignore` Syncthing block
-early: without `.stignore` a still-running Syncthing starts syncing `.git/` and the venv.
-
-1. Let Syncthing finish, then **pause the folder on every machine** before any machine does its first
-   S3 push or pull.
-2. Copy root `CLAUDE.md` by hand to each machine that needs it (`.stignore` carries it today; the S3
-   sync does not).
-3. Do the first upload on the source machine and set up the others (sections above); check
-   `sync.py status` is clean on each.
-4. Stop the Syncthing service on every machine (don't uninstall yet).
-5. Remove the leftovers on each machine: `.stfolder/`, `.stversions/`, `*.sync-conflict-*`.
-6. Only once Syncthing is stopped everywhere, delete `.stignore` and remove the Syncthing block from
-   `.gitignore`.
+Done on 2026-09-28: Syncthing was disabled on every machine, then `.stignore` and the `.gitignore`
+Syncthing block were removed. **Do not re-enable Syncthing on this repo** — without `.stignore` it
+would sync `.git/` and the venv, and it would also sync each machine's `s3sync_state.json` and
+`s3sync_backup/`, corrupting the 3-way base. Any leftover `.stfolder/`, `.stversions/` or
+`*.sync-conflict-*` files on a machine can be deleted. Root `CLAUDE.md` is copied between machines by
+hand.
 
 ## Known limits
 

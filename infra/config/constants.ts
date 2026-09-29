@@ -27,6 +27,9 @@ export const BACKEND_CPU_TARGET_UTILIZATION_PERCENT = 60;
 // ~15GB, per backend/app/config.py's GCP_BATCH_MACHINE_TYPE default).
 export const ML_TASK_CPU = 4096; // 4 vCPU
 export const ML_TASK_MEMORY_MIB = 16384; // 16 GB
+// ~12GB of model weights are downloaded from S3 at task start (plus the input
+// CSV and outputs), well past Fargate's 20GiB default once unpacked.
+export const ML_TASK_EPHEMERAL_STORAGE_GIB = 50;
 
 export const ECR_MAX_IMAGE_COUNT = 10;
 

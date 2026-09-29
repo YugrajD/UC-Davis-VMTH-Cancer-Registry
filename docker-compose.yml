@@ -77,18 +77,20 @@ services:
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-vmthcancerregistryweb}
       COGNITO_ISSUER_URL: ${COGNITO_ISSUER_URL:-http://floci:4566}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      UPLOAD_DIR: /app/uploads
-      # GCP Batch (optional)
-      USE_GCP_BATCH: ${USE_GCP_BATCH:-false}
-      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
-      GCP_REGION: ${GCP_REGION:-us-central1}
-      GCS_BUCKET: ${GCS_BUCKET:-}
-      GCP_BATCH_IMAGE_URI: ${GCP_BATCH_IMAGE_URI:-}
-      GCP_BATCH_SERVICE_ACCOUNT: ${GCP_BATCH_SERVICE_ACCOUNT:-}
-      GCP_BATCH_MACHINE_TYPE: ${GCP_BATCH_MACHINE_TYPE:-n1-standard-4}
-      GCP_BATCH_POLL_INTERVAL: ${GCP_BATCH_POLL_INTERVAL:-60}
-      GCP_BATCH_TIMEOUT_HOURS: ${GCP_BATCH_TIMEOUT_HOURS:-12}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      # S3 blob storage — Floci locally, real S3 in AWS
+      S3_BUCKET: ${S3_BUCKET:-vmth-cancer-registry-storage-local}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_S3_ENDPOINT_URL: ${AWS_S3_ENDPOINT_URL:-http://floci:4566}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      # ECS Fargate ML task (optional; local dev uses the ml-worker container)
+      USE_ECS_ML: ${USE_ECS_ML:-false}
+      ECS_CLUSTER_ARN: ${ECS_CLUSTER_ARN:-}
+      ML_TASK_DEFINITION_ARN: ${ML_TASK_DEFINITION_ARN:-}
+      ML_TASK_SUBNET_IDS: ${ML_TASK_SUBNET_IDS:-}
+      ML_TASK_SECURITY_GROUP_ID: ${ML_TASK_SECURITY_GROUP_ID:-}
+      ML_POLL_INTERVAL: ${ML_POLL_INTERVAL:-60}
+      ML_TIMEOUT_HOURS: ${ML_TIMEOUT_HOURS:-12}
     ports:
       - "8000:8000"
     volumes:

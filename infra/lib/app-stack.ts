@@ -20,6 +20,7 @@ import {
   ECR_MAX_IMAGE_COUNT,
   EnvConfig,
   ML_TASK_CPU,
+  ML_TASK_EPHEMERAL_STORAGE_GIB,
   ML_TASK_MEMORY_MIB,
   resourceName,
 } from "../config/constants";
@@ -102,6 +103,7 @@ export class AppStack extends Stack {
       family: resourceName(envConfig, "ml-task"),
       cpu: ML_TASK_CPU,
       memoryLimitMiB: ML_TASK_MEMORY_MIB,
+      ephemeralStorageGiB: ML_TASK_EPHEMERAL_STORAGE_GIB,
     });
     mlTaskDefinition.addContainer("MlWorker", {
       containerName: "ml-worker",
@@ -113,7 +115,7 @@ export class AppStack extends Stack {
       },
     });
     bucket.grantReadWrite(mlTaskDefinition.taskRole);
-    // ML task has no DB access: batch_predict.py is S3-only, the backend
+    // ML task has no DB access: s3_batch_entrypoint.py is S3-only, the backend
     // does all DB writes after RunTask completes and results are read back
     // from S3 - so no DB secret/security-group rule is granted here.
 
@@ -148,6 +150,7 @@ export class AppStack extends Stack {
             COGNITO_USER_POOL_ID: userPool.userPoolId,
             COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
             COGNITO_ISSUER_URL: `https://cognito-idp.${this.region}.amazonaws.com/${userPool.userPoolId}`,
+            USE_ECS_ML: "true",
             ECS_CLUSTER_ARN: cluster.clusterArn,
             ML_TASK_DEFINITION_ARN: mlTaskDefinition.taskDefinitionArn,
             ML_TASK_SUBNET_IDS: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_ISOLATED })

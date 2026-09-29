@@ -2,10 +2,9 @@ export const STAGE_LABELS: Record<string, string> = {
   queued:                  'Queued for processing',
   reading_files:           'Reading files',
   running_ml_worker:       'Running PetBERT inference',
-  uploading_to_gcs:        'Uploading to Cloud Storage',
-  submitting_batch_job:    'Submitting batch job',
-  batch_queued:            'Batch job queued',
-  batch_scheduled:         'Batch job scheduled',
+  submitting_batch_job:    'Starting ML task',
+  batch_queued:            'ML task queued',
+  batch_scheduled:         'ML task starting',
   batch_running:           'Running PetBERT inference',
   downloading_predictions: 'Downloading predictions',
   ingesting:               'Writing to database',
@@ -18,9 +17,8 @@ export const LOCAL_STAGES = [
   'ingesting',
 ];
 
-export const GCP_STAGES = [
+export const BATCH_STAGES = [
   'queued',
-  'uploading_to_gcs',
   'submitting_batch_job',
   'batch_queued',
   'batch_scheduled',

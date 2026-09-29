@@ -54,7 +54,7 @@ const jobs: IngestionJob[] = [
   job({ id: 4, status: 'failed', dataset_a_filename: 'failed.csv', processing_error: 'Pipeline failed' }),
   job({ id: 5, status: 'rejected', dataset_a_filename: 'rejected.csv', rejection_reason: 'Bad columns' }),
   job({ id: 6, status: 'cancelled', dataset_a_filename: 'cancelled.csv' }),
-  job({ id: 7, status: 'processing', dataset_a_filename: 'gcp.csv', processing_stage: 'uploading_to_gcs' }),
+  job({ id: 7, status: 'processing', dataset_a_filename: 'ecs.csv', processing_stage: 'submitting_batch_job' }),
 ];
 
 beforeEach(() => {
@@ -238,11 +238,10 @@ describe('AdminQueue', () => {
     await waitFor(() => expect(alertMock()).toHaveBeenCalledWith('Approve failed upstream'));
   });
 
-  it('renders local and GCP processing stage indicators', async () => {
+  it('renders local and ECS processing stage indicators', async () => {
     render(<AdminQueue />);
 
     expect(await screen.findByText('Reading files')).toBeInTheDocument();
-    expect(screen.getByText('Uploading to Cloud Storage')).toBeInTheDocument();
-    expect(screen.getByText('Submitting batch job')).toBeInTheDocument();
+    expect(screen.getByText('Starting ML task')).toBeInTheDocument();
   });
 });

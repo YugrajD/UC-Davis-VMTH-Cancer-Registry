@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchJobs, reviewJob, fetchJobPreview, cancelJob, fetchAvailableModels, type IngestionJob } from '../../api/client';
-import { STAGE_LABELS, LOCAL_STAGES, GCP_STAGES } from '../shared/pipelineStages';
+import { STAGE_LABELS, LOCAL_STAGES, BATCH_STAGES } from '../shared/pipelineStages';
 
 const ACTIVE_STATUSES = ['pending_review', 'processing'];
 const ARCHIVE_STATUSES = ['completed', 'failed', 'rejected', 'cancelled'];
 
 function PipelineStageIndicator({ stage }: { stage: string }) {
-  const isGcp = GCP_STAGES.includes(stage);
-  const steps = isGcp ? GCP_STAGES : LOCAL_STAGES;
+  const isBatch = BATCH_STAGES.includes(stage);
+  const steps = isBatch ? BATCH_STAGES : LOCAL_STAGES;
   const currentIndex = steps.indexOf(stage);
 
   return (

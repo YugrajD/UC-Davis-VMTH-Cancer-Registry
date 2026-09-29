@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { STAGE_LABELS, LOCAL_STAGES, GCP_STAGES } from '../components/shared/pipelineStages';
+import { STAGE_LABELS, LOCAL_STAGES, BATCH_STAGES } from '../components/shared/pipelineStages';
 
 describe('STAGE_LABELS', () => {
   it('contains a label for every LOCAL_STAGES step', () => {
@@ -9,8 +9,8 @@ describe('STAGE_LABELS', () => {
     }
   });
 
-  it('contains a label for every GCP_STAGES step', () => {
-    for (const stage of GCP_STAGES) {
+  it('contains a label for every BATCH_STAGES step', () => {
+    for (const stage of BATCH_STAGES) {
       expect(STAGE_LABELS).toHaveProperty(stage);
       expect(STAGE_LABELS[stage].length).toBeGreaterThan(0);
     }
@@ -41,26 +41,26 @@ describe('LOCAL_STAGES', () => {
   });
 });
 
-describe('GCP_STAGES', () => {
+describe('BATCH_STAGES', () => {
   it('starts with queued', () => {
-    expect(GCP_STAGES[0]).toBe('queued');
+    expect(BATCH_STAGES[0]).toBe('queued');
   });
 
   it('ends with ingesting', () => {
-    expect(GCP_STAGES[GCP_STAGES.length - 1]).toBe('ingesting');
+    expect(BATCH_STAGES[BATCH_STAGES.length - 1]).toBe('ingesting');
   });
 
   it('contains batch_running', () => {
-    expect(GCP_STAGES).toContain('batch_running');
+    expect(BATCH_STAGES).toContain('batch_running');
   });
 
   it('has more stages than LOCAL_STAGES', () => {
-    expect(GCP_STAGES.length).toBeGreaterThan(LOCAL_STAGES.length);
+    expect(BATCH_STAGES.length).toBeGreaterThan(LOCAL_STAGES.length);
   });
 
-  it('uploading_to_gcs comes before batch_running', () => {
-    const uploadIdx = GCP_STAGES.indexOf('uploading_to_gcs');
-    const runIdx = GCP_STAGES.indexOf('batch_running');
-    expect(uploadIdx).toBeLessThan(runIdx);
+  it('submitting_batch_job comes before batch_running', () => {
+    const submitIdx = BATCH_STAGES.indexOf('submitting_batch_job');
+    const runIdx = BATCH_STAGES.indexOf('batch_running');
+    expect(submitIdx).toBeLessThan(runIdx);
   });
 });

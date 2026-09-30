@@ -6,10 +6,12 @@ pandas==2.2.3
 scikit-learn==1.5.0
 scipy==1.17.1
 
-# HuggingFace (version-sensitive with transformers)
-huggingface_hub==0.36.2
+# HuggingFace (version-sensitive with transformers). transformers==5.0.0rc3
+# requires huggingface_hub>=1.3.0,<2.0 and tokenizers>=0.22.0,<=0.23.0 -
+# these two were left on their pre-v5 pins and never resolved cleanly.
+huggingface_hub==1.33.0
 safetensors==0.7.0
-tokenizers==0.20.3
+tokenizers==0.22.2
 datasets>=4.8.4
 
 # Utilities

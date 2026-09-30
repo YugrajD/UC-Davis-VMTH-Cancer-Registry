@@ -27,7 +27,6 @@ from app.models.models import (
     CancerType,
     CaseDiagnosis,
     County,
-    DiagnosisReviewEvent,
     IngestionLog,
     PathologyReport,
     Patient,
@@ -114,6 +113,7 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
             continue
 
         original_text = row.get("original_text", "").strip()
+        source_version = (row.get("source_version") or "").strip() or None
 
         # Detect per-row format: explicit integer diagnosis_index AND no
         # numbered strings in predicted_term/predicted_group.
@@ -137,6 +137,7 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
                 "confidence": conf,
                 "original_text": original_text,
                 "method": method,
+                "source_version": source_version,
             })
             continue
 
@@ -170,6 +171,7 @@ def parse_predictions(predictions: list[dict]) -> dict[str, list[dict]]:
                 "confidence": conf,
                 "original_text": original_text,
                 "method": meth,
+                "source_version": source_version,
             })
 
     return dict(result)
@@ -483,7 +485,7 @@ async def ingest_upload(
                 )
             )
 
-    # --- Upload report texts to GCS, then create one PathologyReport per patient ---
+    # --- Upload report texts to GCS/S3, then create one PathologyReport per patient ---
     # Collect anon_id → text pairs for patients that have text.
     text_by_anon_id: dict[str, str] = {}
     for anon_id in ids_to_process:
@@ -494,11 +496,31 @@ async def ingest_upload(
         if report_text:
             text_by_anon_id[anon_id] = report_text
 
-    # Upload to GCS whenever a bucket is configured — works for both GCP Batch
-    # and local ml-worker runs as long as GCS credentials are available.
-    # Falls back to None (no GCS path) only when GCS is not configured at all.
+    # Upload whenever a storage backend is configured — works for GCP Batch,
+    # the ECS ML task, and local ml-worker runs alike, as long as credentials
+    # are available. Falls back to None (no storage_path) only when neither
+    # backend is configured at all.
     gcs_path_by_anon_id: dict[str, str] = {}
-    if settings.GCS_BUCKET and ingestion_job_id and text_by_anon_id:
+    if settings.USE_ECS_ML and ingestion_job_id and text_by_anon_id:
+        from app.services.s3_service import upload_report_text
+        loop = asyncio.get_running_loop()
+        _UPLOAD_CHUNK = 50  # limit concurrent S3 connections
+
+        items = list(text_by_anon_id.items())
+        for i in range(0, len(items), _UPLOAD_CHUNK):
+            chunk = items[i : i + _UPLOAD_CHUNK]
+            results = await asyncio.gather(*[
+                loop.run_in_executor(
+                    None, upload_report_text, ingestion_job_id, anon_id, txt
+                )
+                for anon_id, txt in chunk
+            ], return_exceptions=True)
+            for (anon_id, _), storage_path in zip(chunk, results):
+                if isinstance(storage_path, Exception):
+                    logger.warning("S3 upload failed for %s: %s", anon_id, storage_path)
+                else:
+                    gcs_path_by_anon_id[anon_id] = storage_path
+    elif settings.GCS_BUCKET and ingestion_job_id and text_by_anon_id:
         from app.services.gcp_batch_service import upload_report_text_to_gcs
         loop = asyncio.get_running_loop()
         _UPLOAD_CHUNK = 50  # limit concurrent GCS connections
@@ -526,7 +548,7 @@ async def ingest_upload(
         demo = demographics.get(anon_id, {})
         report = PathologyReport(
             patient_id=patient_id,
-            gcs_path=gcs_path_by_anon_id.get(anon_id),
+            storage_path=gcs_path_by_anon_id.get(anon_id),
             report_date=demo.get("diagnosis_date"),
         )
         db.add(report)
@@ -572,21 +594,15 @@ async def ingest_upload(
             method = diag["method"]
             rank = diag["diagnosis_index"]
 
-            # Review gate: flag pending when confidence is below the auto-
-            # accept threshold OR (rank-1 only) the margin to the next
-            # candidate is too tight OR the pipeline already labelled the
-            # row low_confidence.
+            # top2_margin is kept as informational metadata (top1-top2
+            # confidence spread on the rank-1 row). It no longer gates
+            # review_status — per ml/documentation/audit-list-change-
+            # request.md section 1.6, the backend's own ingest-time review
+            # gate is retired: the Audit Worklist (backend/app/routers/
+            # audit_review.py) plus ML's own review_status on the next
+            # combined-predictions run are the only review path now, and
+            # there is no Review Queue left to act on a 'pending' row.
             row_margin = margin if rank == 1 else None
-            margin_too_tight = (
-                row_margin is not None
-                and row_margin < settings.REVIEW_AUTO_ACCEPT_MARGIN
-            )
-            needs_review = (
-                method == "low_confidence"
-                or conf < settings.REVIEW_AUTO_ACCEPT_CONFIDENCE
-                or margin_too_tight
-            )
-            review_status = "pending" if needs_review else "confirmed"
 
             report = report_by_anon_id.get(anon_id)
             diagnosis = CaseDiagnosis(
@@ -599,25 +615,13 @@ async def ingest_upload(
                 prediction_method=method or None,
                 source_row_index=diag["row_index"],
                 diagnosis_index=rank,
-                review_status=review_status,
+                source_version=diag.get("source_version"),
+                review_status="confirmed",
                 top2_margin=round(row_margin, 2) if row_margin is not None else None,
                 ingestion_job_id=ingestion_job_id,
             )
             db.add(diagnosis)
             diagnoses_inserted += 1
-
-            if needs_review:
-                # Audit-log the auto-flag so the queue can show "flagged at
-                # ingest" alongside subsequent reviewer actions.
-                db.add(DiagnosisReviewEvent(
-                    case_diagnosis=diagnosis,
-                    actor_email="system",
-                    action="flagged",
-                    from_status=None,
-                    to_status="pending",
-                    cancer_type_id_after=cancer_type_id,
-                    icd_o_code_after=diag["icd_o_code"] or None,
-                ))
 
             row_results.append(IngestionRowResult(
                 row_number=diag["row_index"],

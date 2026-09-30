@@ -1,0 +1,136 @@
+"""Cloud file contracts: land inbox exports, write outbox exports, build the worker bundle.
+
+Usage:
+  python ml/scripts/handoff.py import-pending --csv PATH --export-id ID
+  python ml/scripts/handoff.py import-gold     --csv PATH --export-id ID --reviewer "Dr. Smith"
+  python ml/scripts/handoff.py export-silver   --silver-id SID
+  python ml/scripts/handoff.py export-coding   --run-id RUN
+  python ml/scripts/handoff.py export-bundle   [--generation current]
+  python ml/scripts/handoff.py export-audit-list --list-id 2026-09-27 [--no-review-queue]
+
+Every subcommand except export-bundle takes --push: after it succeeds, push the S3 sync sets it wrote
+(see PUSH_SETS; needs AWS credentials). export-bundle has none — bundles are not synced; the generation
+itself is published with sync.py publish-model or promote.py --publish.
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from handoff import exports, imports
+
+# The S3 sync sets (config.S3_SYNC_SETS) each subcommand writes into: the inbox/outbox files land in
+# "handoff"; a gold import also writes the gold store, and an audit list also records its ledger, both
+# in "manual_audit". export-bundle writes only the excluded bundles dir, so it has no entry.
+PUSH_SETS = {
+    "import-pending": ("handoff",),
+    "import-gold": ("manual_audit", "handoff"),
+    "export-silver": ("handoff",),
+    "export-coding": ("handoff",),
+    "export-audit-list": ("manual_audit", "handoff"),
+}
+
+
+def _cmd_import_pending(args: argparse.Namespace) -> int:
+    result = imports.import_pending_diagnoses(args.csv, args.export_id)
+    print(f"Imported {result['imported_rows']} row(s) across {result['imported_cases']} case(s) "
+          f"({result['replaced_cases']} replaced); landing table now holds "
+          f"{result['merged_total_rows']} row(s) across {result['merged_total_cases']} case(s).")
+    return 0
+
+
+def _cmd_import_gold(args: argparse.Namespace) -> int:
+    result = imports.import_gold(
+        args.csv, args.export_id, reviewer=args.reviewer,
+        upload_period=args.upload_period, slice_rate=args.slice_rate,
+    )
+    print(f"Gold: {result['added_cases']} new case(s), {result['replaced_cases']} re-reviewed; "
+          f"store now holds {result['total_rows']} row(s) across {result['total_cases']} case(s).")
+    return 0
+
+
+def _cmd_export_silver(args: argparse.Namespace) -> int:
+    out_path = exports.export_silver(args.silver_id)
+    print(f"wrote {out_path}")
+    return 0
+
+
+def _cmd_export_coding(args: argparse.Namespace) -> int:
+    result = exports.export_coding(args.run_id)
+    print(f"wrote {result['combined_predictions_path']} ({result['combined_rows']} rows)")
+    print(f"wrote {result['review_queue_path']} ({result['review_queue_rows']} rows)")
+    return 0
+
+
+def _cmd_export_bundle(args: argparse.Namespace) -> int:
+    result = exports.export_bundle(args.generation)
+    print(f"wrote {result['tarball_path']} (sha256 {result['sha256']}) for generation {result['generation_id']}")
+    print(f"wrote {result['sha256_path']}")
+    return 0
+
+
+def _cmd_export_audit_list(args: argparse.Namespace) -> int:
+    result = exports.export_audit_list(args.list_id, include_review_queue=not args.no_review_queue)
+    print(f"wrote {result['path']} ({result['cases']} cases, {result['new_cases']} listed for the first time)")
+    for origin, n in result["by_origin"].items():
+        print(f"  {origin:<25} {n:>6}")
+    return 0
+
+
+def _push(command: str) -> int:
+    from s3sync import hooks  # only when --push is given: no boto3 or credentials otherwise
+
+    return hooks.push_sets(command, PUSH_SETS[command])
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("import-pending", help="Land + merge a pending-diagnoses export.")
+    p.add_argument("--csv", required=True)
+    p.add_argument("--export-id", required=True)
+
+    p = sub.add_parser("import-gold", help="Land a gold export and ingest it via manual_audit.gold.")
+    p.add_argument("--csv", required=True)
+    p.add_argument("--export-id", required=True)
+    p.add_argument("--reviewer", required=True)
+    p.add_argument("--upload-period", default="")
+    p.add_argument("--slice-rate", default="")
+
+    p = sub.add_parser("export-silver", help="Write silver_codes_<silver_id>.csv to the outbox.")
+    p.add_argument("--silver-id", required=True)
+
+    p = sub.add_parser("export-coding", help="Write combined_predictions_<run>.csv + review_queue_<run>.csv to the outbox.")
+    p.add_argument("--run-id", required=True)
+
+    p = sub.add_parser("export-bundle", help="Tar a report-mapping generation + sha256 for ml-worker (not S3-synced; no --push).")
+    p.add_argument("--generation", default="current")
+
+    p = sub.add_parser("export-audit-list", help="Write audit_list_<id>.txt (every case awaiting review) to the outbox.")
+    p.add_argument("--list-id", required=True)
+    p.add_argument("--no-review-queue", action="store_true", help="Leave the review queue off the list.")
+
+    for name in PUSH_SETS:
+        sub.choices[name].add_argument("--push", action="store_true",
+                                       help=f"Then push the S3 sets this writes: {', '.join(PUSH_SETS[name])}.")
+
+    args = parser.parse_args()
+    dispatch = {
+        "export-audit-list": _cmd_export_audit_list,
+        "import-pending": _cmd_import_pending,
+        "import-gold": _cmd_import_gold,
+        "export-silver": _cmd_export_silver,
+        "export-coding": _cmd_export_coding,
+        "export-bundle": _cmd_export_bundle,
+    }
+    status = dispatch[args.command](args)
+    if status == 0 and getattr(args, "push", False):
+        return _push(args.command)
+    return status
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

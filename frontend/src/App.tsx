@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, DiagnosisReview, UserManagement, ResetPasswordModal, Settings } from './components';
+import { Navigation, Filters, SummaryTable, CountyTable, ChoroplethMap, Footer, DataUpload, AnalysisView, BreedDisparitiesView, AgeDisparitiesView, AdminQueue, AuditWorklist, UserManagement, ResetPasswordModal, Settings } from './components';
 import { useFilteredData } from './hooks/useFilteredData';
 import { useCancerTypesData } from './hooks/useCancerTypesData';
 import { useSessionStorageState } from './hooks/useSessionStorageState';
@@ -69,7 +69,7 @@ function AppContent() {
         ) : activeTab === 'review-queue' ? (
           <AdminQueue />
         ) : activeTab === 'diagnosis-review' ? (
-          <DiagnosisReview />
+          <AuditWorklist />
         ) : activeTab === 'user-management' ? (
           <UserManagement />
         ) : activeTab === 'settings' ? (

@@ -1,4 +1,6 @@
-FROM python:3.11-slim
+# Local HTTP worker. docker-compose mounts ./ml at /ml (the code app.py imports) and ./ml-worker at
+# /worker; the bundle is found from PETBERT_MODEL_PATH.
+FROM python:3.12-slim
 
 WORKDIR /worker
 

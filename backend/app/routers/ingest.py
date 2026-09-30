@@ -403,19 +403,25 @@ async def upload_datasets(
 async def list_models(
     _reviewer: CurrentUser = Depends(require_reviewer),
 ):
-    """Return the top-level model folder names available in GCS.
+    """Return the top-level model folder names available in GCS or S3.
 
-    Falls back to ["production"] when GCP Batch is disabled (local dev).
+    Falls back to ["production"] when neither GCP Batch nor the ECS ML task
+    is enabled (local dev), or when the listing call fails.
     """
-    if not settings.USE_GCP_BATCH:
+    if settings.USE_ECS_ML:
+        from app.services.s3_service import list_model_folders
+        source = "S3"
+    elif settings.USE_GCP_BATCH:
+        from app.services.gcp_batch_service import list_model_folders
+        source = "GCS"
+    else:
         return {"models": ["production"]}
 
     loop = asyncio.get_running_loop()
     try:
-        from app.services.gcp_batch_service import list_model_folders
         folders = await loop.run_in_executor(None, list_model_folders)
     except Exception:
-        logger.warning("Failed to list model folders from GCS", exc_info=True)
+        logger.warning("Failed to list model folders from %s", source, exc_info=True)
         folders = []
 
     if not folders:
@@ -530,15 +536,19 @@ async def cancel_job(
     await db.commit()
     await db.refresh(job)
 
-    # Best-effort: cancel the GCP Batch job if one was submitted
+    # Best-effort: cancel the GCP Batch job or ECS task if one was submitted
     if job.batch_job_name:
         try:
-            from app.services.gcp_batch_service import cancel_batch_job
             import asyncio
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, cancel_batch_job, job.batch_job_name)
+            if settings.USE_ECS_ML:
+                from app.services.ml_task_service import stop_ml_task
+                await loop.run_in_executor(None, stop_ml_task, job.batch_job_name)
+            else:
+                from app.services.gcp_batch_service import cancel_batch_job
+                await loop.run_in_executor(None, cancel_batch_job, job.batch_job_name)
         except Exception:
-            logger.warning("Failed to cancel GCP Batch job for job %d", job_id, exc_info=True)
+            logger.warning("Failed to cancel batch job/ML task for job %d", job_id, exc_info=True)
 
     return _job_to_dict(job)
 

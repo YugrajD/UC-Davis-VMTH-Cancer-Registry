@@ -1,12 +1,13 @@
 # Core ML
 torch==2.9.1
-transformers==5.0.0rc3
+transformers==4.46.3
 numpy>=2.0.0
 pandas==2.2.3
 scikit-learn==1.5.0
 scipy==1.17.1
 
-# HuggingFace (version-sensitive with transformers)
+# HuggingFace (version-sensitive with transformers). Keep these three in step with
+# ml-worker/requirements.txt: production generations were trained and are served on them.
 huggingface_hub==0.36.2
 safetensors==0.7.0
 tokenizers==0.20.3
@@ -17,9 +18,13 @@ tqdm==4.67.3
 requests>=2.32.0
 python-dotenv>=1.0.0
 matplotlib>=3.10.0
+boto3>=1.36
 
 # TUI
 textual>=0.47.0
+
+# Testing
+pytest>=8.0.0
 
 # Install torch from the CUDA 12.8 index for NVIDIA GPU support (Blackwell / sm_120, e.g. RTX 5070 Ti):
 # pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128

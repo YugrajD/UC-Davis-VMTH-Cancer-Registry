@@ -27,6 +27,12 @@ _GCP_BATCH_STATE_TO_STAGE: dict[str, str] = {
     "RUNNING":    "batch_running",
 }
 
+# Maps normalised ECS task states (see ml_task_service) to processing_stage values
+_ML_TASK_STATE_TO_STAGE: dict[str, str] = {
+    "PENDING": "batch_scheduled",
+    "RUNNING": "batch_running",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers — each opens and closes its own short-lived DB session so callers
@@ -122,7 +128,9 @@ def _delete_upload_dir(storage_path: str) -> None:
 async def process_approved_job(job_id: int) -> None:
     """Route to the correct processing backend based on config."""
     try:
-        if settings.USE_GCP_BATCH:
+        if settings.USE_ECS_ML:
+            await _process_via_ecs_task(job_id)
+        elif settings.USE_GCP_BATCH:
             await _process_via_gcp_batch(job_id)
         else:
             await _process_via_local_ml_worker(job_id)
@@ -422,4 +430,183 @@ async def _process_via_gcp_batch(job_id: int) -> None:
 
     except Exception as e:
         logger.exception("Job %d failed (GCP Batch path)", job_id)
+        await _mark_failed(job_id, _safe_error_message(e))
+
+
+# ---------------------------------------------------------------------------
+# ECS Fargate ML task path
+# ---------------------------------------------------------------------------
+
+async def _process_via_ecs_task(job_id: int) -> None:
+    """Process an approved ingestion job via an on-demand ECS Fargate task.
+
+    1. Upload dataset_a.csv to S3
+    2. Start the ML task (it reads uploads/{job_id}/dataset_a.csv from S3)
+    3. Poll until the task stops, updating processing_stage from ECS state
+    4. Download predictions.json and PetBERT diagnostics from S3
+    5. Ingest into database
+    6. Optionally cleanup S3 job files
+    """
+    from app.services.ml_task_service import (
+        STATE_SUCCEEDED,
+        get_task_status,
+        stop_ml_task,
+        submit_ml_task,
+    )
+    from app.services.s3_service import (
+        cleanup_job_files,
+        download_petbert_summary,
+        download_predictions,
+        upload_csv,
+    )
+
+    loop = asyncio.get_running_loop()
+
+    # --- Phase 1: fetch job metadata, mark as processing ----------------
+    async with async_session() as db:
+        result = await db.execute(
+            select(IngestionJob).where(IngestionJob.id == job_id)
+        )
+        job = result.scalar_one_or_none()
+        if not job:
+            logger.error("Job %d not found", job_id)
+            return
+
+        storage_path = job.storage_path
+        dataset_a_filename = job.dataset_a_filename
+        model_folder = job.model_folder or "production"
+
+        job.status = "processing"
+        job.processing_stage = "uploading_to_s3"
+        job.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    try:
+        t_job_start = time.perf_counter()
+        timings: dict[str, float] = {}
+
+        # --- Phase 2: read file and upload to S3 (no long DB hold) ------
+        dataset_a_path = f"{storage_path}/dataset_a.csv"
+
+        with open(dataset_a_path, "rb") as f:
+            dataset_a_bytes = f.read()
+
+        logger.info("Job %d: uploading dataset_a.csv to S3", job_id)
+        _t = time.perf_counter()
+        await loop.run_in_executor(
+            None, upload_csv, job_id, "dataset_a.csv", dataset_a_bytes
+        )
+        timings["s3_upload_s"] = round(time.perf_counter() - _t, 2)
+
+        # --- Phase 3: start the ML task ---------------------------------
+        await _update_job(job_id, processing_stage="submitting_batch_job")
+        logger.info("Job %d: starting ML task (model_folder=%s)", job_id, model_folder)
+        _t = time.perf_counter()
+        task_arn = await loop.run_in_executor(None, submit_ml_task, job_id, model_folder)
+        timings["task_submit_s"] = round(time.perf_counter() - _t, 2)
+
+        await _update_job(
+            job_id,
+            processing_stage="batch_queued",
+            batch_job_name=task_arn,
+        )
+
+        # --- Phase 4: poll until the task stops -------------------------
+        logger.info("Job %d: polling ML task %s", job_id, task_arn)
+        poll_interval = settings.ML_POLL_INTERVAL
+        timeout_s = settings.ML_TIMEOUT_HOURS * 3600
+        _t = time.perf_counter()
+
+        while True:
+            await asyncio.sleep(poll_interval)
+            state, error_msg = await loop.run_in_executor(None, get_task_status, task_arn)
+            logger.info("Job %d: ML task state = %s", job_id, state)
+
+            mapped_stage = _ML_TASK_STATE_TO_STAGE.get(state)
+            if mapped_stage:
+                await _update_job(job_id, processing_stage=mapped_stage)
+
+            if state in ("SUCCEEDED", "FAILED"):
+                break
+
+            if await _is_cancelled(job_id):
+                logger.info("Job %d was cancelled during ML task polling", job_id)
+                return
+
+            # ECS has no built-in max run time, so enforce it here.
+            if time.perf_counter() - _t > timeout_s:
+                await loop.run_in_executor(None, stop_ml_task, task_arn, "Timed out")
+                raise RuntimeError(
+                    f"ML task {task_arn} exceeded {settings.ML_TIMEOUT_HOURS}h timeout"
+                )
+
+        timings["ml_task_run_s"] = round(time.perf_counter() - _t, 2)
+
+        if state != STATE_SUCCEEDED:
+            raise RuntimeError(
+                f"ML task {task_arn} ended with state {state}: {error_msg or 'no details'}"
+            )
+
+        # --- Phase 5: download predictions ------------------------------
+        await _update_job(job_id, processing_stage="downloading_predictions")
+        logger.info("Job %d: downloading predictions from S3", job_id)
+        _t = time.perf_counter()
+        predictions = await loop.run_in_executor(None, download_predictions, job_id)
+        petbert_summary = _compact_petbert_summary(
+            await loop.run_in_executor(None, download_petbert_summary, job_id)
+        )
+        timings["s3_download_s"] = round(time.perf_counter() - _t, 2)
+
+        if not predictions:
+            raise RuntimeError("ML task produced no predictions")
+
+        # --- Phase 6: ingest into database (fresh session) --------------
+        await _update_job(job_id, processing_stage="ingesting")
+        _t = time.perf_counter()
+
+        async with async_session() as db:
+            ingestion_result = await ingest_upload(
+                db=db,
+                predictions=predictions,
+                dataset_a_filename=dataset_a_filename,
+                dataset_a_csv=dataset_a_bytes,
+                ingestion_job_id=job_id,
+            )
+
+            timings["db_ingest_s"] = round(time.perf_counter() - _t, 2)
+            timings["total_s"] = round(time.perf_counter() - t_job_start, 2)
+            logger.info("Job %d timings: %s", job_id, timings)
+
+            summary = ingestion_result.result_summary or {}
+            summary["timings_seconds"] = timings
+            if petbert_summary:
+                summary["petbert"] = petbert_summary
+
+            result = await db.execute(
+                select(IngestionJob).where(IngestionJob.id == job_id)
+            )
+            job = result.scalar_one_or_none()
+            if job:
+                job.status = "completed"
+                job.processing_stage = None
+                job.ingestion_log_id = ingestion_result.ingestion_log_id
+                job.result_summary = summary
+                job.updated_at = datetime.now(timezone.utc)
+                await db.commit()
+
+        logger.info("Job %d completed via ECS task: %d inserted", job_id, ingestion_result.inserted)
+        clear_all_caches()
+
+        # Cleanup S3 files (best-effort). Disabled by default so scan_output
+        # diagnostics remain available after a suspicious successful run.
+        if settings.ML_CLEANUP_JOB_FILES:
+            try:
+                await loop.run_in_executor(None, cleanup_job_files, job_id)
+            except Exception:
+                logger.warning("Job %d: S3 cleanup failed (non-fatal)", job_id, exc_info=True)
+        else:
+            logger.info("Job %d: preserving S3 job files for diagnostics", job_id)
+
+    except Exception as e:
+        logger.exception("Job %d failed (ECS task path)", job_id)
         await _mark_failed(job_id, _safe_error_message(e))

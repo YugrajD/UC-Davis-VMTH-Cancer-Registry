@@ -120,8 +120,6 @@ GCP_BATCH_MACHINE_TYPE=n1-standard-4
 GCP_BATCH_POLL_INTERVAL=60
 GCP_BATCH_TIMEOUT_HOURS=12
 GCP_BATCH_CLEANUP_JOB_FILES=false
-CASE_PRESENCE_THRESHOLD=0.5
-GROUP_CLASSIFIER_THRESHOLD=0.3
 GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp-sa-key.json
 ```
 
@@ -131,7 +129,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp-sa-key.json
 2. **GCP Batch**: Set `USE_GCP_BATCH=true`, approve an upload, then monitor:
    - Backend logs for periodic `Batch status = RUNNING` messages
    - GCP Console → Batch → Jobs for the running job
-   - `gs://$GCS_BUCKET/uploads/{job_id}/scan_output/petbert_summary.json`
+   - `gs://$GCS_BUCKET/uploads/{job_id}/predictions.json`
      for PetBERT method counts such as `low_confidence`,
      `unidentified_cancer`, `embedding`, and `label_presence`
 3. **Failure handling**: Kill the Batch job in GCP Console → backend detects `FAILED` → job marked failed with error.

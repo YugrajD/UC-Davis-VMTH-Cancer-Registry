@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Security updates only (limit 0 turns off routine version-update PRs, which were never enabled).
+  # transformers 5.x changed tokenizer loading (vocab-only tokenizers now yield [UNK]), and a
+  # backbone upgrade invalidates every trained generation, so HF major bumps are an ML task, not a PR.
+  - package-ecosystem: "pip"
+    directories:
+      - "/ml"
+      - "/ml-worker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "transformers"
+        versions: [">=5.0.0"]
+      - dependency-name: "tokenizers"
+        versions: [">=0.21.0"]
+      - dependency-name: "huggingface_hub"
+        versions: [">=1.0.0"]

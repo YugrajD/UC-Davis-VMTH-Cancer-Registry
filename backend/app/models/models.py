@@ -76,6 +76,14 @@ class Patient(Base):
     birth_date = Column(Date, nullable=True)
     diagnosis_date = Column(Date, nullable=True)
     outcome = Column(String(20), nullable=True)
+    # Set when a combined_predictions load codes this case NO_CANCER — a case
+    # with zero case_diagnoses rows and this false just hasn't been coded yet.
+    # See database/migrations/035_combined_predictions.sql.
+    registry_no_cancer = Column(Boolean, nullable=False, server_default="false")
+    registry_no_cancer_source_version = Column(String(80), nullable=True)
+    # Set when a review_queue load lists this case with no combined_predictions
+    # row yet (queued, not coded).
+    registry_awaiting_review = Column(Boolean, nullable=False, server_default="false")
 
     species = relationship("Species", back_populates="patients")
     breed = relationship("Breed", back_populates="patients")
@@ -98,6 +106,23 @@ class CaseDiagnosis(Base):
     prediction_method = Column(String(50), nullable=True)
     source_row_index = Column(Integer, nullable=True)
     diagnosis_index = Column(Integer, nullable=True)
+    # The report-mapping generation_id that produced this code (e.g. "gen-20260927T003905Z"),
+    # from the worker's source_version — see database/migrations/032_case_diagnosis_source_version.sql
+    source_version = Column(String(80), nullable=True)
+
+    # Provenance from a combined_predictions load — see
+    # database/migrations/035_combined_predictions.sql and ml/coding/combine.py.
+    # code_source: 'manual' (gold) / 'diagnosis' (silver) / 'report' (bronze).
+    # source_confidence is free text: a decision-stage name for silver (e.g.
+    # "tier1_exact"), a numeric string for bronze, empty for gold — never a
+    # column read as a number; the existing `confidence` column above still
+    # holds bronze's numeric value for anything that sorts/displays by it.
+    # ml_review_status is ML's own raw value (confirmed/auto_accepted/queued),
+    # kept alongside our mapped `review_status` below so the UI can tell a
+    # specialist's code from a machine's.
+    code_source = Column(String(20), nullable=True)
+    source_confidence = Column(Text, nullable=True)
+    ml_review_status = Column(String(20), nullable=True)
 
     # Review workflow — see database/migrations/010_diagnosis_review.sql
     review_status = Column(String(20), nullable=False, server_default="confirmed")
@@ -162,7 +187,9 @@ class PathologyReport(Base):
 
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
-    gcs_path = Column(String(1000), nullable=True)
+    # Cloud-provider-agnostic locator for the report's stored text — a GCS
+    # blob path or an S3 object key, depending on which backend wrote it.
+    storage_path = Column(String(1000), nullable=True)
     report_date = Column(Date, nullable=True)
     source_diagnosis = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -284,3 +311,107 @@ class ExportRequest(Base):
     resolved_by_email = Column(String(255), nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+# --- Audit-list / gold review — see database/migrations/033_gold_review.sql ---
+# and ml/documentation/audit-list-change-request.md.
+
+
+class TaxonomyTerm(Base):
+    """A (group, term) pair from ml/taxonomy/labels.csv, seeded once (not read
+    live — production has no /ml mount). Backs the review screen's code picker
+    and validates case_review_codes rows before they're saved or exported."""
+    __tablename__ = "taxonomy_terms"
+
+    id = Column(Integer, primary_key=True)
+    vet_icd_o_code = Column(String(20), nullable=True)
+    taxonomy_group = Column(String(255), nullable=False)
+    taxonomy_term = Column(String(255), nullable=False)
+    # "Preferred" / "Synonym" / "Related", from labels.csv's `level` column
+    # (migration 036). Nullable until the seed is re-run against it.
+    term_level = Column(String(20), nullable=True)
+
+
+class AuditList(Base):
+    """One imported audit_list_<list_id>.txt. Only one is ever active — the
+    specialist's current worklist; loading a new list flips this one off."""
+    __tablename__ = "audit_lists"
+
+    id = Column(Integer, primary_key=True)
+    list_id = Column(String(100), nullable=False, unique=True)
+    imported_by_email = Column(String(255), nullable=False)
+    imported_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    sha256 = Column(String(64), nullable=False)
+    case_count = Column(Integer, nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default="false")
+
+    cases = relationship("AuditListCase", back_populates="audit_list", cascade="all, delete-orphan")
+
+
+class AuditListCase(Base):
+    """case_id + position within a list, exactly as ML sent it (never
+    normalized — the gold export echoes it back verbatim). Kept across every
+    list ever imported: export eligibility checks this table's full history,
+    since ML refuses the whole gold file if a case_id was never on any list."""
+    __tablename__ = "audit_list_cases"
+
+    id = Column(Integer, primary_key=True)
+    audit_list_id = Column(Integer, ForeignKey("audit_lists.id", ondelete="CASCADE"), nullable=False)
+    case_id = Column(String(100), nullable=False)
+    position = Column(Integer, nullable=False)
+
+    audit_list = relationship("AuditList", back_populates="cases")
+
+
+class GoldExport(Base):
+    """One admin-triggered export batch — a gold_<export_id>.csv for one
+    reviewer's completed, unlocked reviews."""
+    __tablename__ = "gold_exports"
+
+    id = Column(Integer, primary_key=True)
+    export_id = Column(String(100), nullable=False, unique=True)
+    reviewer_email = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    case_count = Column(Integer, nullable=False)
+
+
+class CaseReview(Base):
+    """One row per case ever reviewed from the audit-list worklist: either
+    no_cancer or a complete code set in case_review_codes, never both
+    (enforced in the router, not here).
+
+    Editable while locked = false. Exporting sets locked = true and records
+    the export in gold_export_id/exported_at — the most recent export this
+    case was part of, not a version history; ML's own audit_list_ledger.csv
+    is the system of record for prior gold versions. An admin can explicitly
+    reopen a locked review; re-exporting after an edit replaces ML's copy
+    (audit-list-change-request.md: "re-sending a case replaces its earlier
+    review on ML's side")."""
+    __tablename__ = "case_reviews"
+
+    id = Column(Integer, primary_key=True)
+    case_id = Column(String(100), nullable=False, unique=True)
+    no_cancer = Column(Boolean, nullable=False, server_default="false")
+    reviewed_by_email = Column(String(255), nullable=False)
+    reviewed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    locked = Column(Boolean, nullable=False, server_default="false")
+    gold_export_id = Column(Integer, ForeignKey("gold_exports.id", ondelete="SET NULL"), nullable=True)
+    exported_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    codes = relationship("CaseReviewCode", back_populates="case_review", cascade="all, delete-orphan")
+    gold_export = relationship("GoldExport")
+
+
+class CaseReviewCode(Base):
+    """One code in a case's complete set (only when case_reviews.no_cancer is
+    false). (group, term) must exist in taxonomy_terms — validated when the
+    review is saved and again at export time, in case the taxonomy changed."""
+    __tablename__ = "case_review_codes"
+
+    id = Column(Integer, primary_key=True)
+    case_review_id = Column(Integer, ForeignKey("case_reviews.id", ondelete="CASCADE"), nullable=False)
+    taxonomy_group = Column(String(255), nullable=False)
+    taxonomy_term = Column(String(255), nullable=False)
+
+    case_review = relationship("CaseReview", back_populates="codes")

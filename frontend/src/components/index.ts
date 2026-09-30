@@ -10,7 +10,7 @@ export { BreedDisparitiesView } from './BreedDisparitiesView/BreedDisparitiesVie
 export { AgeDisparitiesView } from './AgeDisparitiesView/AgeDisparitiesView';
 export { LoginModal } from './LoginModal/LoginModal';
 export { AdminQueue } from './AdminQueue/AdminQueue';
-export { DiagnosisReview } from './DiagnosisReview/DiagnosisReview';
+export { AuditWorklist } from './AuditWorklist/AuditWorklist';
 export { UserManagement } from './UserManagement/UserManagement';
 export { ResetPasswordModal } from './ResetPasswordModal/ResetPasswordModal';
 export { Settings } from './Settings/Settings';

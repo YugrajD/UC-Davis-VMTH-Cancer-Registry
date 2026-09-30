@@ -153,12 +153,12 @@ def test_download_report_text_from_gcs_decodes_utf8(mock_get_bucket):
 
 
 # ---------------------------------------------------------------------------
-# submit_batch_job — ML threshold env and diagnostics upload
+# submit_batch_job — one-shot bundle download, MODEL_PATH wiring
 # ---------------------------------------------------------------------------
 
 
 @patch("app.services.gcp_batch_service._get_batch_client")
-def test_submit_batch_job_includes_ml_threshold_env(mock_get_client, monkeypatch):
+def test_submit_batch_job_downloads_bundle_in_one_recursive_copy(mock_get_client, monkeypatch):
     import app.services.gcp_batch_service as svc
 
     mock_get_client.return_value.create_job.return_value = SimpleNamespace(name="jobs/test")
@@ -166,19 +166,37 @@ def test_submit_batch_job_includes_ml_threshold_env(mock_get_client, monkeypatch
     monkeypatch.setattr(svc.settings, "GCP_PROJECT_ID", "project")
     monkeypatch.setattr(svc.settings, "GCP_REGION", "us-central1")
     monkeypatch.setattr(svc.settings, "GCP_BATCH_IMAGE_URI", "image")
-    monkeypatch.setattr(svc.settings, "CASE_PRESENCE_THRESHOLD", 0.3)
-    monkeypatch.setattr(svc.settings, "GROUP_CLASSIFIER_THRESHOLD", 0.25)
+
+    submit_batch_job(job_id=42, model_folder="production")
+
+    created_job = mock_get_client.return_value.create_job.call_args.kwargs["job"]
+    setup_commands = created_job.task_groups[0].task_spec.runnables[0].container.commands
+    setup_script = setup_commands[2]
+    assert "gcloud storage cp -r 'gs://bucket/models/production' /tmp/batch_data/models/" in setup_script
+    # No optional-file fallbacks — a partial bundle must fail the job, not degrade silently.
+    assert "|| echo" not in setup_script
+
+
+@patch("app.services.gcp_batch_service._get_batch_client")
+def test_submit_batch_job_sets_only_model_path_env(mock_get_client, monkeypatch):
+    import app.services.gcp_batch_service as svc
+
+    mock_get_client.return_value.create_job.return_value = SimpleNamespace(name="jobs/test")
+    monkeypatch.setattr(svc.settings, "GCS_BUCKET", "bucket")
+    monkeypatch.setattr(svc.settings, "GCP_PROJECT_ID", "project")
+    monkeypatch.setattr(svc.settings, "GCP_REGION", "us-central1")
+    monkeypatch.setattr(svc.settings, "GCP_BATCH_IMAGE_URI", "image")
 
     submit_batch_job(job_id=42, model_folder="production")
 
     created_job = mock_get_client.return_value.create_job.call_args.kwargs["job"]
     env = created_job.task_groups[0].task_spec.runnables[1].environment.variables
-    assert env["CASE_PRESENCE_THRESHOLD"] == "0.3"
-    assert env["GROUP_CLASSIFIER_THRESHOLD"] == "0.25"
+    assert env["MODEL_PATH"] == "/tmp/batch_data/models/production/petbert"
+    assert set(env.keys()) == {"JOB_ID", "INPUT_CSV_PATH", "OUTPUT_DIR", "MODEL_PATH"}
 
 
 @patch("app.services.gcp_batch_service._get_batch_client")
-def test_submit_batch_job_uploads_scan_output_diagnostics(mock_get_client, monkeypatch):
+def test_submit_batch_job_upload_step_only_sends_predictions_json(mock_get_client, monkeypatch):
     import app.services.gcp_batch_service as svc
 
     mock_get_client.return_value.create_job.return_value = SimpleNamespace(name="jobs/test")
@@ -191,7 +209,8 @@ def test_submit_batch_job_uploads_scan_output_diagnostics(mock_get_client, monke
 
     created_job = mock_get_client.return_value.create_job.call_args.kwargs["job"]
     upload_commands = created_job.task_groups[0].task_spec.runnables[2].container.commands
-    assert "scan_output" in upload_commands[2]
+    assert "predictions.json" in upload_commands[2]
+    assert "scan_output" not in upload_commands[2]
 
 
 @patch("app.services.gcp_batch_service._get_bucket")

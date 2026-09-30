@@ -101,6 +101,10 @@ EVAL_DIR = OUTPUT_DIR / "eval"
 # One line per silver-eval run (evaluation/silver_eval.py), carried over from log_evaluation.py.
 SILVER_EVAL_HISTORY_CSV = EVAL_DIR / "silver_eval_history.csv"
 
+# Retrieve-and-rerank Phase 0 experiment (experiments/retrieve_rerank/): models, recall JSON,
+# candidate CSVs and the OpenJev pilot. Scratch output, never part of a generation.
+RR_PHASE0_DIR = OUTPUT_DIR / "rr_phase0"
+
 # ---------------------------------------------------------------------------
 # Handoff (cloud file contracts)
 # ---------------------------------------------------------------------------

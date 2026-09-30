@@ -73,6 +73,7 @@ A generation directory (`current/` or `candidate/`) holds `petbert/` (the backbo
 |---|---|---|
 | `PREDICTIONS_DIR` | `ml/output/predictions/` | `<generation_id>_predictions.csv`. Synced (set `predictions`) |
 | `EVAL_DIR` | `ml/output/eval/` | Evaluation outputs. Synced (set `eval`) |
+| `RR_PHASE0_DIR` | `ml/output/rr_phase0/` | Retrieve-and-rerank Phase 0 experiment (`ml/experiments/retrieve_rerank/`, branch `bronze-retrieve-rerank`): per-loss retriever, `recall.json`, candidate CSVs, `pilot/`. Scratch, not synced |
 | `SILVER_EVAL_HISTORY_CSV` | `eval/silver_eval_history.csv` | One line per silver-eval run |
 
 ## Handoff

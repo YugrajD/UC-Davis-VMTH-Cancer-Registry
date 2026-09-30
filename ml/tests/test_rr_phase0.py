@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 import pytest
 import torch
 
 from experiments.retrieve_rerank import batching, recall_metrics, report_text, retriever
-from experiments.retrieve_rerank.openjev_pilot import chunk_sizes
-from experiments.retrieve_rerank.pilot_score import ece, in_fit_half
+from experiments.retrieve_rerank.eval_recall import DEFAULT_MAX_LENGTH, trained_max_length
+from experiments.retrieve_rerank.openjev_pilot import chunk_sizes, read_done
+from experiments.retrieve_rerank.pilot_score import (case_view, ece, in_fit_half, make_predictions, probs,
+                                                     verdict_summary)
 
 
 def _ce(z_gold: float, z_negs: list[float]) -> float:
@@ -118,7 +121,6 @@ def test_chunk_sizes_balanced_and_bounded():
 
 
 def test_ece_perfectly_calibrated_and_overconfident():
-    import numpy as np
     assert ece(np.array([1.0, 1.0]), np.array([True, True])) == pytest.approx(0.0)
     assert ece(np.array([0.9, 0.9, 0.9, 0.9]), np.array([True, False, False, False])) == pytest.approx(0.65)
 
@@ -127,3 +129,80 @@ def test_fit_half_splits_calibration_style_ids_roughly_evenly():
     ids = [f"CASE-{i:05d}" for i in range(2000)]
     share = sum(in_fit_half(c) for c in ids) / len(ids)
     assert 0.4 < share < 0.6
+
+
+def _record() -> dict:
+    def cand(term, rank, gold, ent):
+        return {"term": term, "rank": rank, "gold": gold, "probs": [0.0, ent, 0.0]}
+    return {"case_id": "c1", "is_cancer": 1, "q1_yes": [0, 0.9, 0], "q1_no": [0, 0.1, 0],
+            "candidates": [cand("t1", 1, False, 0.2), cand("t2", 2, True, 0.6), cand("t3", 5, False, 0.4),
+                           cand("t4", 9, True, 0.8), cand("t9", None, True, 0.5)]}
+
+
+def test_case_view_retriever_excludes_gold_only_and_beyond_n():
+    view = case_view(_record(), "retriever", 5)
+    assert view["terms"] == ["t2", "t3", "t1"]                  # sorted by entailment; t4 (rank 9) and t9 (None) out
+    assert view["gold"].tolist() == [True, False, False]
+    assert view["p_yes"] == pytest.approx(0.9)
+    assert case_view(_record(), "retriever", 0) is None
+
+
+def test_case_view_oracle_is_top_n_plus_gold_whatever_the_run_n():
+    record = _record()
+    assert case_view(record, "oracle", 5)["terms"] == ["t4", "t2", "t9", "t3", "t1"]
+    assert case_view(record, "oracle", 2)["terms"] == ["t4", "t2", "t9", "t1"]   # t3 (rank 5) is not gold, n=2: out
+
+
+def test_probs_temperature_one_is_normalised_entailment_and_argmax_is_preserved():
+    view = {"ent": np.array([0.6, 0.3, 0.1])}
+    assert probs(view, 1.0) == pytest.approx(view["ent"] / view["ent"].sum())
+    for temperature in (0.3, 2.0, 5.0):
+        p = probs(view, temperature)
+        assert p.sum() == pytest.approx(1.0) and p.argmax() == 0 and list(np.argsort(-p)) == [0, 1, 2]
+
+
+def test_head_runs_fp32_under_bf16_autocast():
+    class Encoder(torch.nn.Module):
+        config = type("Config", (), {"hidden_size": 8})()
+
+        def forward(self, input_ids, attention_mask):
+            return type("Out", (), {"last_hidden_state": torch.randn(*input_ids.shape, 8)})()
+
+    model = retriever.TermRetriever(Encoder(), ["a", "b", "c"])
+    ids, mask = torch.ones(2, 4, dtype=torch.long), torch.ones(2, 4, dtype=torch.long)
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        assert model(ids, mask).dtype == torch.float32
+        assert torch.nn.functional.linear(torch.randn(2, 8), torch.randn(3, 8)).dtype == torch.bfloat16  # autocast is on
+
+
+def test_make_predictions_feed_the_verdict_scoring(tmp_path):
+    data = type("Data", (), {"term_group": {"t1": "G1", "t2": "G2"}, "term_code": {"t1": "c1", "t2": "c2"}})()
+    def view(case_id, is_cancer, terms, ent, p_yes):
+        return {"case_id": case_id, "is_cancer": is_cancer, "terms": terms, "ent": np.array(ent),
+                "gold": np.array([True] + [False] * (len(terms) - 1)), "p_yes": p_yes}
+    views = [view("a", 1, ["t1", "t2"], [0.9, 0.5], 0.95),      # good, plus a second term
+             view("b", 1, ["t1", "t2"], [0.9, 0.001], 0.2),     # gate-rejected -> Non-Cancer -> false negative
+             view("n", 0, ["t1", "t2"], [0.9, 0.001], 0.1)]     # gate-rejected non-cancer -> true negative
+    predictions = make_predictions(views, temperature=1.0, gate=0.5, second=0.3, data=data)
+    assert predictions.loc[predictions["case_id"] != "a", "predicted_term"].tolist() == ["Non-Cancer", "Non-Cancer"]
+    assert predictions[predictions["case_id"] == "a"]["predicted_term"].tolist() == ["t1", "t2"]
+    labels = pd.DataFrame({"case_id": ["a", "b", "n"], "matched_term": ["t1", "t1", ""], "matched_group": ["G1", "G1", ""]})
+    summary = verdict_summary(predictions, labels, ["a", "b", "n"], frozenset(), {"a": 1.0, "b": 1.0, "n": 1.0})
+    assert summary["good"] == 1 and summary["false_negative"] == 1 and summary["false_positive"] == 0
+
+
+def test_trained_max_length_from_train_log_else_default(tmp_path):
+    assert trained_max_length(tmp_path) == DEFAULT_MAX_LENGTH
+    (tmp_path / "train_log.json").write_text('{"summary": {"args": {"max_length": "8192"}}, "steps": []}', encoding="utf-8")
+    assert trained_max_length(tmp_path) == 8192
+
+
+def test_read_done_drops_only_a_torn_last_line(tmp_path):
+    raw = tmp_path / "raw.jsonl"
+    raw.write_text('{"case_id": "a"}\n{"case_id": "b"}\n{"case_id": "c", "cand', encoding="utf-8")
+    assert read_done(raw) == {"a", "b"}
+    assert raw.read_text(encoding="utf-8") == '{"case_id": "a"}\n{"case_id": "b"}\n'   # appends stay valid JSONL
+    raw.write_text('{"case_id": "a"}\nnot json\n{"case_id": "b"}\n', encoding="utf-8")
+    with pytest.raises(ValueError):
+        read_done(raw)
+    assert read_done(tmp_path / "missing.jsonl") == set()

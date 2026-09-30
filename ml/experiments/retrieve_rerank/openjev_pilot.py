@@ -10,7 +10,8 @@ forward pass per hypothesis, P(entailment) read off. All hypotheses of a case sh
 
 The candidate set is the retriever's top-n UNION the case's gold terms, so one pass serves both the
 real run (top-n only) and the ORACLE run (gold forced in); pilot_score.py separates them by ``rank``.
-Output: <out-dir>/cases.csv (the sample, fixed once written) and raw_<tag>.jsonl (resumable).
+Output: <out-dir>/cases.csv (the sample, fixed once written) and raw_<loss>_<tag>.jsonl (resumable; <loss> is
+the candidates CSV's parent directory name, so two retrievers never share a raw file).
 Smoke: --limit 10.
 """
 
@@ -52,12 +53,12 @@ def candidate_hypothesis(term: str, group: str) -> str:
     return TEMPLATE.format(instr=Q2_INSTR, label=term, crit=group)
 
 
-def load_openjev(device: str = "cuda"):
+def load_openjev(device: str = "cuda", max_len: int = 4096):
     code = hf_hub_download(OPENJEV_REPO, "modeling_openjev.py", revision=OPENJEV_REVISION)
     sys.path.insert(0, str(Path(code).parent))
     from modeling_openjev import OpenJevCrossEncoder
     snapshot = snapshot_download(OPENJEV_REPO, revision=OPENJEV_REVISION, allow_patterns=[f"{OPENJEV_SUBFOLDER}/*"])
-    return OpenJevCrossEncoder(snapshot, subfolder=OPENJEV_SUBFOLDER, device=device)
+    return OpenJevCrossEncoder(snapshot, subfolder=OPENJEV_SUBFOLDER, device=device, max_len=max_len)
 
 
 def sample_cases(data, per_stratum: int, seed: int) -> pd.DataFrame:
@@ -84,6 +85,24 @@ def fit_premise(jev, text: str, budget: int) -> tuple[str, int, bool]:
     return jev.tok.decode(ids[:budget]), len(ids), True
 
 
+def read_done(raw_path: Path) -> set[str]:
+    """Case ids already in the raw file. A torn (unparsable) LAST line from an interrupted run is dropped
+    from the file so appends stay valid JSONL; an unparsable line anywhere else is an error."""
+    if not raw_path.is_file():
+        return set()
+    lines = raw_path.read_text(encoding="utf-8").splitlines()
+    records = []
+    for k, line in enumerate(lines):
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            if k != len(lines) - 1:
+                raise
+            print(f"dropping 1 truncated last line of {raw_path.name}", flush=True)
+    raw_path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8", newline="\n")
+    return {r["case_id"] for r in records}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--candidates-csv", type=Path, required=True)
@@ -94,7 +113,7 @@ def main() -> None:
     parser.add_argument("--max-len", type=int, default=4096, help="OpenJev input tokens (the card allows 8k)")
     parser.add_argument("--chunk", type=int, default=12, help="max hypotheses per forward call (memory)")
     parser.add_argument("--out-dir", type=Path, default=config.RR_PHASE0_DIR / "pilot")
-    parser.add_argument("--tag", default=None, help="raw file suffix; default n<N>")
+    parser.add_argument("--tag", default=None, help="raw file suffix after the loss; default n<N>")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -112,12 +131,11 @@ def main() -> None:
     candidates = candidates[candidates["rank"] <= args.n]
     ranked = {c: list(zip(g["term"], g["rank"])) for c, g in candidates.groupby("case_id")}
 
-    raw_path = args.out_dir / f"raw_{args.tag or f'n{args.n}'}.jsonl"
-    done = set()
-    if raw_path.is_file():
-        done = {json.loads(line)["case_id"] for line in raw_path.read_text(encoding="utf-8").splitlines()}
+    loss = args.candidates_csv.resolve().parent.name
+    raw_path = args.out_dir / f"raw_{loss}_{args.tag or f'n{args.n}'}.jsonl"
+    done = read_done(raw_path)
     texts = report_text.build_report_texts(data.reports)
-    jev = load_openjev()
+    jev = load_openjev(max_len=args.max_len)
 
     todo = [(c, int(f)) for c, f in zip(sample["case_id"], sample["is_cancer"]) if c not in done]
     print(f"{len(todo)} cases to run ({len(done)} already in {raw_path.name})", flush=True)

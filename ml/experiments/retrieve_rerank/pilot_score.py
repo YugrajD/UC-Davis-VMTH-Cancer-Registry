@@ -1,8 +1,8 @@
 """Score the OpenJev pilot from its raw probabilities (cheap to re-run; never calls a model).
 
-  ml/.venv/Scripts/python.exe ml/experiments/retrieve_rerank/pilot_score.py --n 30
+  ml/.venv/Scripts/python.exe ml/experiments/retrieve_rerank/pilot_score.py --loss bce --n 30
 
-Reads <pilot-dir>/raw_<tag>.jsonl, writes scores_<tag>.json and summary_<tag>.md beside it. Two variants
+Reads <pilot-dir>/raw_<loss>_<tag>.jsonl, writes scores_<loss>_<tag>.json and summary_<loss>_<tag>.md beside it. Two variants
 per run: "retriever" (candidates = the retriever's top-n) and "oracle" (gold terms forced in).
 
 Fit half / eval half: the repo's md5 half rule (generations.splits.in_sweep_half) is constant over the
@@ -52,7 +52,7 @@ def in_fit_half(case_id: str) -> bool:
 def case_view(record: dict, variant: str, n: int) -> dict | None:
     """One case's candidates sorted by P(entailment), for the retriever or oracle candidate set."""
     cands = [c for c in record["candidates"]
-             if variant == "oracle" or (c["rank"] is not None and c["rank"] <= n)]
+             if (c["rank"] is not None and c["rank"] <= n) or (variant == "oracle" and c["gold"])]
     if not cands:
         return None
     ent = np.array([c["probs"][ENT] for c in cands])
@@ -100,6 +100,13 @@ def best_f1_threshold(score: np.ndarray, positive: np.ndarray, accepted_correct:
 def f1_at(score: np.ndarray, positive: np.ndarray, hit: np.ndarray, t: float) -> float:
     accept = score >= t
     return float(2 * (accept & hit).sum() / max(accept.sum() + positive.sum(), 1))
+
+
+def accept_arrays(views: list[dict]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Per case: (normalised top-1 confidence, raw top-1 entailment, top-1 is gold, is cancer)."""
+    return (np.array([probs(v, 1.0)[0] for v in views]), np.array([v["ent"][0] for v in views]),
+            np.array([bool(v["is_cancer"]) and bool(v["gold"][0]) for v in views]),
+            np.array([bool(v["is_cancer"]) for v in views]))
 
 
 def make_predictions(views: list[dict], temperature: float, gate: float, second: float, data) -> pd.DataFrame:
@@ -156,12 +163,12 @@ def score_variant(views: list[dict], data, labels, weights: dict) -> dict:
     cal_conf = np.array([probs(v, temperature)[0] for v in with_gold])
     hit = top1_hit(with_gold)
 
-    all_raw = np.array([probs(v, 1.0)[0] for v in evaluation])
-    all_ent = np.array([v["ent"][0] for v in evaluation])
-    all_hit = np.array([bool(v["is_cancer"]) and bool(v["gold"][0]) for v in evaluation])
-    positives = np.array([bool(v["is_cancer"]) for v in evaluation])
+    all_raw, all_ent, all_hit, positives = accept_arrays(evaluation)
+    fit_raw, fit_ent, fit_hit, fit_positives = accept_arrays(fit)
     t_norm, f1_norm = best_f1_threshold(all_raw, positives, all_hit)
     t_ent, f1_ent = best_f1_threshold(all_ent, positives, all_hit)
+    t_norm_fit, _ = best_f1_threshold(fit_raw, fit_positives, fit_hit)
+    t_ent_fit, _ = best_f1_threshold(fit_ent, fit_positives, fit_hit)
     cliff_grid = (0.3, 0.5, 0.7, 0.9, 0.95, 0.99)
 
     p_yes = np.array([v["p_yes"] for v in evaluation])
@@ -180,9 +187,11 @@ def score_variant(views: list[dict], data, labels, weights: dict) -> dict:
         "ece_raw": ece(raw_conf, hit), "ece_temperature": ece(cal_conf, hit),
         "mean_conf_raw": float(raw_conf.mean()), "mean_conf_temperature": float(cal_conf.mean()),
         "accept_top1_f1": {
-            "normalised_conf": {"best_threshold": t_norm, "best_f1": f1_norm,
+            "normalised_conf": {"best_threshold": t_norm, "best_f1": f1_norm, "best_threshold_fit_half": t_norm_fit,
+                                "f1_eval_at_fit_threshold": f1_at(all_raw, positives, all_hit, t_norm_fit),
                                 "f1_at": {str(t): f1_at(all_raw, positives, all_hit, t) for t in cliff_grid}},
-            "raw_entailment": {"best_threshold": t_ent, "best_f1": f1_ent,
+            "raw_entailment": {"best_threshold": t_ent, "best_f1": f1_ent, "best_threshold_fit_half": t_ent_fit,
+                               "f1_eval_at_fit_threshold": f1_at(all_ent, positives, all_hit, t_ent_fit),
                                "f1_at": {str(t): f1_at(all_ent, positives, all_hit, t) for t in cliff_grid}},
         },
         "verdicts_openjev": verdict_summary(predictions, labels, eval_ids, data.uncommon_groups, weights),
@@ -191,13 +200,14 @@ def score_variant(views: list[dict], data, labels, weights: dict) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--loss", required=True, help="retriever loss dir name the pilot was run with (bce / softmax)")
     parser.add_argument("--n", type=int, default=30, help="top-n retriever candidates to keep (<= the run's n)")
-    parser.add_argument("--tag", default=None, help="raw file suffix; default n<N>")
+    parser.add_argument("--tag", default=None, help="raw file suffix after the loss; default n<N>")
     parser.add_argument("--pilot-dir", type=Path, default=config.RR_PHASE0_DIR / "pilot")
     parser.add_argument("--baseline-predictions", type=Path,
                         default=config.PREDICTIONS_DIR / "gen-20260927T025939Z_predictions.csv")
     args = parser.parse_args()
-    tag = args.tag or f"n{args.n}"
+    tag = f"{args.loss}_{args.tag or f'n{args.n}'}"
 
     raw = args.pilot_dir / f"raw_{tag}.jsonl"
     records = [json.loads(line) for line in raw.read_text(encoding="utf-8").splitlines()]
@@ -225,6 +235,9 @@ def main() -> None:
     eval_ids = [r["case_id"] for r in records if not in_fit_half(r["case_id"])]
     baseline = silver_eval.read_predictions(args.baseline_predictions)
     result["verdicts_wp14_baseline"] = verdict_summary(baseline, labels, eval_ids, data.uncommon_groups, weights)
+    base_eval = baseline[baseline["case_id"].isin(eval_ids)]
+    unidentified = (base_eval.get("method", "") == "unidentified_cancer") | (base_eval["predicted_group"] == "Unidentified Group")
+    result["wp14_baseline_unidentified_rows_eval"] = {"unidentified": int(unidentified.sum()), "rows": len(base_eval)}
 
     (args.pilot_dir / f"scores_{tag}.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
     (args.pilot_dir / f"summary_{tag}.md").write_text(render_markdown(result), encoding="utf-8")
@@ -254,15 +267,22 @@ def render_markdown(r: dict) -> str:
                   f"- Retrieval hit rate (cancer, gold in candidates) {pct(s['retrieval_hit_rate_eval_cancer'])}%; "
                   f"top-1 accuracy | gold in candidates {pct(s['top1_acc_gold_in_candidates'])}%; over all cancer cases {pct(s['top1_acc_all_cancer_cases'])}%",
                   f"- ECE(15) raw {s['ece_raw']:.3f} -> after T={s['temperature']:.2f}: {s['ece_temperature']:.3f}",
-                  f"- Accept-top-1 F1 (normalised conf): best {f1n['best_f1']:.3f} at t={f1n['best_threshold']:.2f}; "
+                  f"- Accept-top-1 F1 (normalised conf): eval-half best {f1n['best_f1']:.3f} at t={f1n['best_threshold']:.2f} "
+                  f"(diagnostic); fit-half best t={f1n['best_threshold_fit_half']:.2f} -> eval F1 {f1n['f1_eval_at_fit_threshold']:.3f}; "
                   f"F1 at t={f1n['f1_at']}",
-                  f"- Accept-top-1 F1 (raw entailment): best {f1e['best_f1']:.3f} at t={f1e['best_threshold']:.2f}",
+                  f"- Accept-top-1 F1 (raw entailment): eval-half best {f1e['best_f1']:.3f} at t={f1e['best_threshold']:.2f} "
+                  f"(diagnostic); fit-half best t={f1e['best_threshold_fit_half']:.2f} -> eval F1 {f1e['f1_eval_at_fit_threshold']:.3f}",
                   f"- Second-term threshold {s['second_term_threshold']:.2f}", ""]
     lines += ["## Verdicts on the eval-half pilot cases (%; last column = natural cancer mix, Good / Slight / CO / FP / FN)", "",
               "| system | rows | Good | Slight | CO | FP | FN | G+S | natural mix |", "|---|---|---|---|---|---|---|---|---|",
               verdict_row("OpenJev, retriever candidates", r["retriever"]["verdicts_openjev"]),
               verdict_row("OpenJev, oracle candidates", r["oracle"]["verdicts_openjev"]),
-              verdict_row("WP14 baseline", r["verdicts_wp14_baseline"]), ""]
+              verdict_row("WP14 baseline", r["verdicts_wp14_baseline"]), "",
+              f"WP14 baseline rows with an unidentified cancer (method unidentified_cancer / group Unidentified Group) among "
+              f"the eval cases: {r['wp14_baseline_unidentified_rows_eval']['unidentified']} of "
+              f"{r['wp14_baseline_unidentified_rows_eval']['rows']} prediction rows.",
+              "Note: the baseline's thresholds were calibrated on the whole calibration partition (which includes this "
+              "eval half), so this comparison is mildly baseline-optimistic.", ""]
     return "\n".join(lines)
 
 

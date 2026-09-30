@@ -30,7 +30,8 @@ class TermRetriever(nn.Module):
         hidden = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
         mask = attention_mask.unsqueeze(-1).to(hidden.dtype)
         pooled = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1)
-        return self.head(pooled.float())
+        with torch.autocast(device_type=pooled.device.type, enabled=False):  # fp32 head: bf16 logits tie ranks
+            return self.head(pooled.float())
 
     def init_bias_from_frequency(self, freq: torch.Tensor) -> None:
         """Start every term at its train prior so early steps aren't spent learning the base rate."""

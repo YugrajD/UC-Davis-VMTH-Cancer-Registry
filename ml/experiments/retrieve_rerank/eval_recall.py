@@ -28,6 +28,7 @@ from experiments.retrieve_rerank.data import load_phase0_data
 
 TOP_K = 49
 NS = (5, 10, 20, 30, 49)
+DEFAULT_MAX_LENGTH = 4096
 
 
 @torch.inference_mode()
@@ -44,11 +45,19 @@ def score_cases(model, tokenizer, texts: list[str], max_length: int, token_budge
     return logits, over
 
 
+def trained_max_length(model_dir: Path, default: int = DEFAULT_MAX_LENGTH) -> int:
+    """The ``--max-length`` the model was trained with (train_log.json), else ``default``."""
+    log = model_dir / "train_log.json"
+    if not log.is_file():
+        return default
+    return int(json.loads(log.read_text(encoding="utf-8"))["summary"]["args"].get("max_length", default))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--loss", choices=sorted(retriever.LOSSES), required=True)
     parser.add_argument("--model-dir", type=Path, default=None)
-    parser.add_argument("--max-length", type=int, default=4096)
+    parser.add_argument("--max-length", type=int, default=None, help="default: the value the model was trained with")
     parser.add_argument("--token-budget", type=int, default=32768)
     parser.add_argument("--limit", type=int, default=0, help="smoke: only the first N calibration cases")
     parser.add_argument("--out-dir", type=Path, default=None)
@@ -56,6 +65,7 @@ def main() -> None:
 
     model_dir = args.model_dir or config.RR_PHASE0_DIR / args.loss
     out_dir = args.out_dir or model_dir
+    args.max_length = args.max_length or trained_max_length(model_dir)
     device = torch.device("cuda")
 
     data = load_phase0_data()

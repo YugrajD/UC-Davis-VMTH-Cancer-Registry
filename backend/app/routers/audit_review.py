@@ -402,16 +402,20 @@ class CaseDetail(BaseModel):
 
 
 async def _fetch_report_text(report: PathologyReport) -> Optional[str]:
-    """Fetch a pathology report's full text from GCS. Mirrors
-    diagnoses_review._fetch_report_text, adapted to take the report
-    directly rather than through a CaseDiagnosis's relationship — never
-    raises; a missing bucket/path/fetch failure just means no text."""
-    if not report.gcs_path or not settings.GCS_BUCKET:
+    """Fetch a pathology report's full text from GCS or S3, whichever backend
+    wrote it — never raises; a missing bucket/path/fetch failure just means
+    no text."""
+    if not report.storage_path:
         return None
     try:
-        from app.services.gcp_batch_service import download_report_text_from_gcs
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, download_report_text_from_gcs, report.gcs_path)
+        if settings.USE_ECS_ML:
+            from app.services.s3_service import download_report_text
+            return await loop.run_in_executor(None, download_report_text, report.storage_path)
+        if settings.GCS_BUCKET:
+            from app.services.gcp_batch_service import download_report_text_from_gcs
+            return await loop.run_in_executor(None, download_report_text_from_gcs, report.storage_path)
+        return None
     except Exception:
         return None
 

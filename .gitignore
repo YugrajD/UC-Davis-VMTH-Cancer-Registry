@@ -178,6 +178,10 @@ local_dump.sql
 
 # Local restructure/legacy ML directories (never committed)
 ml-*/
+# ml-worker/ is real, tracked source (the GCP Batch / ECS inference worker),
+# not a legacy scratch directory — a bare `!*.py` below can't rescue files
+# out of an already-ignored directory, so it needs its own exception here.
+!ml-worker/
 
 # Local archive (gitignored experimental/legacy artifacts moved out of ml/)
 _archive/

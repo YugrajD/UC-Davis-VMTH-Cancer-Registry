@@ -500,7 +500,7 @@ async def test_case_detail_happy_path_with_predictions_and_existing_review():
     _override_user(_reviewer())
 
     patient = Patient(id=1, anon_id="CASE-0001", data_source="petbert")
-    report = PathologyReport(id=1, patient_id=1, gcs_path=None, source_diagnosis="Mast cell tumor, skin mass")
+    report = PathologyReport(id=1, patient_id=1, storage_path=None, source_diagnosis="Mast cell tumor, skin mass")
     diag = CaseDiagnosis(
         id=1, patient_id=1, cancer_type_id=1, icd_o_code="9740/3", predicted_term="Mast cell tumor, NOS",
         confidence=0.91, prediction_method="embedding", diagnosis_index=1,
@@ -542,7 +542,7 @@ async def test_case_detail_happy_path_with_predictions_and_existing_review():
         body = r.json()
         assert body["patient_found"] is True
         assert body["source_diagnosis"] == "Mast cell tumor, skin mass"
-        assert body["report_text"] is None  # gcs_path unset — no GCS call attempted
+        assert body["report_text"] is None  # storage_path unset — no GCS call attempted
         assert len(body["predicted_codes"]) == 1
         assert body["predicted_codes"][0]["cancer_type_name"] == "Mast cell neoplasms"
         assert body["predicted_codes"][0]["icd_o_code"] == "9740/3"

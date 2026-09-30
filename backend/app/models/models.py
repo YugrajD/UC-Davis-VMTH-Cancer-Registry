@@ -187,7 +187,9 @@ class PathologyReport(Base):
 
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
-    gcs_path = Column(String(1000), nullable=True)
+    # Cloud-provider-agnostic locator for the report's stored text — a GCS
+    # blob path or an S3 object key, depending on which backend wrote it.
+    storage_path = Column(String(1000), nullable=True)
     report_date = Column(Date, nullable=True)
     source_diagnosis = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

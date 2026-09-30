@@ -80,7 +80,7 @@ _REPORTS_PREFIX = "reports"
 def upload_report_text_to_gcs(job_id: int, anon_id: str, text: str) -> str:
     """Upload a single patient's pathology report text to GCS.
 
-    Returns the blob path (without gs:// prefix) stored in pathology_reports.gcs_path.
+    Returns the blob path (without gs:// prefix) stored in pathology_reports.storage_path.
     """
     blob_path = f"{_REPORTS_PREFIX}/{job_id}/{anon_id}.txt"
     blob = _get_bucket().blob(blob_path)

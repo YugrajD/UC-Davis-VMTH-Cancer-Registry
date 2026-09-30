@@ -485,7 +485,7 @@ async def ingest_upload(
                 )
             )
 
-    # --- Upload report texts to GCS, then create one PathologyReport per patient ---
+    # --- Upload report texts to GCS/S3, then create one PathologyReport per patient ---
     # Collect anon_id → text pairs for patients that have text.
     text_by_anon_id: dict[str, str] = {}
     for anon_id in ids_to_process:
@@ -496,11 +496,31 @@ async def ingest_upload(
         if report_text:
             text_by_anon_id[anon_id] = report_text
 
-    # Upload to GCS whenever a bucket is configured — works for both GCP Batch
-    # and local ml-worker runs as long as GCS credentials are available.
-    # Falls back to None (no GCS path) only when GCS is not configured at all.
+    # Upload whenever a storage backend is configured — works for GCP Batch,
+    # the ECS ML task, and local ml-worker runs alike, as long as credentials
+    # are available. Falls back to None (no storage_path) only when neither
+    # backend is configured at all.
     gcs_path_by_anon_id: dict[str, str] = {}
-    if settings.GCS_BUCKET and ingestion_job_id and text_by_anon_id:
+    if settings.USE_ECS_ML and ingestion_job_id and text_by_anon_id:
+        from app.services.s3_service import upload_report_text
+        loop = asyncio.get_running_loop()
+        _UPLOAD_CHUNK = 50  # limit concurrent S3 connections
+
+        items = list(text_by_anon_id.items())
+        for i in range(0, len(items), _UPLOAD_CHUNK):
+            chunk = items[i : i + _UPLOAD_CHUNK]
+            results = await asyncio.gather(*[
+                loop.run_in_executor(
+                    None, upload_report_text, ingestion_job_id, anon_id, txt
+                )
+                for anon_id, txt in chunk
+            ], return_exceptions=True)
+            for (anon_id, _), storage_path in zip(chunk, results):
+                if isinstance(storage_path, Exception):
+                    logger.warning("S3 upload failed for %s: %s", anon_id, storage_path)
+                else:
+                    gcs_path_by_anon_id[anon_id] = storage_path
+    elif settings.GCS_BUCKET and ingestion_job_id and text_by_anon_id:
         from app.services.gcp_batch_service import upload_report_text_to_gcs
         loop = asyncio.get_running_loop()
         _UPLOAD_CHUNK = 50  # limit concurrent GCS connections
@@ -528,7 +548,7 @@ async def ingest_upload(
         demo = demographics.get(anon_id, {})
         report = PathologyReport(
             patient_id=patient_id,
-            gcs_path=gcs_path_by_anon_id.get(anon_id),
+            storage_path=gcs_path_by_anon_id.get(anon_id),
             report_date=demo.get("diagnosis_date"),
         )
         db.add(report)

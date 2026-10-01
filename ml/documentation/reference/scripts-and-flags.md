@@ -20,6 +20,7 @@ and [sync-with-s3.md](../how-to/sync-with-s3.md).
 | `predict.py` | Predictions from a generation |
 | `promote.py` | Promotion recommendation and swap |
 | `retrain_cycle.py` | The local retraining lane in one call |
+| `rr_phase1.py` | Retrieve-and-rerank experiment (branch `bronze-retrieve-rerank`): ruler, train, score, bake-off, freeze |
 | `split.py` | Create a three-way split, run the leakage guards |
 | `sync.py` | Sync file sets and the model with S3 |
 | `train.py` | Train a candidate generation |
@@ -338,6 +339,31 @@ prints STOP because no gold exists.
 | `--upload-period` | empty | passed to the gold import |
 | `--slice-rate` | empty | passed to the gold import |
 | `--n-boot` | 1000 | bootstrap replicates for the promotion recommendation |
+
+## `rr_phase1.py`
+
+Experiment only (branch `bronze-retrieve-rerank`, package `ml/bronze_rr/`, outputs under `RR_PHASE1_DIR`; see
+[paths.md](paths.md)). Subcommands: `ruler` (score the WP14 baseline predictions with WP14's uncommon list on
+test and calibration), `train-gate`, `train-retriever`, `score`, `bakeoff` (calibration only) and `freeze`.
+`--limit N` is a smoke: N cases, everything under `RR_PHASE1_DIR/_smoke`.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--predictions` | the WP14 predictions CSV | `ruler`: predictions to score |
+| `--split` | `three-way-v1` | `ruler`: split id |
+| `--seed` | 42 | `train-gate`, `train-retriever`: training seed |
+| `--epochs` | 3 | `train-gate`, `train-retriever` |
+| `--lr` | 5e-5 | encoder learning rate |
+| `--max-length` | 4096 | tokens per report |
+| `--token-budget` | 16384 | padded tokens per micro-batch |
+| `--max-steps` | 0 | smoke: stop after N optimizer steps |
+| `--out` | `rr_phase1/gate` or `rr_phase1/retriever_seed<S>` | model output directory |
+| `--retriever-dir` | none | `score`: retriever to score; `freeze`: required |
+| `--gate-dir` | none | `score`: ModernBERT gate to score |
+| `--partition` | `calibration` | `score`: `train`, `calibration`, `test` or `all` |
+| `--i-understand-this-spends-the-test-set` | off | `score`: required for `test` and `all` |
+| `--gate` | required | `freeze`: `old` (WP14 gate probabilities) or `new` (`rr_phase1/gate`) |
+| `--limit` | 0 | smoke: first N cases |
 
 ## `split.py`
 

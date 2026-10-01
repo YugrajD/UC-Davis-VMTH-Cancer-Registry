@@ -84,10 +84,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsUploader(false);
         setIsReviewer(false);
       }
-      // Exponential backoff: 2s, 4s, 8s, 16s, 30s cap
+      // Exponential backoff: 2s, 4s, 8s, 16s, 30s cap.
+      // Re-fetch a fresh token at retry time rather than reusing the one
+      // that just failed — if the original failure was token-related
+      // (e.g. briefly rejected during clock-skew), retrying with the same
+      // token fails identically on every attempt, repeatedly tripping the
+      // backend's auth rate limiter for the life of the lockout window.
       backoffRef.current = Math.min(backoffRef.current + 1, 5);
       const delay = Math.min(1000 * 2 ** backoffRef.current, 30_000);
-      retryTimerRef.current = setTimeout(() => refreshRolesRef.current?.(accessToken), delay);
+      retryTimerRef.current = setTimeout(async () => {
+        const { data } = await supabase.auth.getSession();
+        const freshToken = data.session?.access_token;
+        if (freshToken) refreshRolesRef.current?.(freshToken);
+      }, delay);
     } finally {
       inflightRef.current = false;
     }

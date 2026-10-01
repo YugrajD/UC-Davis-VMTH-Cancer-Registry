@@ -656,7 +656,7 @@ export function AuditWorklist() {
                               <button
                                 type="button"
                                 onClick={() => setCodes((prev) => prev.filter((_, idx) => idx !== i))}
-                                className="text-gray-400 hover:text-red-600 text-xs"
+                                className="text-gray-600 hover:text-red-600 text-xs font-medium"
                               >
                                 Remove
                               </button>

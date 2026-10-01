@@ -138,6 +138,50 @@ describe('AuditWorklist', () => {
     expect(await screen.findByText('No active audit list.')).toBeInTheDocument();
   });
 
+  it('paginates the worklist 10 cases at a time', async () => {
+    const user = userEvent.setup();
+    const manyCases: WorklistResponse = {
+      list_id: 'big-list',
+      imported_at: '2026-09-27T00:00:00Z',
+      case_count: 25,
+      cases: Array.from({ length: 25 }, (_, i) => ({
+        case_id: `CASE-${String(i).padStart(4, '0')}`,
+        position: i,
+        patient_found: true,
+        review_status: 'unreviewed' as const,
+        no_cancer: null,
+        code_count: 0,
+        reviewed_by_email: null,
+        reviewed_at: null,
+      })),
+    };
+    mocks.fetchAuditWorklist.mockResolvedValue(manyCases);
+    render(<AuditWorklist />);
+
+    // Page 1: first 10 cases only, no page-11-only case visible.
+    expect(await screen.findByText('CASE-0000')).toBeInTheDocument();
+    expect(screen.getByText('CASE-0009')).toBeInTheDocument();
+    expect(screen.queryByText('CASE-0010')).not.toBeInTheDocument();
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument();
+    expect(screen.getByText('Previous')).toBeDisabled();
+
+    await user.click(screen.getByText('Next'));
+    expect(await screen.findByText('CASE-0010')).toBeInTheDocument();
+    expect(screen.getByText('CASE-0019')).toBeInTheDocument();
+    expect(screen.queryByText('CASE-0000')).not.toBeInTheDocument();
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Next'));
+    expect(await screen.findByText('CASE-0020')).toBeInTheDocument();
+    expect(screen.getByText('CASE-0024')).toBeInTheDocument();
+    expect(screen.getByText('Page 3 of 3')).toBeInTheDocument();
+    expect(screen.getByText('Next')).toBeDisabled();
+
+    await user.click(screen.getByText('Previous'));
+    expect(await screen.findByText('CASE-0010')).toBeInTheDocument();
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument();
+  });
+
   it('loads a case detail on selection and shows its report, demographics, and predictions', async () => {
     const user = userEvent.setup();
     render(<AuditWorklist />);

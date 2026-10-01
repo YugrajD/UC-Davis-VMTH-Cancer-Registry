@@ -69,6 +69,8 @@ interface CodeIn {
   taxonomy_term: string;
 }
 
+const WORKLIST_PAGE_SIZE = 10;
+
 export function AuditWorklist() {
   const { getAccessToken, isAdmin } = useAuth();
 
@@ -107,6 +109,25 @@ export function AuditWorklist() {
   const [exportResult, setExportResult] = useState<GoldExportSummary | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+
+  const [worklistPage, setWorklistPage] = useState(0);
+
+  // Reset to page 1 whenever a different audit list is loaded (e.g. a new
+  // import replaces the active list) so the user isn't left stranded on a
+  // page number that may no longer exist.
+  useEffect(() => {
+    setWorklistPage(0);
+  }, [worklist?.list_id]);
+
+  const totalWorklistPages = Math.max(1, Math.ceil((worklist?.cases.length ?? 0) / WORKLIST_PAGE_SIZE));
+  const currentWorklistPage = Math.min(worklistPage, totalWorklistPages - 1);
+  const pagedCases = useMemo(
+    () => worklist?.cases.slice(
+      currentWorklistPage * WORKLIST_PAGE_SIZE,
+      currentWorklistPage * WORKLIST_PAGE_SIZE + WORKLIST_PAGE_SIZE,
+    ) ?? [],
+    [worklist, currentWorklistPage],
+  );
 
   const loadWorklist = useCallback(async () => {
     const token = await getAccessToken();
@@ -402,39 +423,64 @@ export function AuditWorklist() {
               {isAdmin ? 'No active audit list — import one above.' : 'No active audit list.'}
             </div>
           ) : (
-            <ul className="divide-y divide-gray-100 max-h-[70vh] overflow-auto">
-              {worklist.cases.map((c) => {
-                const active = c.case_id === selectedCaseId;
-                return (
-                  <li
-                    key={c.case_id}
-                    onClick={() => selectCase(c.case_id)}
-                    className={`px-4 py-3 cursor-pointer hover:bg-gray-50 ${active ? 'bg-blue-50' : ''}`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
-                          {c.case_id}
-                          {!c.patient_found && (
-                            <span
-                              title="No matching patient record"
-                              className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-red-100 text-red-800 border-red-200"
-                            >
-                              No record
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-gray-500 truncate">
-                          #{c.position + 1}
-                          {c.reviewed_by_email && ` · ${c.reviewed_by_email}`}
-                        </p>
+            <>
+              <ul className="divide-y divide-gray-100">
+                {pagedCases.map((c) => {
+                  const active = c.case_id === selectedCaseId;
+                  return (
+                    <li
+                      key={c.case_id}
+                      onClick={() => selectCase(c.case_id)}
+                      className={`px-4 py-3 cursor-pointer hover:bg-gray-50 ${active ? 'bg-blue-50' : ''}`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
+                            {c.case_id}
+                            {!c.patient_found && (
+                              <span
+                                title="No matching patient record"
+                                className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-red-100 text-red-800 border-red-200"
+                              >
+                                No record
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate">
+                            #{c.position + 1}
+                            {c.reviewed_by_email && ` · ${c.reviewed_by_email}`}
+                          </p>
+                        </div>
+                        <StatusBadge status={c.review_status} />
                       </div>
-                      <StatusBadge status={c.review_status} />
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                    </li>
+                  );
+                })}
+              </ul>
+              {totalWorklistPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => setWorklistPage((p) => Math.max(0, p - 1))}
+                    disabled={currentWorklistPage === 0}
+                    className="px-2.5 py-1 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-xs text-gray-500">
+                    Page {currentWorklistPage + 1} of {totalWorklistPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setWorklistPage((p) => Math.min(totalWorklistPages - 1, p + 1))}
+                    disabled={currentWorklistPage === totalWorklistPages - 1}
+                    className="px-2.5 py-1 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
 

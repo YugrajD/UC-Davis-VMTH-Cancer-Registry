@@ -447,18 +447,18 @@ export function AuditWorklist() {
       )}
 
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-5 bg-white rounded-lg border border-gray-200">
-          <div className="px-4 py-3 border-b border-gray-200">
+        <div className="col-span-5 bg-white rounded-lg border border-gray-200 h-[70vh] flex flex-col">
+          <div className="px-4 py-3 border-b border-gray-200 shrink-0">
             <span className="text-sm font-medium">Worklist</span>
           </div>
-          {loadingWorklist ? (
-            <div className="p-6 text-sm text-gray-500">Loading...</div>
-          ) : !worklist || worklist.cases.length === 0 ? (
-            <div className="p-6 text-sm text-gray-500">
-              {isAdmin ? 'No active audit list — import one above.' : 'No active audit list.'}
-            </div>
-          ) : (
-            <>
+          <div className="flex-1 overflow-y-auto">
+            {loadingWorklist ? (
+              <div className="p-6 text-sm text-gray-500">Loading...</div>
+            ) : !worklist || worklist.cases.length === 0 ? (
+              <div className="p-6 text-sm text-gray-500">
+                {isAdmin ? 'No active audit list — import one above.' : 'No active audit list.'}
+              </div>
+            ) : (
               <ul className="divide-y divide-gray-100">
                 {pagedCases.map((c) => {
                   const active = c.case_id === selectedCaseId;
@@ -492,34 +492,34 @@ export function AuditWorklist() {
                   );
                 })}
               </ul>
-              {totalWorklistPages > 1 && (
-                <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-100">
-                  <button
-                    type="button"
-                    onClick={() => setWorklistPage((p) => Math.max(0, p - 1))}
-                    disabled={currentWorklistPage === 0}
-                    className="px-2.5 py-1 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <span className="text-xs text-gray-500">
-                    Page {currentWorklistPage + 1} of {totalWorklistPages}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setWorklistPage((p) => Math.min(totalWorklistPages - 1, p + 1))}
-                    disabled={currentWorklistPage === totalWorklistPages - 1}
-                    className="px-2.5 py-1 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-            </>
+            )}
+          </div>
+          {!loadingWorklist && worklist && worklist.cases.length > 0 && totalWorklistPages > 1 && (
+            <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setWorklistPage((p) => Math.max(0, p - 1))}
+                disabled={currentWorklistPage === 0}
+                className="px-2.5 py-1 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <span className="text-xs text-gray-500">
+                Page {currentWorklistPage + 1} of {totalWorklistPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setWorklistPage((p) => Math.min(totalWorklistPages - 1, p + 1))}
+                disabled={currentWorklistPage === totalWorklistPages - 1}
+                className="px-2.5 py-1 text-xs font-medium bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
           )}
         </div>
 
-        <div className="col-span-7 bg-white rounded-lg border border-gray-200">
+        <div className="col-span-7 bg-white rounded-lg border border-gray-200 h-[70vh] overflow-y-auto">
           {!selectedCaseId ? (
             <div className="p-6 text-sm text-gray-500">Select a case from the worklist.</div>
           ) : loadingDetail ? (

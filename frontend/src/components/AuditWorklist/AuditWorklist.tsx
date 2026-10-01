@@ -516,7 +516,9 @@ export function AuditWorklist() {
               {detail.source_diagnosis && (
                 <div>
                   <p className="text-xs font-medium text-gray-500 mb-1">Clinical diagnosis</p>
-                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{detail.source_diagnosis}</p>
+                  <div className="text-sm text-gray-800 whitespace-pre-wrap max-h-48 overflow-auto border border-gray-100 rounded p-2 bg-gray-50">
+                    {detail.source_diagnosis}
+                  </div>
                 </div>
               )}
 

@@ -1,7 +1,8 @@
 """Gate bake-off on the CALIBRATION partition only: fit half -> eval half.
 
 For each gate source (old = WP14 PetBERT gate probabilities from its predictions CSV; new = the ModernBERT gate)
-and each available retriever seed: fit {gate_t, tau, rho} on the fit half, score the eval half through
+and each available retriever seed (and, for a "shared" gate, a head on one retriever's pooled vector, only with
+the retriever it was trained on): fit {gate_t, tau, rho} on the fit half, score the eval half through
 ``silver_eval.evaluate`` with WP14's uncommon list, and report gate AUC, retriever top-1 accuracy, the objective
 along gate_t (the "no cliff" check) and the WP14 baseline on the same eval-half cases.
 
@@ -20,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 import config
-from bronze_rr import calibrate, decide, gate as gate_mod, scoring
+from bronze_rr import calibrate, decide, gate as gate_mod, scoring, shared_gate
 from bronze_rr.data import BronzeData, load_uncommon_groups
 from bronze_rr.decide import Thresholds
 from bronze_rr.ruler import SUMMARY_HEADER, summary_row
@@ -99,10 +100,22 @@ def run_bakeoff(data: BronzeData, labels, *, root: Path = config.RR_PHASE1_DIR, 
         print(f"no trained gate in {new_gate_dir}: only the old gate is compared")
 
     systems = []
-    for retriever_name, directory in available_retrievers(root).items():
+    retrievers = available_retrievers(root)
+    for retriever_name, directory in retrievers.items():
         scores = scoring.retriever_scores(directory, data, "calibration", out_dir=scores_dir, limit=limit)
         for gate_name, gate_by_case in gates.items():
             systems.append(run_system(gate_name, gate_by_case, retriever_name, scores, data, labels, uncommon, limit))
+
+    for gate_dir in shared_gate.available(root):
+        wanted = shared_gate.read_source(gate_dir)["retriever_tag"]
+        paired = [(n, d) for n, d in retrievers.items() if scoring.model_tag(d) == wanted]
+        if not paired:
+            print(f"{gate_dir.name}: its retriever ({wanted}) is not available; skipped")
+            continue
+        retriever_name, directory = paired[0]
+        gate_by_case = shared_gate.gate_scores(gate_dir, directory, data, "calibration", out_dir=scores_dir, limit=limit)
+        scores = scoring.retriever_scores(directory, data, "calibration", out_dir=scores_dir, limit=limit)
+        systems.append(run_system("shared", gate_by_case, retriever_name, scores, data, labels, uncommon, limit))
 
     _, eval_universe = _half(data, False, limit)
     baseline = silver_eval.evaluate(silver_eval.read_predictions(OLD_GATE_CSV), labels, eval_universe, uncommon)["summary"]

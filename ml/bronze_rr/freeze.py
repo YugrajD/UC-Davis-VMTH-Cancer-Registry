@@ -10,24 +10,29 @@ from pathlib import Path
 
 import io_utils
 import config
-from bronze_rr import calibrate, decide, gate as gate_mod, generation, scoring
+from bronze_rr import calibrate, decide, gate as gate_mod, generation, scoring, shared_gate
 from bronze_rr.bakeoff import OLD_GATE_CSV
 from bronze_rr.data import BronzeData, load_uncommon_groups
 
 
 def run_freeze(data: BronzeData, labels, *, gate: str, retriever_dir: Path, root: Path = config.RR_PHASE1_DIR,
                limit: int = 0) -> dict:
-    """``gate`` is "old" (WP14 predictions CSV) or "new" (<root>/gate). Models and caches live under ``root``;
-    the predictions CSV goes to config.PREDICTIONS_DIR, or to <root>/predictions in a smoke (``limit`` > 0)."""
+    """``gate`` is "old" (WP14 predictions CSV), "new" (<root>/gate) or "shared" (the head trained on this retriever,
+    <root>/gate_shared_<retriever tag>; one retriever pass per report gives both the gate and the term
+    probabilities). Models and caches live under ``root``; the predictions CSV goes to config.PREDICTIONS_DIR, or
+    to <root>/predictions in a smoke (``limit`` > 0)."""
     scores_dir, gate_dir = root / "scores", (root / "gate" if gate == "new" else None)
+    shared_dir = shared_gate.gate_dir_for(root, retriever_dir) if gate == "shared" else None
     uncommon = load_uncommon_groups()
 
-    calibration_scores = scoring.retriever_scores(retriever_dir, data, "calibration", out_dir=scores_dir, limit=limit)
-    all_scores = scoring.retriever_scores(retriever_dir, data, "all", out_dir=scores_dir, limit=limit)
     if gate == "new":
         gate_by_case = scoring.gate_scores(gate_dir, data, "all", out_dir=scores_dir, limit=limit)
+    elif gate == "shared":  # first, so the same pass fills the retriever score caches read below
+        gate_by_case = shared_gate.gate_scores(shared_dir, retriever_dir, data, "all", out_dir=scores_dir, limit=limit)
     else:
         gate_by_case = gate_mod.load_old_gate_probs(OLD_GATE_CSV)
+    calibration_scores = scoring.retriever_scores(retriever_dir, data, "calibration", out_dir=scores_dir, limit=limit)
+    all_scores = scoring.retriever_scores(retriever_dir, data, "all", out_dir=scores_dir, limit=limit)
 
     universe = frozenset(calibration_scores.case_ids) if limit else data.split_cases["calibration"]
     counts = calibrate.build_pattern_counts(calibration_scores, gate_mod.probs_for(calibration_scores.case_ids, gate_by_case),
@@ -43,7 +48,7 @@ def run_freeze(data: BronzeData, labels, *, gate: str, retriever_dir: Path, root
                    "partition_gs_share": fitted["gs_share"], "partition_good_share": fitted["good_share"],
                    "curve_along_gate_t": fitted["curve"]}
     directory = generation.write_generation(
-        root / "generation", generation_id=generation_id, retriever_dir=retriever_dir, gate_dir=gate_dir,
+        root / "generation", generation_id=generation_id, retriever_dir=retriever_dir, gate_dir=gate_dir, shared_gate_dir=shared_dir,
         old_gate_csv=OLD_GATE_CSV if gate == "old" else None, thresholds=thresholds, calibration=calibration,
         split_id=data.split_id, silver_id=data.silver_id, uncommon_groups_txt=config.RR_PHASE1_UNCOMMON_GROUPS_TXT,
         max_length=scoring.trained_max_length(retriever_dir))

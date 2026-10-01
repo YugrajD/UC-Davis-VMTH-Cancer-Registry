@@ -3,14 +3,19 @@ test-set guard and (on CUDA) the shared training loop. Synthetic data only."""
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 
-from bronze_rr import calibrate, decide, encoder as enc, encoder_train, gate, generation, report_text, scoring
+import config
+from bronze_rr import (bakeoff, calibrate, decide, encoder as enc, encoder_train, freeze, gate, generation, report_text,
+                       retriever, scoring, shared_gate)
 from bronze_rr.decide import NEVER, Thresholds
 from bronze_rr.scoring import RetrieverScores
 from evaluation import verdicts
@@ -286,3 +291,174 @@ def test_fit_runs_an_epoch_logs_it_and_calls_the_epoch_hook(tiny_bert_dir):
     assert all(e["marker"] == 1.0 and np.isfinite(e["train_loss"]) for e in epochs)
     logits, over = scoring.logits_for(model, tokenizer, texts, max_length=128, token_budget=64, device="cuda")
     assert logits.shape == (16, 1) and over == 0
+
+
+# --- shared gate: a head on the retriever's pooled vector ---------------------------------------------------------
+
+def test_one_pass_returns_pooled_and_logits_consistent_with_the_logits_path(tiny_bert_dir):
+    from transformers import AutoModel, AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(str(tiny_bert_dir))
+    model = retriever.TermRetriever(AutoModel.from_pretrained(str(tiny_bert_dir)), TERMS)
+    texts = ["mast cell tumor present", "no evidence of neoplasia", "carcinoma malignant with a longer sentence here"]
+    pooled, logits, over = scoring.pooled_and_logits_for(model, tokenizer, texts, 64, 40, "cpu")
+    assert pooled.shape == (3, model.head.in_features) and pooled.dtype == np.float32 and logits.shape == (3, len(TERMS))
+    only_logits, over_logits = scoring.logits_for(model, tokenizer, texts, 64, 40, "cpu")
+    assert np.array_equal(only_logits, logits) and over == over_logits == 0
+    head = model.head
+    assert logits == pytest.approx(pooled @ head.weight.detach().numpy().T + head.bias.detach().numpy(), abs=1e-4)
+    # one text at a time (no padding) gives the same numbers, in input order
+    single = np.concatenate([scoring.logits_for(model, tokenizer, [t], 64, 10**6, "cpu")[0] for t in texts])
+    assert logits == pytest.approx(single, abs=1e-4)
+
+
+def _fake_retriever(directory, weights=b"w"):
+    (directory / "encoder").mkdir(parents=True)
+    (directory / "encoder" / "model.safetensors").write_bytes(weights)
+    (directory / "head.pt").write_bytes(b"head" + weights)
+    return directory
+
+
+def _synthetic_gate_data(n=400, hidden=8, seed=0):
+    rng = np.random.default_rng(seed)
+    targets = (rng.random(n) < 0.4).astype(np.float32)
+    pooled = (rng.normal(size=(n, hidden)) + 0.35 * targets[:, None] * np.arange(1, hidden + 1) / hidden).astype(np.float32)
+    ids = [f"c{i}" for i in range(n)]
+    data = SimpleNamespace(gate_ids=ids, gate_targets=targets)
+    return data, ids, pooled, targets
+
+
+def test_shared_head_training_keeps_the_best_heldout_auc_epoch_on_the_gates_holdout(tmp_path, monkeypatch):
+    data, ids, pooled, targets = _synthetic_gate_data()
+    retriever_dir = _fake_retriever(tmp_path / "ret")
+    monkeypatch.setattr(shared_gate, "pooled_vectors", lambda *a, **k: (ids, pooled))
+    out = tmp_path / "gate_shared_x"
+    summary = shared_gate.train_shared_gate(data, retriever_dir, out, scores_dir=tmp_path, epochs=12, batch_size=64)
+
+    _, held_idx = gate.split_holdout(targets)          # the existing gate's fixed-seed stratified 5%
+    assert summary["heldout_cases"] == len(held_idx) == 20 and summary["train_cases"] == 380
+    log = json.loads((out / "train_log.json").read_text(encoding="utf-8"))
+    best_aucs = {}
+    for kind in ("linear", "mlp"):
+        aucs = [e["heldout_auc"] for e in log["variants"][kind]["epochs"]]
+        assert len(aucs) == 12 and len(set(aucs)) > 1
+        assert log["variants"][kind]["best_epoch"] == int(np.argmax(aucs))      # first epoch with the maximum
+        assert log["variants"][kind]["best_heldout_auc"] == max(aucs)
+        best_aucs[kind] = max(aucs)
+    assert summary["chosen"] == max(best_aucs, key=best_aucs.get)
+    assert summary["linear_best_heldout_auc"] == best_aucs["linear"] and summary["mlp_best_heldout_auc"] == best_aucs["mlp"]
+    # the saved head reproduces that epoch's held-out AUC on exactly those cases
+    head = shared_gate.load_head(out)
+    assert head.kind == summary["chosen"]
+    auc = gate.roc_auc(shared_gate.head_probs(head, pooled[held_idx]), targets[held_idx])
+    assert auc == pytest.approx(best_aucs[summary["chosen"]], abs=1e-6)
+    assert {p.name for p in out.iterdir()} == {"head.pt", "source.json", "train_log.json"}
+    with pytest.raises(SystemExit, match="already holds"):
+        shared_gate.train_shared_gate(data, retriever_dir, out, scores_dir=tmp_path, epochs=1)
+
+
+def test_shared_head_variants_have_the_specified_shapes():
+    mean, std = torch.zeros(768), torch.ones(768)
+    linear, mlp = shared_gate.SharedHead("linear", 768, mean, std), shared_gate.SharedHead("mlp", 768, mean, std)
+    assert isinstance(linear.net, torch.nn.Linear) and linear.net.out_features == 1
+    first, relu, dropout, last = mlp.net
+    assert (first.in_features, first.out_features, last.in_features, last.out_features) == (768, 256, 256, 1)
+    assert isinstance(relu, torch.nn.ReLU) and dropout.p == 0.3
+
+
+def test_shared_gate_is_refused_with_any_other_retriever(tmp_path, monkeypatch):
+    own = _fake_retriever(tmp_path / "own", b"a")
+    other_encoder = _fake_retriever(tmp_path / "enc", b"a")
+    (other_encoder / "encoder" / "model.safetensors").write_bytes(b"different encoder")
+    other_head = _fake_retriever(tmp_path / "head", b"a")
+    (other_head / "head.pt").write_bytes(b"different head")
+    gate_dir = tmp_path / "gate_shared_own"
+    gate_dir.mkdir()
+    shared_gate.write_source(gate_dir, own)
+    assert set(shared_gate.read_source(gate_dir)) >= {"retriever_tag", "retriever_head_sha256", "retriever_encoder_sha256"}
+    shared_gate.verify_source(gate_dir, own)
+    with pytest.raises(ValueError, match="retriever_encoder_sha256"):
+        shared_gate.verify_source(gate_dir, other_encoder)
+    with pytest.raises(ValueError, match="retriever_head_sha256"):
+        shared_gate.verify_source(gate_dir, other_head)
+    monkeypatch.setattr(shared_gate, "pooled_vectors", lambda *a, **k: pytest.fail("embedded with a mismatched retriever"))
+    with pytest.raises(ValueError):
+        shared_gate.gate_scores(gate_dir, other_head, None, "calibration")
+
+
+def _stub_bakeoff(monkeypatch, tmp_path):
+    """run_bakeoff with only the pairing logic live; returns (run_system calls, gate_scores calls)."""
+    systems, gate_calls = [], []
+    monkeypatch.setattr(config, "RR_PHASE0_DIR", tmp_path / "p0")
+    monkeypatch.setattr(bakeoff, "load_uncommon_groups", lambda: frozenset())
+    monkeypatch.setattr(gate, "load_old_gate_probs", lambda path: {})
+    monkeypatch.setattr(scoring, "retriever_scores", lambda *a, **k: "scores")
+    monkeypatch.setattr(shared_gate, "gate_scores",
+                        lambda gate_dir, ret_dir, *a, **k: gate_calls.append((gate_dir.name, ret_dir.name)) or {})
+    monkeypatch.setattr(bakeoff, "run_system", lambda gate_name, probs, name, *a: systems.append((gate_name, name)) or
+                        {"gate": gate_name, "retriever": name})
+    monkeypatch.setattr(bakeoff.silver_eval, "read_predictions", lambda path: None)
+    monkeypatch.setattr(bakeoff.silver_eval, "evaluate", lambda *a: {"summary": {}})
+    monkeypatch.setattr(bakeoff, "render_markdown", lambda result: "")
+    return systems, gate_calls
+
+
+def test_bakeoff_pairs_the_shared_gate_only_with_the_retriever_it_was_trained_on(tmp_path, monkeypatch):
+    root = tmp_path / "p1"
+    seed42 = _fake_retriever(tmp_path / "p0" / "bce", b"seed42")
+    seed2 = _fake_retriever(root / "retriever_seed2", b"seed2")
+    for directory in (seed42, seed2):
+        (directory / "train_log.json").write_text("{}", encoding="utf-8")
+    gate_dir = shared_gate.gate_dir_for(root, seed2)       # a head trained on seed2 only
+    gate_dir.mkdir(parents=True)
+    shared_gate.write_source(gate_dir, seed2)
+    for name in ("head.pt", "train_log.json"):
+        (gate_dir / name).write_bytes(b"x")
+    orphan = root / "gate_shared_gone-retriever"           # its retriever is not available: skipped
+    orphan.mkdir()
+    (orphan / "source.json").write_text(json.dumps({"retriever_tag": "gone-retriever"}), encoding="utf-8")
+    for name in ("head.pt", "train_log.json"):
+        (orphan / name).write_bytes(b"x")
+    systems, gate_calls = _stub_bakeoff(monkeypatch, tmp_path)
+    data = SimpleNamespace(split_id="s", split_cases={"calibration": frozenset()}, partition_ids={"calibration": []})
+
+    result = bakeoff.run_bakeoff(data, None, root=root)
+    assert systems == [("old", "seed42"), ("old", "seed2"), ("shared", "seed2")]    # never ("shared", "seed42")
+    assert gate_calls == [("gate_shared_" + scoring.model_tag(seed2), "retriever_seed2")]
+    assert [s["gate"] for s in result["systems"]] == ["old", "old", "shared"]
+
+
+def test_freeze_with_the_shared_gate_writes_a_shared_head_generation_and_the_same_prediction_format(tmp_path, monkeypatch):
+    scores, gate_probs, has_text, labels, universe = _calibration_fixture()
+    retriever_dir = tmp_path / "ret"
+    _fake_model(retriever_dir)
+    root = tmp_path / "p1"
+    gate_dir = shared_gate.gate_dir_for(root, retriever_dir)
+    gate_dir.mkdir(parents=True)
+    zeros = torch.zeros(4)
+    shared_gate.save_head(shared_gate.SharedHead("linear", 4, zeros, zeros + 1), gate_dir / "head.pt")
+    shared_gate.write_source(gate_dir, retriever_dir)
+    (gate_dir / "train_log.json").write_text('{"summary": {"args": {"seed": 3}}}', encoding="utf-8")
+    uncommon = tmp_path / "u.txt"
+    uncommon.write_text("G3\n", encoding="utf-8")
+    pooled = np.random.default_rng(0).normal(size=(len(scores.case_ids), 4)).astype(np.float32)
+
+    monkeypatch.setattr(config, "RR_PHASE1_UNCOMMON_GROUPS_TXT", uncommon)
+    monkeypatch.setattr(freeze, "load_uncommon_groups", lambda: UNCOMMON)
+    monkeypatch.setattr(shared_gate, "pooled_vectors", lambda *a, **k: (scores.case_ids, pooled))
+    monkeypatch.setattr(scoring, "retriever_scores", lambda *a, **k: scores)
+    data = SimpleNamespace(split_id="s", silver_id="v", split_cases={"calibration": universe}, has_text=has_text,
+                           term_info=TERM_INFO)
+
+    result = freeze.run_freeze(data, labels, gate="shared", retriever_dir=retriever_dir, root=root, limit=1)
+    manifest, thresholds = generation.load_generation_info(Path(result["generation_dir"]))
+    assert manifest["gate"]["kind"] == "shared_head" and manifest["gate"]["seed"] == 3
+    assert {f for f in manifest["files"] if f.startswith("gate/")} == {"gate/head.pt", "gate/source.json", "gate/train_log.json"}
+    assert thresholds.as_dict() == result["thresholds"]
+    predictions = pd.read_csv(result["predictions_csv"], dtype=str, keep_default_na=False)
+    assert list(predictions.columns) == decide.COLUMNS == PRODUCTION_COLUMNS
+    assert set(predictions["method"]) <= {"retriever_top1", "rejected_by_case_presence"}
+    assert Path(result["predictions_csv"]).parent == root / "predictions"
+
+    (retriever_dir / "encoder" / "model.safetensors").write_bytes(b"retrained in place")
+    with pytest.raises(ValueError):   # the retriever is no longer the one the head was trained on
+        freeze.run_freeze(data, labels, gate="shared", retriever_dir=retriever_dir, root=root, limit=1)

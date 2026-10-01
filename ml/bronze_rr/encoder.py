@@ -25,12 +25,22 @@ class PooledClassifier(nn.Module):
         self.encoder = encoder
         self.head = nn.Linear(encoder.config.hidden_size, n_out)
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    def pooled(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         hidden = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
         mask = attention_mask.unsqueeze(-1).to(hidden.dtype)
-        pooled = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1)
+        return (hidden * mask).sum(1) / mask.sum(1).clamp(min=1)
+
+    def head_logits(self, pooled: torch.Tensor) -> torch.Tensor:
         with torch.autocast(device_type=pooled.device.type, enabled=False):  # fp32 head: bf16 logits tie ranks
             return self.head(pooled.float())
+
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        return self.head_logits(self.pooled(input_ids, attention_mask))
+
+    def forward_with_pooled(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """(pooled fp32 vectors, head logits) from ONE encoder pass; the logits equal ``forward``'s."""
+        pooled = self.pooled(input_ids, attention_mask).float()
+        return pooled, self.head_logits(pooled)
 
     def init_bias_from_frequency(self, freq: torch.Tensor) -> None:
         """Start every output at its train prior so early steps aren't spent learning the base rate."""

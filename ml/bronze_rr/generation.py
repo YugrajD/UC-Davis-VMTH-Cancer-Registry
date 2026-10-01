@@ -2,7 +2,9 @@
 
   retriever/           encoder/, head.pt, terms.json (copied from the source retriever dir), train_log.json
   gate/                encoder/, head.pt, train_log.json (new gate)   OR   gate_source.json (old gate: a reference
-                       to the report_mapping predictions CSV whose case_presence_prob is the gate)
+                       to the report_mapping predictions CSV whose case_presence_prob is the gate)   OR   head.pt,
+                       source.json, train_log.json (shared gate: a head on the retriever's pooled vector; the
+                       encoder is the retriever's, so one pass gives both the gate and the term probabilities)
   thresholds.json      {gate_t, tau, rho}
   uncommon_groups.txt  the list the scoring ruler uses
   manifest.json        generation_id, sources, seeds, split/labels ids, calibration block, sha256 per file
@@ -21,6 +23,7 @@ from bronze_rr.decide import Thresholds
 from generations.manifest import read_manifest, sha256_file, verify_manifest, write_manifest
 
 COPIED_FILES = ("head.pt", "terms.json", "train_log.json")
+SHARED_GATE_FILES = ("head.pt", "source.json", "train_log.json")
 
 
 def new_generation_id() -> str:
@@ -42,15 +45,20 @@ def _seed_of(model_dir: Path) -> str | None:
 
 def write_generation(root: Path, *, generation_id: str, retriever_dir: Path, gate_dir: Path | None,
                      old_gate_csv: Path | None, thresholds: Thresholds, calibration: dict, split_id: str,
-                     silver_id: str, uncommon_groups_txt: Path, max_length: int) -> Path:
+                     silver_id: str, uncommon_groups_txt: Path, max_length: int, shared_gate_dir: Path | None = None) -> Path:
     """Write the generation directory and its manifest; returns the directory. Exactly one of ``gate_dir`` (new
-    gate) and ``old_gate_csv`` (old gate) is given."""
-    if (gate_dir is None) == (old_gate_csv is None):
-        raise ValueError("give exactly one of gate_dir and old_gate_csv")
+    gate), ``old_gate_csv`` (old gate) and ``shared_gate_dir`` (head on the retriever's encoder) is given."""
+    if sum(x is not None for x in (gate_dir, old_gate_csv, shared_gate_dir)) != 1:
+        raise ValueError("give exactly one of gate_dir, old_gate_csv and shared_gate_dir")
     directory = root / generation_id
     directory.mkdir(parents=True)
     _copy_model(retriever_dir, directory / "retriever")
-    if gate_dir is not None:
+    if shared_gate_dir is not None:
+        (directory / "gate").mkdir()
+        for name in SHARED_GATE_FILES:
+            shutil.copy2(shared_gate_dir / name, directory / "gate" / name)
+        gate = {"kind": "shared_head", "source": str(shared_gate_dir), "seed": _seed_of(shared_gate_dir)}
+    elif gate_dir is not None:
         _copy_model(gate_dir, directory / "gate")
         gate = {"kind": "modernbert", "source": str(gate_dir), "seed": _seed_of(gate_dir)}
     else:

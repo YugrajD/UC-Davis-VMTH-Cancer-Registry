@@ -6,6 +6,8 @@
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py score --retriever-dir ml/output/rr_phase0/bce --partition calibration
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py bakeoff
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py freeze --gate old --retriever-dir ml/output/rr_phase0/bce
+  ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py train-shared-gate --retriever-dir ml/output/rr_phase0/bce
+  ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py time-cpu --n 50
 
 Outputs go under config.RR_PHASE1_DIR. ``--limit N`` is a smoke: N cases, and everything goes under RR_PHASE1_DIR/_smoke.
 """
@@ -22,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch  # noqa: F401  must load before scipy/sklearn on Windows (libomp DLL clash, WinError 1114)
 
 import config
-from bronze_rr import bakeoff, freeze, ruler, scoring, train
+from bronze_rr import bakeoff, freeze, ruler, scoring, shared_gate, timing, train
 from bronze_rr.data import SILVER_ID, load_data
 from evaluation import silver_eval
 from report_mapping.training.recipe import PRODUCTION_SEED
@@ -57,6 +59,24 @@ def _cmd_train_gate(args: argparse.Namespace) -> int:
 def _cmd_train_retriever(args: argparse.Namespace) -> int:
     out = args.out or _root(args.limit) / f"retriever_seed{args.seed}"
     print(json.dumps(train.train_retriever(load_data(), out, _recipe(args)), indent=1))
+    return 0
+
+
+def _cmd_train_shared_gate(args: argparse.Namespace) -> int:
+    root = _root(args.limit)
+    out = args.out or shared_gate.gate_dir_for(root, args.retriever_dir)
+    print(json.dumps(shared_gate.train_shared_gate(load_data(), args.retriever_dir, out, scores_dir=root / "scores",
+                                                   limit=args.limit, seed=args.seed, epochs=args.epochs), indent=1))
+    return 0
+
+
+def _cmd_time_cpu(args: argparse.Namespace) -> int:
+    root = config.RR_PHASE1_DIR
+    shared = args.shared_gate_dir or shared_gate.gate_dir_for(root, args.retriever_dir)
+    result = timing.time_cpu(load_data(), args.retriever_dir, args.gate_dir, shared if shared.is_dir() else None, args.n)
+    print(json.dumps(result, indent=1))
+    if args.save:
+        print(f"saved {timing.save(result)}")
     return 0
 
 
@@ -116,6 +136,23 @@ def main() -> int:
     _add_training_flags(p)
     p.set_defaults(func=_cmd_train_retriever)
 
+    p = sub.add_parser("train-shared-gate", help="train a gate head on a retriever's pooled vectors into rr_phase1/gate_shared_<tag>")
+    p.add_argument("--retriever-dir", type=Path, required=True)
+    p.add_argument("--seed", type=int, default=PRODUCTION_SEED)
+    p.add_argument("--epochs", type=int, default=50, help="head epochs; the best held-out-AUC epoch is kept")
+    p.add_argument("--limit", type=int, default=0, help="smoke: first N train cases; output under _smoke")
+    p.add_argument("--out", type=Path, default=None)
+    p.set_defaults(func=_cmd_train_shared_gate)
+
+    p = sub.add_parser("time-cpu", help="CPU seconds per report: retriever + separate gate vs retriever + shared head")
+    p.add_argument("--n", type=int, default=50, help="first N calibration reports")
+    p.add_argument("--retriever-dir", type=Path, default=config.RR_PHASE0_DIR / "bce")
+    p.add_argument("--gate-dir", type=Path, default=config.RR_PHASE1_DIR / "gate")
+    p.add_argument("--shared-gate-dir", type=Path, default=None,
+                   help="default rr_phase1/gate_shared_<retriever tag>; an untrained stand-in head if it does not exist")
+    p.add_argument("--save", action="store_true", help="also write rr_phase1/timing/cpu_n<N>.json")
+    p.set_defaults(func=_cmd_time_cpu)
+
     p = sub.add_parser("score", help="score a retriever and/or gate over a partition; cached as numbers")
     p.add_argument("--retriever-dir", type=Path, default=None)
     p.add_argument("--gate-dir", type=Path, default=None)
@@ -130,7 +167,7 @@ def main() -> int:
     p.set_defaults(func=_cmd_bakeoff)
 
     p = sub.add_parser("freeze", help="fit thresholds on the full calibration partition, write a generation and predictions")
-    p.add_argument("--gate", choices=("old", "new"), required=True)
+    p.add_argument("--gate", choices=("old", "new", "shared"), required=True)
     p.add_argument("--retriever-dir", type=Path, required=True)
     p.add_argument("--limit", type=int, default=0, help="smoke: first N cases per partition; output under _smoke")
     p.set_defaults(func=_cmd_freeze)

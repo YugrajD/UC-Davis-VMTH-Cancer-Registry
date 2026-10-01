@@ -48,16 +48,27 @@ def trained_max_length(model_dir: Path, default: int = DEFAULT_MAX_LENGTH) -> in
 
 
 @torch.inference_mode()
-def logits_for(model, tokenizer, texts: list[str], max_length: int, token_budget: int, device) -> tuple[np.ndarray, int]:
-    """(len(texts), n_out) float32 logits in input order, and the count of texts over max_length."""
+def pooled_and_logits_for(model, tokenizer, texts: list[str], max_length: int, token_budget: int, device
+                          ) -> tuple[np.ndarray, np.ndarray, int]:
+    """(pooled (len(texts), hidden), logits (len(texts), n_out)) float32 in input order from ONE encoder pass,
+    and the count of texts over max_length."""
     token_ids, over = batching.encode_reports(tokenizer, texts, max_length)
     lengths = [len(x) for x in token_ids]
+    pooled = np.zeros((len(texts), model.head.in_features), dtype=np.float32)
     logits = np.zeros((len(texts), model.head.out_features), dtype=np.float32)
+    kind = torch.device(device).type
     model.eval()
     for micro in batching.micro_batches(list(range(len(texts))), lengths, token_budget):
         ids, mask = batching.collate(token_ids, micro, tokenizer.pad_token_id, device)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            logits[micro] = model(ids, mask).float().cpu().numpy()
+        with torch.autocast(kind, dtype=torch.bfloat16, enabled=kind == "cuda"):
+            batch_pooled, batch_logits = model.forward_with_pooled(ids, mask)
+        pooled[micro], logits[micro] = batch_pooled.cpu().numpy(), batch_logits.float().cpu().numpy()
+    return pooled, logits, over
+
+
+def logits_for(model, tokenizer, texts: list[str], max_length: int, token_budget: int, device) -> tuple[np.ndarray, int]:
+    """(len(texts), n_out) float32 logits in input order, and the count of texts over max_length."""
+    _, logits, over = pooled_and_logits_for(model, tokenizer, texts, max_length, token_budget, device)
     return logits, over
 
 
@@ -96,18 +107,18 @@ def retriever_scores_from_frame(frame: pd.DataFrame, terms: list[str]) -> Retrie
                            frame[[f"p{k:02d}" for k in range(TOP_K)]].to_numpy(dtype=float))
 
 
-def _cache_path(kind: str, model_dir: Path, partition: str, out_dir: Path) -> Path:
+def cache_path(kind: str, model_dir: Path, partition: str, out_dir: Path) -> Path:
     return out_dir / f"{kind}_{model_tag(model_dir)}_{partition}.csv"
 
 
-def _partitions(partition: str) -> tuple[str, ...]:
+def partitions(partition: str) -> tuple[str, ...]:
     return ("train", "calibration", "test") if partition == "all" else (partition,)
 
 
 def _score_partition(kind: str, model_dir: Path, data: BronzeData, partition: str, *, out_dir: Path, limit: int,
                      token_budget: int, device) -> pd.DataFrame:
     """Cache hit -> the cached frame; miss -> run the model over the partition's cases and write the cache."""
-    path = _cache_path(kind, model_dir, partition, out_dir)
+    path = cache_path(kind, model_dir, partition, out_dir)
     if path.is_file():
         return io_utils.read_csv(path, encoding="utf-8", dtype={"case_id": str})
     case_ids = data.ids_for(partition)[:limit] if limit else data.ids_for(partition)
@@ -134,7 +145,7 @@ def _score_partition(kind: str, model_dir: Path, data: BronzeData, partition: st
 def retriever_scores(model_dir: Path, data: BronzeData, partition: str, *, out_dir: Path = SCORES_DIR, limit: int = 0,
                      token_budget: int = 32768, device="cuda") -> RetrieverScores:
     frames = [_score_partition("retriever", model_dir, data, p, out_dir=out_dir, limit=limit,
-                               token_budget=token_budget, device=device) for p in _partitions(partition)]
+                               token_budget=token_budget, device=device) for p in partitions(partition)]
     return retriever_scores_from_frame(pd.concat(frames, ignore_index=True), retriever.read_terms(model_dir))
 
 
@@ -142,6 +153,6 @@ def gate_scores(model_dir: Path, data: BronzeData, partition: str, *, out_dir: P
                 token_budget: int = 32768, device="cuda") -> dict[str, float]:
     """{case_id: probability} from the ModernBERT gate in ``model_dir``."""
     frames = [_score_partition("gate", model_dir, data, p, out_dir=out_dir, limit=limit,
-                               token_budget=token_budget, device=device) for p in _partitions(partition)]
+                               token_budget=token_budget, device=device) for p in partitions(partition)]
     frame = pd.concat(frames, ignore_index=True)
     return dict(zip(frame["case_id"].astype(str), frame["prob"].astype(float)))

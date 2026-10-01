@@ -20,7 +20,7 @@ and [sync-with-s3.md](../how-to/sync-with-s3.md).
 | `predict.py` | Predictions from a generation |
 | `promote.py` | Promotion recommendation and swap |
 | `retrain_cycle.py` | The local retraining lane in one call |
-| `rr_phase1.py` | Retrieve-and-rerank experiment (branch `bronze-retrieve-rerank`): ruler, train, score, bake-off, freeze |
+| `rr_phase1.py` | Retrieve-and-rerank experiment (branch `bronze-retrieve-rerank`): ruler, train, score, shared gate, CPU timing, bake-off, freeze |
 | `split.py` | Create a three-way split, run the leakage guards |
 | `sync.py` | Sync file sets and the model with S3 |
 | `train.py` | Train a candidate generation |
@@ -344,26 +344,31 @@ prints STOP because no gold exists.
 
 Experiment only (branch `bronze-retrieve-rerank`, package `ml/bronze_rr/`, outputs under `RR_PHASE1_DIR`; see
 [paths.md](paths.md)). Subcommands: `ruler` (score the WP14 baseline predictions with WP14's uncommon list on
-test and calibration), `train-gate`, `train-retriever`, `score`, `bakeoff` (calibration only) and `freeze`.
+test and calibration), `train-gate`, `train-retriever`, `train-shared-gate` (a gate head on a retriever's pooled
+vector, so one encoder pass gives the gate and the term probabilities), `time-cpu` (seconds per report, two models vs
+one), `score`, `bakeoff` (calibration only; also scores every `gate_shared_*` head with its own retriever) and `freeze`.
 `--limit N` is a smoke: N cases, everything under `RR_PHASE1_DIR/_smoke`.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--predictions` | the WP14 predictions CSV | `ruler`: predictions to score |
 | `--split` | `three-way-v1` | `ruler`: split id |
-| `--seed` | 42 | `train-gate`, `train-retriever`: training seed |
-| `--epochs` | 3 | `train-gate`, `train-retriever` |
+| `--seed` | 42 | `train-gate`, `train-retriever`, `train-shared-gate`: training seed |
+| `--epochs` | 3 (50 for `train-shared-gate`) | `train-gate`, `train-retriever`; head epochs for `train-shared-gate` (best held-out-AUC epoch is kept) |
 | `--lr` | 5e-5 | encoder learning rate |
 | `--max-length` | 4096 | tokens per report |
 | `--token-budget` | 16384 | padded tokens per micro-batch |
 | `--max-steps` | 0 | smoke: stop after N optimizer steps |
-| `--out` | `rr_phase1/gate` or `rr_phase1/retriever_seed<S>` | model output directory |
-| `--retriever-dir` | none | `score`: retriever to score; `freeze`: required |
-| `--gate-dir` | none | `score`: ModernBERT gate to score |
+| `--out` | `rr_phase1/gate`, `rr_phase1/retriever_seed<S>` or `rr_phase1/gate_shared_<retriever tag>` | model output directory |
+| `--retriever-dir` | none | `score`: retriever to score; `freeze`, `train-shared-gate`: required; `time-cpu`: default `rr_phase0/bce` |
+| `--n` | 50 | `time-cpu`: first N calibration reports, one at a time on CPU |
+| `--gate-dir` | none (`time-cpu`: `rr_phase1/gate`) | `score`: ModernBERT gate to score; `time-cpu`: the separate gate model |
+| `--shared-gate-dir` | `rr_phase1/gate_shared_<tag>` | `time-cpu`: the shared head (an untrained stand-in if the directory does not exist) |
+| `--save` | off | `time-cpu`: also write `rr_phase1/timing/cpu_n<N>.json` |
 | `--partition` | `calibration` | `score`: `train`, `calibration`, `test` or `all` |
 | `--i-understand-this-spends-the-test-set` | off | `score`: required for `test` and `all` |
-| `--gate` | required | `freeze`: `old` (WP14 gate probabilities) or `new` (`rr_phase1/gate`) |
-| `--limit` | 0 | smoke: first N cases |
+| `--gate` | required | `freeze`: `old` (WP14 gate probabilities), `new` (`rr_phase1/gate`) or `shared` (`rr_phase1/gate_shared_<retriever tag>`) |
+| `--limit` | 0 | smoke: first N cases (`train-shared-gate`: first N train cases) |
 
 ## `split.py`
 

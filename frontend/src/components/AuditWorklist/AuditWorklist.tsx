@@ -447,7 +447,12 @@ export function AuditWorklist() {
       )}
 
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-5 bg-white rounded-lg border border-gray-200 h-[70vh] flex flex-col">
+        {/* 720px ≈ the 44px header + 10 rows at 60px (+9px of divide-y
+            borders) + the 45px pagination footer, plus a little slack —
+            sized so a full page of 10 rows never needs its own scrollbar.
+            The detail panel matches it so both panels have a constant,
+            predictable height and scroll independently of each other. */}
+        <div className="col-span-5 bg-white rounded-lg border border-gray-200 h-[720px] flex flex-col">
           <div className="px-4 py-3 border-b border-gray-200 shrink-0">
             <span className="text-sm font-medium">Worklist</span>
           </div>
@@ -519,7 +524,7 @@ export function AuditWorklist() {
           )}
         </div>
 
-        <div className="col-span-7 bg-white rounded-lg border border-gray-200 h-[70vh] overflow-y-auto">
+        <div className="col-span-7 bg-white rounded-lg border border-gray-200 h-[720px] overflow-y-auto">
           {!selectedCaseId ? (
             <div className="p-6 text-sm text-gray-500">Select a case from the worklist.</div>
           ) : loadingDetail ? (

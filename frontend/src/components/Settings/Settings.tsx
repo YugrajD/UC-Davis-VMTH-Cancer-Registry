@@ -43,7 +43,7 @@ export function Settings() {
         </div>
       </div>
 
-      {(isReviewer || isAdmin) && (
+      {isAdmin && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">Audit Worklist</h2>
           <p className="text-sm text-[var(--color-text-secondary)] mb-4">

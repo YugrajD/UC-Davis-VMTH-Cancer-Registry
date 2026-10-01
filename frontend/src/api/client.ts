@@ -827,6 +827,7 @@ export interface AuditCaseDetail {
   patient_species: string | null;
   patient_breed: string | null;
   patient_sex: string | null;
+  patient_age: number | null;
   source_diagnosis: string | null;
   report_text: string | null;
   predicted_codes: PredictedCode[];

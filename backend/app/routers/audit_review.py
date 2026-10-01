@@ -378,6 +378,10 @@ class CaseDetail(BaseModel):
     patient_species: Optional[str]
     patient_breed: Optional[str]
     patient_sex: Optional[str]
+    # Calendar-year difference between diagnosis_date and birth_date — same
+    # definition used for the age_group dimension in trends.py/incidence.py,
+    # kept consistent rather than computing a calendar-exact age here.
+    patient_age: Optional[int]
     # The clinic's short "Clinical Diagnoses" text, from pathology_reports.
     source_diagnosis: Optional[str]
     # The full pathology report, fetched from GCS. None if unavailable
@@ -453,9 +457,12 @@ async def get_case_detail(
     predicted_codes: list[PredictedCode] = []
     patient_breed: Optional[str] = None
     patient_species: Optional[str] = None
+    patient_age: Optional[int] = None
     if patient is not None:
         patient_breed = patient.breed.name if patient.breed else None
         patient_species = patient.species.name if patient.species else None
+        if patient.birth_date and patient.diagnosis_date:
+            patient_age = patient.diagnosis_date.year - patient.birth_date.year
 
         report = (
             await db.execute(select(PathologyReport).where(PathologyReport.patient_id == patient.id))
@@ -507,6 +514,7 @@ async def get_case_detail(
         patient_species=patient_species,
         patient_breed=patient_breed,
         patient_sex=patient.sex if patient else None,
+        patient_age=patient_age,
         source_diagnosis=source_diagnosis,
         report_text=report_text,
         predicted_codes=predicted_codes,

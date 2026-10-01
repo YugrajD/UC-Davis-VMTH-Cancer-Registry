@@ -8,7 +8,7 @@ without making real network or DB calls.
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -541,6 +541,7 @@ async def test_case_detail_happy_path_with_predictions_and_existing_review():
         assert r.status_code == 200
         body = r.json()
         assert body["patient_found"] is True
+        assert body["patient_age"] is None  # birth_date/diagnosis_date unset on this fixture
         assert body["source_diagnosis"] == "Mast cell tumor, skin mass"
         assert body["report_text"] is None  # storage_path unset — no GCS call attempted
         assert len(body["predicted_codes"]) == 1
@@ -551,6 +552,44 @@ async def test_case_detail_happy_path_with_predictions_and_existing_review():
         assert body["review_locked"] is False
         assert len(body["review_codes"]) == 1
         assert body["review_codes"][0]["taxonomy_term"] == "Cutaneous mast cell tumor grade Patnaik II"
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_case_detail_computes_patient_age_from_birth_and_diagnosis_date():
+    """patient_age is the calendar-year difference between diagnosis_date and
+    birth_date — same definition as the age_group dimension used elsewhere
+    (trends.py/incidence.py), not a calendar-exact age."""
+    _override_user(_reviewer())
+
+    patient = Patient(
+        id=1, anon_id="CASE-0001", data_source="petbert",
+        birth_date=date(2018, 11, 1), diagnosis_date=date(2026, 3, 15),
+    )
+
+    mock_db = AsyncMock()
+    on_list_result = MagicMock()
+    on_list_result.scalar_one_or_none.return_value = 1
+    patient_result = MagicMock()
+    patient_result.scalar_one_or_none.return_value = patient
+    report_result = MagicMock()
+    report_result.scalar_one_or_none.return_value = None
+    diag_result = MagicMock()
+    diag_result.all.return_value = []
+    review_result = MagicMock()
+    review_result.scalar_one_or_none.return_value = None
+    mock_db.execute.side_effect = [on_list_result, patient_result, report_result, diag_result, review_result]
+
+    async def override():
+        yield mock_db
+    app.dependency_overrides[get_db] = override
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/audit-review/cases/CASE-0001")
+        assert r.status_code == 200
+        assert r.json()["patient_age"] == 8  # 2026 - 2018, ignoring month/day
     finally:
         _cleanup()
 

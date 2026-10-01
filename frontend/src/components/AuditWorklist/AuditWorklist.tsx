@@ -454,9 +454,14 @@ export function AuditWorklist() {
                     No matching patient record — report text and predictions unavailable.
                   </p>
                 ) : (
-                  (detail.patient_species || detail.patient_breed || detail.patient_sex) && (
+                  (detail.patient_species || detail.patient_breed || detail.patient_sex || detail.patient_age != null) && (
                     <p className="text-xs text-gray-500 mt-1">
-                      {[detail.patient_species, detail.patient_breed, detail.patient_sex].filter(Boolean).join(' · ')}
+                      {[
+                        detail.patient_species,
+                        detail.patient_breed,
+                        detail.patient_sex,
+                        detail.patient_age != null ? `${detail.patient_age} yr${detail.patient_age === 1 ? '' : 's'}` : null,
+                      ].filter(Boolean).join(' · ')}
                     </p>
                   )
                 )}

@@ -80,6 +80,7 @@ function caseDetail(overrides: Partial<AuditCaseDetail> = {}): AuditCaseDetail {
     patient_species: 'Dog',
     patient_breed: 'Labrador Retriever',
     patient_sex: 'Spayed Female',
+    patient_age: 7,
     source_diagnosis: 'Skin mass',
     report_text: 'Full pathology report text.',
     predicted_codes: [
@@ -145,11 +146,27 @@ describe('AuditWorklist', () => {
 
     expect(await screen.findByText('Full pathology report text.')).toBeInTheDocument();
     expect(screen.getByText('Skin mass')).toBeInTheDocument();
-    expect(screen.getByText('Dog · Labrador Retriever · Spayed Female')).toBeInTheDocument();
+    expect(screen.getByText('Dog · Labrador Retriever · Spayed Female · 7 yrs')).toBeInTheDocument();
     // Appears twice: once in the read-only "Current predictions" list, once
     // pre-filled into the editable code set (approve-or-correct).
     expect(screen.getAllByText(/Mast cell tumor, NOS/)).toHaveLength(2);
     expect(mocks.fetchAuditCaseDetail).toHaveBeenCalledWith('reviewer-token', 'CASE-0001');
+  });
+
+  it('singularizes "1 yr" and omits age entirely when birth_date was unavailable', async () => {
+    const user = userEvent.setup();
+    mocks.fetchAuditCaseDetail.mockResolvedValueOnce(caseDetail({ patient_age: 1 }));
+    render(<AuditWorklist />);
+
+    await user.click(await screen.findByText('CASE-0001'));
+    expect(await screen.findByText('Dog · Labrador Retriever · Spayed Female · 1 yr')).toBeInTheDocument();
+
+    cleanup();
+    mocks.fetchAuditCaseDetail.mockResolvedValueOnce(caseDetail({ patient_age: null }));
+    render(<AuditWorklist />);
+
+    await user.click(await screen.findByText('CASE-0001'));
+    expect(await screen.findByText('Dog · Labrador Retriever · Spayed Female')).toBeInTheDocument();
   });
 
   it('pre-fills from the registry prediction, offering Approve, and lets a correction be saved', async () => {

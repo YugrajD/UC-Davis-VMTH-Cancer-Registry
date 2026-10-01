@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuditCaseDetail, TaxonomyTermOut, WorklistResponse } from '../../api/client';
+import { HIDE_PREDICTIONS_BY_DEFAULT_KEY } from '../../lib/auditWorklistPrefs';
 import { AuditWorklist } from './AuditWorklist';
 import realTaxonomy from './__fixtures__/taxonomyTerms.fixture.json';
 
@@ -195,6 +196,55 @@ describe('AuditWorklist', () => {
     // pre-filled into the editable code set (approve-or-correct).
     expect(screen.getAllByText(/Mast cell tumor, NOS/)).toHaveLength(2);
     expect(mocks.fetchAuditCaseDetail).toHaveBeenCalledWith('reviewer-token', 'CASE-0001');
+  });
+
+  describe('hide predictions by default setting', () => {
+    it('hides model predictions until revealed, then pre-fills the editable codes from them', async () => {
+      const user = userEvent.setup();
+      localStorage.setItem(HIDE_PREDICTIONS_BY_DEFAULT_KEY, JSON.stringify(true));
+      render(<AuditWorklist />);
+
+      await user.click(await screen.findByText('CASE-0001'));
+
+      expect(await screen.findByText('Hidden — click to reveal')).toBeInTheDocument();
+      expect(screen.queryByText(/Mast cell tumor, NOS/)).not.toBeInTheDocument();
+
+      await user.click(screen.getByText('Hidden — click to reveal'));
+
+      // Appears twice once revealed: the read-only "Current predictions"
+      // list, and pre-filled into the editable code set (approve-or-correct)
+      // — same as what always happens when the setting is off.
+      expect(await screen.findAllByText(/Mast cell tumor, NOS/)).toHaveLength(2);
+      expect(screen.queryByText('Hidden — click to reveal')).not.toBeInTheDocument();
+    });
+
+    it('does not hide predictions for a case that already has the reviewer\'s own answer', async () => {
+      const user = userEvent.setup();
+      localStorage.setItem(HIDE_PREDICTIONS_BY_DEFAULT_KEY, JSON.stringify(true));
+      mocks.fetchAuditCaseDetail.mockResolvedValueOnce(caseDetail({
+        review_exists: true,
+        review_no_cancer: false,
+        review_codes: [{ taxonomy_group: 'Mast cell neoplasms', taxonomy_term: 'Cutaneous mast cell tumor grade Patnaik II' }],
+      }));
+      render(<AuditWorklist />);
+
+      await user.click(await screen.findByText('CASE-0001'));
+
+      expect(await screen.findByText(/Mast cell tumor, NOS/)).toBeInTheDocument();
+      expect(screen.queryByText('Hidden — click to reveal')).not.toBeInTheDocument();
+    });
+
+    it('does not overwrite an in-progress correction when revealing predictions', async () => {
+      const user = userEvent.setup();
+      localStorage.setItem(HIDE_PREDICTIONS_BY_DEFAULT_KEY, JSON.stringify(true));
+      render(<AuditWorklist />);
+
+      await user.click(await screen.findByText('CASE-0001'));
+      await user.click(await screen.findByLabelText('No reportable cancer'));
+      await user.click(screen.getByText('Hidden — click to reveal'));
+
+      expect(screen.getByLabelText('No reportable cancer')).toBeChecked();
+    });
   });
 
   it('singularizes "1 yr" and omits age entirely when birth_date was unavailable', async () => {

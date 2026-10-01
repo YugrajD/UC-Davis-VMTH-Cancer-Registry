@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLocalStorageState } from '../../hooks/useLocalStorageState';
+import { HIDE_PREDICTIONS_BY_DEFAULT_KEY } from '../../lib/auditWorklistPrefs';
 import {
   fetchAuditWorklist,
   fetchTaxonomyTerms,
@@ -84,6 +86,12 @@ export function AuditWorklist() {
   const [detail, setDetail] = useState<AuditCaseDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+
+  // Reviewer preference, set on the Settings page: whether a case with no
+  // prior review opens with the model's predictions already visible, or
+  // hidden until the reviewer asks for them (closer to a blind review).
+  const [hidePredictionsByDefault] = useLocalStorageState(HIDE_PREDICTIONS_BY_DEFAULT_KEY, false);
+  const [predictionsRevealed, setPredictionsRevealed] = useState(true);
 
   const [noCancer, setNoCancer] = useState(false);
   const [codes, setCodes] = useState<CodeIn[]>([]);
@@ -197,22 +205,49 @@ export function AuditWorklist() {
       setCodes([]);
       setBaselineNoCancer(false);
       setBaselineCodes([]);
+      setPredictionsRevealed(true);
       return;
     }
     // A prior review takes precedence (editing the specialist's own earlier
-    // answer). Otherwise pre-fill from the registry's current codes — the
-    // reviewer approves them as-is or corrects them, rather than starting
-    // blank. ML has accepted this makes review non-blind for the evaluation
-    // batch; that's a deliberate tradeoff on their side, not a bug here.
-    const initialNoCancer = detail.review_exists ? (detail.review_no_cancer ?? false) : detail.registry_no_cancer;
+    // answer) and is always shown — the hide-by-default setting only applies
+    // to the *model's* predictions, not a human reviewer's own past answer.
+    // Otherwise, pre-fill from the registry's current codes — the reviewer
+    // approves them as-is or corrects them, rather than starting blank. ML
+    // has accepted this makes review non-blind for the evaluation batch;
+    // that's a deliberate tradeoff on their side. The hide-by-default setting
+    // lets a reviewer opt out of that by default and reveal predictions only
+    // when they choose to (see revealPredictions below).
+    const revealed = detail.review_exists || !hidePredictionsByDefault;
+    setPredictionsRevealed(revealed);
+    const initialNoCancer = detail.review_exists
+      ? (detail.review_no_cancer ?? false)
+      : revealed ? detail.registry_no_cancer : false;
     const initialCodes: CodeIn[] = detail.review_exists
       ? detail.review_codes.map((c) => ({ taxonomy_group: c.taxonomy_group, taxonomy_term: c.taxonomy_term }))
-      : detail.predicted_codes.map((c) => ({ taxonomy_group: c.cancer_type_name, taxonomy_term: c.predicted_term ?? '' }));
+      : revealed ? detail.predicted_codes.map((c) => ({ taxonomy_group: c.cancer_type_name, taxonomy_term: c.predicted_term ?? '' })) : [];
     setNoCancer(initialNoCancer);
     setCodes(initialCodes);
     setBaselineNoCancer(initialNoCancer);
     setBaselineCodes(initialCodes);
-  }, [detail]);
+  }, [detail, hidePredictionsByDefault]);
+
+  // Reveals the model's predictions for the current case. Only pre-fills the
+  // editable form from them if the reviewer hasn't already started their own
+  // answer — revealing is informational and must never silently overwrite a
+  // correction already in progress.
+  const revealPredictions = useCallback(() => {
+    if (!detail) return;
+    setPredictionsRevealed(true);
+    if (!noCancer && codes.length === 0) {
+      const initialCodes: CodeIn[] = detail.predicted_codes.map((c) => ({
+        taxonomy_group: c.cancer_type_name, taxonomy_term: c.predicted_term ?? '',
+      }));
+      setNoCancer(detail.registry_no_cancer);
+      setCodes(initialCodes);
+      setBaselineNoCancer(detail.registry_no_cancer);
+      setBaselineCodes(initialCodes);
+    }
+  }, [detail, noCancer, codes]);
 
   const isUnmodifiedFromBaseline = useMemo(() => {
     if (noCancer !== baselineNoCancer) return false;
@@ -531,7 +566,18 @@ export function AuditWorklist() {
                 </div>
               )}
 
-              {detail.predicted_codes.length > 0 ? (
+              {detail.predicted_codes.length === 0 && !detail.registry_no_cancer ? null : !predictionsRevealed ? (
+                <div>
+                  <p className="text-xs font-medium text-gray-500 mb-1">Current predictions</p>
+                  <button
+                    type="button"
+                    onClick={revealPredictions}
+                    className="text-xs font-medium text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Hidden — click to reveal
+                  </button>
+                </div>
+              ) : detail.predicted_codes.length > 0 ? (
                 <div>
                   <p className="text-xs font-medium text-gray-500 mb-1">Current predictions</p>
                   <ul className="text-sm text-gray-700 space-y-0.5">
@@ -549,9 +595,9 @@ export function AuditWorklist() {
                     ))}
                   </ul>
                 </div>
-              ) : detail.registry_no_cancer ? (
+              ) : (
                 <p className="text-xs text-gray-500">Registry: no reportable cancer.</p>
-              ) : null}
+              )}
 
               <div className="border-t border-gray-100 pt-3">
                 <p className="text-xs font-medium text-gray-500 mb-2">Gold review</p>

@@ -10,6 +10,7 @@ import pytest
 import torch
 
 from experiments.retrieve_rerank import batching, recall_metrics, report_text, retriever
+from experiments.retrieve_rerank import retriever_only_score as ros
 from experiments.retrieve_rerank.eval_recall import DEFAULT_MAX_LENGTH, trained_max_length
 from experiments.retrieve_rerank.openjev_pilot import chunk_sizes, read_done
 from experiments.retrieve_rerank.pilot_score import (case_view, ece, in_fit_half, make_predictions, probs,
@@ -189,6 +190,43 @@ def test_make_predictions_feed_the_verdict_scoring(tmp_path):
     labels = pd.DataFrame({"case_id": ["a", "b", "n"], "matched_term": ["t1", "t1", ""], "matched_group": ["G1", "G1", ""]})
     summary = verdict_summary(predictions, labels, ["a", "b", "n"], frozenset(), {"a": 1.0, "b": 1.0, "n": 1.0})
     assert summary["good"] == 1 and summary["false_negative"] == 1 and summary["false_positive"] == 0
+
+
+def test_wp14_gate_passes_only_cases_with_a_cancer_row():
+    baseline = pd.DataFrame({"case_id": ["rej", "rej2", "ok", "ok", "mixed", "mixed"],
+                             "predicted_group": ["Non-Cancer", "Non-Cancer", "G1", "G2", "Non-Cancer", "G1"]})
+    passed = ros.wp14_passes(baseline)
+    assert passed == {"ok", "mixed"}                      # only-Non-Cancer rows -> rejected
+    passes, threshold = ros.fit_gate(ros.WP14, [], passed)
+    assert threshold is None
+    assert [passes({"case_id": c}) for c in ("rej", "ok", "absent")] == [False, True, False]
+
+
+def test_retriever_views_sigmoid_rank_order_and_gold():
+    candidates = pd.DataFrame({"case_id": ["a", "a", "b"], "rank": ["2", "1", "1"], "term": ["t2", "t1", "t3"],
+                               "score": ["0.0", "2.0", "-2.0"]})
+    views = ros.retriever_views(candidates, {"a": frozenset({"t1"})})
+    assert views["a"]["terms"] == ["t1", "t2"] and views["a"]["gold"].tolist() == [True, False]
+    assert views["a"]["prob"] == pytest.approx([1 / (1 + math.exp(-2.0)), 0.5])
+    assert views["a"]["is_cancer"] and not views["b"]["is_cancer"]
+
+
+def test_retriever_only_predictions_top1_second_and_gate_rejection():
+    data = type("Data", (), {"term_group": {"t1": "G1", "t2": "G2"}, "term_code": {"t1": "c1", "t2": "c2"}})()
+    def view(case_id, is_cancer, probs):
+        return {"case_id": case_id, "is_cancer": is_cancer, "terms": ["t1", "t2"], "prob": np.array(probs),
+                "gold": np.array([True, False])}
+    views = [view("hi", 1, [0.9, 0.6]), view("lo", 1, [0.9, 0.1]), view("rej", 1, [0.9, 0.6]), view("neg", 0, [0.9, 0.6])]
+    predictions = ros.make_predictions(views, lambda v: v["case_id"] in {"hi", "lo", "neg"}, second=0.5, data=data)
+    terms = predictions.groupby("case_id")["predicted_term"].apply(list).to_dict()
+    assert terms == {"hi": ["t1", "t2"], "lo": ["t1"], "rej": ["Non-Cancer"], "neg": ["t1", "t2"]}
+    assert set(predictions.loc[predictions["case_id"] == "hi", "method"]) == {ros.METHOD}
+    labels = pd.DataFrame({"case_id": ["hi", "lo", "rej", "neg"], "matched_term": ["t1", "t1", "t1", ""],
+                           "matched_group": ["G1", "G1", "G1", ""]})
+    summary = verdict_summary(predictions, labels, ["hi", "lo", "rej", "neg"], frozenset(), dict.fromkeys(labels["case_id"], 1.0))
+    # hi: good + completely_off (t2 is in no gold group); lo: good; rej: FN; neg: 2 FP rows
+    assert summary["good"] == 2 and summary["completely_off"] == 1 and summary["false_negative"] == 1
+    assert summary["false_positive"] == 2
 
 
 def test_trained_max_length_from_train_log_else_default(tmp_path):

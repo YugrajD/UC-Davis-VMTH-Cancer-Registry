@@ -49,6 +49,12 @@ def in_fit_half(case_id: str) -> bool:
     return (int(hashlib.md5(case_id.encode()).hexdigest(), 16) >> 1) % 2 == 0
 
 
+def q1_p_yes(record: dict) -> float:
+    """Q1 probability = P_ent(yes) / (P_ent(yes) + P_ent(no))."""
+    yes, no = record["q1_yes"][ENT], record["q1_no"][ENT]
+    return yes / max(yes + no, 1e-9)
+
+
 def case_view(record: dict, variant: str, n: int) -> dict | None:
     """One case's candidates sorted by P(entailment), for the retriever or oracle candidate set."""
     cands = [c for c in record["candidates"]
@@ -57,10 +63,9 @@ def case_view(record: dict, variant: str, n: int) -> dict | None:
         return None
     ent = np.array([c["probs"][ENT] for c in cands])
     order = np.argsort(-ent, kind="stable")
-    yes, no = record["q1_yes"][ENT], record["q1_no"][ENT]
     return {"case_id": record["case_id"], "is_cancer": record["is_cancer"],
             "terms": [cands[i]["term"] for i in order], "ent": ent[order],
-            "gold": np.array([cands[i]["gold"] for i in order]), "p_yes": yes / max(yes + no, 1e-9)}
+            "gold": np.array([cands[i]["gold"] for i in order]), "p_yes": q1_p_yes(record)}
 
 
 def probs(view: dict, temperature: float) -> np.ndarray:
@@ -138,6 +143,15 @@ def verdict_summary(predictions: pd.DataFrame, labels: pd.DataFrame, case_ids, u
     summary["natural_mix"] = {v: verdicts.share(table, (v,), "w") for v in verdicts.VERDICTS}
     summary["natural_mix"]["good_plus_slight"] = verdicts.share(table, verdicts.GOOD_PLUS_SLIGHT, "w")
     return summary
+
+
+def natural_mix_weights(is_cancer: dict[str, int], data) -> dict[str, float]:
+    """Per-case weights re-weighting a sample's cancer / non-cancer shares to the calibration population's."""
+    n_cancer_pop = len(data.calibration_cancer_ids())
+    n_non_pop = len(data.calibration_ids) - n_cancer_pop
+    n_cancer_s = sum(is_cancer.values())
+    return {c: (n_cancer_pop / n_cancer_s if cancer else n_non_pop / (len(is_cancer) - n_cancer_s))
+            for c, cancer in is_cancer.items()}
 
 
 def score_variant(views: list[dict], data, labels, weights: dict) -> dict:
@@ -218,8 +232,7 @@ def main() -> None:
     n_cancer_pop = len(data.calibration_cancer_ids())
     n_non_pop = len(data.calibration_ids) - n_cancer_pop
     n_cancer_s = sum(r["is_cancer"] for r in records)
-    weights = {r["case_id"]: (n_cancer_pop / n_cancer_s if r["is_cancer"] else n_non_pop / (len(records) - n_cancer_s))
-               for r in records}
+    weights = natural_mix_weights({r["case_id"]: r["is_cancer"] for r in records}, data)
 
     seconds = np.array([r["seconds"] for r in records])
     result = {"n": args.n, "tag": tag, "n_cases": len(records), "n_cancer": n_cancer_s,

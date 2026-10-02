@@ -5,6 +5,8 @@
                        to the report_mapping predictions CSV whose case_presence_prob is the gate)   OR   head.pt,
                        source.json, train_log.json (shared gate: a head on the retriever's pooled vector; the
                        encoder is the retriever's, so one pass gives both the gate and the term probabilities)
+                       OR   gate_source.json pointing at retriever/gate_head.pt (joint model: the retriever/ dir is the
+                       whole jointly trained model, one encoder and both heads)
   thresholds.json      {gate_t, tau, rho}
   uncommon_groups.txt  the list the scoring ruler uses
   manifest.json        generation_id, sources, seeds, split/labels ids, calibration block, sha256 per file
@@ -22,7 +24,7 @@ from pathlib import Path
 from bronze_rr.decide import Thresholds
 from generations.manifest import read_manifest, sha256_file, verify_manifest, write_manifest
 
-COPIED_FILES = ("head.pt", "terms.json", "train_log.json")
+COPIED_FILES = ("head.pt", "terms.json", "train_log.json", "gate_head.pt")
 SHARED_GATE_FILES = ("head.pt", "source.json", "train_log.json")
 
 
@@ -45,15 +47,23 @@ def _seed_of(model_dir: Path) -> str | None:
 
 def write_generation(root: Path, *, generation_id: str, retriever_dir: Path, gate_dir: Path | None,
                      old_gate_csv: Path | None, thresholds: Thresholds, calibration: dict, split_id: str,
-                     silver_id: str, uncommon_groups_txt: Path, max_length: int, shared_gate_dir: Path | None = None) -> Path:
+                     silver_id: str, uncommon_groups_txt: Path, max_length: int, shared_gate_dir: Path | None = None,
+                     joint_gate: bool = False) -> Path:
     """Write the generation directory and its manifest; returns the directory. Exactly one of ``gate_dir`` (new
-    gate), ``old_gate_csv`` (old gate) and ``shared_gate_dir`` (head on the retriever's encoder) is given."""
-    if sum(x is not None for x in (gate_dir, old_gate_csv, shared_gate_dir)) != 1:
-        raise ValueError("give exactly one of gate_dir, old_gate_csv and shared_gate_dir")
+    gate), ``old_gate_csv`` (old gate), ``shared_gate_dir`` (head on the retriever's encoder) and ``joint_gate``
+    (``retriever_dir`` is a jointly trained model that holds the gate head, gate_head.pt) is given."""
+    if sum(x is not None for x in (gate_dir, old_gate_csv, shared_gate_dir)) + joint_gate != 1:
+        raise ValueError("give exactly one of gate_dir, old_gate_csv, shared_gate_dir and joint_gate")
     directory = root / generation_id
     directory.mkdir(parents=True)
     _copy_model(retriever_dir, directory / "retriever")
-    if shared_gate_dir is not None:
+    if joint_gate:
+        (directory / "gate").mkdir()
+        source = {"kind": "joint_head", "path": "retriever/gate_head.pt",
+                  "sha256": sha256_file(directory / "retriever" / "gate_head.pt")}
+        (directory / "gate" / "gate_source.json").write_text(json.dumps(source, indent=2) + "\n", encoding="utf-8")
+        gate = {"kind": "joint_head", "source": str(retriever_dir), "seed": _seed_of(retriever_dir)}
+    elif shared_gate_dir is not None:
         (directory / "gate").mkdir()
         for name in SHARED_GATE_FILES:
             shutil.copy2(shared_gate_dir / name, directory / "gate" / name)

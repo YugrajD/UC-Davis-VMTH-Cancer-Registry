@@ -7,6 +7,8 @@
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py bakeoff
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py freeze --gate old --retriever-dir ml/output/rr_phase0/bce
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py train-shared-gate --retriever-dir ml/output/rr_phase0/bce
+  ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py train-joint
+  ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py freeze --gate joint --retriever-dir ml/output/rr_phase1/joint
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py time-cpu --n 50
 
 Outputs go under config.RR_PHASE1_DIR. ``--limit N`` is a smoke: N cases, and everything goes under RR_PHASE1_DIR/_smoke.
@@ -24,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch  # noqa: F401  must load before scipy/sklearn on Windows (libomp DLL clash, WinError 1114)
 
 import config
-from bronze_rr import bakeoff, freeze, ruler, scoring, shared_gate, timing, train
+from bronze_rr import bakeoff, freeze, joint, joint_train, ruler, scoring, shared_gate, timing, train
 from bronze_rr.data import SILVER_ID, load_data
 from evaluation import silver_eval
 from report_mapping.training.recipe import PRODUCTION_SEED
@@ -59,6 +61,15 @@ def _cmd_train_gate(args: argparse.Namespace) -> int:
 def _cmd_train_retriever(args: argparse.Namespace) -> int:
     out = args.out or _root(args.limit) / f"retriever_seed{args.seed}"
     print(json.dumps(train.train_retriever(load_data(), out, _recipe(args)), indent=1))
+    return 0
+
+
+def _cmd_train_joint(args: argparse.Namespace) -> int:
+    out = args.out or _root(args.limit) / joint.DIR_NAME
+    recipe = joint_train.JointRecipe(epochs=args.epochs, max_length=args.max_length, token_budget=args.token_budget,
+                                     lr=args.lr, seed=args.seed, limit_train=args.limit, max_steps=args.max_steps,
+                                     gate_weight=args.gate_weight)
+    print(json.dumps(joint_train.train_joint(load_data(), out, recipe), indent=1))
     return 0
 
 
@@ -136,6 +147,11 @@ def main() -> int:
     _add_training_flags(p)
     p.set_defaults(func=_cmd_train_retriever)
 
+    p = sub.add_parser("train-joint", help="train ONE ModernBERT for the terms and the gate into rr_phase1/joint")
+    _add_training_flags(p)
+    p.add_argument("--gate-weight", type=float, default=1.0, help="total loss = term loss + gate_weight * gate loss")
+    p.set_defaults(func=_cmd_train_joint)
+
     p = sub.add_parser("train-shared-gate", help="train a gate head on a retriever's pooled vectors into rr_phase1/gate_shared_<tag>")
     p.add_argument("--retriever-dir", type=Path, required=True)
     p.add_argument("--seed", type=int, default=PRODUCTION_SEED)
@@ -167,7 +183,7 @@ def main() -> int:
     p.set_defaults(func=_cmd_bakeoff)
 
     p = sub.add_parser("freeze", help="fit thresholds on the full calibration partition, write a generation and predictions")
-    p.add_argument("--gate", choices=("old", "new", "shared"), required=True)
+    p.add_argument("--gate", choices=("old", "new", "shared", "joint"), required=True)
     p.add_argument("--retriever-dir", type=Path, required=True)
     p.add_argument("--limit", type=int, default=0, help="smoke: first N cases per partition; output under _smoke")
     p.set_defaults(func=_cmd_freeze)

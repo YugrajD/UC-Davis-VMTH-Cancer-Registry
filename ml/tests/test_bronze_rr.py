@@ -14,8 +14,8 @@ import pytest
 import torch
 
 import config
-from bronze_rr import (bakeoff, calibrate, decide, encoder as enc, encoder_train, freeze, gate, generation, report_text,
-                       retriever, scoring, shared_gate)
+from bronze_rr import (bakeoff, calibrate, decide, encoder as enc, encoder_train, freeze, gate, generation, joint,
+                       joint_scoring, joint_train, report_text, retriever, scoring, shared_gate)
 from bronze_rr.decide import NEVER, Thresholds
 from bronze_rr.scoring import RetrieverScores
 from evaluation import verdicts
@@ -462,3 +462,321 @@ def test_freeze_with_the_shared_gate_writes_a_shared_head_generation_and_the_sam
     (retriever_dir / "encoder" / "model.safetensors").write_bytes(b"retrained in place")
     with pytest.raises(ValueError):   # the retriever is no longer the one the head was trained on
         freeze.run_freeze(data, labels, gate="shared", retriever_dir=retriever_dir, root=root, limit=1)
+
+
+# --- PooledClassifier: the two forward paths --------------------------------------------------------------------
+
+def test_forward_equals_forward_with_pooled_logits_bit_for_bit(tiny_bert_dir):
+    model = enc.PooledClassifier(enc.new_encoder(str(tiny_bert_dir)), 5).eval()
+    batch = enc.load_tokenizer(str(tiny_bert_dir))(["mast cell tumor present", "no evidence"], padding=True, return_tensors="pt")
+    ids, mask = batch["input_ids"], batch["attention_mask"]
+    assert mask.min() == 0                                          # the batch really is padded
+    with torch.no_grad():
+        pooled, logits = model.forward_with_pooled(ids, mask)
+        assert torch.equal(model(ids, mask), logits) and pooled.dtype == torch.float32
+
+
+# --- joint model: one encoder, a term head and a gate head ----------------------------------------------------------
+
+JOINT_TEXTS = ["mast cell tumor present", "no evidence of neoplasia", "carcinoma malignant with a longer sentence here"]
+MANY_TERMS = [f"x{i}" for i in range(60)]   # the score cache keeps the top 49, so the vocabulary needs more than that
+
+
+def _tiny_joint(tiny_bert_dir, terms=TERMS):
+    model = joint.JointClassifier(enc.new_encoder(str(tiny_bert_dir)), terms)
+    return model, enc.load_tokenizer(str(tiny_bert_dir))
+
+
+def _loss_inputs(seed=0):
+    g = torch.Generator().manual_seed(seed)
+    cancer = torch.tensor([1.0, 0.0, 1.0, 0.0, 0.0, 1.0])
+    term_logits, gate_logits = torch.randn(6, 4, generator=g), torch.randn(6, generator=g)
+    term_targets = (torch.rand(6, 4, generator=g) < 0.4).float()
+    return term_logits, gate_logits, term_targets, cancer
+
+
+def test_joint_loss_is_term_bce_over_cancer_cases_plus_gate_bce_over_all_cases():
+    term_logits, gate_logits, term_targets, cancer = _loss_inputs()
+    term, gate_loss = joint.step_loss(term_logits, gate_logits, term_targets, cancer, cancer, 3, 6)
+    bce = torch.nn.functional.binary_cross_entropy_with_logits
+    by_hand_term = sum(bce(term_logits[i], term_targets[i], reduction="sum") for i in (0, 2, 5)) / 3
+    by_hand_gate = sum(bce(gate_logits[i], cancer[i]) for i in range(6)) / 6
+    assert term.item() == pytest.approx(by_hand_term.item()) and gate_loss.item() == pytest.approx(by_hand_gate.item())
+
+
+def test_non_cancer_cases_contribute_no_term_loss_or_gradient_but_do_train_the_gate():
+    term_logits, gate_logits, term_targets, cancer = _loss_inputs()
+    base, _ = joint.step_loss(term_logits, gate_logits, term_targets, cancer, cancer, 3, 6)
+    scrambled = term_targets.clone()
+    scrambled[cancer == 0] = 1.0 - scrambled[cancer == 0]            # whatever a non-cancer row holds, it is ignored
+    assert joint.step_loss(term_logits, gate_logits, scrambled, cancer, cancer, 3, 6)[0].item() == base.item()
+
+    term_logits, gate_logits = term_logits.clone().requires_grad_(), gate_logits.clone().requires_grad_()
+    term, _ = joint.step_loss(term_logits, gate_logits, term_targets, cancer, cancer, 3, 6)
+    term.backward()
+    assert (term_logits.grad[cancer == 0] == 0).all() and (term_logits.grad[cancer == 1] != 0).any()
+    assert gate_logits.grad is None                                   # the term loss does not touch the gate head
+    term_logits.grad = None
+    _, gate_loss = joint.step_loss(term_logits, gate_logits, term_targets, cancer, cancer, 3, 6)
+    gate_loss.backward()
+    assert (gate_logits.grad != 0).all() and term_logits.grad is None
+
+
+def test_a_step_without_cancer_cases_has_zero_term_loss():
+    term_logits, gate_logits, term_targets, _ = _loss_inputs()
+    none = torch.zeros(6)
+    term, gate_loss = joint.step_loss(term_logits, gate_logits, term_targets * 0, none, none, 0, 6)
+    assert term.item() == 0.0 and gate_loss.item() > 0
+
+
+def test_accumulating_micro_batches_equals_the_whole_step_loss_and_gradient():
+    term_logits, gate_logits, term_targets, cancer = _loss_inputs()
+
+    def run(micros):
+        t, g = term_logits.clone().requires_grad_(), gate_logits.clone().requires_grad_()
+        term_sum = gate_sum = 0.0
+        for rows in micros:
+            term, gate_loss = joint.step_loss(t[rows], g[rows], term_targets[rows], cancer[rows], cancer[rows], 3, 6)
+            (term + 0.7 * gate_loss).backward()
+            term_sum, gate_sum = term_sum + term.item(), gate_sum + gate_loss.item()
+        return term_sum, gate_sum, t.grad, g.grad
+
+    whole = run([[0, 1, 2, 3, 4, 5]])
+    split = run([[0, 1, 2], [3, 4], [5]])
+    assert split[0] == pytest.approx(whole[0]) and split[1] == pytest.approx(whole[1])
+    assert torch.allclose(split[2], whole[2], atol=1e-7) and torch.allclose(split[3], whole[3], atol=1e-7)
+
+
+def test_heldout_metrics_gate_auc_loss_term_top1_and_pair_recall_at_20():
+    base = np.arange(30, 0, -1, dtype=np.float32)               # term index i has rank i
+    term_logits = np.stack([base, base, base])
+    gate_logits, targets = np.array([3.0, 1.0, -2.0], dtype=np.float32), np.array([1.0, 1.0, 0.0], dtype=np.float32)
+    gold = [frozenset({0, 19}), frozenset({5, 20}), frozenset()]       # two cancer cases, then a non-cancer case
+    m = joint_train.heldout_metrics(term_logits, gate_logits, targets, gold)
+    assert m["heldout_term_top1"] == 0.5 and m["heldout_term_pair_recall_at_20"] == 0.75   # 3 of 4 gold pairs in the top 20
+    assert m["heldout_gate_auc"] == 1.0
+    expected = np.mean(np.logaddexp(0, gate_logits) - targets * gate_logits)
+    assert m["heldout_gate_loss"] == pytest.approx(float(expected), abs=1e-6)
+
+
+def test_joint_biases_start_at_the_train_priors(tiny_bert_dir):
+    model, _ = _tiny_joint(tiny_bert_dir)
+    freq = torch.tensor([0.5, 0.1, 0.0, 1.0])
+    model.init_biases(freq, 0.3)
+    assert torch.sigmoid(model.head.bias).tolist() == pytest.approx([0.5, 0.1, 1e-6, 1 - 1e-6], abs=1e-6)
+    assert torch.sigmoid(model.gate_head.bias).item() == pytest.approx(0.3, abs=1e-6)
+
+
+def test_joint_save_load_round_trip_is_identical_and_the_directory_is_also_a_retriever(tmp_path, tiny_bert_dir):
+    model, tokenizer = _tiny_joint(tiny_bert_dir)
+    model.init_biases(torch.tensor([0.1, 0.2, 0.3, 0.4]), 0.3)
+    model.save(tmp_path / "j", tokenizer)
+    assert {p.name for p in (tmp_path / "j").iterdir()} == {"encoder", "head.pt", "gate_head.pt", "terms.json"}
+    term, gate_logit, _ = joint_scoring.logits_for(model, tokenizer, JOINT_TEXTS, 64, 40, "cpu")
+
+    loaded, loaded_tokenizer = joint.load_joint(tmp_path / "j")
+    term2, gate_logit2, _ = joint_scoring.logits_for(loaded, loaded_tokenizer, JOINT_TEXTS, 64, 40, "cpu")
+    assert loaded.terms == TERMS and np.array_equal(term, term2) and np.array_equal(gate_logit, gate_logit2)
+
+    as_retriever, retriever_tokenizer = retriever.load_retriever(tmp_path / "j")   # head.pt is the term head
+    only_terms, _ = scoring.logits_for(as_retriever, retriever_tokenizer, JOINT_TEXTS, 64, 40, "cpu")
+    assert np.array_equal(only_terms, term)
+
+
+def test_one_joint_pass_fills_both_caches_in_the_existing_formats(tmp_path, tiny_bert_dir, monkeypatch):
+    model, tokenizer = _tiny_joint(tiny_bert_dir, MANY_TERMS)
+    model_dir = tmp_path / "p1" / "joint"
+    model.save(model_dir, tokenizer)
+    (model_dir / "train_log.json").write_text('{"summary": {"args": {"max_length": "64"}}}', encoding="utf-8")
+    ids = ["a", "b", "c"]
+    data = SimpleNamespace(reports=None, ids_for=lambda partition: ids)
+    monkeypatch.setattr(joint_scoring.report_text, "build_report_texts", lambda reports: dict(zip(ids, JOINT_TEXTS)))
+    monkeypatch.setattr(joint_scoring.joint, "load_joint", lambda directory: (model, tokenizer))
+    encoder_calls = []
+    model.encoder.register_forward_hook(lambda *a: encoder_calls.append(1))
+    out = tmp_path / "scores"
+
+    scores, gate_by_case = joint_scoring.score(model_dir, data, "calibration", out_dir=out, device="cpu")
+    assert len(encoder_calls) == 1                                    # one encoder pass for both outputs
+    retriever_csv = scoring.cache_path("retriever", model_dir, "calibration", out)
+    gate_csv = scoring.cache_path("gate", model_dir, "calibration", out)
+    assert retriever_csv.name == "retriever_p1-joint_calibration.csv" and gate_csv.name == "gate_p1-joint_calibration.csv"
+    frame = pd.read_csv(retriever_csv, dtype={"case_id": str})
+    assert list(frame.columns) == ["case_id"] + [f"t{k:02d}" for k in range(49)] + [f"p{k:02d}" for k in range(49)]
+    assert list(pd.read_csv(gate_csv).columns) == ["case_id", "prob"]
+
+    term, gate_logit, _ = joint_scoring.logits_for(model, tokenizer, JOINT_TEXTS, 64, 32768, "cpu")
+    assert scores.case_ids == ids and scores.terms == MANY_TERMS and scores.term_idx[:, 0].tolist() == term.argmax(1).tolist()
+    assert [gate_by_case[c] for c in ids] == pytest.approx(scoring.sigmoid(gate_logit).tolist(), abs=1e-6)
+
+    monkeypatch.setattr(joint_scoring.joint, "load_joint", lambda directory: pytest.fail("a cache hit must not rerun the model"))
+    again, gate_again = joint_scoring.score(model_dir, data, "calibration", out_dir=out, device="cpu")
+    assert again.term_idx.tolist() == scores.term_idx.tolist() and gate_again == gate_by_case
+
+    kept = retriever_csv.read_bytes()
+    gate_csv.unlink()
+    monkeypatch.setattr(joint_scoring.joint, "load_joint", lambda directory: (model, tokenizer))
+    joint_scoring.score(model_dir, data, "calibration", out_dir=out, device="cpu")
+    assert gate_csv.is_file() and retriever_csv.read_bytes() == kept     # only the missing cache is written
+
+
+def _joint_data(n_plain=100, n_cancer=60):
+    ids = [f"n{i}" for i in range(n_plain)] + [f"c{i}" for i in range(n_cancer)]
+    targets = np.array([0.0] * n_plain + [1.0] * n_cancer, dtype=np.float32)
+    order = np.random.default_rng(0).permutation(len(ids))
+    ids, targets = [ids[i] for i in order], targets[order]
+    gold = {c: frozenset({"t1", "t2"} if int(c[1:]) % 2 else {"t3"}) for c in ids if c.startswith("c")}
+    return SimpleNamespace(gate_ids=ids, gate_targets=targets, gold=gold, vocab=TERMS, reports=None)
+
+
+JOINT_DATA = _joint_data()
+
+
+def _patch_joint_training(monkeypatch, tiny_bert_dir):
+    """Everything train_joint needs on CPU, with ``fit`` replaced by a recorder; returns (record, model)."""
+    model, tokenizer = _tiny_joint(tiny_bert_dir)
+    record = {"train_texts": [], "held_texts": []}
+    monkeypatch.setattr(joint_train.report_text, "build_report_texts", lambda reports: {c: c for c in JOINT_DATA.gate_ids})
+    monkeypatch.setattr(joint_train.enc, "load_tokenizer", lambda: tokenizer)
+    monkeypatch.setattr(joint_train.joint, "new_joint", lambda terms: model)
+    monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", lambda *a, **k: None)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda *a, **k: 0)
+    real_encode, real_logits = joint_train.batching.encode_reports, joint_scoring.logits_for
+
+    def encode_recording_the_first_call(tok, texts, max_length):   # the first call is the training set
+        if not record["train_texts"]:
+            record["train_texts"].extend(texts)
+        return real_encode(tok, texts, max_length)
+
+    monkeypatch.setattr(joint_train.batching, "encode_reports", encode_recording_the_first_call)
+    monkeypatch.setattr(joint_scoring, "logits_for",
+                        lambda m, tok, texts, *a: record["held_texts"].extend(texts) or real_logits(m, tok, texts, *a))
+
+    def fake_fit(m, tok, token_ids, term_targets, gate_targets, recipe, on_epoch_end, device="cuda"):
+        record.update(n=len(token_ids), term_targets=term_targets, gate_targets=gate_targets)
+        return [], [{"epoch": 0, **on_epoch_end(0)}]
+
+    monkeypatch.setattr(joint_train, "fit", fake_fit)
+    return record, model
+
+
+def test_train_joint_excludes_the_gate_holdout_from_both_heads_and_logs_heldout_metrics(tmp_path, tiny_bert_dir, monkeypatch):
+    record, model = _patch_joint_training(monkeypatch, tiny_bert_dir)
+    out = tmp_path / "joint"
+    summary = joint_train.train_joint(JOINT_DATA, out, joint_train.JointRecipe(), device="cpu")
+
+    _, held_idx = gate.split_holdout(JOINT_DATA.gate_targets)           # the gate's fixed-seed stratified 5%
+    held_ids = [JOINT_DATA.gate_ids[i] for i in held_idx]
+    assert record["held_texts"] == held_ids and len(held_ids) == 8       # 5% of 100 plain + 5% of 60 cancer
+    assert set(record["train_texts"]) == set(JOINT_DATA.gate_ids) - set(held_ids) and record["n"] == 152
+    # one training set feeds both losses: row i of the term targets and of the gate targets is train_texts[i]
+    train_ids = record["train_texts"]
+    assert record["gate_targets"].tolist() == [1.0 if c.startswith("c") else 0.0 for c in train_ids]
+    expected = np.zeros((len(train_ids), len(TERMS)), dtype=np.float32)
+    for row, case_id in enumerate(train_ids):
+        for term in JOINT_DATA.gold.get(case_id, ()):
+            expected[row, TERMS.index(term)] = 1.0
+    assert np.array_equal(record["term_targets"], expected)
+
+    fit_cancer = [c for c in train_ids if c.startswith("c")]
+    freq = np.mean([[t in JOINT_DATA.gold[c] for t in TERMS] for c in fit_cancer], axis=0)
+    assert torch.sigmoid(model.head.bias).tolist() == pytest.approx(np.clip(freq, 1e-6, 1 - 1e-6).tolist(), abs=1e-5)
+    assert torch.sigmoid(model.gate_head.bias).item() == pytest.approx(len(fit_cancer) / len(train_ids), abs=1e-5)
+
+    log = json.loads((out / "train_log.json").read_text(encoding="utf-8"))
+    assert {"heldout_gate_auc", "heldout_gate_loss", "heldout_term_top1", "heldout_term_pair_recall_at_20"} <= set(log["epochs"][0])
+    assert summary["train_cases"] == 152 and summary["heldout_cases"] == 8 and summary["train_cancer_cases"] == len(fit_cancer)
+    assert log["summary"]["args"]["gate_weight"] == "1.0" and scoring.trained_max_length(out) == 4096
+    assert {p.name for p in out.iterdir()} == {"encoder", "head.pt", "gate_head.pt", "terms.json", "train_log.json"}
+    with pytest.raises(SystemExit, match="already holds"):
+        joint_train.train_joint(JOINT_DATA, out, joint_train.JointRecipe(), device="cpu")
+
+
+def test_train_joint_refuses_a_case_the_gate_and_the_silver_terms_disagree_on(tmp_path, tiny_bert_dir, monkeypatch):
+    _patch_joint_training(monkeypatch, tiny_bert_dir)
+    broken = SimpleNamespace(**{**vars(JOINT_DATA), "gold": dict(list(JOINT_DATA.gold.items())[1:])})
+    with pytest.raises(ValueError, match="disagree"):
+        joint_train.train_joint(broken, tmp_path / "joint", joint_train.JointRecipe(), device="cpu")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="the joint loop autocasts on CUDA")
+def test_joint_fit_runs_with_micro_batches_and_logs_both_losses(tiny_bert_dir):
+    model, tokenizer = _tiny_joint(tiny_bert_dir)
+    model.cuda()
+    texts = ["mast cell tumor present", "no evidence of neoplasia", "carcinoma malignant", "benign biopsy specimen"] * 4
+    token_ids = tokenizer(texts)["input_ids"]
+    gate_targets = np.array([1.0, 0.0, 1.0, 0.0] * 4, dtype=np.float32)
+    term_targets = np.zeros((16, 4), dtype=np.float32)
+    term_targets[gate_targets == 1, 0] = 1.0
+    recipe = joint_train.JointRecipe(epochs=2, lr=1e-4, batch_size=4, token_budget=16, seed=0, gate_weight=0.5)
+    steps, epochs = joint_train.fit(model, tokenizer, token_ids, term_targets, gate_targets, recipe, lambda e: {"marker": 1.0})
+    assert len(steps) == 8 and [e["epoch"] for e in epochs] == [0, 1] and all(e["marker"] == 1.0 for e in epochs)
+    assert all(np.isfinite(e["train_term_loss"]) and np.isfinite(e["train_gate_loss"]) for e in epochs)
+    assert all(s["loss"] == pytest.approx(s["term_loss"] + 0.5 * s["gate_loss"]) for s in steps)
+
+
+def test_bakeoff_adds_the_joint_model_as_one_system_paired_only_with_itself(tmp_path, monkeypatch):
+    root = tmp_path / "p1"
+    seed42 = _fake_retriever(tmp_path / "p0" / "bce", b"seed42")
+    seed2 = _fake_retriever(root / "retriever_seed2", b"seed2")
+    joint_dir = _fake_retriever(root / "joint", b"joint")
+    for directory in (seed42, seed2):
+        (directory / "train_log.json").write_text("{}", encoding="utf-8")
+    systems, gate_calls = _stub_bakeoff(monkeypatch, tmp_path)
+    joint_calls = []
+    monkeypatch.setattr(joint_scoring, "score", lambda directory, *a, **k: joint_calls.append(directory.name) or ("jscores", {}))
+    data = SimpleNamespace(split_id="s", split_cases={"calibration": frozenset()}, partition_ids={"calibration": []})
+
+    bakeoff.run_bakeoff(data, None, root=root)                          # not trained yet (no train_log.json): no joint row
+    assert systems == [("old", "seed42"), ("old", "seed2")] and joint_calls == []
+
+    (joint_dir / "train_log.json").write_text("{}", encoding="utf-8")
+    systems.clear()
+    result = bakeoff.run_bakeoff(data, None, root=root)
+    assert systems == [("old", "seed42"), ("old", "seed2"), ("joint", "joint")]    # never ("old", "joint") or ("joint", "seed2")
+    assert joint_calls == ["joint"] and gate_calls == []
+    assert [(s["gate"], s["retriever"]) for s in result["systems"]][-1] == ("joint", "joint")
+    assert "joint" not in bakeoff.available_retrievers(root)
+
+
+def test_freeze_with_the_joint_model_writes_a_joint_head_generation_and_the_same_prediction_format(tmp_path, monkeypatch):
+    scores, gate_probs, has_text, labels, universe = _calibration_fixture()
+    root = tmp_path / "p1"
+    joint_dir = root / "joint"
+    _fake_model(joint_dir)
+    uncommon = tmp_path / "u.txt"
+    uncommon.write_text("G3\n", encoding="utf-8")
+    monkeypatch.setattr(config, "RR_PHASE1_UNCOMMON_GROUPS_TXT", uncommon)
+    monkeypatch.setattr(freeze, "load_uncommon_groups", lambda: UNCOMMON)
+    scored_partitions = []
+    monkeypatch.setattr(joint_scoring, "score",
+                        lambda directory, data, partition, **k: scored_partitions.append(partition) or (scores, gate_probs))
+    monkeypatch.setattr(scoring, "retriever_scores", lambda *a, **k: scores)
+    data = SimpleNamespace(split_id="s", silver_id="v", split_cases={"calibration": universe}, has_text=has_text,
+                           term_info=TERM_INFO)
+
+    with pytest.raises(SystemExit, match="not a jointly trained model"):
+        freeze.run_freeze(data, labels, gate="joint", retriever_dir=joint_dir, root=root, limit=1)
+    (joint_dir / "gate_head.pt").write_bytes(b"gate head")
+    result = freeze.run_freeze(data, labels, gate="joint", retriever_dir=joint_dir, root=root, limit=1)
+
+    assert scored_partitions == ["all"]                                  # one pass gives both outputs
+    manifest, thresholds = generation.load_generation_info(Path(result["generation_dir"]))
+    assert manifest["gate"] == {"kind": "joint_head", "source": str(joint_dir), "seed": "7"}
+    assert {f for f in manifest["files"] if f.startswith("gate/")} == {"gate/gate_source.json"}
+    assert {"retriever/encoder/model.safetensors", "retriever/head.pt", "retriever/gate_head.pt",
+            "retriever/terms.json"} <= set(manifest["files"])
+    source = json.loads((Path(result["generation_dir"]) / "gate" / "gate_source.json").read_text(encoding="utf-8"))
+    assert source["kind"] == "joint_head" and source["sha256"] == manifest["files"]["retriever/gate_head.pt"]
+    assert thresholds.as_dict() == result["thresholds"]
+    predictions = pd.read_csv(result["predictions_csv"], dtype=str, keep_default_na=False)
+    assert list(predictions.columns) == decide.COLUMNS == PRODUCTION_COLUMNS
+    assert set(predictions["method"]) <= {"retriever_top1", "rejected_by_case_presence"}
+
+
+def test_write_generation_refuses_a_joint_gate_together_with_another_gate_source(tmp_path):
+    with pytest.raises(ValueError, match="exactly one"):
+        generation.write_generation(tmp_path, generation_id="rr-x", retriever_dir=tmp_path, gate_dir=tmp_path,
+                                    old_gate_csv=None, thresholds=Thresholds(0.5, 0.5, 0.5), calibration={},
+                                    split_id="s", silver_id="v", uncommon_groups_txt=tmp_path, max_length=1,
+                                    joint_gate=True)

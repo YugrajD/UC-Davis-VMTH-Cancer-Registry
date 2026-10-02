@@ -5,6 +5,8 @@ and each available retriever seed (and, for a "shared" gate, a head on one retri
 the retriever it was trained on): fit {gate_t, tau, rho} on the fit half, score the eval half through
 ``silver_eval.evaluate`` with WP14's uncommon list, and report gate AUC, retriever top-1 accuracy, the objective
 along gate_t (the "no cliff" check) and the WP14 baseline on the same eval-half cases.
+The jointly trained model in <root>/joint (one encoder, two heads) is one more system, "joint + joint gate":
+it is paired only with itself.
 
 Fit / eval half: the repo's md5 half rule is constant over the calibration partition (calibration IS the sweep
 half), so, as in the Phase 0 pilot, the next md5 bit splits it.
@@ -21,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 import config
-from bronze_rr import calibrate, decide, gate as gate_mod, scoring, shared_gate
+from bronze_rr import calibrate, decide, gate as gate_mod, joint, joint_scoring, scoring, shared_gate
 from bronze_rr.data import BronzeData, load_uncommon_groups
 from bronze_rr.decide import Thresholds
 from bronze_rr.ruler import SUMMARY_HEADER, summary_row
@@ -116,6 +118,11 @@ def run_bakeoff(data: BronzeData, labels, *, root: Path = config.RR_PHASE1_DIR, 
         gate_by_case = shared_gate.gate_scores(gate_dir, directory, data, "calibration", out_dir=scores_dir, limit=limit)
         scores = scoring.retriever_scores(directory, data, "calibration", out_dir=scores_dir, limit=limit)
         systems.append(run_system("shared", gate_by_case, retriever_name, scores, data, labels, uncommon, limit))
+
+    joint_dir = root / joint.DIR_NAME  # one jointly trained model: its own retriever AND its own gate, paired with nothing else
+    if (joint_dir / "train_log.json").is_file():
+        joint_retriever, joint_gate = joint_scoring.score(joint_dir, data, "calibration", out_dir=scores_dir, limit=limit)
+        systems.append(run_system("joint", joint_gate, "joint", joint_retriever, data, labels, uncommon, limit))
 
     _, eval_universe = _half(data, False, limit)
     baseline = silver_eval.evaluate(silver_eval.read_predictions(OLD_GATE_CSV), labels, eval_universe, uncommon)["summary"]

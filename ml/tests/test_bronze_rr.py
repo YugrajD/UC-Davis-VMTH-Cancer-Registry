@@ -160,6 +160,83 @@ def test_fit_thresholds_returns_the_max_objective_with_good_tie_break_and_the_ga
     assert max(row["best_gs"] for row in fitted["curve"]) == pytest.approx(fitted["gs_share"])
 
 
+# --- calibrate: the FP cap ------------------------------------------------------------------------------------
+
+def _fp_trade_off_counts():
+    """3 cases whose verdicts depend on the gate: A cancer (gate .9), B non-cancer (gate .5), C cancer (gate .3).
+    Rejected: A -> FN, B -> nothing, C -> FN. Passed (top-1): A -> Good, B -> FP, C -> Good. Uncapped best is
+    gate_t .05 (G+S 2/3, FP 1/3); a low cap forces gate_t > .5 (A Good, C FN: G+S 1/2, FP 0)."""
+    counts = np.zeros((3, 3, 5), dtype=np.int64)
+    counts[calibrate.REJECT, 0, 4] = counts[calibrate.REJECT, 2, 4] = 1
+    for pattern in (calibrate.TOP1, calibrate.TOP2):
+        counts[pattern, 0, 0] = counts[pattern, 2, 0] = 1
+        counts[pattern, 1, 3] = 1
+    return calibrate.PatternCounts(np.array([0.9, 0.5, 0.3]), np.array([0.9, 0.9, 0.9]), np.array([0.05] * 3), counts,
+                                   np.zeros(5, dtype=np.int64))
+
+
+def test_fp_cap_excludes_points_over_the_cap_and_keeps_the_best_eligible_one():
+    pc = _fp_trade_off_counts()
+    uncapped = calibrate.fit_thresholds(pc)
+    assert uncapped["thresholds"].gate_t == 0.05 and uncapped["verdicts"]["false_positive_share"] == pytest.approx(1 / 3)
+
+    capped = calibrate.fit_thresholds(pc, 0.1)
+    best_key, best_th = None, None            # brute force over the eligible points, grid order, strict improvement
+    for gate_t in calibrate.GATE_GRID:
+        for tau in calibrate.TAU_GRID:
+            for rho in calibrate.RHO_GRID:
+                th = Thresholds(gate_t, tau, rho)
+                if pc.totals(th)[calibrate.FP_INDEX] / pc.totals(th).sum() > 0.1:
+                    continue
+                if best_key is None or pc.objective(th) > best_key:
+                    best_key, best_th = pc.objective(th), th
+    assert capped["thresholds"] == best_th == Thresholds(0.55, 0.1, 0.0)
+    assert (capped["gs_share"], capped["good_share"]) == pytest.approx((0.5, 0.5))
+    assert capped["verdicts"]["false_positive_share"] == 0.0
+    assert [row["eligible"] for row in capped["curve"]] == [g > 0.5 for g in calibrate.GATE_GRID]
+    for row in capped["curve"]:
+        assert (row["best_gs"] is None) == (not row["eligible"]) and (row["best_fp_share"] is None) == (not row["eligible"])
+        assert row["best_fp_share"] in (None, 0.0)
+
+
+def test_no_cap_and_a_cap_nothing_exceeds_give_the_uncapped_result():
+    scores, gate_probs, has_text, labels, universe = _calibration_fixture()
+    pc = calibrate.build_pattern_counts(scores, np.array([gate_probs[c] for c in scores.case_ids]), has_text, labels,
+                                        universe, UNCOMMON, TERM_INFO)
+    assert calibrate.fit_thresholds(pc, None) == calibrate.fit_thresholds(pc) == calibrate.fit_thresholds(pc, 1.0)
+    assert all(row["eligible"] for row in calibrate.fit_thresholds(pc)["curve"])
+
+
+def test_an_infeasible_fp_cap_raises_instead_of_relaxing():
+    pc = _fp_trade_off_counts()
+    pc = calibrate.PatternCounts(pc.gate_probs, pc.p1, pc.p2, pc.counts, np.array([0, 0, 0, 1, 0], dtype=np.int64))
+    assert calibrate.fit_thresholds(pc)["verdicts"]["false_positive"] >= 1     # every point carries a fixed FP row
+    with pytest.raises(ValueError, match="not relaxing the cap"):
+        calibrate.fit_thresholds(pc, 0.0)
+
+
+@pytest.mark.parametrize("cap", [None, 0.12])
+def test_fp_share_in_the_curve_and_the_chosen_verdicts_equal_verdicts_summarize(cap):
+    scores, gate_probs, has_text, labels, universe = _calibration_fixture()
+    pc = calibrate.build_pattern_counts(scores, np.array([gate_probs[c] for c in scores.case_ids]), has_text, labels,
+                                        universe, UNCOMMON, TERM_INFO)
+    fitted = calibrate.fit_thresholds(pc, cap)
+
+    def summary(th):
+        preds = decide.decide_all(scores, gate_probs, has_text, th, TERM_INFO, "g")
+        return verdicts.summarize(verdicts.score(labels[labels["case_id"].isin(universe)], preds, UNCOMMON))
+
+    chosen = fitted["thresholds"]
+    expected = summary(chosen)
+    assert fitted["verdicts"] == pytest.approx(expected) and fitted["verdicts"]["total"] == expected["total"]
+    assert fitted["verdicts"]["good_plus_slight_share"] == pytest.approx(fitted["gs_share"])
+    for row in fitted["curve"]:
+        if row["eligible"]:
+            assert row["best_fp_share"] == pytest.approx(summary(Thresholds(row["gate_t"], row["best_tau"], row["best_rho"]))["false_positive_share"])
+            assert cap is None or row["best_fp_share"] <= cap
+        assert row["at_chosen_fp_share"] == pytest.approx(summary(Thresholds(row["gate_t"], chosen.tau, chosen.rho))["false_positive_share"])
+
+
 def test_grids_contain_the_required_points():
     assert 0.8 in calibrate.GATE_GRID and calibrate.GATE_GRID[0] == 0.05 and calibrate.GATE_GRID[-1] == 0.95
     assert len(calibrate.GATE_GRID) == 19 and NEVER in calibrate.TAU_GRID and calibrate.TAU_GRID[0] == 0.1
@@ -780,3 +857,42 @@ def test_write_generation_refuses_a_joint_gate_together_with_another_gate_source
                                     old_gate_csv=None, thresholds=Thresholds(0.5, 0.5, 0.5), calibration={},
                                     split_id="s", silver_id="v", uncommon_groups_txt=tmp_path, max_length=1,
                                     joint_gate=True)
+
+
+def test_freeze_passes_the_fp_cap_through_and_records_it_with_the_in_sample_verdicts(tmp_path, monkeypatch):
+    scores, gate_probs, has_text, labels, universe = _calibration_fixture()
+    root = tmp_path / "p1"
+    joint_dir = root / "joint"
+    _fake_model(joint_dir)
+    (joint_dir / "gate_head.pt").write_bytes(b"gate head")
+    uncommon = tmp_path / "u.txt"
+    uncommon.write_text("G3\n", encoding="utf-8")
+    monkeypatch.setattr(config, "RR_PHASE1_UNCOMMON_GROUPS_TXT", uncommon)
+    monkeypatch.setattr(freeze, "load_uncommon_groups", lambda: UNCOMMON)
+    monkeypatch.setattr(joint_scoring, "score", lambda *a, **k: (scores, gate_probs))
+    monkeypatch.setattr(scoring, "retriever_scores", lambda *a, **k: scores)
+    ids = iter(["rr-a", "rr-b", "rr-c"])
+    monkeypatch.setattr(generation, "new_generation_id", lambda: next(ids))
+    caps, real_fit = [], calibrate.fit_thresholds
+    monkeypatch.setattr(calibrate, "fit_thresholds", lambda pc, cap=None: caps.append(cap) or real_fit(pc, cap))
+    data = SimpleNamespace(split_id="s", silver_id="v", split_cases={"calibration": universe}, has_text=has_text,
+                           term_info=TERM_INFO)
+
+    default = freeze.run_freeze(data, labels, gate="joint", retriever_dir=joint_dir, root=root, limit=1)
+    capped = freeze.run_freeze(data, labels, gate="joint", retriever_dir=joint_dir, root=root, limit=1, max_fp_share=0.12)
+    assert caps == [None, 0.12] and default["max_fp_share"] is None and capped["max_fp_share"] == 0.12
+
+    directory = Path(capped["generation_dir"])
+    recorded = json.loads((directory / "thresholds.json").read_text(encoding="utf-8"))
+    manifest, thresholds = generation.load_generation_info(directory)     # extra keys do not break the loader
+    assert thresholds.as_dict() == capped["thresholds"] == {k: recorded[k] for k in ("gate_t", "tau", "rho")}
+    verdict_record = capped["calibration_verdicts_in_sample"]
+    assert recorded["max_fp_share"] == manifest["calibration"]["max_fp_share"] == 0.12
+    assert recorded["calibration_verdicts_in_sample"] == manifest["calibration"]["chosen_verdicts_in_sample"] == verdict_record
+    assert verdict_record["false_positive_share"] <= 0.12 and verdict_record["good_plus_slight_share"] == capped["calibration_gs_share"]
+    assert capped["predictions_by_partition"] == {"calibration": {"rows": capped["prediction_rows"],
+                                                                  "cases": capped["cases_predicted"]}}
+    assert len(freeze.curve_table(capped).splitlines()) == 1 + len(calibrate.GATE_GRID)
+
+    with pytest.raises(ValueError, match="not relaxing the cap"):
+        freeze.run_freeze(data, labels, gate="joint", retriever_dir=joint_dir, root=root, limit=1, max_fp_share=-0.1)

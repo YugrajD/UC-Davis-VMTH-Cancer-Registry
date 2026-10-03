@@ -371,6 +371,7 @@ one), `score`, `bakeoff` (calibration only; also scores every `gate_shared_*` he
 | `--partition` | `calibration` | `score`: `train`, `calibration`, `test` or `all` |
 | `--i-understand-this-spends-the-test-set` | off | `score`: required for `test` and `all` |
 | `--gate` | required | `freeze`: `old` (WP14 gate probabilities), `new` (`rr_phase1/gate`), `shared` (`rr_phase1/gate_shared_<retriever tag>`) or `joint` (`--retriever-dir` is the `rr_phase1/joint` model) |
+| `--max-fp-share` | none | `freeze`: fit the thresholds only among grid points whose false-positive share of the calibration verdict rows is <= this fraction (e.g. `0.0293`); errors if no point qualifies. Recorded in `thresholds.json` and the manifest with the in-sample calibration verdicts |
 | `--limit` | 0 | smoke: first N cases (`train-gate`, `train-retriever`, `train-joint`, `train-shared-gate`: first N train cases) |
 
 ## `split.py`

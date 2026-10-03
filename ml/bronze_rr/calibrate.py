@@ -27,6 +27,7 @@ RHO_GRID = (0.0, 0.25, 0.5, 0.75)
 OBJECTIVE = ("G+S share of the evaluation.verdicts table vs the silver labels on the calibration cases; "
              "ties -> higher Good share, then first grid point (gate_t, tau, rho order)")
 
+FP_INDEX = verdicts.VERDICTS.index("false_positive")
 REJECT, TOP1, TOP2 = 0, 1, 2
 _PATTERN_THRESHOLDS = {REJECT: Thresholds(2.0, NEVER, 0.0), TOP1: Thresholds(0.0, NEVER, 0.0), TOP2: Thresholds(0.0, 0.0, 0.0)}
 
@@ -51,9 +52,29 @@ class PatternCounts:
 
     def objective(self, th: Thresholds) -> tuple[float, float]:
         """(G+S share, Good share) of the verdict rows at ``th``."""
-        t = self.totals(th)
-        n = int(t.sum())
-        return ((int(t[0] + t[1]) / n, int(t[0]) / n) if n else (0.0, 0.0))
+        return _objective(self.totals(th))
+
+
+def _objective(totals: np.ndarray) -> tuple[float, float]:
+    n = int(totals.sum())
+    return ((int(totals[0] + totals[1]) / n, int(totals[0]) / n) if n else (0.0, 0.0))
+
+
+def _fp_share(totals: np.ndarray) -> float:
+    n = int(totals.sum())
+    return int(totals[FP_INDEX]) / n if n else 0.0
+
+
+def verdict_summary(totals: np.ndarray) -> dict:
+    """Counts and shares of the verdict rows, named as ``verdicts.summarize`` names them."""
+    n = int(totals.sum())
+    summary: dict = {"total": n}
+    for verdict, count in zip(verdicts.VERDICTS, totals):
+        summary[verdict] = int(count)
+        summary[f"{verdict}_share"] = int(count) / n if n else 0.0
+    summary["good_plus_slight"] = int(totals[0] + totals[1])
+    summary["good_plus_slight_share"] = _objective(totals)[0]
+    return summary
 
 
 def build_pattern_counts(scores: RetrieverScores, gate_probs: np.ndarray, has_text, labels: pd.DataFrame,
@@ -77,25 +98,47 @@ def build_pattern_counts(scores: RetrieverScores, gate_probs: np.ndarray, has_te
     return PatternCounts(np.asarray(gate_probs, dtype=float), scores.probs[:, 0], scores.probs[:, 1], counts, fixed)
 
 
-def fit_thresholds(pc: PatternCounts) -> dict:
-    """Grid search. Returns {"thresholds": Thresholds, "gs_share", "good_share", "curve"}: ``curve`` has, per
-    gate_t, the best (tau, rho) there and its objective ("best_*") and the objective at the chosen (tau, rho)
-    ("at_chosen_*"), for the "no cliff along gate_t" check."""
-    best, best_key = None, None
+def fit_thresholds(pc: PatternCounts, max_fp_share: float | None = None) -> dict:
+    """Grid search. Returns {"thresholds": Thresholds, "gs_share", "good_share", "verdicts", "curve"}: ``verdicts``
+    is the chosen point's verdict counts and shares (``verdict_summary``); ``curve`` has, per gate_t, the best
+    (tau, rho) there and its objective and FP share ("best_*") and the objective and FP share at the chosen
+    (tau, rho) ("at_chosen_*"), for the "no cliff along gate_t" check.
+
+    ``max_fp_share``: only grid points whose false-positive share of the verdict rows is <= it are eligible
+    (objective and tie-break unchanged among them). A gate_t with no eligible point has "eligible": False and
+    best_* None. Raises ValueError if no grid point is eligible; the cap is never relaxed."""
+    best, best_key, best_totals = None, None, None
     per_gate: dict[float, tuple] = {}
+    lowest_fp = None
     for gate_t in GATE_GRID:
         for tau in TAU_GRID:
             for rho in RHO_GRID:
                 th = Thresholds(gate_t, tau, rho)
-                key = pc.objective(th)
+                totals = pc.totals(th)
+                fp = _fp_share(totals)
+                lowest_fp = fp if lowest_fp is None else min(lowest_fp, fp)
+                if max_fp_share is not None and fp > max_fp_share:
+                    continue
+                key = _objective(totals)
                 if best_key is None or key > best_key:
-                    best, best_key = th, key
+                    best, best_key, best_totals = th, key, totals
                 if gate_t not in per_gate or key > per_gate[gate_t][0]:
-                    per_gate[gate_t] = (key, th)
+                    per_gate[gate_t] = (key, th, fp)
+    if best is None:
+        raise ValueError(f"no grid point has a false-positive share <= {max_fp_share} "
+                         f"(the lowest on the grid is {lowest_fp:.6f}); not relaxing the cap")
     curve = []
     for gate_t in GATE_GRID:
-        (gs, good), th = per_gate[gate_t]
-        at_gs, at_good = pc.objective(Thresholds(gate_t, best.tau, best.rho))
-        curve.append({"gate_t": gate_t, "best_tau": th.tau, "best_rho": th.rho, "best_gs": gs, "best_good": good,
-                      "at_chosen_gs": at_gs, "at_chosen_good": at_good})
-    return {"thresholds": best, "gs_share": best_key[0], "good_share": best_key[1], "curve": curve}
+        at_totals = pc.totals(Thresholds(gate_t, best.tau, best.rho))
+        at_gs, at_good = _objective(at_totals)
+        at_fp = _fp_share(at_totals)
+        if gate_t in per_gate:
+            (gs, good), th, fp = per_gate[gate_t]
+            row = {"gate_t": gate_t, "eligible": True, "best_tau": th.tau, "best_rho": th.rho, "best_gs": gs,
+                   "best_good": good, "best_fp_share": fp}
+        else:
+            row = {"gate_t": gate_t, "eligible": False, "best_tau": None, "best_rho": None, "best_gs": None,
+                   "best_good": None, "best_fp_share": None}
+        curve.append({**row, "at_chosen_gs": at_gs, "at_chosen_good": at_good, "at_chosen_fp_share": at_fp})
+    return {"thresholds": best, "gs_share": best_key[0], "good_share": best_key[1],
+            "verdicts": verdict_summary(best_totals), "curve": curve}

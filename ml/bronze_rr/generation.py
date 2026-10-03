@@ -7,7 +7,7 @@
                        encoder is the retriever's, so one pass gives both the gate and the term probabilities)
                        OR   gate_source.json pointing at retriever/gate_head.pt (joint model: the retriever/ dir is the
                        whole jointly trained model, one encoder and both heads)
-  thresholds.json      {gate_t, tau, rho}
+  thresholds.json      {gate_t, tau, rho}, plus whatever extra the freeze records (max_fp_share, calibration_verdicts)
   uncommon_groups.txt  the list the scoring ruler uses
   manifest.json        generation_id, sources, seeds, split/labels ids, calibration block, sha256 per file
 
@@ -48,10 +48,11 @@ def _seed_of(model_dir: Path) -> str | None:
 def write_generation(root: Path, *, generation_id: str, retriever_dir: Path, gate_dir: Path | None,
                      old_gate_csv: Path | None, thresholds: Thresholds, calibration: dict, split_id: str,
                      silver_id: str, uncommon_groups_txt: Path, max_length: int, shared_gate_dir: Path | None = None,
-                     joint_gate: bool = False) -> Path:
+                     joint_gate: bool = False, thresholds_extra: dict | None = None) -> Path:
     """Write the generation directory and its manifest; returns the directory. Exactly one of ``gate_dir`` (new
     gate), ``old_gate_csv`` (old gate), ``shared_gate_dir`` (head on the retriever's encoder) and ``joint_gate``
-    (``retriever_dir`` is a jointly trained model that holds the gate head, gate_head.pt) is given."""
+    (``retriever_dir`` is a jointly trained model that holds the gate head, gate_head.pt) is given.
+    ``thresholds_extra`` is written into thresholds.json next to the thresholds."""
     if sum(x is not None for x in (gate_dir, old_gate_csv, shared_gate_dir)) + joint_gate != 1:
         raise ValueError("give exactly one of gate_dir, old_gate_csv, shared_gate_dir and joint_gate")
     directory = root / generation_id
@@ -76,7 +77,8 @@ def write_generation(root: Path, *, generation_id: str, retriever_dir: Path, gat
         source = {"kind": "wp14_predictions_csv", "path": str(old_gate_csv), "sha256": sha256_file(old_gate_csv)}
         (directory / "gate" / "gate_source.json").write_text(json.dumps(source, indent=2) + "\n", encoding="utf-8")
         gate = {"kind": "wp14_predictions_csv", "source": str(old_gate_csv)}
-    (directory / "thresholds.json").write_text(json.dumps(thresholds.as_dict(), indent=2) + "\n", encoding="utf-8")
+    (directory / "thresholds.json").write_text(json.dumps({**thresholds.as_dict(), **(thresholds_extra or {})}, indent=2)
+                                               + "\n", encoding="utf-8")
     shutil.copy2(uncommon_groups_txt, directory / "uncommon_groups.txt")
     write_manifest(directory, {
         "kind": "bronze_rr_generation", "generation_id": generation_id,
@@ -92,4 +94,4 @@ def load_generation_info(directory: Path) -> tuple[dict, Thresholds]:
     """(manifest, thresholds) of a generation whose files all match the manifest's sha256s."""
     verify_manifest(directory)
     values = json.loads((directory / "thresholds.json").read_text(encoding="utf-8"))
-    return read_manifest(directory), Thresholds(**values)
+    return read_manifest(directory), Thresholds(values["gate_t"], values["tau"], values["rho"])

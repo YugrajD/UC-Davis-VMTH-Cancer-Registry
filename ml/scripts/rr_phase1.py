@@ -9,6 +9,7 @@
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py train-shared-gate --retriever-dir ml/output/rr_phase0/bce
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py train-joint
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py freeze --gate joint --retriever-dir ml/output/rr_phase1/joint
+  ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py freeze --gate joint --retriever-dir ml/output/rr_phase1/joint --max-fp-share 0.0293
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py time-cpu --n 50
 
 Outputs go under config.RR_PHASE1_DIR. ``--limit N`` is a smoke: N cases, and everything goes under RR_PHASE1_DIR/_smoke.
@@ -114,8 +115,10 @@ def _cmd_bakeoff(args: argparse.Namespace) -> int:
 
 def _cmd_freeze(args: argparse.Namespace) -> int:
     result = freeze.run_freeze(load_data(), silver_eval.load_labels(SILVER_ID), gate=args.gate,
-                               retriever_dir=args.retriever_dir, root=_root(args.limit), limit=args.limit)
-    print(json.dumps(result, indent=1))
+                               retriever_dir=args.retriever_dir, root=_root(args.limit), limit=args.limit,
+                               max_fp_share=args.max_fp_share)
+    print(json.dumps({k: v for k, v in result.items() if k != "curve_along_gate_t"}, indent=1))
+    print(freeze.curve_table(result))
     return 0
 
 
@@ -185,6 +188,8 @@ def main() -> int:
     p = sub.add_parser("freeze", help="fit thresholds on the full calibration partition, write a generation and predictions")
     p.add_argument("--gate", choices=("old", "new", "shared", "joint"), required=True)
     p.add_argument("--retriever-dir", type=Path, required=True)
+    p.add_argument("--max-fp-share", type=float, default=None,
+                   help="only thresholds whose calibration false-positive share is <= this fraction (e.g. 0.0293); default no cap")
     p.add_argument("--limit", type=int, default=0, help="smoke: first N cases per partition; output under _smoke")
     p.set_defaults(func=_cmd_freeze)
 

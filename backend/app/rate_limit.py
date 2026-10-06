@@ -1,6 +1,7 @@
 """Global rate-limiter instance shared across the application."""
 
 import base64
+import ipaddress
 import json
 import logging
 
@@ -10,6 +11,22 @@ from slowapi import Limiter
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _peer_is_trusted(peer_ip: str, trusted: set[str]) -> bool:
+    """Check peer_ip against a set of trusted IPs/CIDR ranges (e.g. "0.0.0.0/0")."""
+    try:
+        addr = ipaddress.ip_address(peer_ip)
+    except ValueError:
+        return peer_ip in trusted
+    for entry in trusted:
+        try:
+            if addr in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            if peer_ip == entry:
+                return True
+    return False
 
 
 def get_client_ip(request: Request) -> str:
@@ -26,11 +43,13 @@ def get_client_ip(request: Request) -> str:
     peer_ip = request.client.host if request.client else "127.0.0.1"
 
     trusted = settings.forwarded_allow_ips_set
-    if trusted and peer_ip in trusted:
+    if trusted and _peer_is_trusted(peer_ip, trusted):
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
-            # Leftmost entry is the original client.
-            return forwarded.split(",")[0].strip()
+            # The trusted proxy appends the address it saw to the end of
+            # any existing header, so a client-supplied leftmost entry
+            # can't be used to spoof another client's bucket.
+            return forwarded.split(",")[-1].strip()
 
     return peer_ip
 

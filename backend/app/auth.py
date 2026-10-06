@@ -105,6 +105,15 @@ def _record_auth_failure(request: Request) -> None:
         _evict_stale_entries()
 
 
+# PyJWT validates `iat`/`exp`/`nbf` with zero tolerance by default. Without
+# this, a container clock running even a couple seconds behind Supabase's
+# (e.g. after the host sleeps/wakes and Docker Desktop's VM clock hasn't
+# resynced yet) rejects freshly-issued, valid tokens as ImmatureSignatureError
+# ("JWT decode failed") — which trips the auth failure rate limiter below for
+# every concurrent request at once.
+_CLOCK_SKEW_LEEWAY = 30  # seconds
+
+
 def _verify_token(token: str) -> dict:
     """Verify a Supabase JWT, auto-detecting HS256 vs ES256."""
     # Peek at the header to determine algorithm
@@ -120,6 +129,7 @@ def _verify_token(token: str) -> dict:
         secret = _decode_hs256_secret(settings.SUPABASE_JWT_SECRET)
         return jwt.decode(
             token, secret, algorithms=["HS256"], audience="authenticated",
+            leeway=_CLOCK_SKEW_LEEWAY,
         )
 
     # ES256 / asymmetric — use JWKS.  Only allow the specific asymmetric
@@ -143,6 +153,7 @@ def _verify_token(token: str) -> dict:
         signing_key.key,
         algorithms=list(_ALLOWED_ASYMMETRIC_ALGS),
         audience="authenticated",
+        leeway=_CLOCK_SKEW_LEEWAY,
     )
 
 
@@ -216,9 +227,9 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
         )
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
         _record_auth_failure(request)
-        logger.warning("JWT decode failed")
+        logger.warning("JWT decode failed: %s: %s", type(e).__name__, e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",

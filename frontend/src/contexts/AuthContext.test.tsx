@@ -246,6 +246,38 @@ describe('AuthProvider', () => {
     await expect(auth.getAccessToken()).resolves.toBeNull();
   });
 
+  it('retries refreshRoles with a freshly fetched token, not the one that failed', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession('stale-token');
+      const { AuthProvider, useAuth, fetchMe, getSession } = await loadAuthContext({
+        initialSession: session,
+        fetchMeRejects: true,
+      });
+
+      render(<StateProbe AuthProvider={AuthProvider} useAuth={useAuth} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchMe).toHaveBeenCalledWith('stale-token');
+
+      // Simulate the token having been refreshed in the background by the
+      // time the backoff retry fires.
+      getSession.mockResolvedValueOnce({ data: { session: makeSession('fresh-token') } });
+      fetchMe.mockResolvedValueOnce({ email: 'admin@example.com', is_admin: true });
+
+      // First retry fires after a 2s backoff.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      expect(fetchMe).toHaveBeenLastCalledWith('fresh-token');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('useAuth throws outside AuthProvider', async () => {
     const { useAuth } = await loadAuthContext({ configured: false });
     function Consumer() {

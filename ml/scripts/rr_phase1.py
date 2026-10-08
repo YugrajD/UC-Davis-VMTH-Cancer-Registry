@@ -11,6 +11,7 @@
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py freeze --gate joint --retriever-dir ml/output/rr_phase1/joint
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py freeze --gate joint --retriever-dir ml/output/rr_phase1/joint --max-fp-share 0.0293
   ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py time-cpu --n 50
+  ml/.venv/Scripts/python.exe ml/scripts/rr_phase1.py phase2 --generation ml/output/rr_phase1/generation/<id> --i-understand-this-spends-the-test-set
 
 Outputs go under config.RR_PHASE1_DIR. ``--limit N`` is a smoke: N cases, and everything goes under RR_PHASE1_DIR/_smoke.
 """
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch  # noqa: F401  must load before scipy/sklearn on Windows (libomp DLL clash, WinError 1114)
 
 import config
-from bronze_rr import bakeoff, freeze, joint, joint_train, ruler, scoring, shared_gate, timing, train
+from bronze_rr import bakeoff, freeze, joint, joint_train, phase2, ruler, scoring, shared_gate, timing, train
 from bronze_rr.data import SILVER_ID, load_data
 from evaluation import silver_eval
 from report_mapping.training.recipe import PRODUCTION_SEED
@@ -122,6 +123,14 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_phase2(args: argparse.Namespace) -> int:
+    result = phase2.run(args.generation, args.baseline_predictions, allow_test=args.i_understand_this_spends_the_test_set,
+                        split_id=args.split)
+    print((Path(result["output_dir"]) / "summary.md").read_text(encoding="utf-8"))
+    print(f"wrote {result['output_dir']}")
+    return 0
+
+
 def _add_training_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=PRODUCTION_SEED)
     parser.add_argument("--epochs", type=int, default=3)
@@ -192,6 +201,13 @@ def main() -> int:
                    help="only thresholds whose calibration false-positive share is <= this fraction (e.g. 0.0293); default no cap")
     p.add_argument("--limit", type=int, default=0, help="smoke: first N cases per partition; output under _smoke")
     p.set_defaults(func=_cmd_freeze)
+
+    p = sub.add_parser("phase2", help="ONE-SHOT: score a frozen generation and the WP14 baseline on the test partition")
+    p.add_argument("--generation", type=Path, required=True, help="a frozen rr generation directory")
+    p.add_argument("--baseline-predictions", type=Path, default=phase2.BASELINE_CSV)
+    p.add_argument("--split", default=config.DEFAULT_SPLIT_ID)
+    p.add_argument("--i-understand-this-spends-the-test-set", action="store_true", help="required; the output is write-once")
+    p.set_defaults(func=_cmd_phase2)
 
     args = parser.parse_args()
     return args.func(args)

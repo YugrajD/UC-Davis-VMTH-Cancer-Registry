@@ -20,7 +20,7 @@ and [sync-with-s3.md](../how-to/sync-with-s3.md).
 | `predict.py` | Predictions from a generation |
 | `promote.py` | Promotion recommendation and swap |
 | `retrain_cycle.py` | The local retraining lane in one call |
-| `rr_phase1.py` | Retrieve-and-rerank experiment (branch `bronze-retrieve-rerank`): ruler, train, score, shared gate, joint model, CPU timing, bake-off, freeze |
+| `rr_phase1.py` | Retrieve-and-rerank experiment (branch `bronze-retrieve-rerank`): ruler, train, score, shared gate, joint model, CPU timing, bake-off, freeze, phase2 |
 | `split.py` | Create a three-way split, run the leakage guards |
 | `sync.py` | Sync file sets and the model with S3 |
 | `train.py` | Train a candidate generation |
@@ -348,13 +348,19 @@ test and calibration), `train-gate`, `train-retriever`, `train-shared-gate` (a g
 vector, so one encoder pass gives the gate and the term probabilities), `train-joint` (ONE ModernBERT trained
 jointly for the terms and the gate, with the gate's 5% hold-out excluded for both heads), `time-cpu` (seconds per report, two models vs
 one), `score`, `bakeoff` (calibration only; also scores every `gate_shared_*` head with its own retriever, and the trained
-`rr_phase1/joint` model as the system "joint + joint gate", paired only with itself) and `freeze`.
+`rr_phase1/joint` model as the system "joint + joint gate", paired only with itself), `freeze` and `phase2`.
+`phase2` is the one-shot test-set head-to-head: a frozen generation's predictions CSV against the WP14 baseline's, both scored with
+`silver_eval.evaluate` on the `three-way-v1` test cases with WP14's uncommon list, a paired bootstrap (`intervals.paired_bootstrap`,
+1000 resamples, seed 0, one stratum of all test cases) of new minus WP14 for each verdict share and G+S, and the three pre-registered bars
+(Good lower bound >= -2 pp, G+S >= WP14, FP <= WP14 + 1 pp). It refuses a generation whose manifest does not verify or is not calibrated,
+predictions whose `generation_id` differs, and an existing output directory (write-once: `rr_phase1/phase2/<generation id>/` with
+`scores.json` and `summary.md`, aggregates only).
 `--limit N` is a smoke: N cases, everything under `RR_PHASE1_DIR/_smoke`.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--predictions` | the WP14 predictions CSV | `ruler`: predictions to score |
-| `--split` | `three-way-v1` | `ruler`: split id |
+| `--split` | `three-way-v1` | `ruler`, `phase2`: split id |
 | `--seed` | 42 | `train-gate`, `train-retriever`, `train-joint`, `train-shared-gate`: training seed |
 | `--epochs` | 3 (50 for `train-shared-gate`) | `train-gate`, `train-retriever`, `train-joint`; head epochs for `train-shared-gate` (best held-out-AUC epoch is kept) |
 | `--lr` | 5e-5 | encoder learning rate |
@@ -369,7 +375,9 @@ one), `score`, `bakeoff` (calibration only; also scores every `gate_shared_*` he
 | `--shared-gate-dir` | `rr_phase1/gate_shared_<tag>` | `time-cpu`: the shared head (an untrained stand-in if the directory does not exist) |
 | `--save` | off | `time-cpu`: also write `rr_phase1/timing/cpu_n<N>.json` |
 | `--partition` | `calibration` | `score`: `train`, `calibration`, `test` or `all` |
-| `--i-understand-this-spends-the-test-set` | off | `score`: required for `test` and `all` |
+| `--i-understand-this-spends-the-test-set` | off | `score`: required for `test` and `all`; `phase2`: required |
+| `--generation` | required | `phase2`: the frozen rr generation directory (its predictions are `<PREDICTIONS_DIR>/<generation id>_predictions.csv`) |
+| `--baseline-predictions` | the WP14 predictions CSV | `phase2`: the baseline predictions |
 | `--gate` | required | `freeze`: `old` (WP14 gate probabilities), `new` (`rr_phase1/gate`), `shared` (`rr_phase1/gate_shared_<retriever tag>`) or `joint` (`--retriever-dir` is the `rr_phase1/joint` model) |
 | `--max-fp-share` | none | `freeze`: fit the thresholds only among grid points whose false-positive share of the calibration verdict rows is <= this fraction (e.g. `0.0293`); errors if no point qualifies. Recorded in `thresholds.json` and the manifest with the in-sample calibration verdicts |
 | `--limit` | 0 | smoke: first N cases (`train-gate`, `train-retriever`, `train-joint`, `train-shared-gate`: first N train cases) |

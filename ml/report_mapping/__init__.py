@@ -1,8 +1,4 @@
-"""Report-mapping: sections, model (backbone + heads + generation), inference.
+"""Report-mapping: one jointly trained ModernBERT (term head + neoplasm gate head) reads the whole report.
 
-Per-section contrastive PetBERT backbone -> concat-3 (2304-d) case embedding ->
-case-presence gate -> group (+ tail gate) -> per-group label-presence ->
-keyword correction (+ Lipoma rescue). See ml/documentation/history/plans/ml-rewrite-plan.md
-and ml/documentation/history/legacy-tree/{production-pipeline,classifiers}.md for the design this
-package carries forward.
+See ml/documentation/history/plans/restructure-plan.md for the design and the generation layout.
 """

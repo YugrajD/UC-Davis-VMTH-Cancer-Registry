@@ -1,6 +1,6 @@
 # Core ML
 torch==2.9.1
-transformers==4.46.3
+transformers==5.18.0
 numpy>=2.0.0
 pandas==2.2.3
 scikit-learn==1.5.0
@@ -8,9 +8,9 @@ scipy==1.17.1
 
 # HuggingFace (version-sensitive with transformers). Keep these three in step with
 # ml-worker/requirements.txt: production generations were trained and are served on them.
-huggingface_hub==0.36.2
-safetensors==0.7.0
-tokenizers==0.20.3
+huggingface_hub==1.33.0
+safetensors==0.8.0
+tokenizers==0.23.2
 datasets>=4.8.4
 
 # Utilities

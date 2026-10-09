@@ -54,7 +54,8 @@ def build_tiny_bert(model_dir: Path) -> Path:
     tokens = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"] + VOCAB_WORDS
     vocab_path.write_text("\n".join(tokens) + "\n", encoding="utf-8")
 
-    tokenizer = BertTokenizer(vocab_file=str(vocab_path), do_lower_case=True)
+    # transformers 5 takes the vocab itself (a ``vocab_file`` argument is silently ignored).
+    tokenizer = BertTokenizer(vocab={token: i for i, token in enumerate(tokens)}, do_lower_case=True)
     tokenizer.save_pretrained(str(model_dir))
 
     config = BertConfig(
@@ -71,6 +72,25 @@ def build_tiny_bert(model_dir: Path) -> Path:
     # still load it since transformers strips the "bert." prefix.
     model = BertForMaskedLM(config)
     model.save_pretrained(str(model_dir))
+    return model_dir
+
+
+def build_tiny_modernbert(model_dir: Path) -> Path:
+    """A tiny random-init ModernBERT + the tiny word-level tokenizer, in HF format: the offline stand-in for
+    BioClinical ModernBERT that ``report_mapping.model.new_encoder`` loads."""
+    from transformers import ModernBertConfig, ModernBertModel
+
+    build_tiny_bert(model_dir)
+    tokenizer = BertTokenizer.from_pretrained(str(model_dir))
+    config = ModernBertConfig(
+        vocab_size=tokenizer.vocab_size, hidden_size=TINY_EMB_DIM, num_hidden_layers=2, num_attention_heads=2,
+        intermediate_size=64, max_position_embeddings=128, pad_token_id=tokenizer.pad_token_id,
+        bos_token_id=tokenizer.cls_token_id, eos_token_id=tokenizer.sep_token_id,
+        cls_token_id=tokenizer.cls_token_id, sep_token_id=tokenizer.sep_token_id,
+        global_attn_every_n_layers=2, local_attention=8,
+    )
+    torch.manual_seed(0)
+    ModernBertModel(config).save_pretrained(str(model_dir))
     return model_dir
 
 
@@ -479,7 +499,6 @@ def point_training_config_at(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(config, "REPORT_MAPPING_DIR", report_mapping_dir)
     monkeypatch.setattr(config, "REPORT_MAPPING_CURRENT_DIR", report_mapping_dir / "current")
     monkeypatch.setattr(config, "REPORT_MAPPING_CANDIDATE_DIR", report_mapping_dir / "candidate")
-    monkeypatch.setattr(config, "EMBEDDING_CACHE_DIR", report_mapping_dir / "embedding_cache")
     monkeypatch.setattr(config, "OOF_DIR", report_mapping_dir / "oof")
 
 
@@ -887,3 +906,30 @@ def point_promotion_config_at(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(config, "EVAL_BATCH_LEDGER_CSV", root / "output" / "manual_audit" / "eval_batch_ledger.csv")
     monkeypatch.setattr(config, "SILVER_DIR", root / "output" / "silver")
     monkeypatch.setattr(config, "ARCHIVE_ROOT", root / "output" / "archive")
+
+
+# ---------------------------------------------------------------------------
+# New report_mapping generation (joint ModernBERT): a tiny generation directory
+# ---------------------------------------------------------------------------
+
+TINY_TERMS = ["Mast cell tumor, malignant", "Mast cell tumor, benign", "Mast cell sarcoma", "Fibrosarcoma, NOS"]
+TINY_THRESHOLDS = {"gate_t": 0.5, "tau": 0.1, "rho": 0.25, "review_cut": 0.3, "max_fp_share": 0.0243,
+                   "review_target_share": 0.2336}
+
+
+def build_tiny_generation(root: Path, encoder_dir: Path, calibrated: bool = True, split_id: str = "tiny-split") -> Path:
+    """A real generation directory (tiny random ModernBERT, random heads over ``TINY_TERMS``): pending, or
+    calibrated with ``TINY_THRESHOLDS``. Built through the same functions training uses."""
+    from report_mapping import generation
+    from report_mapping.model import JointClassifier, load_tokenizer, new_encoder
+
+    torch.manual_seed(0)
+    model = JointClassifier(new_encoder(str(encoder_dir)), list(TINY_TERMS))
+    model.save(root, load_tokenizer(str(encoder_dir)))
+    groups = {term: (group, code) for group, entries in TAXONOMY_GROUPS.items() for code, term in entries}
+    (root / generation.TERM_INFO_FILE).write_text(json.dumps({t: list(groups[t]) for t in TINY_TERMS}), encoding="utf-8")
+    generation.write_pending_manifest(root, encoder_id=str(encoder_dir), max_length=64, recipe={},
+                                      parents={"split_id": split_id}, training={})
+    if calibrated:
+        generation.write_calibration(root, TINY_THRESHOLDS, {"partition": "calibration"})
+    return root

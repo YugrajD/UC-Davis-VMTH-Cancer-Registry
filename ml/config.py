@@ -88,10 +88,16 @@ SPLITS_DIR = OUTPUT_DIR / "splits"
 REPORT_MAPPING_DIR = OUTPUT_DIR / "report_mapping"
 REPORT_MAPPING_CURRENT_DIR = REPORT_MAPPING_DIR / "current"
 REPORT_MAPPING_CANDIDATE_DIR = REPORT_MAPPING_DIR / "candidate"
-# Content-hash keyed embedding cache. Sits beside the generations; never bundled.
-EMBEDDING_CACHE_DIR = REPORT_MAPPING_DIR / "embedding_cache"
-# k-fold out-of-fold gate scores on train cases (train.py --stage oof); read by the Report-Mapping audit.
+# 5-fold cross-fit output on train cases (scripts/oof.py): numbers only (case ids, gate and term probabilities).
+# Read by the Report-Mapping audit.
 OOF_DIR = REPORT_MAPPING_DIR / "oof"
+# WP14's calibration false-positive share: the default FP cap when thresholds are fitted.
+FP_CAP = 0.0243
+# WP14's calibration review volume (592 of 2,534 accepted cases): the share of accepted calibration cases the
+# review cut queues.
+REVIEW_TARGET_SHARE = 0.2336
+# The uncommon-groups list is part of the scoring rule (the ruler), not of a generation: WP14's 24 groups.
+UNCOMMON_GROUPS_TXT = ML_ROOT / "evaluation" / "uncommon_groups.txt"
 
 # ---------------------------------------------------------------------------
 # Predictions and evaluation outputs

@@ -20,6 +20,12 @@ def tiny_bert_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return fx.build_tiny_bert(tmp_path_factory.mktemp("tiny_bert"))
 
 
+@pytest.fixture(scope="session")
+def tiny_modernbert_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A tiny random-init ModernBERT + tokenizer (the offline stand-in for the real encoder), built once per session."""
+    return fx.build_tiny_modernbert(tmp_path_factory.mktemp("tiny_modernbert"))
+
+
 @pytest.fixture
 def labels_csv(tmp_path: Path) -> Path:
     """A synthetic labels.csv-shaped taxonomy file."""

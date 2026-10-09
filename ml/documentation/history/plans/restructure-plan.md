@@ -179,3 +179,79 @@ generation id (`generations.py recalibrate`, replaces `fork`).
 ## Notes carried between work packages
 
 (append below)
+
+### 2026-10-09 WP2 (report_mapping rebuild): public interfaces for WP3/5/6
+
+Import-light modules: `text`, `batching`, `model`, `generation`, `inference/*` (a subprocess test blocks scipy,
+sklearn, diagnosis_mapping, evaluation, generations.guards; transformers itself imports sklearn when it is
+installed, so the test blocks them the way the serving image lacks them). `generation` imports no torch.
+`config`: `EMBEDDING_CACHE_DIR` removed; `FP_CAP`, `REVIEW_TARGET_SHARE`, `UNCOMMON_GROUPS_TXT` added
+(`ml/evaluation/uncommon_groups.txt`, byte copy of WP14's list); `OOF_DIR` now holds cross-fit CSVs.
+
+```
+report_mapping.text
+  TEXT_SPEC_VERSION = 1; REPORT_COLUMNS
+  clean_text(value) -> str
+  build_report_text(row: Series) -> str            # missing column = empty
+  build_report_texts(reports: DataFrame) -> list[str]   # positional, one per row (repeated case_ids are kept)
+  has_text(row: Series) -> bool
+  read_reports() -> DataFrame                      # config.REPORT_CSV, latin-1, case_id cleaned
+report_mapping.generation                          # stdlib + generations.manifest + config + text
+  ARCHITECTURE (dict), KIND, SCHEMA_VERSION, WEIGHT_FILES, THRESHOLD_KEYS, layout names (ENCODER_DIR, HEAD_FILE, ...)
+  class GenerationError(Exception)
+  new_generation_id(now=None) -> "gen-<UTC>"
+  resolve_generation_dir(name: str | Path) -> Path     # "current" | "candidate" | path
+  weights_sha256(directory) -> str; weights_digest(file_hashes: dict) -> str
+  read_terms(dir) -> list[str]; read_term_info(dir) -> dict[str, (group, code)]; read_thresholds(dir) -> dict
+  write_pending_manifest(directory, *, encoder_id, max_length, recipe: dict, parents: dict, training: dict) -> dict
+      # directory already holds encoder/, head.pt, gate_head.pt, terms.json, term_info.json; calibration {"status": "pending"}
+  write_calibration(directory, thresholds: dict, block: dict) -> dict   # thresholds.json + calibrated block bound to weights; keeps created_at/git_sha
+  verify_spec(directory, *, require_calibrated=True) -> manifest    # raises GenerationError
+report_mapping.model
+  ENCODER_ID; new_encoder(model_id=ENCODER_ID); load_tokenizer(model_id=ENCODER_ID)
+  class JointClassifier(encoder, terms): .head .gate_head .terms; .save(directory, tokenizer); .init_biases(term_freq, gate_rate)
+  load_joint(directory) -> (model, tokenizer)      # ValueError if terms.json and the term head disagree
+report_mapping.inference.scoring
+  TOP_K = 49; DEFAULT_TOKEN_BUDGET = 32768
+  logits_for(model, tokenizer, texts, max_length, device, token_budget=DEFAULT_TOKEN_BUDGET) -> (term_logits, gate_logits, n_over)
+  rank(case_ids, terms, term_logits, gate_logits) -> RankedScores(terms, case_ids, term_idx, probs, gate_probs)
+report_mapping.inference.decide
+  COLUMNS, NEVER, TERM_METHOD = "term_head", REJECTED_METHOD; Thresholds(gate_t, tau, rho)
+  case_rows(...); decide_all(scores: RankedScores, th, term_info, generation_id) -> DataFrame   # no has_text arg: score only cases with text
+report_mapping.inference.predict
+  load_generation(directory, device) -> LoadedGeneration(model, tokenizer, thresholds, terms, term_info, max_length, generation_id)
+  predict_frame(reports: DataFrame, loaded, device) -> DataFrame[decide.COLUMNS]   # case_id + any subset of the 8 columns
+  run_predict(generation_dir, device, out=None) -> Path
+report_mapping.training
+  recipe: Recipe (frozen dataclass), PRODUCTION_SEED, seed_all(seed)
+  labels: load_labels_table, lineage, select_train, training_case_ids, cancer_case_ids, gate_targets
+  data: load_training_data(labels_table: DataFrame, split_id, limit=0) -> TrainingData; split_holdout(targets, fraction, seed); assign_folds(targets, k, seed)
+  train: train(labels: str, split_id, out_dir, recipe, device, model_id=ENCODER_ID, limit=0, max_steps=0) -> manifest
+         fit_model(texts, term_targets, gate_targets, vocab, recipe, device, model_id, max_steps=0, holdout=None) -> (model, tokenizer, summary)
+  calibrate: calibrate(generation_dir, labels: str, split_id, max_fp_share, review_target_share, device) -> calibration block
+         fit_thresholds, fit_review_cut(rank1_confidences, target_share), build_pattern_counts, PatternCounts
+  crossfit: crossfit(labels: str, split_id, k, recipe, device, out_csv, limit=0, max_steps=0, model_id=ENCODER_ID) -> Path
+```
+
+- `thresholds.json` = `gate_t, tau, rho, review_cut, max_fp_share, review_target_share`. `review_cut` is fitted on the
+  2-decimal rank-1 confidences of the accepted calibration cases (what the predictions CSV carries), so the queue
+  rule `confidence < review_cut` on that CSV reproduces the fitted share.
+- `calibrate` refuses a generation whose calibration is not `pending` (a recalibration is a new generation, so
+  `generations.py recalibrate` must copy, reset `calibration` to pending, delete `thresholds.json`, new id, rewrite
+  the manifest, then call `calibrate`). A re-housed frozen generation is built with `model.JointClassifier`-layout
+  files + `term_info.json` + `generation.write_pending_manifest(...)`.
+- Calibration scores only cases with text; labelled calibration cases without text count as false negatives in every
+  threshold pattern (same as the old unscored-case rule). `calibration.n_cases_with_text` is recorded.
+- Cross-fit CSV columns: `case_id, fold, gate_target, gate_prob, term, term_prob` (one row per labelled term of a
+  cancer case, one empty-term row for a non-cancer case; `term_prob` empty when the term is outside the fold model's
+  vocabulary). The audit (WP5) must read this instead of the old gate-only OOF file.
+- `tests/fixtures.py`: `build_tiny_modernbert`, `build_tiny_generation(root, encoder_dir, calibrated=True)`;
+  conftest fixture `tiny_modernbert_dir`. The old bundle builders (`build_report_mapping_bundle`, head builders) are
+  still there for the not-yet-rewired tests; delete them in WP3. `build_tiny_bert` now builds its tokenizer with
+  `vocab=` (transformers 5 ignored `vocab_file`, so every word was `[UNK]`).
+
+**2026-10-09 lead, after WP2 verify (PASS WITH FIXES):**
+- Re-housing (WP4) must NOT refit: build the generation with `write_pending_manifest`, then `generation.write_calibration` with the frozen gate_t 0.75 / tau 0.10 / rho 0.25, max_length 4096, `review_cut` from `fit_review_cut` on 2-decimal rank-1 confidences of accepted calibration cases (simulated: cut 0.85, share 0.2325 vs target 0.2336), and a calibration block from `build_pattern_counts`.
+- 8-column has-text rule: all 58,313 report rows have text vs 58,172 under the old rule; 141 extra cases (109 train / 17 calibration / 15 test).
+- R1 exact check: the harness replays the old per-partition scoring (train, calibration, test of `three-way-v1`, report order within each, one `logits_for` call per partition) and compares by case_id merge. Separately report cell flips of the library's one-pass `run_predict` vs the frozen CSV (bf16 batch-composition noise; verify measured ≤ 7.6e-6 term-logit drift for partition-vs-one-pass on synthetic text).
+- R4: compare calibration verdicts to the freeze record after masking the 15 extra labelled calibration cases; report the delta with them included.

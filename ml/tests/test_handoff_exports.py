@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+import tarfile
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -9,7 +13,9 @@ import config
 import io_utils
 from coding.combine import COMBINED_PREDICTIONS_COLUMNS
 from coding.queue import REVIEW_QUEUE_COLUMNS
+from generations.manifest import read_manifest, update_manifest
 from handoff import contracts, exports
+from report_mapping.generation import GenerationError
 
 from . import fixtures as fx
 
@@ -82,29 +88,51 @@ def test_export_coding_missing_column_refused(handoff_root):
         exports.export_coding("run1")
 
 
-def test_export_bundle_and_verify_round_trip(handoff_root, tiny_bert_dir):
-    fx.build_report_mapping_bundle(config.REPORT_MAPPING_CURRENT_DIR, tiny_bert_dir)
+def _current(tiny_generation_dir, generation_id="gen-bundle"):
+    shutil.copytree(tiny_generation_dir, config.REPORT_MAPPING_CURRENT_DIR)
+    update_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"generation_id": generation_id})
+    return config.REPORT_MAPPING_CURRENT_DIR
+
+
+def test_export_bundle_and_verify_round_trip(handoff_root, tiny_generation_dir):
+    _current(tiny_generation_dir)
 
     result = exports.export_bundle("current")
 
     assert result["tarball_path"].is_file()
     assert result["sha256_path"].is_file()
-    assert result["generation_id"] == "test-gen"
+    assert result["generation_id"] == "gen-bundle"
+    with tarfile.open(result["tarball_path"]) as tar:
+        names = {Path(name).relative_to("current").as_posix() for name in tar.getnames() if name != "current"}
+    assert {"manifest.json", "head.pt", "gate_head.pt", "terms.json", "term_info.json", "thresholds.json",
+            "encoder/model.safetensors"} <= names
 
     verify_result = exports.verify_bundle(result["tarball_path"])
-    assert verify_result == {"sha256_verified": True, "generation_id": "test-gen"}
+    assert verify_result == {"sha256_verified": True, "generation_id": "gen-bundle"}
 
 
-def test_export_bundle_refuses_stale_manifest(handoff_root, tiny_bert_dir):
-    directory = fx.build_report_mapping_bundle(config.REPORT_MAPPING_CURRENT_DIR, tiny_bert_dir)
-    (directory / "checkpoints" / "thresholds.json").write_text('{"tampered": true}\n', encoding="utf-8")
+def test_export_bundle_refuses_a_tampered_generation(handoff_root, tiny_generation_dir):
+    directory = _current(tiny_generation_dir)
+    (directory / "thresholds.json").write_text('{"tampered": true}', encoding="utf-8")
 
-    with pytest.raises(exports.worker_format.ManifestError, match="does not match"):
+    with pytest.raises(GenerationError, match="does not match"):
+        exports.export_bundle("current")
+    assert not config.HANDOFF_BUNDLES_DIR.exists()
+
+
+def test_export_bundle_refuses_an_uncalibrated_or_other_architecture_generation(handoff_root, tiny_generation_dir):
+    directory = _current(tiny_generation_dir)
+    update_manifest(directory, {"calibration": {"status": "pending"}})
+    with pytest.raises(GenerationError, match="calibration.status"):
+        exports.export_bundle("current")
+    update_manifest(directory, {"calibration": read_manifest(tiny_generation_dir)["calibration"],
+                                "architecture": {"name": "petbert-four-stage"}})
+    with pytest.raises(GenerationError, match="architecture"):
         exports.export_bundle("current")
 
 
-def test_verify_bundle_detects_checksum_mismatch(handoff_root, tiny_bert_dir):
-    fx.build_report_mapping_bundle(config.REPORT_MAPPING_CURRENT_DIR, tiny_bert_dir)
+def test_verify_bundle_detects_checksum_mismatch(handoff_root, tiny_generation_dir):
+    _current(tiny_generation_dir)
     result = exports.export_bundle("current")
     result["tarball_path"].write_bytes(b"corrupted")
 

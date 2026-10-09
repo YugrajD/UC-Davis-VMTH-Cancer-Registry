@@ -12,6 +12,7 @@ from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 ML_ROOT = PACKAGE_ROOT
+REPO_ROOT = ML_ROOT.parent
 
 DATA_DIR = ML_ROOT / "data"
 OUTPUT_DIR = ML_ROOT / "output"
@@ -131,6 +132,12 @@ HANDOFF_PENDING_DIAGNOSES_CSV = HANDOFF_INBOX_DIR / "pending_diagnoses.csv"
 # Bundle tarballs (handoff/exports.py export_bundle) — kept out of
 # HANDOFF_OUTBOX_DIR's flat file list since a bundle is large and binary.
 HANDOFF_BUNDLES_DIR = HANDOFF_OUTBOX_DIR / "bundles"
+
+# ---------------------------------------------------------------------------
+# History docs (ADRs, plans): a file under here is the recorded reason for adopting a new architecture
+# (generations/promote.py adopt_architecture).
+# ---------------------------------------------------------------------------
+HISTORY_DIR = ML_ROOT / "documentation" / "history"
 
 # ---------------------------------------------------------------------------
 # Archive — written only by generations/ (promote.py); nothing loads from it.

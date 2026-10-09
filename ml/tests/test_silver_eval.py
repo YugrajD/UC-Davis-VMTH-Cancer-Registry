@@ -9,6 +9,7 @@ import pytest
 
 import config
 from evaluation import silver_eval, verdicts
+from generations.manifest import write_manifest
 from generations.splits import in_sweep_half
 
 from . import fixtures as fx
@@ -31,6 +32,13 @@ PREDICTION_ROWS = [
 ]
 
 
+def _stub_generation(directory, generation_id):
+    """All silver-eval reads from a generation is its manifest's generation_id."""
+    directory.mkdir(parents=True, exist_ok=True)
+    write_manifest(directory, {"generation_id": generation_id})
+    return directory
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     fx.point_evaluation_config_at(monkeypatch, tmp_path)
@@ -39,7 +47,8 @@ def env(tmp_path, monkeypatch):
     pd.DataFrame(LABEL_ROWS, columns=["case_id", "matched_term", "matched_group", "matched_code"]).to_csv(
         labels, index=False, encoding="utf-8")
     predictions = fx.make_bronze_predictions_csv(tmp_path / "predictions.csv", PREDICTION_ROWS)
-    fx.make_minimal_generation(config.REPORT_MAPPING_CURRENT_DIR, GEN, UNCOMMON)
+    _stub_generation(config.REPORT_MAPPING_CURRENT_DIR, GEN)
+    config.UNCOMMON_GROUPS_TXT.write_text("\n".join(UNCOMMON) + "\n", encoding="utf-8")
     return {"labels": str(labels), "predictions": predictions}
 
 
@@ -88,9 +97,32 @@ def test_md5_half_restricts_the_partition(env):
 
 
 def test_refuses_foreign_generation_and_missing_partition(env, tmp_path):
-    other = fx.make_minimal_generation(tmp_path / "other-gen", "other-gen", [])
+    other = _stub_generation(tmp_path / "other-gen", "other-gen")
     with pytest.raises(silver_eval.SilverEvalError, match="generation_id"):
         silver_eval.run(env["predictions"], env["labels"], "se-split", "test", generation=str(other))
     fx.make_two_way_split_generation("se-two-way", ["T1"], ["S1"])
     with pytest.raises(silver_eval.SilverEvalError, match="no 'calibration' partition"):
         silver_eval.run(env["predictions"], env["labels"], "se-two-way", "calibration")
+
+
+def test_uncommon_groups_come_from_the_ruler_file_not_the_generation(env, tmp_path):
+    # S2 expects Rare Sarcomas and is predicted as Rare Carcinomas: slightly_off while both are on the ruler.
+    rows = [PREDICTION_ROWS[0],
+            ("S2", 1, "Squamous cell carcinoma, NOS", "Rare Carcinomas", "3001/3", "0.9", "0.80", "0.9", "term_head", GEN)]
+    predictions = fx.make_bronze_predictions_csv(tmp_path / "rare.csv", rows)
+    assert silver_eval.uncommon_groups() == frozenset(UNCOMMON)
+    assert silver_eval.run(predictions, env["labels"], "se-split", "test")["summary"]["slightly_off"] == 1
+
+    config.UNCOMMON_GROUPS_TXT.write_text("", encoding="utf-8")
+    assert silver_eval.uncommon_groups() == frozenset()
+    assert silver_eval.run(predictions, env["labels"], "se-split", "test")["summary"]["slightly_off"] == 0
+
+
+def test_check_generation_id_returns_the_id_and_refuses_mixed_or_missing_ids(env):
+    predictions = silver_eval.read_predictions(env["predictions"])
+    assert silver_eval.check_generation_id("current", predictions) == GEN
+    mixed = pd.concat([predictions, predictions.assign(generation_id="other")])
+    with pytest.raises(silver_eval.SilverEvalError, match="generation_id"):
+        silver_eval.check_generation_id("current", mixed)
+    with pytest.raises(silver_eval.SilverEvalError, match="generation_id"):
+        silver_eval.check_generation_id("current", predictions.drop(columns=["generation_id"]))

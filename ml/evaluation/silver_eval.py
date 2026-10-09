@@ -10,8 +10,8 @@ with ``verdicts.score``, and append one line to a history CSV.
 - ``half`` optionally keeps only the md5 "eval" or "sweep" half of the
   partition (``generations.splits.in_sweep_half``), so the legacy split's test
   partition can be scored on the same cases as the frozen parity reference.
-- The uncommon-groups list comes from the report-mapping generation that made
-  the predictions; the predictions' ``generation_id`` must match it.
+- The uncommon-groups list is the scoring ruler's (``config.UNCOMMON_GROUPS_TXT``), the same for every
+  generation; the predictions' ``generation_id`` must match the generation they are scored for.
 - Breakdowns are keyed on the *expected* group / term: a row counts toward every
   group (term) its case expects, and false positives (no expectation) are left
   out. Legacy keyed its per-group table on the predicted group and dropped
@@ -32,7 +32,7 @@ from diagnosis_mapping.silver import load_silver
 from evaluation import verdicts
 from generations.manifest import read_manifest
 from generations.splits import in_sweep_half, load_split
-from report_mapping.model.generation import generation_paths, resolve_generation_dir
+from report_mapping.generation import resolve_generation_dir
 
 HALVES = ("eval", "sweep")
 TEXT_COLUMNS = ["diagnosis"]  # never carried into evaluation
@@ -52,20 +52,22 @@ def read_predictions(predictions_csv: str | Path) -> pd.DataFrame:
     return io_utils.read_csv(predictions_csv, encoding="utf-8", dtype=str, keep_default_na=False)
 
 
-def generation_uncommon_groups(generation: str, predictions: pd.DataFrame) -> tuple[str, frozenset[str]]:
-    """(generation_id, uncommon groups) of a report-mapping generation ("current", "candidate" or a dir).
+def uncommon_groups() -> frozenset[str]:
+    """The ruler's uncommon-groups list (``config.UNCOMMON_GROUPS_TXT``); not part of any generation."""
+    text = config.UNCOMMON_GROUPS_TXT.read_text(encoding="utf-8")
+    return frozenset(line.strip() for line in text.splitlines() if line.strip())
 
-    Refuses predictions that carry a different (or more than one) ``generation_id``:
-    scoring them with another generation's uncommon list would shift verdicts silently.
-    """
-    directory = resolve_generation_dir(generation)
-    generation_id = read_manifest(directory)["generation_id"]
+
+def check_generation_id(generation: str, predictions: pd.DataFrame) -> str:
+    """The ``generation_id`` of a report-mapping generation ("current", "candidate" or a dir), if the predictions
+    carry exactly that id; refuses otherwise. Predictions of another generation scored as this one would mislabel
+    the history and any promotion comparison."""
+    generation_id = read_manifest(resolve_generation_dir(generation))["generation_id"]
     found = sorted(set(predictions["generation_id"])) if "generation_id" in predictions.columns else []
     if found != [generation_id]:
         raise SilverEvalError(f"predictions carry generation_id {found}, but generation {generation!r} "
                               f"is {generation_id!r}; pass the generation that made them")
-    text = generation_paths(directory).uncommon_groups_txt.read_text(encoding="utf-8")
-    return generation_id, frozenset(line.strip() for line in text.splitlines() if line.strip())
+    return generation_id
 
 
 def load_labels(labels: str) -> pd.DataFrame:
@@ -136,9 +138,9 @@ def run(predictions_csv: str | Path, labels: str, split_id: str, partition: str,
         generation: str = "current", half: str | None = None, history_csv: str | Path | None = None) -> dict:
     """Load, score, and append the history line. ``labels`` is a silver_id or a labels CSV path."""
     predictions = read_predictions(predictions_csv)
-    generation_id, uncommon_groups = generation_uncommon_groups(generation, predictions)
+    generation_id = check_generation_id(generation, predictions)
     case_ids = partition_case_ids(split_id, partition, half)
-    result = evaluate(predictions, load_labels(labels), case_ids, uncommon_groups)
+    result = evaluate(predictions, load_labels(labels), case_ids, uncommon_groups())
     partition_label = partition if half is None else f"{partition}:{half}-half"
     result["history_csv"] = append_history(result["summary"], generation_id=generation_id, labels=labels,
                                            split_id=split_id, partition=partition_label, history_csv=history_csv)

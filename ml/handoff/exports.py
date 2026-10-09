@@ -12,9 +12,9 @@ Four outbox kinds (ml-rewrite-plan.md Artefacts, "Handoff"):
   report/diagnosis text.
 - ``export_bundle`` — a tarball of a report-mapping generation directory (what
   ml-worker needs to serve predictions), plus a sha256 sidecar file. The
-  source generation is verified (manifest file-hashes + embedding fingerprint,
-  via ``handoff.worker_format.verify_worker_bundle``) *before* bundling, so a
-  stale or tampered generation is refused rather than shipped;
+  source generation is verified (``report_mapping.generation.verify_spec``:
+  file hashes, architecture, calibration) *before* bundling, so a stale or
+  tampered generation is refused rather than shipped;
   ``verify_bundle`` re-runs the same check against the tarball's own contents
   after extraction, plus the sha256 sidecar, for the receiving side (and for
   this module's own tests) to confirm the tarball travelled intact.
@@ -37,9 +37,9 @@ import config
 import io_utils
 from diagnosis_mapping.silver import load_silver
 from generations.manifest import sha256_file
-from handoff import contracts, worker_format
+from handoff import contracts
 from manual_audit import audit_list
-from report_mapping.model.generation import resolve_generation_dir
+from report_mapping import generation
 
 
 class HandoffExportError(Exception):
@@ -121,12 +121,12 @@ def export_audit_list(list_id: str, *, include_review_queue: bool = True, out_di
 def export_bundle(generation_dir: str | Path | None = None, *, out_dir: str | Path | None = None) -> dict:
     """Tar ``generation_dir`` (default ``current``) and write a sha256 sidecar.
 
-    Refuses (via ``worker_format.verify_worker_bundle``) before bundling if the
-    source generation's manifest or embedding fingerprint doesn't check out.
+    Refuses (``generation.verify_spec``, raising ``GenerationError``) before bundling if the
+    source generation doesn't pass the spec check.
     """
-    directory = resolve_generation_dir(generation_dir) if generation_dir is not None else config.REPORT_MAPPING_CURRENT_DIR
-    manifest = worker_format.verify_worker_bundle(directory)
-    generation_id = manifest.get("generation_id", directory.name)
+    directory = generation.resolve_generation_dir(generation_dir) if generation_dir is not None else config.REPORT_MAPPING_CURRENT_DIR
+    manifest = generation.verify_spec(directory)
+    generation_id = manifest["generation_id"]
 
     out_dir = Path(out_dir) if out_dir is not None else config.HANDOFF_BUNDLES_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -146,7 +146,7 @@ def export_bundle(generation_dir: str | Path | None = None, *, out_dir: str | Pa
 
 def verify_bundle(tarball_path: str | Path, *, sha256_path: str | Path | None = None) -> dict:
     """Verify a bundle's sha256 sidecar, then extract it to a temp dir and
-    re-run ``worker_format.verify_worker_bundle`` against its contents — the
+    re-run ``generation.verify_spec`` against its contents — the
     receiving side's (and this module's own tests') confirmation that the
     tarball travelled intact and is still a loadable generation."""
     tarball_path = Path(tarball_path)
@@ -164,6 +164,6 @@ def verify_bundle(tarball_path: str | Path, *, sha256_path: str | Path | None = 
         extracted = [p for p in Path(tmp).iterdir() if p.is_dir()]
         if len(extracted) != 1:
             raise HandoffExportError(f"{tarball_path}: expected exactly one top-level directory, found {len(extracted)}")
-        manifest = worker_format.verify_worker_bundle(extracted[0])
+        manifest = generation.verify_spec(extracted[0])
 
-    return {"sha256_verified": True, "generation_id": manifest.get("generation_id")}
+    return {"sha256_verified": True, "generation_id": manifest["generation_id"]}

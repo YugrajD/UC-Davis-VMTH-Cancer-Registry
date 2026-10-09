@@ -120,7 +120,7 @@ def train(labels: str, split_id: str, out_dir: Path, recipe: Recipe, device, mod
                       [frozenset(np.flatnonzero(data.term_targets[i]).tolist()) for i in held_idx])
     model, tokenizer, summary = fit_model(
         [data.texts[i] for i in fit_idx], data.term_targets[fit_idx], data.gate_targets[fit_idx], data.vocab, recipe,
-        device, model_id, max_steps, holdout)
+        device, model_id, max_steps, holdout if held_idx else None)  # a --limit smoke can hold out nothing
 
     model.save(out_dir, tokenizer)
     (out_dir / generation.TERM_INFO_FILE).write_text(

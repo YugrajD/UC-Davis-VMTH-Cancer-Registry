@@ -75,8 +75,9 @@ AUDIT_LIST_EXPORT_SCHEMA_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Outbox: report-mapping generation bundle (ML -> cloud, for ml-worker). The
-# bundle's own internal shape is report_mapping.model.generation's layout
-# (see handoff/worker_format.py); this is just the tarball's own schema version.
+# bundle's own internal shape is report_mapping.generation's layout (encoder/, head.pt,
+# gate_head.pt, terms.json, term_info.json, thresholds.json, manifest.json; see handoff/worker_format.py);
+# this is just the tarball's own schema version.
 # ---------------------------------------------------------------------------
 BUNDLE_KIND = "report_mapping_bundle"
 BUNDLE_SCHEMA_VERSION = 1

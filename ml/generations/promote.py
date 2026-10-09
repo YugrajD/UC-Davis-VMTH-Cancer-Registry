@@ -1,39 +1,39 @@
 """The promotion rule, and applying it: archive the incumbent, swap the candidate in.
 
-**Rule** (ml-rewrite-plan.md, Decisions). Primary metric: weighted per-code
-exact accuracy (``good`` share); G+S is reported as secondary. Both the
-challenger (``candidate/``) and the incumbent (``current/``) are scored on the
-*current* gold-eval — the same cases, the incumbent re-scored every time — each
-with its own generation's uncommon groups. Promote only if
+Two kinds of model change (restructure-plan.md, Decisions 1):
+
+**Retraining** (same code, new weights) is judged on **gold only**. Both the challenger (``candidate/``) and the
+incumbent (``current/``) are scored on the *current* gold-eval - the same cases, the incumbent re-scored every
+time - against the one uncommon-groups ruler (``config.UNCOMMON_GROUPS_TXT``). Promote only if
 
 (a) at least one retraining trigger is met (``generations.triggers``), and
-(b) the lower 95% bound of the paired (challenger − incumbent) good share, from
-    a stratified case-cluster paired bootstrap, is ≥ ``MARGIN`` (−2.0 pp).
+(b) the lower 95% bound of the paired (challenger - incumbent) good share, from a stratified case-cluster paired
+    bootstrap, is >= ``MARGIN`` (-2.0 pp).
 
-``recommend`` computes this and changes nothing; ``trigger_status`` computes (a)
-alone, before any challenger exists. ``apply`` carries it out: a winning
-candidate is swapped in after the incumbent is archived; a losing one is
-deleted. ``adopt`` does the same swap without the rule, for a generation that
-was already promoted on another machine (s3sync/models.py pulls it into
-``candidate/`` first).
+There is no silver fallback: without gold-eval rows ``recommend`` refuses. It also refuses a candidate whose
+``architecture`` block differs from current's - that is not a retraining; use ``adopt_architecture``.
+``recommend`` computes the rule and changes nothing; ``trigger_status`` computes (a) alone, before any challenger
+exists. ``apply`` carries it out: a winning candidate is swapped in after the incumbent is archived; a losing one is
+deleted.
 
-**Swap safety.** The candidate is re-verified (manifest, embedding fingerprint,
-``calibration.status == "calibrated"``) and the incumbent's manifest verified
-immediately before anything moves. Both moves are same-filesystem
-``os.rename`` calls: ``current → ARCHIVE_ROOT/YYYY-MM-DD_<desc>/`` then
-``candidate → current``. If the second fails, the first is undone, so
-``current/`` is never left half-moved or empty. Only then are the manifest
-statuses set (``archived`` / ``current``) and the embedding-cache entries the new
-``current/`` cannot use moved into the archive. Their key includes the backbone
-fingerprint, so a stale entry could never load against the wrong generation;
-it is archived because CLAUDE.md archives a generation's embeddings with it.
+**Architectural change** (new code) is adopted by hand: ``adopt_architecture`` needs a reason, an existing file
+under ``config.HISTORY_DIR`` (an ADR), records it in the manifest (``adoption``), archives ``current/`` whole and
+swaps. No gold rule, no triggers.
+
+``adopt_published`` is a third, separate thing: it swaps in a generation that was already promoted on another machine
+(s3sync/models.py pulls it into ``candidate/`` first), without the rule.
+
+**Swap safety.** The candidate is re-verified (``report_mapping.generation.verify_spec``: file hashes, architecture,
+calibration bound to its weights) and the incumbent's manifest verified immediately before anything moves. Both moves
+are same-filesystem ``os.rename`` calls: ``current -> ARCHIVE_ROOT/YYYY-MM-DD_<desc>/`` then ``candidate -> current``.
+If the second fails, the first is undone, so ``current/`` is never left half-moved or empty.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
-from datetime import date
+from datetime import date, datetime, timezone
 from functools import partial
 from pathlib import Path
 
@@ -43,10 +43,9 @@ import config
 import io_utils
 from evaluation import gold_eval, intervals, silver_eval, verdicts
 from generations import guards, triggers
-from generations.manifest import read_manifest, sha256_file, update_manifest, verify_manifest
+from generations.manifest import read_manifest, update_manifest, verify_manifest
 from manual_audit import eval_batch, gold
-from report_mapping.inference import embedding_cache
-from report_mapping.model.generation import compute_embedding_fingerprint, generation_paths, verify_fingerprint
+from report_mapping import generation
 
 MARGIN = -0.02
 
@@ -56,16 +55,12 @@ class PromotionError(Exception):
 
 
 def check_candidate(directory: str | Path) -> dict:
-    """Verify manifest + embedding fingerprint + calibration status; return the manifest."""
+    """``generation.verify_spec`` (file hashes, architecture, calibrated and bound to its weights); return the
+    manifest. A generation that fails the spec raises ``GenerationError``."""
     directory = Path(directory)
     if not directory.is_dir():
         raise PromotionError(f"no candidate generation at {directory}")
-    verify_manifest(directory)
-    manifest = verify_fingerprint(directory)
-    status = (manifest.get("calibration") or {}).get("status")
-    if status != "calibrated":
-        raise PromotionError(f"{directory}: calibration.status is {status!r}; run calibrate.py first")
-    return manifest
+    return generation.verify_spec(directory)
 
 
 def _ledger() -> pd.DataFrame:
@@ -91,15 +86,15 @@ def decide(comparison: dict, fired: list[triggers.Trigger]) -> bool:
     return bool(comparison["good_lo"] >= MARGIN and any(t.met for t in fired))
 
 
-def _score(generation: str, predictions_csv: str | Path, gold_rows: pd.DataFrame,
+def _score(generation_name: str, predictions_csv: str | Path, gold_rows: pd.DataFrame,
            cases: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    """One generation's gold-eval verdict table, with its own uncommon groups, and how many gold-eval
-    cases have no prediction row. predict.py writes no row for a case whose report sections are all
-    empty, so such a case scores as "predicted nothing", as it does in silver-eval and gold-eval."""
+    """One generation's gold-eval verdict table (the ruler's uncommon groups), and how many gold-eval cases
+    have no prediction row. predict.py writes no row for a case with no report text, so such a case scores as
+    "predicted nothing", as it does in silver-eval and gold-eval. The predictions must carry the generation's id."""
     predictions = silver_eval.read_predictions(predictions_csv)
-    _, uncommon = silver_eval.generation_uncommon_groups(generation, predictions)
+    silver_eval.check_generation_id(generation_name, predictions)
     unpredicted = len(set(cases.index) - set(predictions["case_id"]))
-    return gold_eval.score_bronze(gold_rows, predictions, uncommon, cases), unpredicted
+    return gold_eval.score_bronze(gold_rows, predictions, silver_eval.uncommon_groups(), cases), unpredicted
 
 
 def trigger_status(silver_id: str | None, incumbent_predictions_csv: str | Path, *, split_id: str | None = None,
@@ -131,6 +126,11 @@ def recommend(challenger_predictions_csv: str | Path, incumbent_predictions_csv:
     if challenger_manifest["generation_id"] == incumbent_manifest["generation_id"]:
         raise PromotionError(f"candidate and current share generation_id {incumbent_manifest['generation_id']!r}; "
                              "their predictions cannot be told apart")
+    if challenger_manifest["architecture"] != incumbent_manifest.get("architecture"):
+        raise PromotionError(f"candidate architecture {challenger_manifest['architecture']} differs from current's "
+                             f"{incumbent_manifest.get('architecture')}: that is an architectural change, not a "
+                             "retraining. Adopt it with promote.py --adopt --reason <a file under "
+                             f"{config.HISTORY_DIR}>")
 
     gold_rows = gold.gold_eval(split_id=split_id)
     if gold_rows.empty:
@@ -168,70 +168,63 @@ def apply(result: dict, description: str | None = None, today: date | None = Non
     if read_manifest(current)["generation_id"] != result["incumbent_id"]:
         raise PromotionError("current/ changed since the recommendation; re-run it")
     archive = archive_path(result["incumbent_id"], description, today)
-    moved = _archive_and_swap(archive)
-    return {"action": "promoted", "generation_id": result["challenger_id"], "archive": archive,
-            "archived_caches": len(moved)}
+    _swap_in(candidate, current, archive, {})
+    return {"action": "promoted", "generation_id": result["challenger_id"], "archive": archive}
 
 
 def archive_path(incumbent_id: str, description: str | None = None, today: date | None = None) -> Path:
-    """Where ``apply`` / ``adopt`` archive the incumbent."""
+    """Where ``apply`` / ``adopt_architecture`` / ``adopt_published`` archive the incumbent."""
     return config.ARCHIVE_ROOT / f"{(today or date.today()).isoformat()}_{description or incumbent_id}"
 
 
-def adopt(description: str | None = None, today: date | None = None) -> dict:
+def adopt_published(description: str | None = None, today: date | None = None) -> dict:
     """Swap a verified ``candidate/`` in without the scoring rule: it was already promoted where it was
-    published. Archives the incumbent as ``apply`` does; a machine with no ``current/`` just takes it."""
-    candidate, current = config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR
+    published (s3sync/models.py pull_model). Archives the incumbent as ``apply`` does; a machine with no
+    ``current/`` just takes it."""
+    return _adopt(config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR, description, today, {})
+
+
+def adopt_architecture(candidate_dir: str | Path, current_dir: str | Path, reason_path: str | Path,
+                       description: str | None = None, today: date | None = None) -> dict:
+    """Adopt a candidate built by new code. No gold rule, no triggers: ``reason_path`` must be an existing file
+    under ``config.HISTORY_DIR`` (the ADR that explains the change); its repo-relative path is recorded in the
+    manifest as ``adoption`` {reason, adopted_at}. ``current_dir`` is archived whole when it exists."""
+    reason = Path(reason_path).resolve()
+    if not reason.is_file() or not reason.is_relative_to(config.HISTORY_DIR.resolve()):
+        raise PromotionError(f"the reason must be an existing file under {config.HISTORY_DIR}, got {reason_path}")
+    current = Path(current_dir)
+    if current.exists() and read_manifest(current).get("architecture") == check_candidate(candidate_dir)["architecture"]:
+        raise PromotionError("candidate/ has the same architecture as current/: a retrain goes through the gold rule "
+                             "(promote.py --apply), not --adopt")
+    adoption ={"reason": reason.relative_to(config.REPO_ROOT.resolve()).as_posix(),
+                "adopted_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    return _adopt(Path(candidate_dir), Path(current_dir), description, today, {"adoption": adoption})
+
+
+def _adopt(candidate: Path, current: Path, description: str | None, today: date | None, fields: dict) -> dict:
     generation_id = check_candidate(candidate)["generation_id"]
-    if not current.exists():
+    archive = None
+    if current.exists():
+        verify_manifest(current)
+        archive = archive_path(read_manifest(current)["generation_id"], description, today)
+    _swap_in(candidate, current, archive, fields)
+    return {"action": "adopted", "generation_id": generation_id, "archive": archive}
+
+
+def _swap_in(candidate: Path, current: Path, archive: Path | None, fields: dict) -> None:
+    """Archive ``current`` into ``archive`` (None: there is no current/) and put ``candidate`` in its place."""
+    if archive is None:
         current.parent.mkdir(parents=True, exist_ok=True)
         os.rename(candidate, current)
-        update_manifest(current, {"status": "current"})
-        return {"action": "adopted", "generation_id": generation_id, "archive": None, "archived_caches": 0}
-
-    verify_manifest(current)
-    archive = archive_path(read_manifest(current)["generation_id"], description, today)
-    moved = _archive_and_swap(archive)
-    return {"action": "adopted", "generation_id": generation_id, "archive": archive, "archived_caches": len(moved)}
-
-
-def _archive_and_swap(archive: Path) -> list[str]:
-    """Archive current/ into ``archive``, put candidate/ in its place; return the cache files archived too."""
-    candidate, current = config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR
-    if archive.exists():
-        raise PromotionError(f"{archive} already exists; pass another description")
-    archive.parent.mkdir(parents=True, exist_ok=True)
-
-    os.rename(current, archive)
-    try:
-        os.rename(candidate, current)
-    except OSError:
-        os.rename(archive, current)
-        raise
-    update_manifest(current, {"status": "current"})
-    moved = _archive_stale_caches(archive)
-    # The archive's manifest lists the moved cache files too, so the archive still verifies.
-    files = {**read_manifest(archive)["files"], **{rel: sha256_file(archive / rel) for rel in moved}}
-    update_manifest(archive, {"status": "archived", "files": files})
-    return moved
-
-
-def _archive_stale_caches(archive: Path) -> list[str]:
-    """Move every embedding-cache entry the new current/ cannot use into ``archive``; return their
-    paths relative to it.
-
-    CLAUDE.md archives a generation's embeddings with it. The cache is keyed by content, so the
-    entry to keep is the one for the new current's backbone and today's report.csv. A heads-only
-    promotion shares the incumbent's backbone, so its entry stays."""
-    cached = sorted(config.EMBEDDING_CACHE_DIR.glob("*.npz"))
-    if not cached:
-        return []
-    paths = generation_paths(config.REPORT_MAPPING_CURRENT_DIR)
-    keep = embedding_cache.content_key(config.REPORT_CSV, paths.labels_csv,
-                                       compute_embedding_fingerprint(paths.petbert_dir))
-    moved = [f"embedding_cache/{path.name}" for path in cached if path.stem != keep]
-    if moved:
-        (archive / "embedding_cache").mkdir()
-    for rel in moved:
-        os.rename(config.EMBEDDING_CACHE_DIR / Path(rel).name, archive / rel)
-    return moved
+    else:
+        if archive.exists():
+            raise PromotionError(f"{archive} already exists; pass another description")
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        os.rename(current, archive)
+        try:
+            os.rename(candidate, current)
+        except OSError:
+            os.rename(archive, current)
+            raise
+        update_manifest(archive, {"status": "archived"})
+    update_manifest(current, {"status": "current", **fields})

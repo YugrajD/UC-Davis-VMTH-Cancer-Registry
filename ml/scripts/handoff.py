@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from handoff import exports, imports
+from report_mapping.generation import GenerationError
 
 # The S3 sync sets (config.S3_SYNC_SETS) each subcommand writes into: the inbox/outbox files land in
 # "handoff"; a gold import also writes the gold store, and an audit list also records its ledger, both
@@ -65,7 +66,11 @@ def _cmd_export_coding(args: argparse.Namespace) -> int:
 
 
 def _cmd_export_bundle(args: argparse.Namespace) -> int:
-    result = exports.export_bundle(args.generation)
+    try:
+        result = exports.export_bundle(args.generation)
+    except GenerationError as error:
+        print(f"REFUSED: {error}", file=sys.stderr)
+        return 1
     print(f"wrote {result['tarball_path']} (sha256 {result['sha256']}) for generation {result['generation_id']}")
     print(f"wrote {result['sha256_path']}")
     return 0

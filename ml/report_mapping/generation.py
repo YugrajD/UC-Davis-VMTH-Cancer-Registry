@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -120,6 +121,20 @@ def write_calibration(directory: Path, thresholds: dict, block: dict) -> dict:
                              "calibrated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     write_manifest(directory, fields)
     return update_manifest(directory, {"created_at": old["created_at"], "git_sha": old["git_sha"]})
+
+
+def copy_for_recalibration(source: Path, dest: Path) -> dict:
+    """Copy the calibrated generation ``source`` to ``dest`` as a new generation with the same weights: a new
+    generation_id, calibration "pending", no thresholds.json; weights_sha256, architecture and parents unchanged.
+    New thresholds for the same weights are a new generation, so ``calibrate`` can then fit ``dest``."""
+    source, dest = Path(source), Path(dest)
+    old = verify_spec(source)
+    if dest.exists():
+        raise GenerationError(f"{dest} already exists")
+    shutil.copytree(source, dest, ignore=shutil.ignore_patterns(THRESHOLDS_FILE, "manifest.json"))
+    fields = {k: v for k, v in old.items() if k not in ("files", "created_at", "git_sha", "adoption")}
+    return write_manifest(dest, {**fields, "generation_id": new_generation_id(), "status": "candidate",
+                                 "recalibrated_from": old["generation_id"], "calibration": {"status": "pending"}})
 
 
 def verify_spec(directory: Path, *, require_calibrated: bool = True) -> dict:

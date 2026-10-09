@@ -36,7 +36,7 @@ miss). Missed gold codes and ``Non-Cancer`` rows take the case's stage: the
 label of its vague rows if any, else of its coded rows, else of all its rows;
 ``mixed`` when those disagree. Gold-eval cases with no silver rows (no
 diagnosis) are not scored for silver. Silver is scored without the uncommon-
-group leniency, which belongs to the report-mapping generation; bronze uses it.
+group leniency (``config.UNCOMMON_GROUPS_TXT``); bronze uses it.
 
 **Bands (result 2).** One band per case, from its top-ranked prediction (the
 review gate in ``coding.combine`` is also per case, on the top prediction):
@@ -486,7 +486,7 @@ def run(predictions_csv: str | Path, silver_id: str, split_id: str, *, generatio
         raise GoldEvalError(f"no gold-eval rows for split {split_id!r} in {config.GOLD_STORE_CSV}; "
                             "ingest an eval batch or a random slice first")
     predictions = silver_eval.read_predictions(predictions_csv)
-    generation_id, uncommon_groups = silver_eval.generation_uncommon_groups(generation, predictions)
+    generation_id = silver_eval.check_generation_id(generation, predictions)
     silver = load_silver(silver_id).drop(columns=silver_eval.TEXT_COLUMNS, errors="ignore")
 
     if config.COMBINED_PREDICTIONS_CSV.is_file():
@@ -498,7 +498,7 @@ def run(predictions_csv: str | Path, silver_id: str, split_id: str, *, generatio
 
     result = evaluate(
         gold_rows, _read_store(config.EVAL_BATCH_LEDGER_CSV, eval_batch.EVAL_BATCH_LEDGER_FIELDS), silver,
-        predictions, uncommon_groups, split_id=split_id, silver_id=silver_id, generation_id=generation_id,
+        predictions, silver_eval.uncommon_groups(), split_id=split_id, silver_id=silver_id, generation_id=generation_id,
         cause_store=_read_store(config.CAUSE_STORE_CSV, ["case_id", "gold_code", "method", "input_supports"]),
         group_codes=group_codes, test_codes=code_counts_by_group(test_silver, "matched_code", "matched_group"),
         n_boot=n_boot, seed=seed,

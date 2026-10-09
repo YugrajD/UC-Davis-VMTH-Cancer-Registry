@@ -26,6 +26,13 @@ def tiny_modernbert_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return fx.build_tiny_modernbert(tmp_path_factory.mktemp("tiny_modernbert"))
 
 
+@pytest.fixture(scope="session")
+def tiny_generation_dir(tmp_path_factory: pytest.TempPathFactory, tiny_modernbert_dir: Path) -> Path:
+    """A calibrated tiny generation (tiny ModernBERT, random heads), built once per session. Tests copy it
+    (``shutil.copytree``) and change the copy's manifest fields; never write into it."""
+    return fx.build_tiny_generation(tmp_path_factory.mktemp("tiny_generation") / "generation", tiny_modernbert_dir)
+
+
 @pytest.fixture
 def labels_csv(tmp_path: Path) -> Path:
     """A synthetic labels.csv-shaped taxonomy file."""
@@ -54,27 +61,3 @@ def annotation_csv(tmp_path: Path) -> Path:
 def split_files(tmp_path: Path) -> tuple[Path, Path]:
     """(train_cases.txt, test_cases.txt) — a legacy-style case-id split."""
     return fx.make_split(tmp_path / "splits")
-
-
-@pytest.fixture
-def case_presence_head():
-    """A random-init CasePresenceClassifier at the tiny embedding dimension."""
-    return fx.build_case_presence_head()
-
-
-@pytest.fixture
-def group_head():
-    """A random-init GroupClassifier over the synthetic taxonomy's groups."""
-    return fx.build_group_head()
-
-
-@pytest.fixture
-def label_presence_head():
-    """A random-init LabelPresenceClassifier (n_cols=3, concat-3 section spec)."""
-    return fx.build_label_presence_head()
-
-
-@pytest.fixture
-def report_mapping_bundle(tmp_path: Path, tiny_bert_dir: Path) -> Path:
-    """A full synthetic report-mapping generation directory (report_mapping bundle layout)."""
-    return fx.build_report_mapping_bundle(tmp_path / "generation", tiny_bert_dir)

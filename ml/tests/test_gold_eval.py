@@ -28,7 +28,8 @@ import pytest
 import config
 import io_utils
 from coding.rule import UnknownDecisionError
-from evaluation import gold_eval, intervals
+from evaluation import gold_eval, intervals, silver_eval
+from generations.manifest import write_manifest
 from manual_audit.cause_pass import CAUSE_STORE_FIELDS
 from manual_audit.eval_batch import EVAL_BATCH_LEDGER_FIELDS
 
@@ -112,7 +113,9 @@ def build(root, monkeypatch, review_mode="app_non_blind"):
         _bronze("U1", 1, None, 0),
         _bronze("E6", 1, MCT_M, 0.99),
     ])
-    fx.make_minimal_generation(config.REPORT_MAPPING_CURRENT_DIR, GEN, UNCOMMON)
+    config.REPORT_MAPPING_CURRENT_DIR.mkdir(parents=True)
+    write_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"generation_id": GEN})  # all gold-eval reads from a generation
+    config.UNCOMMON_GROUPS_TXT.write_text("\n".join(UNCOMMON) + "\n", encoding="utf-8")
     config.CAUSE_STORE_CSV.parent.mkdir(parents=True, exist_ok=True)
     io_utils.write_csv(pd.DataFrame([
         {"case_id": "E2", "gold_code": "2001/3", "method": "silver", "input_supports": "yes"},
@@ -332,3 +335,12 @@ def test_cli_fails_cleanly_without_gold_or_audit_rows(tmp_path, monkeypatch, cap
     assert script.main() == 1
     err = capsys.readouterr().err
     assert "no gold-eval rows" in err and "no audit rows" in err
+
+
+def test_predictions_stamped_with_another_generation_are_refused(tmp_path, monkeypatch):
+    build(tmp_path, monkeypatch)
+    path = tmp_path / "predictions.csv"
+    stamped = io_utils.read_csv(path, encoding="utf-8", dtype=str, keep_default_na=False).assign(generation_id="other-gen")
+    io_utils.write_csv(stamped, path)
+    with pytest.raises(silver_eval.SilverEvalError, match="generation_id"):
+        gold_eval.run(path, SILVER, SPLIT, n_boot=N_BOOT)

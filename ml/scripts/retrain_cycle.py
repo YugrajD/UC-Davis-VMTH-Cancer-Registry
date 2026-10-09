@@ -1,8 +1,8 @@
-"""The local lane of the full cycle in one go (icd-mapping-strategy.md, "The full cycle"). Recommend-only.
+"""The local lane of the full cycle in one go (icd-mapping-strategy.md, "The full cycle"). Recommend-only by default.
 
-  ml/.venv/bin/python ml/scripts/retrain_cycle.py --silver SID [--split ID] [--device cuda] [--local-only]
+  ml/.venv/Scripts/python.exe ml/scripts/retrain_cycle.py --silver SID [--split ID] [--device cuda]
       [--gold-csv PATH --export-id ID --reviewer NAME [--upload-period YYYY-MM] [--slice-rate R]]
-      [--backbone] [--force]
+      [--force] [--apply]
 
 Steps, each the existing entry point run as its own process (the parity runbook's commands, and a fresh
 process frees GPU memory between steps):
@@ -13,9 +13,10 @@ process frees GPU memory between steps):
    stop unless a retraining trigger is met for a challenger trained on ``--silver`` (``--force`` trains
    anyway; ``promote.py`` still needs a trigger).
 4. ``code_cases.py corrected``: latest silver + gold-train, the table the challenger trains on.
-5. ``train.py`` heads on the current backbone, after ``--stage backbone`` when ``--backbone`` is given.
+5. ``train.py`` (one step, from the base checkpoint).
 6. ``calibrate.py``, then ``predict.py`` for the candidate.
-7. ``promote.py`` without ``--apply``. Applying the recommendation is left to the Admin.
+7. ``promote.py`` without ``--apply``: the recommendation is left to the Admin. With ``--apply`` here, ``promote.py
+   --apply`` runs only when the gold rule passes; otherwise the cycle still only recommends (the candidate is kept).
 
 It never runs the LLM cascade: a new silver generation is its own step (``map_diagnoses.py``).
 """
@@ -31,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
 from generations.manifest import read_manifest
-from generations.promote import trigger_status
+from generations.promote import recommend, trigger_status
 from manual_audit import gold
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -52,10 +53,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--silver", required=True, help="The silver_id the challenger trains on.")
     parser.add_argument("--split", default=None, help=f"split_id (default: {config.DEFAULT_SPLIT_ID})")
-    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps", "xpu"])
-    parser.add_argument("--local-only", action="store_true")
-    parser.add_argument("--backbone", action="store_true", help="Retrain the backbone before the heads (cold start).")
+    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--force", action="store_true", help="Train even when no retraining trigger is met.")
+    parser.add_argument("--apply", action="store_true",
+                        help="Promote the candidate when the gold rule passes (default: only recommend).")
     parser.add_argument("--gold-csv", help="A gold_<export>.csv from the cloud to ingest first.")
     parser.add_argument("--export-id")
     parser.add_argument("--reviewer")
@@ -88,17 +89,25 @@ def main() -> int:
         return 0
 
     _run("code_cases.py", "corrected", "--silver", args.silver, "--split", split_id)
-    local = ["--local-only"] if args.local_only else []
-    for stage in (["backbone"] if args.backbone else []) + ["heads"]:
-        _run("train.py", "--stage", stage, "--labels", str(config.CORRECTED_ANNOTATIONS_CSV), "--split", split_id,
-             "--device", args.device, "--out", "candidate", *local)
+    _run("train.py", "--labels", str(config.CORRECTED_ANNOTATIONS_CSV), "--split", split_id,
+         "--device", args.device, "--out", "candidate")
     # The corrected table covers the train partition only; the calibration partition is labelled by silver.
     _run("calibrate.py", "--generation", "candidate", "--labels", args.silver, "--split", split_id,
-         "--device", "cpu" if args.device == "auto" else args.device)
+         "--device", args.device)
     candidate_predictions = _predictions_path(candidate)
     _run("predict.py", "--generation", "candidate", "--device", args.device, "--out", str(candidate_predictions))
-    _run("promote.py", "--candidate-predictions", str(candidate_predictions),
-         "--incumbent-predictions", str(incumbent_predictions), "--split", split_id, "--n-boot", args.n_boot)
+    promote_args = ["--candidate-predictions", str(candidate_predictions),
+                    "--incumbent-predictions", str(incumbent_predictions), "--split", split_id, "--n-boot", args.n_boot]
+    if args.apply:
+        try:  # the same call promote.py makes (deterministic), so --apply runs only when the rule passes
+            passes = recommend(candidate_predictions, incumbent_predictions, split_id=split_id,
+                               n_boot=int(args.n_boot))["promote"]
+        except Exception as error:  # noqa: BLE001 - promote.py would refuse with this same message
+            print(f"REFUSED: {error}", file=sys.stderr)
+            return 1
+        if passes:
+            promote_args.append("--apply")
+    _run("promote.py", *promote_args)
     return 0
 
 

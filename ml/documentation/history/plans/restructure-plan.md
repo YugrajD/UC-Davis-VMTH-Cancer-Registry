@@ -255,3 +255,52 @@ report_mapping.training
 - 8-column has-text rule: all 58,313 report rows have text vs 58,172 under the old rule; 141 extra cases (109 train / 17 calibration / 15 test).
 - R1 exact check: the harness replays the old per-partition scoring (train, calibration, test of `three-way-v1`, report order within each, one `logits_for` call per partition) and compares by case_id merge. Separately report cell flips of the library's one-pass `run_predict` vs the frozen CSV (bf16 batch-composition noise; verify measured ≤ 7.6e-6 term-logit drift for partition-vs-one-pass on synthetic text).
 - R4: compare calibration verdicts to the freeze record after masking the 15 extra labelled calibration cases; report the delta with them included.
+
+### 2026-10-09 WP3 (generations, promote/adopt, evaluation ruler, scripts): interfaces and final CLIs for WP4/WP7
+
+Python in all commands: `ml/.venv/Scripts/python.exe`. `--device` is `auto|cpu|cuda` everywhere (`auto` = cuda if available:
+`report_mapping.model.resolve_device`; mps/xpu are gone). Refusals print `REFUSED: ...` to stderr and exit 1.
+
+```
+train.py        --labels L (required: silver_id or CSV) [--split ID] [--seed 42] [--device auto] [--out candidate|DIR]
+                [--model ENCODER_ID|DIR] [--limit N] [--max-steps N]       # one step -> candidate, calibration pending
+calibrate.py    --labels L (required) [--generation candidate|current|DIR] [--split ID] [--max-fp-share X = config.FP_CAP]
+                [--device auto]                                           # review share = config.REVIEW_TARGET_SHARE; no --partition
+predict.py      [--generation current|candidate|DIR] [--device auto] [--out PATH]   # default out PREDICTIONS_DIR/<generation_id>_predictions.csv
+evaluate.py     unchanged CLI (silver | gold | audit-rates); ruler = config.UNCOMMON_GROUPS_TXT
+promote.py      --candidate-predictions P --incumbent-predictions P [--split ID] [--n-boot N] [--seed N]
+                  [--apply [--description D] [--publish]]                 # retraining: gold rule, same architecture only
+                --adopt --reason PATH [--description D] [--publish]       # architectural adopt; PATH = existing file under ml/documentation/history/
+                (--adopt with --apply, --adopt without --reason, --reason without --adopt, --publish alone: argparse error, exit 2)
+retrain_cycle.py --silver SID [--split ID] [--device auto] [--gold-csv P --export-id I --reviewer R [--upload-period] [--slice-rate]]
+                [--force] [--apply] [--n-boot N]   # code_cases -> train -> calibrate -> predict -> promote.py; --apply adds
+                                                  # promote.py --apply only when the gold rule passes (else recommend, candidate kept)
+generations.py  status [--silver SID [--split ID] [--incumbent-predictions P]]      # current/candidate/archive: id, architecture, calibration, adopted_for
+                recalibrate --labels L [--split ID] [--from current] [--to candidate] [--max-fp-share X] [--device auto]
+handoff.py      export-bundle [--generation current]   # verify_spec then tar; REFUSED on GenerationError
+```
+
+Functions:
+- `generations.promote`: `check_candidate(dir)` = `report_mapping.generation.verify_spec` (raises `GenerationError`; `PromotionError` only if the dir is
+  missing); `recommend`/`apply`/`trigger_status` unchanged in rule, plus the refusal of a candidate whose manifest `architecture` differs from
+  current's (message names `promote.py --adopt --reason`); `adopt_architecture(candidate_dir, current_dir, reason_path, description=None,
+  today=None)` (reason must resolve under `config.HISTORY_DIR`; records `adoption: {reason: repo-relative posix, adopted_at}` on the new current
+  after the swap; no current/ -> plain rename); `adopt_published(description=None, today=None)` is the old `adopt` (s3sync pull) - renamed. `apply`
+  and the adopts return `{action, generation_id, archive}` (no `archived_caches`). `_archive_stale_caches` and all embedding-cache steps are gone.
+- `evaluation.silver_eval`: `uncommon_groups()` (reads `config.UNCOMMON_GROUPS_TXT`) and `check_generation_id(generation, predictions) -> generation_id`
+  (refuses predictions whose `generation_id` is not the generation's manifest id; read with `generations.manifest.read_manifest`, no spec check, so
+  archived/older generations can still be scored) replace `generation_uncommon_groups`.
+- `report_mapping.generation.copy_for_recalibration(source, dest) -> manifest` (source must pass `verify_spec`; new id, `calibration` pending, no
+  thresholds.json, same weights/architecture/parents, `recalibrated_from` = source id at the manifest top level).
+- `report_mapping.model.resolve_device(name)`. `config`: `REPO_ROOT`, `HISTORY_DIR` added.
+- WP2 fix: `training/train.py` passed an empty `Holdout` to `fit_model` when `--limit` left nothing to hold out (tokenizer crash); it now passes
+  `None` then.
+
+For WP4: the first adopt is `promote.py --adopt --reason ml/documentation/history/decisions/0009-<title>.md` (ADR must exist first - WP7), run from the
+repo root or with an absolute path. The re-housed generation must pass `verify_spec` (calibrated, bound) before it is adopt-able. For WP7: `test_docs`
+currently fails only on `scripts-and-flags.md` still documenting `calibrate.py --partition`, `predict.py --model/--embed-only/--cache-dir/--local-only`,
+`retrain_cycle.py --backbone/--local-only`, `train.py --stage/--oof-stage/--k/--local-only` and the removed `rr_phase1.py`. For WP6: `export_bundle` no
+longer imports `worker_format`; the bundle is the generation directory (`encoder/`, `head.pt`, ...), `BUNDLE_KIND`/`BUNDLE_SCHEMA_VERSION` are unchanged
+(schema is a description of the tarball, not of its contents - bump `BUNDLE_SCHEMA_VERSION` if the backend reads the contents, e.g. `<bundle>/petbert`);
+`tests/fixtures.py` no longer has `build_report_mapping_bundle`/`report_mapping_bundle` (use the session fixture `tiny_generation_dir`, a calibrated tiny
+generation: `shutil.copytree` it and `update_manifest` the copy).

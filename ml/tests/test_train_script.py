@@ -1,144 +1,185 @@
-"""scripts/train.py: the thin entry point.
+"""scripts/train.py, calibrate.py and predict.py: the thin entry points, end to end on a tiny offline ModernBERT.
 
-End-to-end on synthetic data: ``--stage heads`` (gate, then group, then
-label-presence) produces a complete candidate generation whose manifest
-verifies and that ``report_mapping.model.generation.load_generation`` can
-load — the manifest is the deliverable's own acceptance test ("the candidate
-manifest is complete, and load_generation loads the candidate").
+train.py is one step (labels + split -> candidate with calibration pending); calibrate.py fits the thresholds;
+predict.py refuses an uncalibrated generation and stamps its predictions with the generation id.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import re
-import shutil
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from generations.guards import GuardViolation
-from report_mapping.model.generation import GenerationError, load_generation
+import config
+from generations.manifest import read_manifest, verify_manifest
+from report_mapping import generation
+from report_mapping.inference import decide
+from report_mapping.model import ENCODER_ID
 
 from . import fixtures as fx
 
-_TRAIN_PY = Path(__file__).resolve().parents[1] / "scripts" / "train.py"
-_spec = importlib.util.spec_from_file_location("ml_next_scripts_train", _TRAIN_PY)
-train_script = importlib.util.module_from_spec(_spec)
-sys.modules.setdefault(_spec.name, train_script)
-_spec.loader.exec_module(train_script)
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+
+
+def _load(name: str):
+    spec = importlib.util.spec_from_file_location(f"ml_next_scripts_{name}_tests", SCRIPTS / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+train_script, calibrate_script, predict_script = _load("train"), _load("calibrate"), _load("predict")
 
 
 @pytest.fixture
-def training_env(tmp_path, monkeypatch, tiny_bert_dir):
-    fx.point_training_config_at(monkeypatch, tmp_path)
-    import config
-
-    config.REPORT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    fx.make_training_reports_csv(config.REPORT_CSV)
-    fx.make_labels_csv(config.LABELS_CSV)
-    ann_path = tmp_path / "annotation.csv"
-    fx.make_training_annotation_csv(ann_path)
-    fx.make_two_way_split_generation("all-train", train_ids=fx.TRAINING_CASE_IDS, test_ids=[])
-
-    from report_mapping.model.generation import generation_paths
-    current_petbert = generation_paths(config.REPORT_MAPPING_CURRENT_DIR).petbert_dir
-    current_petbert.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(tiny_bert_dir, current_petbert)
-    # A minimal "current" generation thresholds.json so train.py's manifest
-    # step has a parent placeholder to copy.
-    current_thresholds = generation_paths(config.REPORT_MAPPING_CURRENT_DIR).thresholds_json
-    current_thresholds.parent.mkdir(parents=True, exist_ok=True)
-    current_thresholds.write_text('{"case_presence_gate": 0.5}', encoding="utf-8")
-
-    return ann_path, config
+def world(tmp_path, monkeypatch):
+    labels, split_id = fx.make_training_world(tmp_path, monkeypatch)
+    return labels, split_id
 
 
-def test_heads_stage_produces_a_loadable_candidate(training_env):
-    ann_path, config = training_env
-
-    rc = train_script.main([
-        "--stage", "heads", "--labels", str(ann_path), "--split", "all-train",
-        "--seed", "42", "--device", "cpu", "--out", "candidate", "--local-only",
-    ])
-    assert rc == 0
-
-    candidate_dir = config.REPORT_MAPPING_CANDIDATE_DIR
-    manifest_path = candidate_dir / "manifest.json"
-    assert manifest_path.is_file()
-
-    # A freshly trained candidate is uncalibrated: real loading must be refused by default...
-    with pytest.raises(GenerationError, match="calibration"):
-        load_generation(candidate_dir)
-
-    # ...but allow_uncalibrated=True (e.g. for inspection, or calibrate.py's own load) works.
-    gen = load_generation(candidate_dir, allow_uncalibrated=True)
-    assert gen.group_names == ["Uncommon"]
-    assert "Uncommon" in gen.label_presence_heads
-    assert gen.thresholds == {"case_presence_gate": 0.5}  # copied from the parent as a placeholder
-    assert gen.manifest["calibration"]["status"] == "pending"
-    assert gen.manifest["status"] == "candidate"
-    assert gen.manifest["parents"]["split_id"] == "all-train"
-    # What the triggers read: a plain CSV with no silver_generation column trained on no gold.
-    assert gen.manifest["parents"]["silver_id"] is None
-    assert gen.manifest["parents"]["gold_train_codes"] == 0
-    assert re.fullmatch(r"gen-\d{8}T\d{6}Z", gen.generation_id)
+def _train(world, tiny_modernbert_dir, *extra):
+    labels, split_id = world
+    return train_script.main(["--labels", labels, "--split", split_id, "--device", "cpu",
+                              "--model", str(tiny_modernbert_dir), "--max-steps", "2", *extra])
 
 
-def test_backbone_then_heads_stage_reuses_candidate_petbert(training_env):
-    ann_path, config = training_env
-    from report_mapping.model.generation import generation_paths
+def test_train_produces_a_pending_candidate_that_verifies(world, tiny_modernbert_dir):
+    assert _train(world, tiny_modernbert_dir) == 0
 
-    current_petbert = generation_paths(config.REPORT_MAPPING_CURRENT_DIR).petbert_dir
-    rc = train_script.main([
-        "--stage", "backbone", "--labels", str(ann_path), "--split", "all-train",
-        "--seed", "42", "--device", "cpu", "--out", "candidate", "--local-only",
-        "--model", str(current_petbert),
-    ])
-    assert rc == 0
-    candidate_petbert = generation_paths(config.REPORT_MAPPING_CANDIDATE_DIR).petbert_dir
-    assert candidate_petbert.is_dir()
-    fingerprint_before = candidate_petbert.stat().st_mtime
-
-    rc = train_script.main([
-        "--stage", "heads", "--labels", str(ann_path), "--split", "all-train",
-        "--seed", "42", "--device", "cpu", "--out", "candidate", "--local-only",
-    ])
-    assert rc == 0
-    # heads-only training must reuse the backbone the "backbone" stage just
-    # wrote, not overwrite it with a fresh copy of the current generation's.
-    assert candidate_petbert.stat().st_mtime == fingerprint_before
-
-    gen = load_generation(config.REPORT_MAPPING_CANDIDATE_DIR, allow_uncalibrated=True)
-    assert gen.group_names == ["Uncommon"]
+    candidate = config.REPORT_MAPPING_CANDIDATE_DIR
+    verify_manifest(candidate)
+    manifest = generation.verify_spec(candidate, require_calibrated=False)
+    assert manifest["calibration"] == {"status": "pending"} and manifest["status"] == "candidate"
+    assert re.fullmatch(r"gen-\d{8}T\d{6}Z", manifest["generation_id"])
+    assert manifest["parents"]["split_id"] == world[1] and manifest["training"]["seed"] == 42
+    assert manifest["model"]["encoder_id"] == str(tiny_modernbert_dir)
+    assert not (candidate / "thresholds.json").exists()
+    # A freshly trained candidate is uncalibrated, so predict.py refuses it.
+    with pytest.raises(generation.GenerationError, match="calibrate"):
+        generation.verify_spec(candidate)
 
 
-def test_heads_stage_refuses_when_a_split_guard_fails(tmp_path, monkeypatch, tiny_bert_dir):
-    fx.point_training_config_at(monkeypatch, tmp_path)
-    import config
+def test_train_calibrate_predict_end_to_end(world, tiny_modernbert_dir, tmp_path, capsys):
+    labels, split_id = world
+    assert _train(world, tiny_modernbert_dir, "--seed", "7") == 0
+    candidate = config.REPORT_MAPPING_CANDIDATE_DIR
+    assert read_manifest(candidate)["training"]["seed"] == 7
 
-    config.REPORT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    fx.make_training_reports_csv(config.REPORT_CSV)
-    fx.make_labels_csv(config.LABELS_CSV)
-    ann_path = tmp_path / "annotation.csv"
-    fx.make_training_annotation_csv(ann_path)
-    # A corrupted split: one case sits in both train and test -- guards.check_all's
-    # disjointness check must refuse before any data loading or training happens
-    # (ml-rewrite-plan.md: "split.py check runs inside train ... and refuses on
-    # any violation").
-    fx.make_two_way_split_generation("corrupt-split", train_ids=fx.TRAINING_CASE_IDS,
-                                      test_ids=[fx.TRAINING_CASE_IDS[0]])
+    assert predict_script.main(["--generation", "candidate", "--device", "cpu"]) == 1   # not calibrated yet
+    assert "REFUSED" in capsys.readouterr().err
 
-    from report_mapping.model.generation import generation_paths
-    current_petbert = generation_paths(config.REPORT_MAPPING_CURRENT_DIR).petbert_dir
-    current_petbert.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(tiny_bert_dir, current_petbert)
+    # (--max-fp-share 1.0: with random heads the default cap would leave no accepted case to fit the review cut on)
+    assert calibrate_script.main(["--labels", labels, "--split", split_id, "--device", "cpu",
+                                  "--max-fp-share", "1.0"]) == 0
+    out = capsys.readouterr().out
+    assert "calibrated on calibration of" in out
+    manifest = generation.verify_spec(candidate)                    # now whole, calibrated and bound to its weights
+    assert manifest["calibration"]["max_fp_share"] == 1.0
+    assert manifest["calibration"]["review_target_share"] == config.REVIEW_TARGET_SHARE
+    assert set(generation.read_thresholds(candidate)) == set(generation.THRESHOLD_KEYS)
 
-    with pytest.raises(GuardViolation):
-        train_script.main([
-            "--stage", "heads", "--labels", str(ann_path), "--split", "corrupt-split",
-            "--seed", "42", "--device", "cpu", "--out", "candidate", "--local-only",
-        ])
+    assert calibrate_script.main(["--labels", labels, "--split", split_id, "--device", "cpu",
+                                  "--max-fp-share", "1.0"]) == 1   # calibrated once
+    assert "recalibrate" in capsys.readouterr().err
 
-    # Refused before anything was written.
+    predictions = tmp_path / "out" / "candidate_predictions.csv"
+    assert predict_script.main(["--generation", "candidate", "--device", "cpu", "--out", str(predictions)]) == 0
+    frame = pd.read_csv(predictions, dtype=str, keep_default_na=False)
+    assert list(frame.columns) == decide.COLUMNS
+    assert set(frame["generation_id"]) == {manifest["generation_id"]} and len(frame) > 0
+
+
+def test_predict_defaults_to_current_and_writes_to_the_predictions_dir(world, tiny_generation_dir, monkeypatch):
+    import shutil
+
+    shutil.copytree(tiny_generation_dir, config.REPORT_MAPPING_CURRENT_DIR)
+    assert predict_script.main(["--device", "cpu"]) == 0
+    expected = config.PREDICTIONS_DIR / f"{read_manifest(config.REPORT_MAPPING_CURRENT_DIR)['generation_id']}_predictions.csv"
+    assert expected.is_file()
+
+
+def test_train_refuses_a_corrupt_split_before_writing_anything(world, tiny_modernbert_dir, capsys):
+    labels, _ = world
+    ids = fx.TRAINING_CASE_IDS
+    fx.make_three_way_split_generation("corrupt", ids[:10], ids[:2], ids[13:15])    # train and calibration overlap
+    assert train_script.main(["--labels", labels, "--split", "corrupt", "--device", "cpu",
+                              "--model", str(tiny_modernbert_dir), "--max-steps", "1"]) == 1
+    assert "REFUSED" in capsys.readouterr().err
     assert not (config.REPORT_MAPPING_CANDIDATE_DIR / "manifest.json").exists()
+
+
+def test_train_refuses_a_non_empty_out_directory(world, tiny_modernbert_dir, capsys):
+    config.REPORT_MAPPING_CANDIDATE_DIR.mkdir(parents=True)
+    (config.REPORT_MAPPING_CANDIDATE_DIR / "old.txt").write_text("x", encoding="utf-8")
+    assert _train(world, tiny_modernbert_dir) == 1
+    assert "not empty" in capsys.readouterr().err
+    assert (config.REPORT_MAPPING_CANDIDATE_DIR / "old.txt").is_file()
+
+
+def test_train_script_defaults_and_flags_reach_the_trainer(world, monkeypatch):
+    labels, split_id = world
+    seen = []
+
+    def spy(*args, **kwargs):
+        seen.append((args, kwargs))
+        return {"generation_id": "gen-x", "model": {"n_terms": 0}}
+
+    monkeypatch.setattr(train_script, "train", spy)
+    assert train_script.main(["--labels", labels, "--device", "cpu"]) == 0
+    (args, kwargs), = seen
+    assert args[:2] == (labels, config.DEFAULT_SPLIT_ID) and args[2] == config.REPORT_MAPPING_CANDIDATE_DIR
+    assert args[3].seed == 42 and args[4] == "cpu"
+    assert kwargs == {"model_id": ENCODER_ID, "limit": 0, "max_steps": 0}
+
+    seen.clear()
+    train_script.main(["--labels", labels, "--split", split_id, "--seed", "3", "--device", "cpu",
+                       "--out", "elsewhere", "--model", "some/checkpoint", "--limit", "9", "--max-steps", "4"])
+    (args, kwargs), = seen
+    assert args[0] == labels and args[1] == split_id and args[2] == Path("elsewhere") and args[3].seed == 3
+    assert kwargs == {"model_id": "some/checkpoint", "limit": 9, "max_steps": 4}
+
+
+def test_calibrate_script_defaults_to_the_candidate_and_the_config_cap(world, monkeypatch):
+    labels, _ = world
+    seen = []
+
+    def spy(*args):
+        seen.append(args)
+        return {"partition": "calibration", "split_id": "s", "n_cases": 1, "n_cases_with_text": 1, "n_accepted": 1,
+                "values": {"gate_t": 0.5}, "partition_gs_share": 0.0, "partition_good_share": 0.0,
+                "review_share_below_cut": 0.0}
+
+    monkeypatch.setattr(calibrate_script, "calibrate", spy)
+    assert calibrate_script.main(["--labels", labels, "--device", "cpu"]) == 0
+    assert seen[-1] == (config.REPORT_MAPPING_CANDIDATE_DIR, labels, config.DEFAULT_SPLIT_ID, config.FP_CAP,
+                        config.REVIEW_TARGET_SHARE, "cpu")
+    calibrate_script.main(["--labels", labels, "--generation", "current", "--split", "s2", "--max-fp-share", "0.5",
+                           "--device", "cpu"])
+    assert seen[-1] == (config.REPORT_MAPPING_CURRENT_DIR, labels, "s2", 0.5, config.REVIEW_TARGET_SHARE, "cpu")
+
+
+@pytest.mark.parametrize("script, argv", [
+    (predict_script, ["--model", "m"]), (predict_script, ["--embed-only"]), (predict_script, ["--cache-dir", "d"]),
+    (predict_script, ["--local-only"]),
+    (train_script, ["--labels", "x", "--stage", "heads"]), (train_script, ["--labels", "x", "--local-only"]),
+])
+def test_flags_of_the_old_pipeline_are_gone(script, argv):
+    with pytest.raises(SystemExit) as exit_info:
+        script.main(argv)
+    assert exit_info.value.code == 2
+
+
+def test_resolve_device_auto_prefers_cuda_and_passes_explicit_names_through(monkeypatch):
+    import torch
+
+    from report_mapping.model import resolve_device
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert resolve_device("auto") == "cuda" and resolve_device("cpu") == "cpu"
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert resolve_device("auto") == "cpu" and resolve_device("cuda") == "cuda"

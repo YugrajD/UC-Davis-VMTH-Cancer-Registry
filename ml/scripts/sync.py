@@ -6,7 +6,7 @@ All the work lives in ``s3sync``. Sets are listed in ``config.S3_SYNC_SETS``; SE
   ml/.venv/bin/python ml/scripts/sync.py push [SET] [--apply]
   ml/.venv/bin/python ml/scripts/sync.py pull [SET] [--apply]
   ml/.venv/bin/python ml/scripts/sync.py publish-model [--apply]   # config.REPORT_MAPPING_CURRENT_DIR only
-  ml/.venv/bin/python ml/scripts/sync.py pull-model [--apply]      # fetch, verify, then promote.adopt
+  ml/.venv/bin/python ml/scripts/sync.py pull-model [--apply]      # fetch, verify, then promote.adopt_published
 """
 
 from __future__ import annotations

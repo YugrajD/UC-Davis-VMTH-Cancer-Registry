@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import csv
 import importlib.util
-import shutil
 import sys
 from pathlib import Path
 
@@ -33,7 +32,7 @@ MOCK_GOLD = [(case_id, "1001/3", "Mast cell tumor, malignant", "Mast Cell Tumors
              for case_id in fx.TRAINING_CASE_IDS[15:18]]  # three silver no-cancer cases, "corrected" by review
 
 
-def test_mock_gold_train_reaches_the_manifest_and_fires_the_growth_trigger(tmp_path, monkeypatch, tiny_bert_dir):
+def test_mock_gold_train_reaches_the_manifest_and_fires_the_growth_trigger(tmp_path, monkeypatch, tiny_modernbert_dir):
     fx.point_promotion_config_at(monkeypatch, tmp_path)
     import config
 
@@ -43,7 +42,6 @@ def test_mock_gold_train_reaches_the_manifest_and_fires_the_growth_trigger(tmp_p
     fx.make_two_way_split_generation(SPLIT, train_ids=fx.TRAINING_CASE_IDS, test_ids=[])
     with open(fx.make_training_annotation_csv(tmp_path / "annotation.csv"), newline="", encoding="utf-8") as file:
         fx.make_silver_generation("silver-M", list(csv.reader(file))[1:])
-    shutil.copytree(tiny_bert_dir, config.REPORT_MAPPING_CURRENT_DIR / "petbert")  # heads train on current's backbone
 
     rows = [{field: "" for field in gold.GOLD_STORE_FIELDS}
             | {"case_id": c, "code": code, "term": term, "group": group, "origin": "review_queue"}
@@ -55,8 +53,8 @@ def test_mock_gold_train_reaches_the_manifest_and_fires_the_growth_trigger(tmp_p
     table = io_utils.read_csv(corrected, encoding="utf-8", dtype=str, keep_default_na=False)
     assert set(table.loc[table["label_source"] == "gold", "case_id"]) == {c for c, *_ in MOCK_GOLD}
 
-    assert train_script.main(["--stage", "heads", "--labels", str(corrected), "--split", SPLIT,
-                              "--seed", "42", "--device", "cpu", "--out", "candidate", "--local-only"]) == 0
+    assert train_script.main(["--labels", str(corrected), "--split", SPLIT, "--seed", "42", "--device", "cpu",
+                              "--out", "candidate", "--model", str(tiny_modernbert_dir), "--max-steps", "2"]) == 0
     parents = read_manifest(config.REPORT_MAPPING_CANDIDATE_DIR)["parents"]
     assert parents["silver_id"] == "silver-M" and parents["gold_train_codes"] == 3
     assert parents["gold_train_snapshot"] == gold.gold_snapshot_hash(SPLIT)

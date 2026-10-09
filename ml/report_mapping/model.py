@@ -22,6 +22,11 @@ from report_mapping.generation import ENCODER_DIR, GATE_HEAD_FILE, HEAD_FILE, TE
 ENCODER_ID = "thomas-sounack/BioClinical-ModernBERT-base"
 
 
+def resolve_device(name: str) -> str:
+    """"auto" -> cuda when available, else cpu; "cpu" and "cuda" as given."""
+    return ("cuda" if torch.cuda.is_available() else "cpu") if name == "auto" else name
+
+
 def new_encoder(model_id: str = ENCODER_ID):
     # sdpa: flash-attn is not available on Windows. reference_compile off: it needs triton.
     config = AutoConfig.from_pretrained(model_id)

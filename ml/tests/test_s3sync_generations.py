@@ -11,7 +11,7 @@ from datetime import date
 import pytest
 
 import config
-from generations.manifest import read_manifest, verify_manifest, write_manifest
+from generations.manifest import read_manifest, update_manifest, verify_manifest
 from s3sync import models
 from s3sync.files import VerificationError
 from s3sync.remote import ConflictError, GuardError, Remote, S3SyncError
@@ -31,23 +31,25 @@ def remote(fake):
 
 
 @pytest.fixture
-def machine(monkeypatch, tmp_path, tiny_bert_dir):
+def machine(monkeypatch, tmp_path, tiny_generation_dir):
     """machine("a") points config at tmp_path/a; machine("a", "gen-1") also gives it a current/ generation."""
     def switch(name: str, generation_id: str | None = None, status: str = "calibrated") -> None:
         fx.point_promotion_config_at(monkeypatch, tmp_path / name)
         monkeypatch.setattr(config, "S3_SYNC_STATE_JSON", tmp_path / name / "s3sync_state.json")
         if generation_id:
-            _generation(config.REPORT_MAPPING_CURRENT_DIR, tiny_bert_dir, generation_id, status)
-    switch.tiny_bert_dir = tiny_bert_dir
+            _generation(config.REPORT_MAPPING_CURRENT_DIR, tiny_generation_dir, generation_id, status)
+    switch.template = tiny_generation_dir
     return switch
 
 
-def _generation(directory, tiny_bert_dir, generation_id, status="calibrated"):
+def _generation(directory, template, generation_id, status="calibrated"):
     if directory.exists():
         shutil.rmtree(directory)
-    fx.build_report_mapping_bundle(directory, tiny_bert_dir)
-    fields = {k: v for k, v in read_manifest(directory).items() if k not in ("files", "created_at", "git_sha")}
-    write_manifest(directory, {**fields, "generation_id": generation_id, "calibration": {"status": status}})
+    shutil.copytree(template, directory)
+    fields = {"generation_id": generation_id}
+    if status != "calibrated":
+        fields["calibration"] = {"status": status}
+    update_manifest(directory, fields)
 
 
 def _sha_b64(data: bytes) -> str:
@@ -108,8 +110,7 @@ def test_publish_refuses_uncalibrated_or_manifest_broken_current(machine, remote
     with pytest.raises(S3SyncError, match="calibration.status"):
         models.publish(remote, apply=True)
     machine("b", "gen-1")
-    victim = next(config.REPORT_MAPPING_CURRENT_DIR.glob("checkpoints/*.json"))
-    victim.write_text("tampered")
+    (config.REPORT_MAPPING_CURRENT_DIR / "thresholds.json").write_text("tampered")
     with pytest.raises(S3SyncError, match="manifest"):
         models.publish(remote, apply=True)
 
@@ -161,15 +162,20 @@ def test_tampered_remote_file_is_refused_and_candidate_removed(machine, fake, re
     assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-0"
 
 
-def test_tampered_fingerprint_is_refused_and_candidate_removed(machine, fake, remote):
+@pytest.mark.parametrize("tamper, message", [
+    (lambda m: m["model"].update(weights_sha256="0" * 64), "weights_sha256"),
+    (lambda m: m["architecture"].update(name="petbert-four-stage"), "architecture"),
+    (lambda m: m["calibration"].update(weights_sha256="0" * 64), "calibrated for other weights"),
+])
+def test_a_remote_generation_failing_the_spec_check_is_refused_and_candidate_removed(machine, fake, remote, tamper, message):
     machine("a", "gen-1")
     models.publish(remote, apply=True)
     key = _key(remote, "gen-1", "manifest.json")
     manifest = json.loads(fake.objects[key])
-    manifest["embedding_fingerprint"] = "0" * 64
+    tamper(manifest)
     fake.objects[key] = json.dumps(manifest).encode()
     machine("b", "gen-0")
-    with pytest.raises(S3SyncError, match="fingerprint mismatch"):
+    with pytest.raises(S3SyncError, match=message):
         models.pull_model(remote, apply=True)
     assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists() and not config.S3_SYNC_STATE_JSON.exists()
     assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-0"
@@ -237,9 +243,9 @@ def test_every_key_is_under_the_prefix_and_nothing_is_deleted(machine, fake, rem
     assert all(kwargs["ServerSideEncryption"] == "AES256" for kwargs in fake.writes())
 
 
-def test_publish_ignores_a_candidate_directory(machine, fake, remote, tiny_bert_dir):
+def test_publish_ignores_a_candidate_directory(machine, fake, remote):
     machine("a", "gen-1")
-    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_bert_dir, "gen-cand")
+    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, machine.template, "gen-cand")
     models.publish(remote, apply=True)
     assert fake.objects and not any("gen-cand" in key for key in fake.objects)
 
@@ -340,7 +346,7 @@ def test_failed_adopt_removes_the_candidate_and_keeps_current(machine, remote, m
     def refuse(*args, **kwargs):
         raise promote.PromotionError("swap refused")
 
-    monkeypatch.setattr(promote, "adopt", refuse)
+    monkeypatch.setattr(promote, "adopt_published", refuse)
     with pytest.raises(S3SyncError, match="swap refused"):
         models.pull_model(remote, apply=True)
     assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists() and not config.S3_SYNC_STATE_JSON.exists()

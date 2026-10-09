@@ -29,7 +29,7 @@ _MANIFEST = "manifest.json"
 def _generation_checks():
     """Yield ``generations.promote``; its checks refuse with PromotionError / ManifestError / GenerationError."""
     from generations import promote
-    from report_mapping.model.generation import GenerationError
+    from report_mapping.generation import GenerationError
 
     try:
         yield promote
@@ -74,7 +74,7 @@ def status(remote: Remote) -> dict:
 def publish(remote: Remote, apply: bool = False) -> dict:
     current = config.REPORT_MAPPING_CURRENT_DIR
     with _generation_checks() as promote:
-        manifest = promote.check_candidate(current)  # manifest, embedding fingerprint and calibration
+        manifest = promote.check_candidate(current)  # verify_spec: file hashes, architecture, calibration
     generation_id, files = manifest["generation_id"], manifest["files"]
     pointer, synced = _pointer(remote), state.synced(remote, state.MODELS)
     result = {"generation_id": generation_id, "applied": False, "nothing_to_do": False,
@@ -127,7 +127,7 @@ def pull_model(remote: Remote, apply: bool = False) -> dict:
         raise S3SyncError("candidate/ exists; promote or delete it first")
 
     today = date.today()
-    if local_id is not None:  # adopt will archive it: refuse now if it cannot, before downloading anything
+    if local_id is not None:  # adopt_published will archive it: refuse now if it cannot, before downloading anything
         with _generation_checks() as promote:
             verify_manifest(current)
             result["archive"] = promote.archive_path(local_id, today=today)
@@ -163,7 +163,7 @@ def pull_model(remote: Remote, apply: bool = False) -> dict:
         with _generation_checks() as promote:
             if promote.check_candidate(candidate)["generation_id"] != generation_id:
                 raise S3SyncError(f"downloaded manifest is not generation {generation_id!r}")
-            result["adopted"] = promote.adopt(today=today)
+            result["adopted"] = promote.adopt_published(today=today)
     except BaseException:
         shutil.rmtree(candidate, ignore_errors=True)  # no-op once adopt has renamed it into current/
         raise

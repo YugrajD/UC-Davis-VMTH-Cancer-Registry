@@ -17,13 +17,12 @@ import csv
 import json
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import torch
-from transformers import AutoModel, AutoTokenizer, BertConfig, BertForMaskedLM, BertTokenizer
+from transformers import BertConfig, BertForMaskedLM, BertTokenizer
 
 # ---------------------------------------------------------------------------
-# Tiny BERT (stand-in for the real PetBERT checkpoint)
+# Tiny BERT (the tokenizer and starting point for the tiny ModernBERT below)
 # ---------------------------------------------------------------------------
 
 # Word-level vocab covering every word used in the synthetic report/diagnosis
@@ -46,7 +45,7 @@ def build_tiny_bert(model_dir: Path) -> Path:
     """Build and save a tiny random-init BERT + tokenizer in HF format.
 
     2 layers, hidden 32, small word-level vocab — small enough to run on CPU
-    in well under a second, so tests never need the real PetBERT download.
+    in well under a second, so tests never need a real checkpoint download.
     Loadable via AutoModel/AutoModelForMaskedLM + AutoTokenizer.
     """
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -67,9 +66,7 @@ def build_tiny_bert(model_dir: Path) -> Path:
         max_position_embeddings=128,
         type_vocab_size=2,
     )
-    # Saved as a MaskedLM checkpoint to match production's AutoModelForMaskedLM
-    # loading (ml/production/petbert_pipeline/embedding.py); AutoModel can
-    # still load it since transformers strips the "bert." prefix.
+    # Saved as a MaskedLM checkpoint; AutoModel can still load it since transformers strips the "bert." prefix.
     model = BertForMaskedLM(config)
     model.save_pretrained(str(model_dir))
     return model_dir
@@ -92,24 +89,6 @@ def build_tiny_modernbert(model_dir: Path) -> Path:
     torch.manual_seed(0)
     ModernBertModel(config).save_pretrained(str(model_dir))
     return model_dir
-
-
-def embed_report_text(model_dir: Path, text: str) -> np.ndarray:
-    """Tokenize + mean-pool one text through the tiny BERT at model_dir.
-
-    Minimal stand-in for the real embedding pipeline (mean-pool over attended
-    tokens, matching ml/production/petbert_pipeline/embedding.py's algorithm)
-    until report_mapping/model/backbone.py lands in WP4.
-    """
-    tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
-    model = AutoModel.from_pretrained(str(model_dir))
-    model.eval()
-    enc = tokenizer([text], padding=True, truncation=True, max_length=64, return_tensors="pt")
-    with torch.inference_mode():
-        hidden = model(**enc).last_hidden_state
-    mask = enc["attention_mask"].unsqueeze(-1).float()
-    emb = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
-    return emb.squeeze(0).numpy().astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -257,109 +236,6 @@ def make_split(split_dir: Path, case_ids: list[str] = CASE_IDS) -> tuple[Path, P
     train_path.write_text("\n".join(train_ids) + "\n", encoding="utf-8")
     test_path.write_text("\n".join(test_ids) + "\n", encoding="utf-8")
     return train_path, test_path
-
-
-# ---------------------------------------------------------------------------
-# Model heads (random init, legacy-compatible state_dict layout)
-# ---------------------------------------------------------------------------
-
-TINY_HIDDEN_DIM = 16
-GROUP_NAMES = list(TAXONOMY_GROUPS.keys())
-
-
-def _head_classes():
-    """report_mapping/model/heads.py's three head classes.
-
-    State_dict-compatible with the pre-rewrite ml/model classes (WP4); this
-    used to reach into the old ml/ tree by path (see git history) and no
-    longer does, per the comment that used to be here.
-    """
-    from report_mapping.model.heads import CasePresenceClassifier, GroupClassifier, LabelPresenceClassifier
-
-    return CasePresenceClassifier, GroupClassifier, LabelPresenceClassifier
-
-
-def build_case_presence_head():
-    CasePresenceClassifier, _, _ = _head_classes()
-    return CasePresenceClassifier(emb_dim=TINY_EMB_DIM, hidden_dim=TINY_HIDDEN_DIM)
-
-
-def build_group_head(group_names: list[str] = GROUP_NAMES):
-    _, GroupClassifier, _ = _head_classes()
-    return GroupClassifier(num_groups=len(group_names), emb_dim=TINY_EMB_DIM, hidden_dim=TINY_HIDDEN_DIM)
-
-
-def build_label_presence_head():
-    """n_cols=3 for the concat-3 section spec (HISTOPATHOLOGICAL SUMMARY,
-    FINAL COMMENT, COMMENT)."""
-    _, _, LabelPresenceClassifier = _head_classes()
-    return LabelPresenceClassifier(emb_dim=TINY_EMB_DIM, hidden_dim=TINY_HIDDEN_DIM, n_cols=3)
-
-
-# ---------------------------------------------------------------------------
-# Report-mapping generation bundle (WP4): a full synthetic current/ directory
-# ---------------------------------------------------------------------------
-
-# The GroupClassifier's own output space: two "common" groups plus one merged
-# "Uncommon" bucket standing in for the taxonomy's two rare groups.
-REPORT_MAPPING_MERGED_GROUP_NAMES = ["Neoplasms, NOS", "Mast Cell Tumors", "Uncommon"]
-REPORT_MAPPING_UNCOMMON_GROUPS = ["Rare Sarcomas", "Rare Carcinomas"]
-
-REPORT_MAPPING_THRESHOLDS = {
-    "case_presence_gate": 0.5,
-    "group": 0.5,
-    "tail_max_predictions": 2,
-    "tail_max_group_prob_gap": 0.08,
-    "label_presence_fallback": 0.5,
-}
-
-
-def build_report_mapping_bundle(root: Path, tiny_bert_dir: Path) -> Path:
-    """Build a full synthetic generation directory at ``root`` in the report-mapping
-    bundle layout: ``petbert/`` (a copy of ``tiny_bert_dir``), ``labels/labels.csv``,
-    ``checkpoints/{case_presence_classifier.pt, group_classifier_best.pt,
-    label_presence/*.pt, lp_thresholds.json, thresholds.json, uncommon_groups.txt}``,
-    and a manifest with a real embedding fingerprint. Case-presence and group
-    heads are sized for the 3x concat-3 input (``3 * TINY_EMB_DIM``); the LP
-    head is already per-section (``build_label_presence_head``, n_cols=3).
-    """
-    import shutil
-
-    from generations.manifest import write_manifest
-    from report_mapping.model.generation import compute_embedding_fingerprint, generation_paths, safe_filename
-    from report_mapping.model.heads import CasePresenceClassifier, GroupClassifier
-
-    paths = generation_paths(root)
-    shutil.copytree(tiny_bert_dir, paths.petbert_dir)
-    paths.labels_csv.parent.mkdir(parents=True, exist_ok=True)
-    make_labels_csv(paths.labels_csv)
-
-    concat_dim = 3 * TINY_EMB_DIM
-    paths.case_presence_pt.parent.mkdir(parents=True, exist_ok=True)
-    CasePresenceClassifier(emb_dim=concat_dim, hidden_dim=TINY_HIDDEN_DIM).save(paths.case_presence_pt)
-    GroupClassifier(
-        num_groups=len(REPORT_MAPPING_MERGED_GROUP_NAMES), emb_dim=concat_dim, hidden_dim=TINY_HIDDEN_DIM,
-    ).save(paths.group_pt, REPORT_MAPPING_MERGED_GROUP_NAMES)
-
-    paths.label_presence_dir.mkdir(parents=True, exist_ok=True)
-    for group_name in REPORT_MAPPING_MERGED_GROUP_NAMES:
-        build_label_presence_head().save(paths.label_presence_dir / f"{safe_filename(group_name)}.pt")
-    (paths.lp_thresholds_json).write_text(
-        json.dumps({g: 0.5 for g in REPORT_MAPPING_MERGED_GROUP_NAMES}, indent=2) + "\n", encoding="utf-8"
-    )
-    paths.thresholds_json.write_text(json.dumps(REPORT_MAPPING_THRESHOLDS, indent=2) + "\n", encoding="utf-8")
-    paths.uncommon_groups_txt.write_text("\n".join(REPORT_MAPPING_UNCOMMON_GROUPS) + "\n", encoding="utf-8")
-
-    fingerprint = compute_embedding_fingerprint(paths.petbert_dir)
-    write_manifest(root, {
-        "kind": "report_mapping_generation",
-        "generation_id": "test-gen",
-        "embedding_fingerprint": fingerprint,
-        # A ready-to-use test generation is calibrated by default, like "current" in
-        # production; tests exercising an uncalibrated candidate patch this themselves.
-        "calibration": {"status": "calibrated"},
-    })
-    return root
 
 
 # ---------------------------------------------------------------------------
@@ -837,7 +713,6 @@ def build_coding_scenario(monkeypatch, root: Path) -> dict:
 
 # ---------------------------------------------------------------------------
 # evaluation/ (silver_eval, gold_eval, audit_rates): config redirection and a
-# minimal generation directory (manifest + uncommon groups, no weights)
 # ---------------------------------------------------------------------------
 
 
@@ -851,7 +726,10 @@ def point_evaluation_config_at(monkeypatch, root: Path) -> None:
     eval_dir = root / "output" / "eval"
     monkeypatch.setattr(config, "EVAL_DIR", eval_dir)
     monkeypatch.setattr(config, "SILVER_EVAL_HISTORY_CSV", eval_dir / "silver_eval_history.csv")
-    monkeypatch.setattr(config, "REPORT_MAPPING_CURRENT_DIR", root / "output" / "report_mapping" / "current")
+    report_mapping_dir = root / "output" / "report_mapping"
+    monkeypatch.setattr(config, "REPORT_MAPPING_CURRENT_DIR", report_mapping_dir / "current")
+    monkeypatch.setattr(config, "REPORT_MAPPING_CANDIDATE_DIR", report_mapping_dir / "candidate")
+    monkeypatch.setattr(config, "UNCOMMON_GROUPS_TXT", root / "uncommon_groups.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -881,16 +759,6 @@ def point_handoff_config_at(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(config, "REPORT_MAPPING_CANDIDATE_DIR", report_mapping_dir / "candidate")
 
 
-def make_minimal_generation(directory: Path, generation_id: str, uncommon_groups: list[str]) -> Path:
-    """Just what evaluation reads from a generation: manifest.json's generation_id
-    and checkpoints/uncommon_groups.txt."""
-    (directory / "checkpoints").mkdir(parents=True, exist_ok=True)
-    (directory / "checkpoints" / "uncommon_groups.txt").write_text(
-        "".join(f"{g}\n" for g in uncommon_groups), encoding="utf-8")
-    (directory / "manifest.json").write_text(json.dumps({"generation_id": generation_id}), encoding="utf-8")
-    return directory
-
-
 # ---------------------------------------------------------------------------
 # Promotion (generations/promote.py, triggers.py): config redirection
 # ---------------------------------------------------------------------------
@@ -898,11 +766,15 @@ def make_minimal_generation(directory: Path, generation_id: str, uncommon_groups
 
 def point_promotion_config_at(monkeypatch, root: Path) -> None:
     """Everything ``point_training_config_at`` redirects, plus the eval-batch
-    ledger, the silver dir and ``ARCHIVE_ROOT``, so promotion tests never touch
-    a real ml/output path."""
+    ledger, the silver dir, ``ARCHIVE_ROOT``, the uncommon-groups ruler and the history dir (``REPO_ROOT`` is
+    ``root``, so an adoption reason is recorded as ``documentation/history/...``), so promotion tests never
+    touch a real ml/output path."""
     import config
 
     point_training_config_at(monkeypatch, root)
+    monkeypatch.setattr(config, "REPO_ROOT", root)
+    monkeypatch.setattr(config, "HISTORY_DIR", root / "documentation" / "history")
+    monkeypatch.setattr(config, "UNCOMMON_GROUPS_TXT", root / "uncommon_groups.txt")
     monkeypatch.setattr(config, "EVAL_BATCH_LEDGER_CSV", root / "output" / "manual_audit" / "eval_batch_ledger.csv")
     monkeypatch.setattr(config, "SILVER_DIR", root / "output" / "silver")
     monkeypatch.setattr(config, "ARCHIVE_ROOT", root / "output" / "archive")
@@ -933,3 +805,19 @@ def build_tiny_generation(root: Path, encoder_dir: Path, calibrated: bool = True
     if calibrated:
         generation.write_calibration(root, TINY_THRESHOLDS, {"partition": "calibration"})
     return root
+
+
+def make_training_world(root: Path, monkeypatch, split_id: str = "tiny-split") -> tuple[str, str]:
+    """Everything a train -> calibrate -> predict smoke run needs, under ``root`` with config redirected
+    (``point_promotion_config_at``): report.csv, the taxonomy, an uncommon-groups ruler, a three-way split over
+    ``TRAINING_CASE_IDS`` and a labels CSV (cases 1-15 cancer). Returns (labels path, split_id)."""
+    import config
+
+    point_promotion_config_at(monkeypatch, root)
+    config.REPORT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    make_training_reports_csv(config.REPORT_CSV)
+    make_labels_csv(config.LABELS_CSV)
+    config.UNCOMMON_GROUPS_TXT.write_text("Rare Sarcomas\nRare Carcinomas\n", encoding="utf-8")
+    ids = TRAINING_CASE_IDS
+    make_three_way_split_generation(split_id, ids[0:10] + ids[15:25], ids[10:13] + ids[25:28], ids[13:15] + ids[28:30])
+    return str(make_training_annotation_csv(root / "labels_table.csv")), split_id

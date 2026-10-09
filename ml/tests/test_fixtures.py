@@ -5,8 +5,6 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-import numpy as np
-import torch
 from transformers import AutoModel, AutoModelForMaskedLM, AutoTokenizer
 
 from . import fixtures as fx
@@ -18,15 +16,9 @@ def test_tiny_bert_round_trips_through_from_pretrained(tiny_bert_dir: Path) -> N
     assert model.config.hidden_size == fx.TINY_EMB_DIM
     assert tokenizer.tokenize("mast cell tumor") == ["mast", "cell", "tumor"]
 
-    # Also loadable as a MaskedLM checkpoint (how production loads PetBERT).
+    # Also loadable as a MaskedLM checkpoint.
     mlm_model = AutoModelForMaskedLM.from_pretrained(str(tiny_bert_dir))
     assert mlm_model.base_model.config.hidden_size == fx.TINY_EMB_DIM
-
-
-def test_tiny_bert_produces_an_embedding_for_a_synthetic_report(tiny_bert_dir: Path) -> None:
-    embedding = fx.embed_report_text(tiny_bert_dir, "a malignant mast cell tumor is present")
-    assert embedding.shape == (fx.TINY_EMB_DIM,)
-    assert np.isfinite(embedding).all()
 
 
 def test_labels_csv_matches_real_shape(labels_csv: Path) -> None:
@@ -72,22 +64,8 @@ def test_split_files_partition_all_cases(split_files: tuple[Path, Path]) -> None
     assert set(train_ids) & set(test_ids) == set()
 
 
-def test_case_presence_head_forward(case_presence_head) -> None:
-    x = torch.randn(4, fx.TINY_EMB_DIM)
-    proba = case_presence_head.predict_proba(x)
-    assert proba.shape == (4,)
-    assert ((proba >= 0) & (proba <= 1)).all()
+def test_tiny_generation_passes_the_spec_check(tiny_generation_dir: Path) -> None:
+    from report_mapping.generation import verify_spec
 
-
-def test_group_head_forward(group_head) -> None:
-    x = torch.randn(4, fx.TINY_EMB_DIM)
-    proba = group_head.predict_proba(x)
-    assert proba.shape == (4, len(fx.GROUP_NAMES))
-
-
-def test_label_presence_head_forward(label_presence_head) -> None:
-    report_emb = torch.randn(2, 3 * fx.TINY_EMB_DIM)  # n_cols=3
-    label_emb = torch.randn(5, fx.TINY_EMB_DIM)
-    scores = label_presence_head.score_matrix(report_emb, label_emb)
-    assert scores.shape == (2, 5)
-    assert ((scores >= 0) & (scores <= 1)).all()
+    manifest = verify_spec(tiny_generation_dir)
+    assert manifest["model"]["n_terms"] == len(fx.TINY_TERMS) and manifest["calibration"]["status"] == "calibrated"

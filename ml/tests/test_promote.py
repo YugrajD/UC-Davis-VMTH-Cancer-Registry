@@ -1,8 +1,8 @@
-"""generations/promote.py + triggers.py + scripts/{promote,generations,retrain_cycle}.py on synthetic
-generations, gold and predictions.
+"""generations/promote.py + triggers.py + scripts/{promote,retrain_cycle}.py on synthetic generations, gold and
+predictions.
 
-No model runs: predictions CSVs are written directly; generations are the tiny
-fixture bundle with rewritten manifests.
+No model runs: predictions CSVs are written directly; generations are copies of the session's tiny generation
+with rewritten manifest fields.
 """
 
 from __future__ import annotations
@@ -21,11 +21,11 @@ import pytest
 
 import config
 import io_utils
+from evaluation.silver_eval import SilverEvalError
 from generations import promote, triggers
-from generations.manifest import read_manifest, verify_manifest, write_manifest
+from generations.manifest import read_manifest, update_manifest, verify_manifest
 from manual_audit import eval_batch, gold
-from report_mapping.inference import embedding_cache
-from report_mapping.model.generation import compute_embedding_fingerprint, generation_paths
+from report_mapping.generation import ARCHITECTURE, GenerationError
 
 from . import fixtures as fx
 
@@ -39,14 +39,19 @@ SPLIT = "promo-split"
 TRAIN = [f"PTRAIN-{i:03d}" for i in range(1, 11)]
 TEST = [f"PTEST-{i:03d}" for i in range(1, 41)]
 TERMS = [("Term A", "Group A", "8000/3"), ("Term B", "Group B", "8001/3")]
+REASON = "documentation/history/decisions/0009-test-adopt.md"
 
 
-def _generation(directory: Path, tiny_bert_dir: Path, generation_id: str, silver_id: str,
-                status: str = "calibrated") -> None:
-    fx.build_report_mapping_bundle(directory, tiny_bert_dir)
-    fields = {k: v for k, v in read_manifest(directory).items() if k not in ("files", "created_at", "git_sha")}
-    write_manifest(directory, {**fields, "generation_id": generation_id, "parents": {"silver_id": silver_id},
-                               "calibration": {"status": status}})
+def _generation(directory: Path, template: Path, generation_id: str, silver_id: str, pending: bool = False,
+                architecture: dict | None = None) -> None:
+    """A copy of the tiny generation with this id, silver lineage and (optionally) an other architecture."""
+    shutil.copytree(template, directory)
+    fields = {"generation_id": generation_id, "parents": {"silver_id": silver_id}}
+    if pending:
+        fields["calibration"] = {"status": "pending"}
+    if architecture:
+        fields["architecture"] = architecture
+    update_manifest(directory, fields)
 
 
 def _gold_store(rows: list[dict]) -> None:
@@ -78,12 +83,20 @@ def _predictions(path: Path, generation_id: str, wrong: int = 0) -> Path:
     return path
 
 
+def _reason_file(name: str = "0009-test-adopt.md") -> Path:
+    path = config.HISTORY_DIR / "decisions" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# ADR\n", encoding="utf-8")
+    return path
+
+
 @pytest.fixture
-def env(tmp_path, monkeypatch, tiny_bert_dir):
+def env(tmp_path, monkeypatch, tiny_generation_dir):
     fx.point_promotion_config_at(monkeypatch, tmp_path)
+    config.UNCOMMON_GROUPS_TXT.write_text("Group Z\n", encoding="utf-8")
     fx.make_two_way_split_generation(SPLIT, TRAIN, TEST)
-    _generation(config.REPORT_MAPPING_CURRENT_DIR, tiny_bert_dir, "gen-A", "silver-A")
-    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_bert_dir, "gen-B", "silver-B")
+    _generation(config.REPORT_MAPPING_CURRENT_DIR, tiny_generation_dir, "gen-A", "silver-A")
+    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_generation_dir, "gen-B", "silver-B")
     return tmp_path
 
 
@@ -92,29 +105,49 @@ def _recommend(env: Path, wrong: int = 0) -> dict:
                              split_id=SPLIT, n_boot=200)
 
 
+# ---- retraining: the gold rule ----
+
 def test_no_gold_eval_is_refused(env):
     with pytest.raises(promote.PromotionError, match="no gold-eval"):
         _recommend(env)
 
 
-def test_uncalibrated_candidate_is_refused(env, tiny_bert_dir):
+def test_uncalibrated_candidate_is_refused(env, tiny_generation_dir):
     _eval_batch_gold()
-    _generation(config.REPORT_MAPPING_CANDIDATE_DIR.with_name("pending"), tiny_bert_dir, "gen-B", "silver-B",
-                status="pending")
-    os.rename(config.REPORT_MAPPING_CANDIDATE_DIR, env / "old-candidate")
-    os.rename(config.REPORT_MAPPING_CANDIDATE_DIR.with_name("pending"), config.REPORT_MAPPING_CANDIDATE_DIR)
-    with pytest.raises(promote.PromotionError, match="calibration.status"):
+    shutil.rmtree(config.REPORT_MAPPING_CANDIDATE_DIR)
+    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_generation_dir, "gen-B", "silver-B", pending=True)
+    with pytest.raises(GenerationError, match="calibration.status"):
+        _recommend(env)
+
+
+def test_a_candidate_with_an_other_architecture_than_current_is_refused_and_pointed_to_adopt(env):
+    _eval_batch_gold()
+    update_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"architecture": {**ARCHITECTURE, "name": "petbert-four-stage"}})
+    with pytest.raises(promote.PromotionError, match=r"architectural change.*promote\.py --adopt --reason"):
+        _recommend(env)
+
+
+def test_the_architecture_check_comes_before_the_gold_check(env):
+    update_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"architecture": {"name": "petbert-four-stage"}})
+    with pytest.raises(promote.PromotionError, match="architectural change"):  # no gold-eval rows exist here
         _recommend(env)
 
 
 def test_a_case_without_prediction_rows_scores_as_predicting_nothing(env):
-    # predict.py writes no row for an empty report; that case is a miss, and the count is reported.
+    # predict.py writes no row for a case with no report text; that case is a miss, and the count is reported.
     _eval_batch_gold()
     partial = _predictions(env / "b.csv", "gen-B")
     io_utils.write_csv(io_utils.read_csv(partial, encoding="utf-8", dtype=str).iloc[1:], partial)
     c = promote.recommend(partial, _predictions(env / "a.csv", "gen-A"), split_id=SPLIT, n_boot=50)["comparison"]
     assert (c["challenger_unpredicted"], c["incumbent_unpredicted"]) == (1, 0)
     assert c["challenger_good"] == pytest.approx(39 / 40) and c["incumbent_good"] == 1.0
+
+
+def test_predictions_of_another_generation_are_refused(env):
+    _eval_batch_gold()
+    with pytest.raises(SilverEvalError, match="generation_id"):
+        promote.recommend(_predictions(env / "b.csv", "gen-B"), _predictions(env / "a.csv", "gen-Z"),
+                          split_id=SPLIT, n_boot=50)
 
 
 def test_equal_challenger_with_new_silver_is_promoted_and_applied(env):
@@ -126,31 +159,16 @@ def test_equal_challenger_with_new_silver_is_promoted_and_applied(env):
 
     outcome = promote.apply(result, "test", today=date(2026, 9, 26))
     archive = config.ARCHIVE_ROOT / "2026-09-26_test"
-    assert outcome == {"action": "promoted", "generation_id": "gen-B", "archive": archive, "archived_caches": 0}
+    assert outcome == {"action": "promoted", "generation_id": "gen-B", "archive": archive}
     assert read_manifest(archive)["generation_id"] == "gen-A"
     assert read_manifest(archive)["status"] == "archived"
+    assert not (archive / "embedding_cache").exists()      # a generation carries no embedding cache any more
     current = read_manifest(config.REPORT_MAPPING_CURRENT_DIR)
     assert current["generation_id"] == "gen-B" and current["status"] == "current"
     verify_manifest(config.REPORT_MAPPING_CURRENT_DIR)  # a status change leaves the file hashes valid
+    verify_manifest(archive)
+    assert "adoption" not in current
     assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
-
-
-def test_apply_archives_only_the_cache_entries_the_new_current_cannot_use(env):
-    _eval_batch_gold()
-    config.REPORT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    config.REPORT_CSV.write_bytes(b"case_id\nC1\n")
-    paths = generation_paths(config.REPORT_MAPPING_CANDIDATE_DIR)
-    keep = embedding_cache.content_key(config.REPORT_CSV, paths.labels_csv,
-                                       compute_embedding_fingerprint(paths.petbert_dir))
-    config.EMBEDDING_CACHE_DIR.mkdir(parents=True)
-    for key in (keep, "stale-key"):
-        (config.EMBEDDING_CACHE_DIR / f"{key}.npz").write_bytes(b"x")
-
-    outcome = promote.apply(_recommend(env), "test", today=date(2026, 9, 26))
-    assert outcome["archived_caches"] == 1
-    assert [p.name for p in config.EMBEDDING_CACHE_DIR.iterdir()] == [f"{keep}.npz"]
-    assert (outcome["archive"] / "embedding_cache" / "stale-key.npz").is_file()
-    verify_manifest(outcome["archive"])  # the moved cache file is listed
 
 
 def test_trigger_status_runs_before_any_candidate_and_without_gold_eval(env):
@@ -160,12 +178,9 @@ def test_trigger_status_runs_before_any_candidate_and_without_gold_eval(env):
     assert not any(t.met for t in promote.trigger_status("silver-A", env / "never-read.csv", split_id=SPLIT))
 
 
-def test_no_trigger_means_no_promotion(env, tiny_bert_dir):
+def test_no_trigger_means_no_promotion(env):
     _eval_batch_gold()
-    manifest_path = config.REPORT_MAPPING_CANDIDATE_DIR / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["parents"]["silver_id"] = "silver-A"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    update_manifest(config.REPORT_MAPPING_CANDIDATE_DIR, {"parents": {"silver_id": "silver-A"}})
     result = _recommend(env)
     assert not any(t.met for t in result["triggers"]) and not result["promote"]
 
@@ -201,12 +216,17 @@ def test_failed_swap_restores_current(env, monkeypatch):
 
 def test_same_generation_id_is_refused(env):
     _eval_batch_gold()
-    manifest_path = config.REPORT_MAPPING_CANDIDATE_DIR / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["generation_id"] = "gen-A"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    update_manifest(config.REPORT_MAPPING_CANDIDATE_DIR, {"generation_id": "gen-A"})
     with pytest.raises(promote.PromotionError, match="share generation_id"):
         _recommend(env)
+
+
+def test_apply_refuses_when_the_candidate_changed_since_the_recommendation(env):
+    _eval_batch_gold()
+    result = _recommend(env)
+    update_manifest(config.REPORT_MAPPING_CANDIDATE_DIR, {"generation_id": "gen-other"})
+    with pytest.raises(promote.PromotionError, match="candidate/ changed"):
+        promote.apply(result)
 
 
 def test_gold_train_growth_counts_codes_since_incumbent(env):
@@ -242,36 +262,181 @@ def test_random_slice_drop_needs_non_overlapping_intervals():
     assert not no_slice.met and no_slice.numbers == {"slice_cases": 0}
 
 
+# ---- promote.py: recommend / --apply ----
+
+def _argv(env, *extra, wrong=0):
+    return ["promote.py", "--candidate-predictions", str(_predictions(env / "b.csv", "gen-B", wrong)),
+            "--incumbent-predictions", str(_predictions(env / "a.csv", "gen-A")), "--split", SPLIT, "--n-boot", "50",
+            *extra]
+
+
 def test_script_refuses_cleanly_without_gold_eval(env, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["promote.py", "--candidate-predictions", str(_predictions(env / "b.csv", "gen-B")),
-                                      "--incumbent-predictions", str(_predictions(env / "a.csv", "gen-A")),
-                                      "--split", SPLIT])
+    monkeypatch.setattr(sys, "argv", _argv(env))
     assert promote_script.main() == 1
     assert "no gold-eval" in capsys.readouterr().err
 
 
 def test_script_prints_recommendation(env, monkeypatch, capsys):
     _eval_batch_gold()
-    monkeypatch.setattr(sys, "argv", ["promote.py", "--candidate-predictions", str(_predictions(env / "b.csv", "gen-B")),
-                                      "--incumbent-predictions", str(_predictions(env / "a.csv", "gen-A")),
-                                      "--split", SPLIT, "--n-boot", "50"])
+    monkeypatch.setattr(sys, "argv", _argv(env))
     assert promote_script.main() == 0
     out = capsys.readouterr().out
     assert "Recommendation: PROMOTE" in out
     assert config.REPORT_MAPPING_CANDIDATE_DIR.exists()  # recommend-only: nothing moved
 
 
-def test_generations_status_script_reports_triggers(env, monkeypatch, capsys):
-    path = Path(__file__).resolve().parents[1] / "scripts" / "generations.py"
-    spec = importlib.util.spec_from_file_location("ml_next_scripts_generations", path)
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    monkeypatch.setattr(sys, "argv", ["generations.py", "status", "--silver", "silver-B", "--split", SPLIT])
-    assert script.main() == 0
-    out = capsys.readouterr().out
-    assert "current: gen-A" in out and "candidate: gen-B" in out
-    assert "trigger new_silver_lineage   MET" in out and "Retrain: yes" in out
+def test_script_refuses_an_architectural_change_and_names_adopt(env, monkeypatch, capsys):
+    _eval_batch_gold()
+    update_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"architecture": {"name": "petbert-four-stage"}})
+    monkeypatch.setattr(sys, "argv", _argv(env, "--apply"))
+    assert promote_script.main() == 1
+    assert "--adopt --reason" in capsys.readouterr().err
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+    assert config.REPORT_MAPPING_CANDIDATE_DIR.exists()
 
+
+def test_script_flag_combinations(env, monkeypatch, capsys):
+    for argv, message in ((["--adopt"], "--adopt requires --reason"),
+                          (["--adopt", "--apply", "--reason", "x.md"], "mutually exclusive"),
+                          (["--reason", "x.md"], "only for --adopt"),
+                          (["--publish"], "--publish requires --apply or --adopt")):
+        monkeypatch.setattr(sys, "argv", ["promote.py", *argv])
+        with pytest.raises(SystemExit) as exit_info:
+            promote_script.main()
+        assert exit_info.value.code == 2 and message in capsys.readouterr().err
+    assert config.REPORT_MAPPING_CANDIDATE_DIR.exists() and not config.ARCHIVE_ROOT.exists()
+
+
+# ---- architectural adopt ----
+
+def test_adopt_architecture_needs_no_gold_and_records_the_reason(env):
+    update_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"architecture": {"name": "petbert-four-stage"}})
+    reason = _reason_file()
+    outcome = promote.adopt_architecture(config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR,
+                                         reason, "joint-modernbert", today=date(2026, 10, 9))
+    archive = config.ARCHIVE_ROOT / "2026-10-09_joint-modernbert"
+    assert outcome == {"action": "adopted", "generation_id": "gen-B", "archive": archive}
+    assert read_manifest(archive)["generation_id"] == "gen-A" and read_manifest(archive)["status"] == "archived"
+    assert read_manifest(archive)["architecture"] == {"name": "petbert-four-stage"}   # the old current, whole
+    current = read_manifest(config.REPORT_MAPPING_CURRENT_DIR)
+    assert current["generation_id"] == "gen-B" and current["status"] == "current"
+    assert current["adoption"]["reason"] == REASON      # repo-relative, posix
+    assert pd.Timestamp(current["adoption"]["adopted_at"]).tzinfo is not None
+    verify_manifest(config.REPORT_MAPPING_CURRENT_DIR)
+    verify_manifest(archive)
+    assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+
+
+@pytest.mark.parametrize("reason", ["missing", "outside", "directory"])
+def test_adopt_architecture_refuses_a_reason_that_is_not_an_existing_history_file(env, reason):
+    path = {"missing": config.HISTORY_DIR / "decisions" / "nope.md", "outside": env / "elsewhere.md",
+            "directory": config.HISTORY_DIR}[reason]
+    if reason == "outside":
+        path.write_text("# not history\n", encoding="utf-8")
+    config.HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(promote.PromotionError, match="existing file under"):
+        promote.adopt_architecture(config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR, path)
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+    assert config.REPORT_MAPPING_CANDIDATE_DIR.exists() and not config.ARCHIVE_ROOT.exists()
+
+
+def test_adopt_architecture_refuses_an_uncalibrated_candidate(env, tiny_generation_dir):
+    shutil.rmtree(config.REPORT_MAPPING_CANDIDATE_DIR)
+    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_generation_dir, "gen-B", "silver-B", pending=True)
+    with pytest.raises(GenerationError, match="calibration.status"):
+        promote.adopt_architecture(config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR,
+                                   _reason_file())
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+
+
+def test_adopt_architecture_on_a_machine_without_current_just_renames_the_candidate(env):
+    shutil.rmtree(config.REPORT_MAPPING_CURRENT_DIR)
+    outcome = promote.adopt_architecture(config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR,
+                                         _reason_file())
+    assert outcome["archive"] is None
+    current = read_manifest(config.REPORT_MAPPING_CURRENT_DIR)
+    assert current["generation_id"] == "gen-B" and current["adoption"]["reason"] == REASON
+    assert not config.ARCHIVE_ROOT.exists() and not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+
+
+def test_adopt_architecture_restores_current_when_the_swap_fails(env, monkeypatch):
+    update_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"architecture": {"name": "petbert-four-stage"}})
+    real_rename, calls = os.rename, []
+
+    def flaky_rename(src, dst):
+        calls.append((src, dst))
+        if len(calls) == 2:
+            raise OSError("disk full")
+        real_rename(src, dst)
+
+    monkeypatch.setattr(promote.os, "rename", flaky_rename)
+    with pytest.raises(OSError, match="disk full"):
+        promote.adopt_architecture(config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR,
+                                   _reason_file())
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+    assert "adoption" not in read_manifest(config.REPORT_MAPPING_CANDIDATE_DIR)
+
+
+def test_adopt_script_end_to_end(env, monkeypatch, capsys):
+    update_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"architecture": {"name": "petbert-four-stage"}})
+    reason = _reason_file()
+    monkeypatch.setattr(sys, "argv", ["promote.py", "--adopt", "--reason", str(reason), "--description", "adopted"])
+    assert promote_script.main() == 0
+    assert "Adopted gen-B" in capsys.readouterr().out
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["adoption"]["reason"] == REASON
+    assert (config.ARCHIVE_ROOT / f"{date.today().isoformat()}_adopted").is_dir()
+
+
+def test_adopt_script_refuses_a_reason_outside_history(env, monkeypatch, capsys):
+    outside = env / "notes.md"
+    outside.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["promote.py", "--adopt", "--reason", str(outside)])
+    assert promote_script.main() == 1
+    assert "REFUSED" in capsys.readouterr().err
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+
+
+# ---- adopt_published (a generation promoted elsewhere, pulled by s3sync) ----
+
+def test_adopt_published_swaps_a_verified_candidate_in_and_archives_the_incumbent_without_the_rule(env):
+    # No gold-eval, no predictions: the rule is not consulted.
+    outcome = promote.adopt_published("adopted", today=date(2026, 9, 26))
+    archive = config.ARCHIVE_ROOT / "2026-09-26_adopted"
+    assert outcome == {"action": "adopted", "generation_id": "gen-B", "archive": archive}
+    assert read_manifest(archive)["generation_id"] == "gen-A" and read_manifest(archive)["status"] == "archived"
+    current = read_manifest(config.REPORT_MAPPING_CURRENT_DIR)
+    assert current["status"] == "current" and "adoption" not in current
+    verify_manifest(archive)
+    assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+
+
+def test_adopt_published_on_a_fresh_machine_just_renames_the_candidate(env):
+    shutil.rmtree(config.REPORT_MAPPING_CURRENT_DIR)
+    outcome = promote.adopt_published()
+    assert outcome["archive"] is None
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["status"] == "current"
+    assert not config.ARCHIVE_ROOT.exists() and not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+
+
+def test_adopt_published_refuses_an_uncalibrated_candidate(env, tiny_generation_dir):
+    shutil.rmtree(config.REPORT_MAPPING_CANDIDATE_DIR)
+    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_generation_dir, "gen-B", "silver-B", pending=True)
+    with pytest.raises(GenerationError, match="calibration.status"):
+        promote.adopt_published()
+    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+
+
+def test_check_candidate_is_the_spec_check(env):
+    assert promote.check_candidate(config.REPORT_MAPPING_CANDIDATE_DIR)["generation_id"] == "gen-B"
+    with pytest.raises(promote.PromotionError, match="no candidate"):
+        promote.check_candidate(env / "nowhere")
+    (config.REPORT_MAPPING_CANDIDATE_DIR / "head.pt").write_bytes(b"tampered")
+    with pytest.raises(GenerationError, match="does not match"):
+        promote.check_candidate(config.REPORT_MAPPING_CANDIDATE_DIR)
+
+
+# ---- retrain_cycle.py ----
 
 def _load_cycle_script():
     path = Path(__file__).resolve().parents[1] / "scripts" / "retrain_cycle.py"
@@ -282,7 +447,7 @@ def _load_cycle_script():
 
 
 @pytest.fixture
-def cycle(env, monkeypatch, tiny_bert_dir):
+def cycle(env, monkeypatch, tiny_generation_dir):
     """retrain_cycle.py with every step stubbed: records each script it runs; train.py leaves a
     candidate (gen-C) behind, as the real one would."""
     script = _load_cycle_script()
@@ -296,7 +461,7 @@ def cycle(env, monkeypatch, tiny_bert_dir):
             return real_run(command, **kwargs)
         ran.append([Path(command[1]).name, *command[2:]])
         if ran[-1][0] == "train.py" and not config.REPORT_MAPPING_CANDIDATE_DIR.exists():
-            _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_bert_dir, "gen-C", "silver-B")
+            _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_generation_dir, "gen-C", "silver-B")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
@@ -305,70 +470,71 @@ def cycle(env, monkeypatch, tiny_bert_dir):
         monkeypatch.setattr(sys, "argv", ["retrain_cycle.py", "--split", SPLIT, *argv])
         return script.main()
 
-    return main, ran
+    return main, ran, script
 
 
 def test_cycle_stops_without_gold_eval(cycle, capsys):
-    main, ran = cycle
+    main, ran, _ = cycle
     assert main("--silver", "silver-B") == 0 and ran == []
     assert "no gold-eval" in capsys.readouterr().out
 
 
 def test_cycle_stops_when_no_trigger_is_met(cycle, capsys):
-    main, ran = cycle
+    main, ran, _ = cycle
     _eval_batch_gold()
     assert main("--silver", "silver-A") == 0 and ran == []
     assert "STOP: no retraining trigger met" in capsys.readouterr().out
 
 
 def test_cycle_trains_calibrates_predicts_and_recommends_in_order(cycle):
-    main, ran = cycle
+    main, ran, _ = cycle
     _eval_batch_gold()
     assert main("--silver", "silver-B", "--device", "cuda") == 0
     assert [step[0] for step in ran] == ["code_cases.py", "train.py", "calibrate.py", "predict.py", "promote.py"]
-    assert ran[1][1:3] == ["--stage", "heads"] and "--apply" not in ran[-1]
-    # Heads train on the corrected table (train only); calibration is labelled by silver.
+    # One training step from the base checkpoint: no stage, backbone or heads flags.
+    assert "--stage" not in ran[1] and "--local-only" not in ran[1]
+    assert ran[1][ran[1].index("--device") + 1] == "cuda" and ran[1][ran[1].index("--out") + 1] == "candidate"
+    assert "--apply" not in ran[-1]      # recommend-only by default
+    # Training uses the corrected table (train only); calibration is labelled by silver.
     assert ran[1][ran[1].index("--labels") + 1] == str(config.CORRECTED_ANNOTATIONS_CSV)
     assert ran[2][ran[2].index("--labels") + 1] == "silver-B"
     assert str(config.PREDICTIONS_DIR / "gen-C_predictions.csv") in ran[3]
 
 
-def test_cycle_backbone_flag_and_refusal_when_a_candidate_exists(cycle, capsys):
-    main, ran = cycle
+def test_cycle_refuses_when_a_candidate_exists_and_has_no_backbone_flag(cycle, capsys):
+    main, ran, _ = cycle
     _eval_batch_gold()
-    assert main("--silver", "silver-A", "--force", "--backbone") == 0
-    assert [step[:2] for step in ran if step[0] == "train.py"] == [["train.py", "--stage"]] * 2
-    assert [step[2] for step in ran if step[0] == "train.py"] == ["backbone", "heads"]
+    assert main("--silver", "silver-A", "--force") == 0
+    assert [step[0] for step in ran].count("train.py") == 1
     assert main("--silver", "silver-B") == 1  # candidate/ now exists
     assert "REFUSED" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main("--silver", "silver-A", "--backbone")
 
 
-def test_adopt_swaps_a_verified_candidate_in_and_archives_the_incumbent_without_the_rule(env):
-    # No gold-eval, no predictions: the rule is not consulted.
-    outcome = promote.adopt("adopted", today=date(2026, 9, 26))
-    archive = config.ARCHIVE_ROOT / "2026-09-26_adopted"
-    assert outcome == {"action": "adopted", "generation_id": "gen-B", "archive": archive, "archived_caches": 0}
-    assert read_manifest(archive)["generation_id"] == "gen-A" and read_manifest(archive)["status"] == "archived"
-    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["status"] == "current"
-    verify_manifest(archive)
-    assert not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
+@pytest.mark.parametrize("rule_passes", [True, False])
+def test_cycle_apply_promotes_only_when_the_gold_rule_passes(cycle, monkeypatch, rule_passes):
+    main, ran, script = cycle
+    _eval_batch_gold()
+    seen = {}
+
+    def recommend(candidate_csv, incumbent_csv, *, split_id, n_boot):
+        seen.update(candidate=Path(candidate_csv).name, incumbent=Path(incumbent_csv).name, split=split_id)
+        return {"promote": rule_passes}
+
+    monkeypatch.setattr(script, "recommend", recommend)
+    assert main("--silver", "silver-B", "--apply") == 0
+    assert seen == {"candidate": "gen-C_predictions.csv", "incumbent": "gen-A_predictions.csv", "split": SPLIT}
+    assert ("--apply" in ran[-1]) is rule_passes and ran[-1][0] == "promote.py"
 
 
-def test_adopt_on_a_fresh_machine_just_renames_the_candidate(env):
-    shutil.rmtree(config.REPORT_MAPPING_CURRENT_DIR)
-    outcome = promote.adopt()
-    assert outcome["archive"] is None and outcome["archived_caches"] == 0
-    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
-    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["status"] == "current"
-    assert not config.ARCHIVE_ROOT.exists() and not config.REPORT_MAPPING_CANDIDATE_DIR.exists()
-
-
-def test_adopt_refuses_an_uncalibrated_candidate(env, tiny_bert_dir):
-    shutil.rmtree(config.REPORT_MAPPING_CANDIDATE_DIR)
-    _generation(config.REPORT_MAPPING_CANDIDATE_DIR, tiny_bert_dir, "gen-B", "silver-B", status="pending")
-    with pytest.raises(promote.PromotionError, match="calibration.status"):
-        promote.adopt()
-    assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-A"
+def test_cycle_apply_stops_when_the_rule_cannot_be_evaluated(cycle, monkeypatch, capsys):
+    main, ran, script = cycle
+    _eval_batch_gold()
+    monkeypatch.setattr(script, "recommend", lambda *a, **k: (_ for _ in ()).throw(ValueError("no good")))
+    assert main("--silver", "silver-B", "--apply") == 1
+    assert "REFUSED: no good" in capsys.readouterr().err
+    assert ran[-1][0] == "predict.py"
 
 
 # ---- --publish (opt-in S3 hook) ----
@@ -377,9 +543,7 @@ from .s3fake import forbid_s3, use_fake_s3  # noqa: E402
 
 
 def _run_promote(monkeypatch, env, *extra, wrong=0):
-    monkeypatch.setattr(sys, "argv", ["promote.py", "--candidate-predictions", str(_predictions(env / "b.csv", "gen-B", wrong)),
-                                      "--incumbent-predictions", str(_predictions(env / "a.csv", "gen-A")),
-                                      "--split", SPLIT, "--n-boot", "50", *extra])
+    monkeypatch.setattr(sys, "argv", _argv(env, *extra, wrong=wrong))
     return promote_script.main()
 
 
@@ -400,6 +564,15 @@ def test_promote_publish_lands_the_generation_in_s3(env, monkeypatch, capsys):
     assert json.loads(fake.objects[prefix + "CURRENT.json"]) == {"generation_id": "gen-B"}
     assert prefix + "gen-B/manifest.json" in fake.objects
     assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+
+
+def test_adopt_publish_lands_the_generation_in_s3(env, monkeypatch, capsys):
+    update_manifest(config.REPORT_MAPPING_CURRENT_DIR, {"architecture": {"name": "petbert-four-stage"}})
+    fake = use_fake_s3(monkeypatch, env)
+    monkeypatch.setattr(sys, "argv", ["promote.py", "--adopt", "--reason", str(_reason_file()), "--publish"])
+    assert promote_script.main() == 0
+    assert "Published gen-B to S3" in capsys.readouterr().out
+    assert json.loads(fake.objects[config.S3_PREFIX + "generations/CURRENT.json"]) == {"generation_id": "gen-B"}
 
 
 def test_discarded_candidate_is_not_published(env, monkeypatch, capsys):
@@ -458,3 +631,11 @@ def test_apply_without_publish_never_touches_s3(env, monkeypatch):
     forbid_s3(monkeypatch)
     assert _run_promote(monkeypatch, env, "--apply") == 0
     assert read_manifest(config.REPORT_MAPPING_CURRENT_DIR)["generation_id"] == "gen-B"
+
+
+def test_adopt_architecture_refuses_a_same_architecture_candidate(env):
+    # A retrain (same code, new weights) must go through the gold rule, never around it.
+    with pytest.raises(promote.PromotionError, match="same architecture"):
+        promote.adopt_architecture(config.REPORT_MAPPING_CANDIDATE_DIR, config.REPORT_MAPPING_CURRENT_DIR,
+                                   _reason_file(), "retrain")
+    assert config.REPORT_MAPPING_CANDIDATE_DIR.exists() and not config.ARCHIVE_ROOT.exists()

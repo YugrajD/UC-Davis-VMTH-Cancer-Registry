@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import shutil
 import sys
 from pathlib import Path
 
@@ -82,10 +83,18 @@ def test_export_coding_cli(monkeypatch, handoff_root):
     assert (config.HANDOFF_OUTBOX_DIR / "review_queue_run1.csv").is_file()
 
 
-def test_export_bundle_cli(monkeypatch, handoff_root, tiny_bert_dir):
-    fx.build_report_mapping_bundle(config.REPORT_MAPPING_CURRENT_DIR, tiny_bert_dir)
+def test_export_bundle_cli(monkeypatch, handoff_root, tiny_generation_dir):
+    shutil.copytree(tiny_generation_dir, config.REPORT_MAPPING_CURRENT_DIR)
     assert _run(monkeypatch, ["export-bundle", "--generation", "current"]) == 0
     assert any(config.HANDOFF_BUNDLES_DIR.glob("bundle_*.tar.gz"))
+
+
+def test_export_bundle_cli_refuses_a_generation_failing_the_spec_check(monkeypatch, handoff_root, tiny_generation_dir, capsys):
+    shutil.copytree(tiny_generation_dir, config.REPORT_MAPPING_CURRENT_DIR)
+    (config.REPORT_MAPPING_CURRENT_DIR / "head.pt").write_bytes(b"tampered")
+    assert _run(monkeypatch, ["export-bundle", "--generation", "current"]) == 1
+    assert "REFUSED" in capsys.readouterr().err
+    assert not config.HANDOFF_BUNDLES_DIR.exists()
 
 
 # ---- --push (opt-in S3 hook) ----

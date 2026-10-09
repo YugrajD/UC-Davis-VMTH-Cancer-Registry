@@ -62,6 +62,26 @@ def test_queue_subcommand_writes_review_queue_csv(scenario, monkeypatch, tmp_pat
     assert fx.CodingCaseIDs.VAGUE_NOGOLD in set(df["case_id"])
 
 
+@pytest.mark.parametrize("command", ["combine", "queue"])
+def test_generation_flag_selects_the_generation_and_a_mismatch_is_refused(scenario, monkeypatch, tmp_path, capsys, command):
+    other = fx.make_review_generation(tmp_path / "other-gen", "gen-other", 0.99)
+    out_path = tmp_path / "out.csv"
+    argv = [command, "--silver", scenario["silver_id"], "--split", scenario["split_id"],
+            "--predictions", str(scenario["predictions_csv"]), "--out", str(out_path)]
+    assert _run(monkeypatch, argv + ["--generation", str(other)]) == 1   # the predictions carry coding-test-gen
+    err = capsys.readouterr().err
+    assert "REFUSED" in err and "gen-other" in err
+    assert not out_path.exists()
+    assert _run(monkeypatch, argv) == 0                                  # default: current
+    assert out_path.is_file()
+
+
+def test_the_old_generation_id_override_is_gone(scenario, monkeypatch, tmp_path):
+    with pytest.raises(SystemExit) as exit_info:
+        _run(monkeypatch, ["queue", "--silver", "s", "--split", "p", "--predictions", "x", "--generation-id", "g"])
+    assert exit_info.value.code == 2
+
+
 def test_corrected_subcommand_writes_corrected_annotations_csv(scenario, monkeypatch, tmp_path):
     out_path = tmp_path / "corrected.csv"
     rc = _run(monkeypatch, [

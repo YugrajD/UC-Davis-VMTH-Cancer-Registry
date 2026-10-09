@@ -567,6 +567,23 @@ def point_coding_config_at(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(config, "CORRECTED_ANNOTATIONS_CSV", coding_dir / "corrected_annotations.csv")
     monkeypatch.setattr(config, "COMBINED_PREDICTIONS_CSV", coding_dir / "combined_predictions.csv")
     monkeypatch.setattr(config, "REVIEW_QUEUE_CSV", coding_dir / "review_queue.csv")
+    report_mapping_dir = root / "output" / "report_mapping"
+    monkeypatch.setattr(config, "REPORT_MAPPING_DIR", report_mapping_dir)
+    monkeypatch.setattr(config, "REPORT_MAPPING_CURRENT_DIR", report_mapping_dir / "current")
+    monkeypatch.setattr(config, "REPORT_MAPPING_CANDIDATE_DIR", report_mapping_dir / "candidate")
+
+
+def make_review_generation(directory: Path, generation_id: str, review_cut: float) -> Path:
+    """The part of a generation that coding/ reads: a manifest carrying ``generation_id`` and a thresholds.json
+    with ``review_cut`` (no weights). Written at ``directory``, e.g. the redirected ``config.REPORT_MAPPING_CURRENT_DIR``."""
+    from generations.manifest import write_manifest
+    from report_mapping import generation
+
+    directory.mkdir(parents=True, exist_ok=True)
+    thresholds = {**TINY_THRESHOLDS, "review_cut": review_cut}
+    (directory / generation.THRESHOLDS_FILE).write_text(json.dumps(thresholds), encoding="utf-8")
+    write_manifest(directory, {"generation_id": generation_id})
+    return directory
 
 
 BRONZE_PREDICTIONS_COLUMNS = [
@@ -616,14 +633,16 @@ class CodingCaseIDs:
     VAGUE_NOGOLD = "CASE-VAGUE-NOGOLD"        # vague silver, no gold, train -> queued only
     TEST_VAGUE = "CASE-TEST-VAGUE"            # vague silver, no gold, test partition
     BRONZE_HIGH = "CASE-BRONZE-HIGH"          # no diagnosis, high-confidence bronze, 2 codes
-    BRONZE_LOW_CONF = "CASE-BRONZE-LOW-CONF"  # no diagnosis, confidence below the floor
-    BRONZE_LOW_MARGIN = "CASE-BRONZE-LOW-MARGIN"  # no diagnosis, top1-top2 margin below the floor
+    BRONZE_LOW_CONF = "CASE-BRONZE-LOW-CONF"  # no diagnosis, rank-1 confidence below review_cut
+    BRONZE_TIGHT_MARGIN = "CASE-BRONZE-TIGHT-MARGIN"  # no diagnosis, top1-top2 margin tiny but both above review_cut
+    BRONZE_RANK2_LOW = "CASE-BRONZE-RANK2-LOW"  # no diagnosis, confident rank 1, rank 2 below review_cut
     BRONZE_METHOD_FLAG = "CASE-BRONZE-METHOD-FLAG"  # no diagnosis, gate-rejected (blank code)
 
 
 CODING_SILVER_ID = "coding-test-silver"
 CODING_SPLIT_ID = "coding-test-split"
 CODING_GENERATION_ID = "coding-test-gen"
+CODING_REVIEW_CUT = 0.30
 
 
 def build_coding_scenario(monkeypatch, root: Path) -> dict:
@@ -638,21 +657,26 @@ def build_coding_scenario(monkeypatch, root: Path) -> dict:
     - DECISIVE_NONCANCER is decisive ``no_signal`` (no gold, no bronze).
     - VAGUE_NOGOLD (train) and TEST_VAGUE (test) are vague with no gold, at
       case_presence_prob 0.9 / 0.4 respectively (queue priority ordering).
-    - BRONZE_HIGH/LOW_CONF/LOW_MARGIN/METHOD_FLAG have no diagnosis rows at
-      all; each exercises one bronze review-gate trigger (or none, for HIGH).
+    - BRONZE_HIGH/LOW_CONF/TIGHT_MARGIN/RANK2_LOW/METHOD_FLAG have no
+      diagnosis rows at all; LOW_CONF (rank 1 below ``review_cut``) and
+      METHOD_FLAG (gate-rejected) are queued, the others are not.
+    - The current generation (``CODING_GENERATION_ID``) has ``review_cut``
+      ``CODING_REVIEW_CUT``; the predictions carry its id.
 
     Returns ``{"split_id", "silver_id", "generation_id", "predictions_csv"}``.
     """
     import config
 
     point_coding_config_at(monkeypatch, root)
+    make_review_generation(config.REPORT_MAPPING_CURRENT_DIR, CODING_GENERATION_ID, CODING_REVIEW_CUT)
     C = CodingCaseIDs
 
     make_three_way_split_generation(
         CODING_SPLIT_ID,
         train=[
             C.G_DIAG, C.G_VAGUE, C.G_NOCANCER, C.G_BRONZE, C.DECISIVE_CANCER, C.DECISIVE_NONCANCER,
-            C.VAGUE_NOGOLD, C.BRONZE_HIGH, C.BRONZE_LOW_CONF, C.BRONZE_LOW_MARGIN, C.BRONZE_METHOD_FLAG,
+            C.VAGUE_NOGOLD, C.BRONZE_HIGH, C.BRONZE_LOW_CONF, C.BRONZE_TIGHT_MARGIN, C.BRONZE_RANK2_LOW,
+            C.BRONZE_METHOD_FLAG,
         ],
         calibration=[],
         test=[C.TEST_VAGUE],
@@ -681,26 +705,30 @@ def build_coding_scenario(monkeypatch, root: Path) -> dict:
     predictions_rows = [
         # Disagrees with DECISIVE_CANCER's silver code on purpose (never used).
         (C.DECISIVE_CANCER, 1, "Wrong Term", "Wrong Group", "9999/0", "0.9500", "0.95", "0.95",
-         "label_presence", CODING_GENERATION_ID),
+         "term_head", CODING_GENERATION_ID),
         (C.VAGUE_NOGOLD, 1, "V-Term", "V-Group", "9993/3", "0.9000", "0.90", "0.90",
-         "label_presence", CODING_GENERATION_ID),
+         "term_head", CODING_GENERATION_ID),
         (C.TEST_VAGUE, 1, "T-Term", "T-Group", "9994/3", "0.4000", "0.40", "0.40",
-         "label_presence", CODING_GENERATION_ID),
+         "term_head", CODING_GENERATION_ID),
         (C.G_VAGUE, 1, "GV-Term", "GV-Group", "9995/3", "0.8000", "0.80", "0.80",
-         "label_presence", CODING_GENERATION_ID),
+         "term_head", CODING_GENERATION_ID),
         (C.G_BRONZE, 1, "B-Term-G", "B-Group-G", "B900", "0.0500", "0.05", "0.05",
-         "label_presence", CODING_GENERATION_ID),
+         "term_head", CODING_GENERATION_ID),
         (C.BRONZE_HIGH, 1, "B-Term1", "B-Group1", "B001", "0.9000", "0.90", "0.90",
-         "label_presence", CODING_GENERATION_ID),
+         "term_head", CODING_GENERATION_ID),
         (C.BRONZE_HIGH, 2, "B-Term2", "B-Group1", "B002", "0.9000", "0.60", "0.50",
-         "label_presence", CODING_GENERATION_ID),
+         "term_head", CODING_GENERATION_ID),
         (C.BRONZE_LOW_CONF, 1, "B-Term3", "B-Group3", "B003", "0.1000", "0.10", "0.10",
-         "label_presence", CODING_GENERATION_ID),
-        (C.BRONZE_LOW_MARGIN, 1, "B-Term4", "B-Group4", "B004", "0.5000", "0.50", "0.50",
-         "label_presence", CODING_GENERATION_ID),
-        (C.BRONZE_LOW_MARGIN, 2, "B-Term5", "B-Group4", "B005", "0.5000", "0.45", "0.45",
-         "label_presence", CODING_GENERATION_ID),
-        (C.BRONZE_METHOD_FLAG, 1, "Non-Cancer", "Non-Cancer", "", "0.0500", "0.05", "0.05",
+         "term_head", CODING_GENERATION_ID),
+        (C.BRONZE_TIGHT_MARGIN, 1, "B-Term4", "B-Group4", "B004", "0.5000", "0.50", "0.50",
+         "term_head", CODING_GENERATION_ID),
+        (C.BRONZE_TIGHT_MARGIN, 2, "B-Term5", "B-Group4", "B005", "0.5000", "0.49", "0.49",
+         "term_head", CODING_GENERATION_ID),
+        (C.BRONZE_RANK2_LOW, 1, "B-Term6", "B-Group6", "B006", "0.9000", "0.90", "0.90",
+         "term_head", CODING_GENERATION_ID),
+        (C.BRONZE_RANK2_LOW, 2, "B-Term7", "B-Group6", "B007", "0.9000", "0.10", "0.10",
+         "term_head", CODING_GENERATION_ID),
+        (C.BRONZE_METHOD_FLAG, 1, "Non-Cancer", "Non-Cancer", "", "0.0500", "0.00", "",
          "rejected_by_case_presence", CODING_GENERATION_ID),
     ]
     predictions_csv = make_bronze_predictions_csv(root / "predictions.csv", predictions_rows)

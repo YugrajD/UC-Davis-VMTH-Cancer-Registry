@@ -33,10 +33,14 @@ def _cmd_dm_sample(args: argparse.Namespace) -> int:
 
 
 def _cmd_rm_sample(args: argparse.Namespace) -> int:
-    result = report_mapping_audit.sample(
-        oof_csv=args.oof_csv, split_id=args.split_id, batch=args.batch,
-        n_contradicted=args.n_contradicted, n_random=args.n_random, seed=args.seed,
-    )
+    try:
+        result = report_mapping_audit.sample(
+            oof_csv=args.oof_csv, split_id=args.split_id, batch=args.batch,
+            n_contradicted=args.n_contradicted, n_random=args.n_random, seed=args.seed,
+        )
+    except report_mapping_audit.ReportMappingAuditError as error:
+        print(f"REFUSED: {error}", file=sys.stderr)
+        return 1
     print(f"Sampled {result['n_cases']} cases -> {result['case_list']}")
     for reason, pool in result["pools"].items():
         print(f"  {reason:<30} {result['counts'].get(reason, 0):>4} of {pool}")
@@ -115,8 +119,9 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
 
     p = sub.add_parser("rm-sample", help="Draw a Report-Mapping audit batch (ledger CSV + case-ID list).")
-    p.add_argument("--oof-csv", required=True, help="Gate OOF scores from train.py --stage oof (config.OOF_DIR).")
-    p.add_argument("--split-id", default=config.DEFAULT_SPLIT_ID, help="The split the OOF scores were trained on.")
+    p.add_argument("--oof-csv", required=True,
+                   help="Cross-fit CSV from scripts/oof.py (under config.OOF_DIR): out-of-fold gate and term probabilities.")
+    p.add_argument("--split-id", default=config.DEFAULT_SPLIT_ID, help="The split the cross-fit was run on (its train partition).")
     p.add_argument("--batch", type=int, required=True)
     p.add_argument("--n-contradicted", type=int, default=100)
     p.add_argument("--n-random", type=int, default=100)

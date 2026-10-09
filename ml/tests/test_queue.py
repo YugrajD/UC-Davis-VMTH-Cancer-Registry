@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import config
 from coding.queue import LOW_CONF_BRONZE, NO_EVIDENCE, VAGUE_SILVER, build_review_queue
 from coding.rule import UnknownDecisionError
 
@@ -57,9 +58,24 @@ def test_low_confidence_bronze_cases_are_queued(scenario):
     C = fx.CodingCaseIDs
     df = build_review_queue(scenario["silver_id"], scenario["split_id"], scenario["predictions_csv"])
     queued = {row["case_id"]: row["reason"] for _, row in df.iterrows()}
-    assert queued[C.BRONZE_LOW_CONF] == LOW_CONF_BRONZE
-    assert queued[C.BRONZE_LOW_MARGIN] == LOW_CONF_BRONZE
-    assert queued[C.BRONZE_METHOD_FLAG] == LOW_CONF_BRONZE
+    assert queued[C.BRONZE_LOW_CONF] == LOW_CONF_BRONZE      # rank-1 confidence below review_cut
+    assert queued[C.BRONZE_METHOD_FLAG] == LOW_CONF_BRONZE   # rejected by the gate
+
+
+def test_bronze_margin_and_rank2_confidence_do_not_queue(scenario):
+    C = fx.CodingCaseIDs
+    df = build_review_queue(scenario["silver_id"], scenario["split_id"], scenario["predictions_csv"])
+    assert not {C.BRONZE_TIGHT_MARGIN, C.BRONZE_RANK2_LOW} & set(df["case_id"])
+
+
+def test_bronze_priority_is_the_gate_probability(scenario):
+    C = fx.CodingCaseIDs
+    df = build_review_queue(scenario["silver_id"], scenario["split_id"], scenario["predictions_csv"])
+    by_case = dict(zip(df["case_id"], df["priority"]))
+    assert float(by_case[C.BRONZE_LOW_CONF]) == pytest.approx(0.10)
+    assert float(by_case[C.BRONZE_METHOD_FLAG]) == pytest.approx(0.05)
+    bronze_order = [c for c in df["case_id"] if c in (C.BRONZE_LOW_CONF, C.BRONZE_METHOD_FLAG)]
+    assert bronze_order == [C.BRONZE_LOW_CONF, C.BRONZE_METHOD_FLAG]
 
 
 def test_high_confidence_bronze_case_is_not_queued(scenario):
@@ -97,12 +113,13 @@ def test_no_evidence_case_is_queued_with_lowest_priority(monkeypatch, tmp_path):
     prediction at all (e.g. a split member whose report never made it into
     report.csv) must still be queued, not silently dropped."""
     fx.point_coding_config_at(monkeypatch, tmp_path)
+    fx.make_review_generation(config.REPORT_MAPPING_CURRENT_DIR, "gen-ne", 0.30)
     fx.make_three_way_split_generation(
         "no-evidence-split", train=["CASE-HAS-BRONZE", "CASE-NO-EVIDENCE"], calibration=[], test=[],
     )
     fx.make_silver_generation("no-evidence-silver", [])
     predictions_csv = fx.make_bronze_predictions_csv(tmp_path / "predictions.csv", [
-        ("CASE-HAS-BRONZE", 1, "T", "G", "9001/3", "0.9000", "0.90", "0.90", "label_presence", "gen-ne"),
+        ("CASE-HAS-BRONZE", 1, "T", "G", "9001/3", "0.9000", "0.90", "", "term_head", "gen-ne"),
     ])
     df = build_review_queue("no-evidence-silver", "no-evidence-split", predictions_csv)
     row = df[df["case_id"] == "CASE-NO-EVIDENCE"]
@@ -119,14 +136,21 @@ def test_lineage_columns(scenario):
     assert (df["bronze_generation"] == scenario["generation_id"]).all()
 
 
+def test_the_queue_columns_are_unchanged_and_carry_no_text(scenario):
+    df = build_review_queue(scenario["silver_id"], scenario["split_id"], scenario["predictions_csv"])
+    assert list(df.columns) == ["case_id", "reason", "priority", "partition", "silver_generation", "bronze_generation"]
+    assert set(df["reason"]) <= {VAGUE_SILVER, LOW_CONF_BRONZE, NO_EVIDENCE}
+
+
 def test_unknown_decision_pair_raises(monkeypatch, tmp_path):
     fx.point_coding_config_at(monkeypatch, tmp_path)
+    fx.make_review_generation(config.REPORT_MAPPING_CURRENT_DIR, "gen-x", 0.30)
     fx.make_three_way_split_generation("bad-pair-split", train=["CASE-BAD"], calibration=[], test=[])
     fx.make_silver_generation("bad-pair-silver", [
         ("CASE-BAD", 1, "invented diagnosis text", "", "", "", "", "Fuzzy", 0.4, "tier1_exact"),  # tier1_exact/Fuzzy is not a real pair
     ])
     predictions_csv = fx.make_bronze_predictions_csv(tmp_path / "predictions.csv", [
-        ("CASE-BAD", 1, "T", "G", "9999/9", "0.9000", "0.90", "0.90", "label_presence", "gen-x"),
+        ("CASE-BAD", 1, "T", "G", "9999/9", "0.9000", "0.90", "", "term_head", "gen-x"),
     ])
     with pytest.raises(UnknownDecisionError):
         build_review_queue("bad-pair-silver", "bad-pair-split", predictions_csv)

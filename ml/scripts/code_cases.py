@@ -1,9 +1,9 @@
 """Coding-rule outputs: combined predictions, corrected annotations, the review queue.
 
 Usage:
-  python ml/scripts/code_cases.py combine   --silver SID --split SPLIT --predictions PATH [--generation-id ID] [--out PATH]
+  python ml/scripts/code_cases.py combine   --silver SID --split SPLIT --predictions PATH [--generation current] [--out PATH]
   python ml/scripts/code_cases.py corrected --silver SID --split SPLIT [--out PATH]
-  python ml/scripts/code_cases.py queue     --silver SID --split SPLIT --predictions PATH [--generation-id ID] [--out PATH]
+  python ml/scripts/code_cases.py queue     --silver SID --split SPLIT --predictions PATH [--generation current] [--out PATH]
 """
 
 import argparse
@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from coding.combine import write_combined_predictions
 from coding.corrected import write_corrected_annotations
 from coding.queue import write_review_queue
+from generations.manifest import ManifestError
+from report_mapping.generation import GenerationError
 
 
 def main() -> int:
@@ -24,7 +26,9 @@ def main() -> int:
     combine.add_argument("--silver", required=True)
     combine.add_argument("--split", required=True)
     combine.add_argument("--predictions", required=True)
-    combine.add_argument("--generation-id", default=None)
+    combine.add_argument("--generation", default="current",
+                         help='Generation that made --predictions: "current", "candidate" or a directory; its id must match '
+                              "the predictions and its thresholds.json supplies review_cut.")
     combine.add_argument("--out", default=None)
 
     corrected = sub.add_parser("corrected", help="Write the corrected-annotations table (train partition only).")
@@ -36,23 +40,25 @@ def main() -> int:
     queue.add_argument("--silver", required=True)
     queue.add_argument("--split", required=True)
     queue.add_argument("--predictions", required=True)
-    queue.add_argument("--generation-id", default=None)
+    queue.add_argument("--generation", default="current", help="As for combine.")
     queue.add_argument("--out", default=None)
 
     args = parser.parse_args()
 
-    if args.command == "combine":
-        out_path = write_combined_predictions(
-            args.silver, args.split, args.predictions,
-            generation_id=args.generation_id, out_csv=args.out,
-        )
-    elif args.command == "corrected":
-        out_path = write_corrected_annotations(args.silver, args.split, out_csv=args.out)
-    else:
-        out_path = write_review_queue(
-            args.silver, args.split, args.predictions,
-            generation_id=args.generation_id, out_csv=args.out,
-        )
+    try:
+        if args.command == "combine":
+            out_path = write_combined_predictions(
+                args.silver, args.split, args.predictions, generation=args.generation, out_csv=args.out,
+            )
+        elif args.command == "corrected":
+            out_path = write_corrected_annotations(args.silver, args.split, out_csv=args.out)
+        else:
+            out_path = write_review_queue(
+                args.silver, args.split, args.predictions, generation=args.generation, out_csv=args.out,
+            )
+    except (GenerationError, ManifestError, ValueError, FileNotFoundError) as error:
+        print(f"REFUSED: {error}", file=sys.stderr)
+        return 1
     print(f"wrote {out_path}")
     return 0
 

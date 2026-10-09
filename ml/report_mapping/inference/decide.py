@@ -9,10 +9,12 @@ so it gets no row. ``unidentified_cancer`` is never emitted.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from report_mapping.inference.scoring import RankedScores
+if TYPE_CHECKING:  # annotation only: keeps this module free of torch for coding/ and handoff/
+    from report_mapping.inference.scoring import RankedScores
 
 COLUMNS = ["case_id", "diagnosis_index", "predicted_term", "predicted_group", "predicted_code",
            "case_presence_prob", "confidence", "group_prob", "method", "generation_id"]

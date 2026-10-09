@@ -5,11 +5,11 @@ overrides silver"):
 
 - ``vague_silver`` — the case has diagnosis rows and at least one is vague
   (``coding.rule.case_is_vague``).
-- ``low_conf_bronze`` — the case has no diagnosis rows at all, and bronze's
-  own review gate (``coding.combine.bronze_case_is_low_confidence``) flags it.
-  This also covers an ``unidentified_cancer`` bronze case (the gate passed but
-  no label resolved): ``coding.combine`` refuses to code it as ``NO_CANCER``,
-  and its score is always 0.0, so the low-confidence check picks it up here.
+- ``low_conf_bronze`` — the case has no diagnosis rows at all, and the bronze
+  review rule (``coding.combine.bronze_case_is_low_confidence``: a gate-rejected
+  row, no rank-1 row, or a rank-1 confidence below the generation's
+  ``review_cut``) flags it. A case the gate accepts but where no term is
+  confident (the likely out-of-vocabulary case) is caught by the cut.
 - ``no_evidence`` — the case has no gold, no diagnosis row and no bronze
   prediction at all (WP9 fix 2: e.g. an upload whose report never made it
   into ``report.csv``). ``coding.combine`` has nothing to code for such a
@@ -65,7 +65,7 @@ import pandas as pd
 
 import config
 import io_utils
-from coding.combine import bronze_case_is_low_confidence, load_bronze_predictions, resolve_generation_id
+from coding.combine import bronze_case_is_low_confidence, bronze_review_cut, load_bronze_predictions
 from coding.rule import case_is_vague
 from diagnosis_mapping.silver import load_silver
 from generations.splits import load_split
@@ -102,15 +102,15 @@ def build_review_queue(
     split_id: str,
     predictions_csv: str | Path,
     *,
-    generation_id: str | None = None,
+    generation: str = "current",
 ) -> pd.DataFrame:
     """The review queue for ``silver_id`` (diagnosis rows) x ``predictions_csv``
-    (bronze), skipping cases with any gold. Ordered with every test-partition
+    (bronze, made by ``generation``), skipping cases with any gold. Ordered with every test-partition
     item after every train/calibration item, priority-descending within each
     block (see the module docstring)."""
     silver = load_silver(silver_id)
     bronze = load_bronze_predictions(predictions_csv)
-    bronze_generation_id = resolve_generation_id(bronze, generation_id)
+    bronze_generation_id, review_cut = bronze_review_cut(bronze, generation)
     gold_case_ids = set(load_gold()["case_id"])
     split = load_split(split_id)
 
@@ -140,11 +140,8 @@ def build_review_queue(
     for case_id, case_rows in bronze_by_case.items():
         if case_id in gold_case_ids or case_id in diagnosed_cases:
             continue
-        # A bronze-only case always gets a combined row (coding.combine) except
-        # an unidentified_cancer one, which is always low-confidence too (see
-        # coding.combine._bronze_case_codes) — either way it's covered.
-        covered.add(case_id)
-        if not bronze_case_is_low_confidence(case_rows):
+        covered.add(case_id)  # a bronze-only case always gets a combined row (coding.combine)
+        if not bronze_case_is_low_confidence(case_rows, review_cut):
             continue
         rows.append({
             "case_id": case_id, "reason": LOW_CONF_BRONZE, "priority": _case_presence_prob(case_rows),
@@ -177,10 +174,10 @@ def build_review_queue(
 
 def write_review_queue(
     silver_id: str, split_id: str, predictions_csv: str | Path, *,
-    generation_id: str | None = None, out_csv: str | Path | None = None,
+    generation: str = "current", out_csv: str | Path | None = None,
 ) -> Path:
     out_path = Path(out_csv) if out_csv is not None else config.REVIEW_QUEUE_CSV
-    df = build_review_queue(silver_id, split_id, predictions_csv, generation_id=generation_id)
+    df = build_review_queue(silver_id, split_id, predictions_csv, generation=generation)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     io_utils.write_csv(df, out_path)
     return out_path

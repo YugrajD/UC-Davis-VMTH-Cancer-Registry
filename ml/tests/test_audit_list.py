@@ -31,7 +31,7 @@ def sources(tmp_path, monkeypatch, labels_csv):
     dm.key_path(1).parent.mkdir(parents=True, exist_ok=True)
     sheets.write_csv(dm.key_path(1), dm.KEY_COLS, [{**{c: "" for c in dm.KEY_COLS}, "case_id": c, "diagnosis_number": "1"}
                                                    for c in ("D1", "E2")])
-    _write(pd.DataFrame({"case_id": ["R1", "D1"], "reason": "random", "target": "1", "oof_prob": "0.5"}),
+    _write(pd.DataFrame({"case_id": ["R1", "D1"], "reason": "random", "target": "1", "oof_prob": "0.5", "term_prob": "0.4"}),
            rm.ledger_path(1))
     _write(pd.DataFrame({"case_id": ["Q1", "R1", "Q2"]}), config.REVIEW_QUEUE_CSV)
     _write(pd.DataFrame([{"case_id": "Q2", "code": "NO_CANCER", "origin": "review_queue"}]), config.GOLD_STORE_CSV)

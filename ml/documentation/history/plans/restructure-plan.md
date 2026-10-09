@@ -304,3 +304,41 @@ longer imports `worker_format`; the bundle is the generation directory (`encoder
 (schema is a description of the tarball, not of its contents - bump `BUNDLE_SCHEMA_VERSION` if the backend reads the contents, e.g. `<bundle>/petbert`);
 `tests/fixtures.py` no longer has `build_report_mapping_bundle`/`report_mapping_bundle` (use the session fixture `tiny_generation_dir`, a calibrated tiny
 generation: `shutil.copytree` it and `update_manifest` the copy).
+
+### 2026-10-09 WP5 (coding review rule, Report-Mapping audit, oof.py): final CLIs and contract details for WP7
+
+```
+code_cases.py combine --silver SID --split S --predictions P [--generation current] [--out PATH]
+code_cases.py queue   --silver SID --split S --predictions P [--generation current] [--out PATH]
+code_cases.py corrected --silver SID --split S [--out PATH]                      # unchanged
+oof.py          --labels L [--split ID] [--k 5] [--seed 42] [--device auto] [--out PATH] [--force] [--model ENCODER_ID|DIR]
+                [--limit N] [--max-steps N]     # default out = config.OOF_DIR/<labels stem>_<split>_k<k>.csv; REFUSED (exit 1) if it exists without --force
+audit.py rm-sample --oof-csv PATH --batch N [--split-id ID] [--n-contradicted 100] [--n-random 100] [--seed 42]   # --oof-csv stays required
+```
+
+- `--generation-id` is **removed** from `code_cases.py combine|queue` (the scripts-and-flags tables still list it, lines ~138/~156): `--generation`
+  ("current", "candidate" or a directory) replaces it. The predictions' `generation_id` column must be exactly that generation's manifest id, else
+  `REFUSED: predictions carry generation_id [...]` (exit 1); `thresholds.json` of that generation supplies `review_cut`. `combine` reads the
+  generation only when some case is bronze-only (a gold/silver-only run needs no generation); `queue` always reads it (the `bronze_generation` column).
+  The check reads the manifest id and `thresholds.json` only (no `verify_spec`), so it also works on an archived generation.
+- Bronze review rule (`coding.combine.bronze_case_is_low_confidence(case_rows, review_cut)`): queued iff any row has method
+  `rejected_by_case_presence`, or there is no rank-1 row, or rank-1 `confidence` < `review_cut` (equal is accepted; blank confidence counts as 0).
+  Rank-2 confidence and the top1-top2 margin no longer matter. `unidentified_cancer`, `BRONZE_LOW_CONFIDENCE_THRESHOLD` (0.23),
+  `BRONZE_LOW_MARGIN_THRESHOLD` (0.15), `UNIDENTIFIED_CANCER_METHOD`, `resolve_generation_id` are gone. A bronze case never gets "no combined row" any
+  more: every bronze-only case is coded (rejected -> one `NO_CANCER` row) and, when it needs review, `review_status=queued` plus a
+  `low_conf_bronze` queue row. `combine.REJECTED_METHOD` is a literal pinned by a test to `decide.REJECTED_METHOD` (importing `decide` pulls
+  torch/transformers/accelerate-> botocore into `handoff.py`, which `test_help_does_not_import_boto3` forbids).
+- Review-queue output contract unchanged (`REVIEW_QUEUE_COLUMNS`, reason strings `vague_silver`/`low_conf_bronze`/`no_evidence`, priority = bronze
+  `case_presence_prob` descending, test partition last). `handoff-contracts.md`/`coding.md` need the new rule text only.
+- Report-Mapping audit input = the cross-fit CSV (`case_id, fold, gate_target, gate_prob, term, term_prob`); a file lacking those columns (e.g. the old
+  gate-only `case_id,target,prob`) is refused. Reasons: `contradicted_cancer_label` (cancer, gate < 0.2, lowest first), `contradicted_no_cancer_label`
+  (no cancer, gate > 0.8, highest first), new `contradicted_term_label` (cancer, gate >= 0.8, every labelled term's `term_prob` < 0.2; empty
+  `term_prob` = outside the fold vocabulary counts as < 0.2; strongest = lowest best-term probability, cases with no scored term last). The contradicted
+  half is dealt one case at a time across the three reasons (even split; a short reason hands its turns on); the random half and skip rules are unchanged.
+  Ledger columns `case_id, reason, target, oof_prob, term_prob`: `oof_prob` is the gate probability, `term_prob` the **lowest** scored labelled-term
+  probability as written in the cross-fit CSV (empty for a no-cancer case or when no labelled term was scored). Still no text. `audit_list` and the
+  audit-list ledger readers only use `case_id`, so nothing downstream changes.
+- Fixtures: `fixtures.make_review_generation(directory, generation_id, review_cut)` (manifest id + thresholds.json, no weights);
+  `point_coding_config_at` now also redirects `REPORT_MAPPING_*_DIR`; `build_coding_scenario` creates the "current" generation (`CODING_REVIEW_CUT` 0.30)
+  and `CodingCaseIDs.BRONZE_LOW_MARGIN` became `BRONZE_TIGHT_MARGIN` (+ `BRONZE_RANK2_LOW`); scenario bronze rows use method `term_head`.
+- test_docs after WP5: the only failures are still scripts-and-flags.md (WP3's list plus `code_cases.py --generation-id`).

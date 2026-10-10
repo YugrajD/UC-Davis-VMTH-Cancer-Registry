@@ -1,5 +1,5 @@
-# Dockerfile for GCP Batch report-mapping inference.
-# Build from the repo root (after the ml/next -> ml cutover):
+# Dockerfile for GCP Batch report-mapping inference (CPU, fp32).
+# Build from the repo root:
 #   docker build -f ml-worker/Dockerfile.batch -t petbert-batch .
 #
 # Model weights come from GCS (downloaded by the setup runnable),
@@ -10,14 +10,16 @@ FROM python:3.12-slim
 WORKDIR /worker
 
 COPY ml-worker/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 
-# The packages batch_predict.py imports, and what they import in turn
+# The code batch_predict.py imports, and what that imports in turn: config and io_utils, the
+# report_mapping package (inference never imports its training code), the manifest module of
+# generations/ (the spec check reads the manifest through it) and worker_format of handoff/.
 COPY ml/config.py ml/io_utils.py /ml/
-COPY ml/taxonomy /ml/taxonomy
 COPY ml/report_mapping /ml/report_mapping
-COPY ml/generations /ml/generations
-COPY ml/handoff /ml/handoff
+COPY ml/generations/__init__.py ml/generations/manifest.py /ml/generations/
+COPY ml/handoff/__init__.py ml/handoff/worker_format.py /ml/handoff/
 
 COPY ml-worker/batch_predict.py .
 

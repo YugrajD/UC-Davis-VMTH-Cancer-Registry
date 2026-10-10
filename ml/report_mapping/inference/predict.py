@@ -1,5 +1,5 @@
-"""Load a generation and predict: ``predict_frame`` (reports in memory; the worker) and ``run_predict``
-(report.csv -> predictions CSV).
+"""Load a generation and predict: ``predict_texts`` (built texts; the worker), ``predict_frame`` (report columns in
+memory) and ``run_predict`` (report.csv -> predictions CSV).
 
 The taxonomy is never read here: term -> (group, code) comes from the generation's own term_info.json.
 """
@@ -42,18 +42,23 @@ def load_generation(directory: Path, device) -> LoadedGeneration:
         generation_id=manifest["generation_id"])
 
 
-def predict_frame(reports: pd.DataFrame, loaded: LoadedGeneration, device) -> pd.DataFrame:
-    """Prediction rows (``decide.COLUMNS``) for ``reports``: ``case_id`` plus any subset of the 8 report columns.
-    A case with no text in any column gets no rows."""
-    texts = text.build_report_texts(reports)
+def predict_texts(case_ids: list[str], texts: list[str], loaded: LoadedGeneration, device) -> pd.DataFrame:
+    """Prediction rows (``decide.COLUMNS``) for already-built report texts, one per case id (the upload path: the
+    worker's text is a single flat string). A case whose text is empty gets no rows."""
     keep = [i for i, t in enumerate(texts) if t]
-    case_ids = reports["case_id"].map(text.clean_text).tolist()
     if not keep:
         return pd.DataFrame(columns=decide.COLUMNS)
     term_logits, gate_logits, _ = scoring.logits_for(loaded.model, loaded.tokenizer, [texts[i] for i in keep],
                                                      loaded.max_length, device)
     ranked = scoring.rank([case_ids[i] for i in keep], loaded.terms, term_logits, gate_logits)
     return decide.decide_all(ranked, loaded.thresholds, loaded.term_info, loaded.generation_id)
+
+
+def predict_frame(reports: pd.DataFrame, loaded: LoadedGeneration, device) -> pd.DataFrame:
+    """Prediction rows (``decide.COLUMNS``) for ``reports``: ``case_id`` plus any subset of the 8 report columns.
+    A case with no text in any column gets no rows."""
+    return predict_texts(reports["case_id"].map(text.clean_text).tolist(), text.build_report_texts(reports),
+                         loaded, device)
 
 
 def run_predict(generation_dir: Path, device, out: Path | None = None) -> Path:

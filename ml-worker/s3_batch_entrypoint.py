@@ -8,19 +8,21 @@ Env (set by the task definition / RunTask overrides):
 
 S3 layout mirrors the backend (app/services/s3_service.py):
   uploads/{JOB_ID}/dataset_a.csv                        input
-  models/{MODEL_FOLDER}/{petbert,labels,checkpoints}/... one verified bundle
+  models/{MODEL_FOLDER}/...                             one verified bundle (a generation directory:
+                                                        encoder/, head.pt, gate_head.pt, terms.json,
+                                                        term_info.json, thresholds.json, manifest.json)
   uploads/{JOB_ID}/predictions.json                     output
   uploads/{JOB_ID}/scan_output/*                        output (diagnostics)
 
 The whole models/{MODEL_FOLDER}/ prefix is downloaded as one recursive copy,
-preserving its internal layout (petbert/, labels/, checkpoints/ — including
-checkpoints/label_presence/*.pt and checkpoints/thresholds.json — and
-manifest.json). There are no optional files: batch_predict.py's own
-worker_format.resolve_bundle_root() + load_generation() verify the bundle's
-manifest and embedding fingerprint at startup and refuse to run on anything
-missing or changed, so a partial download must fail the job here rather than
-produce predictions from a mismatched bundle. Only MODEL_PATH is set — every
-other path the worker needs is derived from the bundle root.
+preserving its internal layout. There are no optional files: batch_predict.py's
+own worker_format.resolve_bundle_root() + load_generation() run the spec check
+(file hashes against manifest.json, architecture and text spec, thresholds
+calibrated for the weights) at startup and refuse to run on anything missing or
+changed, so a partial download must fail the job here rather than produce
+predictions from a mismatched bundle. Only MODEL_PATH is set: the bundle is its
+parent directory, so MODEL_PATH is named <bundle>/petbert as the backend names it
+(the directory does not exist in the new layout; encoder/ replaced it).
 """
 
 import os
@@ -82,9 +84,8 @@ def main() -> None:
         "MODEL_PATH": os.path.join(model_root, "petbert"),
     })
 
-    # batch_predict.main() verifies the bundle's manifest.json and embedding
-    # fingerprint before predicting, and refuses to run on a mismatch — see
-    # module docstring above.
+    # batch_predict.main() spec-checks the bundle before predicting and refuses
+    # to run on a mismatch — see module docstring above.
     batch_predict.main()
 
     print("[entrypoint] uploading outputs")

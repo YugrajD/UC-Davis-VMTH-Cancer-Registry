@@ -1,51 +1,36 @@
-"""The bundle contract shared between ML (which builds it) and ml-worker (which
-consumes it), plus the worker's upload and response formats.
+"""What ml-worker shares with the ml suite: where the bundle is, the upload -> text mapping, the response payload.
 
-A bundle is just a report-mapping generation directory (``current/``) —
-``report_mapping.model.generation``'s docstring already says so: "This layout
-*is* the cloud bundle layout ml-worker downloads." This module adds nothing to
-that layout; it names the subset of it ml-worker actually needs to serve
-predictions, and the one check both sides must run before trusting a bundle:
-manifest file-hashes + embedding fingerprint, reusing
-``generations.manifest.verify_manifest`` and
-``report_mapping.model.generation.verify_fingerprint`` rather than
-re-implementing either (per CLAUDE.md, "call the public interface").
+A bundle is a report-mapping generation directory (``current/``, see ``report_mapping.generation``). The
+worker loads it with ``report_mapping.inference.predict.load_generation``, which runs
+``report_mapping.generation.verify_spec`` first (file hashes, architecture incl. text spec, calibration bound
+to the weights) and refuses a bad bundle; this module adds nothing to that check.
 
-ml-rewrite-plan.md's Decisions: "The worker refuses to start if a file listed
-in its manifest is missing" — ``verify_worker_bundle`` below is that check,
-run by ``handoff.exports.export_bundle``; the worker gets the same check from
-``load_generation`` at startup.
+Only the model-path variable locates the bundle. The backend and docker-compose keep naming it
+``<bundle>/petbert`` (the PetBERT-era layout); the generation has no ``petbert/`` directory any more
+(``encoder/`` replaced it), so that path need not exist and only its parent is used.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Mapping
 
 import pandas as pd
 
-from generations.manifest import ManifestError, verify_manifest
-from report_mapping import sections
-from report_mapping.model.generation import GenerationError, generation_paths, verify_fingerprint
+from report_mapping.text import clean_text
 
-# ml-worker's env-var contract (ml-worker/app.py, batch_predict.py), mapped to
-# the path each variable must name relative to the bundle root
-# (``report_mapping.model.generation.generation_paths``); ``resolve_bundle_root``
-# refuses any that points elsewhere. Per-group label_presence checkpoints have
-# no variable: the worker loads the whole label_presence dir.
-WORKER_ENV_VAR_TO_BUNDLE_PATH = {
-    "PETBERT_MODEL_PATH": "petbert",  # app.py's name for the model path
-    "MODEL_PATH": "petbert",  # batch_predict.py's name for it
-    "LABELS_CSV_PATH": "labels/labels.csv",
-    "GROUP_CLASSIFIER_PATH": "checkpoints/group_classifier_best.pt",
-    "CASE_PRESENCE_CLASSIFIER_PATH": "checkpoints/case_presence_classifier.pt",
-    "LP_THRESHOLDS_JSON_PATH": "checkpoints/label_presence/lp_thresholds.json",
-    "UNCOMMON_GROUPS_PATH": "checkpoints/uncommon_groups.txt",
-}
-
+# The model-path variables of ml-worker (app.py reads the first, batch_predict.py the second). Both
+# are the bundle root plus this leaf name, a name kept so the backend's contract does not change.
+MODEL_PATH_VARS = ("PETBERT_MODEL_PATH", "MODEL_PATH")
+MODEL_PATH_LEAF = "petbert"
 
 UPLOAD_ID_COL = "anon_id"
 UPLOAD_TEXT_COL = "Text"
+
+THREADS_VAR = "TORCH_NUM_THREADS"
+# 8 is what the CPU timings were measured with; fewer cores use all they have.
+DEFAULT_THREADS = 8
 
 
 class BundleError(Exception):
@@ -55,29 +40,39 @@ class BundleError(Exception):
 def resolve_bundle_root(env: Mapping[str, str], model_var: str) -> Path:
     """The bundle root from the worker's env vars: the parent of the model path (``<root>/petbert``).
 
-    Every other path var that is set must point at its own place in that bundle, so a deployment
-    that mixes files from two generations refuses to start rather than predicting with them."""
+    Both model-path variables, if set, must name that same ``<root>/petbert``, so a deployment that points
+    the two at different bundles refuses to start. The path itself need not exist. The other path variables
+    of the PetBERT-era worker (``LABELS_CSV_PATH``, ``GROUP_CLASSIFIER_PATH``, ``CASE_PRESENCE_CLASSIFIER_PATH``,
+    ``LP_THRESHOLDS_JSON_PATH``, ``UNCOMMON_GROUPS_PATH``) are not read any more and are ignored wherever
+    they point."""
     root = Path(env[model_var]).resolve().parent
-    wrong = sorted(var for var, rel in WORKER_ENV_VAR_TO_BUNDLE_PATH.items()
-                   if env.get(var) and Path(env[var]).resolve() != root / rel)
+    wrong = sorted(var for var in MODEL_PATH_VARS if env.get(var) and Path(env[var]).resolve() != root / MODEL_PATH_LEAF)
     if wrong:
-        raise BundleError(f"{', '.join(wrong)} must point inside the bundle at {root} "
-                          f"({', '.join(WORKER_ENV_VAR_TO_BUNDLE_PATH[v] for v in wrong)})")
+        raise BundleError(f"{', '.join(wrong)} must be {root / MODEL_PATH_LEAF} (the bundle root is the parent of {model_var})")
     return root
 
 
-def upload_to_reports(upload: pd.DataFrame) -> pd.DataFrame:
-    """An upload (Dataset A: ``anon_id`` + one ``Text`` column) as report columns for
-    ``sections.build_section_frame``. As the legacy worker did, Text fills every section: the first
-    source column of each section gets Text and the rest stay empty, so section 1 (FINAL COMMENT +
-    COMMENT) is Text alone. Source columns the upload already has are kept."""
-    reports = upload.copy()
-    text = reports[UPLOAD_TEXT_COL] if UPLOAD_TEXT_COL in reports.columns else ""
-    for group in sections.CONCAT_3_SECTIONS:
-        for i, column in enumerate(group):
-            if column not in reports.columns:
-                reports[column] = text if i == 0 else ""
-    return reports
+def torch_threads(env: Mapping[str, str]) -> int:
+    """CPU threads for torch: ``TORCH_NUM_THREADS`` if set, else ``min(DEFAULT_THREADS, cpu count)``."""
+    raw = env.get(THREADS_VAR)
+    if raw:
+        try:
+            threads = int(raw)
+        except ValueError:
+            threads = 0
+        if threads < 1:
+            raise BundleError(f"{THREADS_VAR} must be a positive integer, got {raw!r}")
+        return threads
+    return min(DEFAULT_THREADS, os.cpu_count() or 1)
+
+
+def upload_to_texts(upload: pd.DataFrame) -> tuple[list[str], list[str]]:
+    """An upload (Dataset A: ``anon_id`` + one ``Text`` column) as (case ids, report texts), row by row.
+    The text is ``Text`` cleaned and flat: no heading, no section columns (measured on calibration, restructure
+    plan WP4). A missing or blank ``Text`` is the empty text, which gets no prediction rows. Other columns are ignored."""
+    ids = upload[UPLOAD_ID_COL].map(clean_text).tolist()
+    texts = upload[UPLOAD_TEXT_COL].map(clean_text).tolist() if UPLOAD_TEXT_COL in upload.columns else [""] * len(ids)
+    return ids, texts
 
 
 def response_rows(rows: list[dict], text_by_id: dict[str, str]) -> list[dict]:
@@ -100,29 +95,7 @@ def response_rows(rows: list[dict], text_by_id: dict[str, str]) -> list[dict]:
     return out
 
 
-def verify_worker_bundle(bundle_root: str | Path) -> dict:
-    """Verify ``bundle_root``'s manifest (file hashes) and embedding fingerprint —
-    the same refusal ml-worker must perform at startup before loading anything.
-    Returns the manifest on success; raises ``ManifestError``/``GenerationError``
-    naming what's missing or mismatched."""
-    bundle_root = Path(bundle_root)
-    verify_manifest(bundle_root)
-    return verify_fingerprint(bundle_root)
-
-
-def required_paths(bundle_root: str | Path) -> list[Path]:
-    """The files/dirs ml-worker must find under ``bundle_root`` (the same set
-    ``report_mapping.model.generation.load_generation`` loads), for a quick
-    existence check without loading any model weights."""
-    paths = generation_paths(bundle_root)
-    return [
-        paths.petbert_dir, paths.labels_csv, paths.case_presence_pt, paths.group_pt,
-        paths.label_presence_dir, paths.lp_thresholds_json, paths.thresholds_json,
-    ]
-
-
 __all__ = [
-    "ManifestError", "GenerationError", "BundleError", "WORKER_ENV_VAR_TO_BUNDLE_PATH",
-    "UPLOAD_ID_COL", "UPLOAD_TEXT_COL", "resolve_bundle_root", "upload_to_reports", "response_rows",
-    "verify_worker_bundle", "required_paths",
+    "BundleError", "MODEL_PATH_VARS", "MODEL_PATH_LEAF", "THREADS_VAR", "DEFAULT_THREADS", "UPLOAD_ID_COL",
+    "UPLOAD_TEXT_COL", "resolve_bundle_root", "torch_threads", "upload_to_texts", "response_rows",
 ]

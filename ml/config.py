@@ -108,16 +108,6 @@ EVAL_DIR = OUTPUT_DIR / "eval"
 # One line per silver-eval run (evaluation/silver_eval.py), carried over from log_evaluation.py.
 SILVER_EVAL_HISTORY_CSV = EVAL_DIR / "silver_eval_history.csv"
 
-# Retrieve-and-rerank Phase 0 experiment (experiments/retrieve_rerank/): models, recall JSON,
-# candidate CSVs and the OpenJev pilot. Scratch output, never part of a generation.
-RR_PHASE0_DIR = OUTPUT_DIR / "rr_phase0"
-
-# Retrieve-and-rerank Phase 1 (bronze_rr/): gate and retriever models, cached score numbers, the bake-off and
-# the frozen generation(s). Scratch output, never part of a report_mapping generation.
-RR_PHASE1_DIR = OUTPUT_DIR / "rr_phase1"
-# WP14's real uncommon-groups list (copied read-only from its archived checkpoints/): the ruler for every Phase 1 score.
-RR_PHASE1_UNCOMMON_GROUPS_TXT = RR_PHASE1_DIR / "ref" / "wp14_uncommon_groups.txt"
-
 # ---------------------------------------------------------------------------
 # Handoff (cloud file contracts)
 # ---------------------------------------------------------------------------

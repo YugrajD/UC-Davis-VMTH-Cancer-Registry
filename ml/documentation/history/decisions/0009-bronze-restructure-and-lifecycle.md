@@ -42,8 +42,8 @@ Phase 2 of 0008 is the model evidence. The rebuilt code had to reproduce it:
 | R2: in-memory `predict_frame` rows equal the CSV `run_predict` rows | pinned by a test |
 | R3: CPU fp32 (torch 2.9.1+cpu, 8 threads) against GPU bf16 on calibration | pass: Good -0.03, Slight +0.05, CO +0.05, FP 0.00, FN -0.07 pp (bar 0.3 pp each); 21 of 5,828 cases change decision; CPU 0.72 s per report chunked, 0.41 s single call (p95 0.80) |
 | R4: calibration silver-eval equals the freeze record | pass: Good 2,447, Slight 375, CO 456, FP 89, FN 712 of 4,079 rows; with the 17 extra calibration cases Good 60.06, Slight 9.21, CO 11.17, FP 2.23, FN 17.32 (4,081 rows) |
-| R5: `python -m pytest ml -q` green | pending when this record was written; the adopt runs after it |
-| R6: Opus sign-off | pending when this record was written; the adopt runs after it |
+| R5: `python -m pytest ml -q` green | PASS: 664 passed, 2 skipped (fastapi-only worker app tests), 2 xfailed (pre-existing) on the dev venv; CI on torch 2.9.1 CPU runs at the PR |
+| R6: Opus sign-off | YES (2026-10-09). R3's largest confidence difference (1.0) comes from the 3 cases whose gate decision flips; among non-flipping cases the largest is 0.02 |
 
 ## Consequences
 - A generation cannot load, promote, export or publish unless its spec check passes; an old-format bundle fails the new worker image and the reverse, so image and bundle switch together.

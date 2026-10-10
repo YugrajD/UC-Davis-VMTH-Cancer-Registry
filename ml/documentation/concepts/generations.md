@@ -291,5 +291,6 @@ only by `generations/` and never loaded from. Promotion or adoption moves the in
   block.
 - A losing candidate is deleted, not archived. There is no restore-from-archive step; the incumbent
   is only ever archived after a win or an adoption.
-- The generation the restructure replaced (`gen-0-legacy`, PetBERT) is archived whole this way. It
-  fails today's spec check, so only the code at git tag `pre-restructure-2026-10-09` can load it.
+- The generation the restructure replaces (the PetBERT `current/` on the main machine) is archived whole this way
+  when the first architectural adopt runs there (see the main-tree cutover runbook in
+  [the restructure plan](../history/plans/restructure-plan.md)). It fails today's spec check, so only the code at git tag `pre-restructure-2026-10-09` can load it.

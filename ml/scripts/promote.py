@@ -67,8 +67,8 @@ def _adopt(args: argparse.Namespace) -> int:
     except (promote.PromotionError, ManifestError, GenerationError) as error:
         print(f"REFUSED: {error}", file=sys.stderr)
         return 1
-    print(f"Adopted {outcome['generation_id']} (reason {args.reason}); "
-          f"incumbent archived to {outcome['archive'] or 'nowhere (no current/)'}")
+    archived = f"incumbent archived to {outcome['archive']}" if outcome["archive"] else "nothing to archive (no current/)"
+    print(f"Adopted {outcome['generation_id']} (reason {args.reason}); {archived}")
     return _publish() if args.publish else 0
 
 

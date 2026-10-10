@@ -74,7 +74,6 @@ manifest fields and the spec check are in [generations.md](../concepts/generatio
 | `EVAL_DIR` | `ml/output/eval/` | Evaluation outputs. Synced (set `eval`) |
 | `SILVER_EVAL_HISTORY_CSV` | `eval/silver_eval_history.csv` | One line per silver-eval run |
 | `UNCOMMON_GROUPS_TXT` | `ml/evaluation/uncommon_groups.txt` | The scoring ruler's uncommon-groups list: 24 group names, one per line. Committed; group names only. Not part of any generation |
-| `RR_PHASE0_DIR`, `RR_PHASE1_DIR`, `RR_PHASE1_UNCOMMON_GROUPS_TXT` | `ml/output/rr_phase0/`, `ml/output/rr_phase1/`, `rr_phase1/ref/wp14_uncommon_groups.txt` | Scratch left by the retrieve-and-rerank experiment, whose code the restructure deleted (it stays in git history). Nothing in `ml/` reads or writes these now. Not synced |
 
 Two numbers that calibration uses are in `config.py` as well, not paths:
 

@@ -174,6 +174,11 @@ was not attempted (it stops at the first failure) and the `sync.py` command that
   it created. Two outcomes fetch nothing: local `current/` already is the remote generation (state
   is recorded, nothing else), or the remote pointer has not moved since this machine's last sync
   while `current/` differs (`keep local: current <id> is unpublished; run publish-model`).
+
+  **First publish after the restructure:** publish only from the machine whose sync state matches
+  the remote pointer (the main machine, after its own `promote.py --adopt`). A checkout with no sync
+  state and a remote pointer present gets `remote model moved, pull-model first`, and `pull-model`
+  then refuses the pre-restructure remote generation on the spec check.
   If a `--publish` finds the remote model moved, run `pull-model --apply`, then re-run the promotion
   against the new `current/` if the candidate should still win.
 

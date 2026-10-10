@@ -1,10 +1,21 @@
 # Open ideas
 
+> **Retired pipeline.** Since October 2026 report mapping is one jointly trained ModernBERT ([decision 0008](decisions/0008-joint-modernbert-report-mapping.md)). Every idea below that names the group classifier, label-presence heads, stage 3, the tail gate, subtype keywords, concat-3, the PetBERT backbone or `ml/report_mapping/model/heads.py` was phrased against the PetBERT four-stage code, which is deleted (git history and the tag `pre-restructure-2026-10-09` keep it). Treat them as ideas about the problem, to be re-expressed for the joint model, not as work against current files. Only the "Parked" section is phrased against the joint model.
+
 Ideas that were proposed for report mapping but never tried, restated against the current code (`ml/report_mapping/`, `ml/taxonomy/`). None is scheduled. Before acting on one, read the experiment records it links to, re-measure the baseline (the old group-level figures came from an earlier architecture), and show Good and Slight separately.
 
 Two general rules from the closed experiments apply to all of them:
 - Anything that changes the embeddings (text, backbone) invalidates every head; train into `candidate/` and promote through the gold-eval rule ([decision 0004](decisions/0004-generations-candidate-current-archive.md)).
 - Gold-eval does not exist yet, so a real promotion cannot happen; until then, results can only be silver-eval on the calibration or test partition.
+
+## Parked: rare-term ideas for the joint model (2026-10-08)
+
+The joint ModernBERT can emit only the 455 terms seen in train silver (of 844 taxonomy terms); rare-term pairs are about 6% of gold, and pair recall on terms with fewer than 5 train cases was 0.54 to 0.58 at N=30 in [Phase 0](experiments/2026-09-30-retrieve-rerank-v2-openjev.md). Three ideas to reach them were discussed on 2026-10-08 and **parked by the user**:
+- **Label-text-initialised head.** Initialise each term's head row from an embedding of the term's name (and group) so unseen or rare terms start near their meaning.
+- **Label-text scoring head.** Score the report against the label text (a bi-encoder or cross-attention head) instead of a fixed output row per term, so a term with no training cases can still be scored.
+- **Contrastive pre-adaptation.** Adapt the encoder on (report, label text) pairs before the joint fine-tune, as the per-section contrastive backbone did for PetBERT ([0002](decisions/0002-per-section-contrastive-backbone.md)).
+
+Expected gain: at most about 1 to 2 pp Good. Before reviving any of them, re-measure the rare-term share on the current generation and show Good and Slight separately; the accepted-but-unconfident cases are already caught by the review cut ([0009](decisions/0009-bronze-restructure-and-lifecycle.md)).
 
 ## Rule and threshold ideas (no retraining)
 

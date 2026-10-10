@@ -20,7 +20,6 @@ and `*.safetensors` in the tree, because they contain patient records or are hun
 | Splits | `ml/output/splits/` | S3 set `splits`. **Do not regenerate**: a new split reshuffles which cases are held out and silently invalidates every published number |
 | Coding tables | `ml/output/coding/` | S3 set `coding` |
 | Production generation | `ml/output/report_mapping/current/` | `sync.py pull-model --apply`; regenerating means a full retrain. `candidate/` is unpromoted work and is not synced |
-| Embedding cache | `ml/output/report_mapping/embedding_cache/` | skip: rebuilt on first use (about 9 minutes on GPU), keyed on content so a stale entry can never load |
 | Predictions, eval history | `ml/output/predictions/`, `ml/output/eval/` | S3 sets `predictions`, `eval`; only if you need a past run |
 | Virtualenv | `ml/.venv/` | rebuild locally (step 2); never copy a venv between machines |
 | Root `CLAUDE.md` | repo root | gitignored and not synced; copy it by hand |
@@ -51,8 +50,12 @@ ml/.venv/Scripts/python.exe -m pip install -r ml/requirements.txt
 ml/.venv/Scripts/python.exe -m pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128 --force-reinstall --no-deps
 ```
 
-The Intel XPU build (`.../whl/xpu`) is legacy: `--device xpu` is still accepted, but training runs
-on CUDA.
+The pins that matter are torch 2.9.1, transformers 5.18.0, tokenizers 0.23.2, huggingface_hub 1.33.0
+and safetensors 0.8.0. A generation is trained and served on these versions, so
+`ml-worker/requirements.txt` carries the same five (a test checks that they agree). A machine with no
+GPU installs the CPU build of the same torch version instead
+(`--index-url https://download.pytorch.org/whl/cpu`); that is enough for inference and the test
+suite, and it is what the cloud worker image uses.
 
 ## 3. Check the GPU
 
@@ -60,9 +63,9 @@ on CUDA.
 ml/.venv/Scripts/python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no CUDA device')"
 ```
 
-If `cuda.is_available()` is `False`, pass `--device cpu`. `train.py`, `predict.py`, `calibrate.py` and
-`retrain_cycle.py` accept `--device` (cpu, cuda, mps, xpu); `auto` picks cuda, then xpu, then mps,
-then cpu, and `calibrate.py` defaults to `cpu`. Training on cpu is correct but far slower.
+If `cuda.is_available()` is `False`, pass `--device cpu`. `train.py`, `predict.py`, `calibrate.py`,
+`oof.py`, `retrain_cycle.py` and `generations.py recalibrate` accept `--device` (`auto`, `cpu`,
+`cuda`); `auto` picks cuda when available, else cpu. Training on cpu is correct but far slower.
 
 ## 4. S3 credentials and the first pull
 
@@ -92,12 +95,18 @@ ml/.venv/Scripts/python.exe -m pytest ml -q -p no:cacheprovider
 ml/.venv/Scripts/python.exe -c "import sys; sys.path.insert(0,'ml'); import config, os; \
 print(all(os.path.exists(p) for p in [config.REPORT_CSV, config.REPORT_MAPPING_CURRENT_DIR, config.SPLITS_DIR]))"
 
+# current/, candidate/ and the archive, with each one's architecture and calibration status
+ml/.venv/Scripts/python.exe ml/scripts/generations.py status
+
 # End-to-end inference on the current generation
-ml/.venv/Scripts/python.exe ml/scripts/predict.py --generation current --device cuda --local-only
+ml/.venv/Scripts/python.exe ml/scripts/predict.py --generation current --device cuda
 ```
 
-The loader refuses a generation whose manifest hashes or embedding fingerprint do not check out, so
-a broken transfer shows up as an error, not as silently wrong numbers.
+The loader refuses a generation whose manifest hashes, architecture or calibration do not check out
+(the spec check, [generations.md](../concepts/generations.md#the-spec-check)), so a broken transfer
+shows up as an error, not as silently wrong numbers. The first training run downloads the base
+checkpoint `thomas-sounack/BioClinical-ModernBERT-base` from Hugging Face (or reads it from the local
+cache); inference reads only the generation's own `encoder/` directory.
 
 ## Optional: diagnosis mapping
 
@@ -116,4 +125,4 @@ To continue the manual audit or eval-batch review without training, you need onl
 [../README.md](../README.md) maps the documentation and says where the project stands;
 [../history/README.md](../history/README.md) indexes the plans, decisions and experiments behind it.
 
-_Last verified against code: 2026-09-29_
+_Last verified against code: 2026-10-09_

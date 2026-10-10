@@ -153,14 +153,14 @@ header row. Each row has:
 Several terms can share one code (186 of the 534 codes map to more than one term, always within the
 same group), so results and reviews are recorded as taxonomy terms, not bare codes.
 
-Production predicts these terms in four stages plus a post-step: a case-presence gate decides whether
-a report describes a cancer, a group classifier (with a tail gate) picks the group or groups, a
-per-group label-presence head picks the terms inside each group, and a keyword correction filters
-those terms; a lipoma rescue runs last. Groups with too few training cases share one `Uncommon` head, so
-every term stays reachable. The design and recipe are in
+Production predicts these terms with one jointly trained ModernBERT: a term head scores every term
+the training cases carry, a gate head says whether the report describes a cancer, and a fitted rule
+returns the rank-1 term (plus a second one when its probability and its ratio to the first are high
+enough) or one `Non-Cancer` row. Each predicted term carries its group and code from the taxonomy
+snapshot stored in the generation. The design and recipe are in
 [report-mapping.md](../concepts/report-mapping.md); the strategy for labels and review is in
 [icd-mapping-strategy.md](../concepts/icd-mapping-strategy.md).
 
 **GIVCS:** https://www.givcs.org/
 
-_Last verified against code: 2026-09-29_
+_Last verified against code: 2026-10-09_

@@ -2,9 +2,9 @@
 
 This is where the project records what it tried, why each change won or failed, and how the report-mapping pipeline arrived at today's design. Read it before repeating an idea; the current system is described in [../README.md](../README.md).
 
-Numbers in these records come from different evaluators and splits. Before May 2026 metrics were per-label, top-k and scored against keyword or LLM labels; from May 2026 they are per-code rows on the held-out test split; since the September rewrite the reference baseline is 61.76% G+S (not the 62.1% published in May, see [decision 0005](decisions/0005-ml-rewrite-and-cutover.md)). Good and Slight are shown separately wherever the sources have them; do not compare across eras.
+Numbers in these records come from different evaluators and splits. Before May 2026 metrics were per-label, top-k and scored against keyword or LLM labels; from May 2026 they are per-code rows on the held-out test split; since the September rewrite the reference baseline is 61.76% G+S (not the 62.1% published in May, see [decision 0005](decisions/0005-ml-rewrite-and-cutover.md)); the October joint ModernBERT is scored against WP14 (`gen-20260927T025939Z`, Good 46.27%, Slight 15.86%) on the `three-way-v1` test partition ([0008](decisions/0008-joint-modernbert-report-mapping.md)). Good and Slight are shown separately wherever the sources have them; do not compare across eras.
 
-## The path in eight steps
+## The path in nine steps
 
 1. **March 2026: keywords, cosine and one classifier.** Keyword-matched diagnoses gave labels; cosine similarity between frozen PetBERT embeddings scored labels (G+S 3.3%). A single all-label PresenceClassifier with cycles of completely-off negatives, per-column embeddings and a wider layer reached about 42% G+S on the old evaluator ([record](experiments/2026-03-03-single-presence-classifier-co-bank.md)).
 2. **23 March: contrastive backbone.** InfoNCE adaptation of PetBERT on (report, label) pairs jumped G+S from 41.9% to 69.0% on the old evaluator ([record](experiments/2026-03-23-contrastive-backbone-infonce.md)).
@@ -14,6 +14,7 @@ Numbers in these records come from different evaluators and splits. Before May 2
 6. **May to August: a run of things that did not work.** LP hard negatives, retrieve-and-rerank, backbone hard negatives, listwise global heads, demographics, NOS demotion and recency weighting all failed or were inconclusive (see the index). In parallel, the gold/silver/bronze plan (approved 17 June) reframed the goal as building a trustworthy ruler before improving the model ([plan](plans/annotation-redesign-plan.md)).
 7. **25 to 27 September: rewrite and cutover.** A clean rewrite with generations, manifests and fingerprints passed parity against a frozen 61.76% reference and replaced the old tree ([0004](decisions/0004-generations-candidate-current-archive.md), [0005](decisions/0005-ml-rewrite-and-cutover.md)).
 8. **27 to 28 September: integration.** The worker reads one bundle, the backend loads combined predictions and the Audit Worklist replaced the dashboard Review Queue, and S3 sync replaced Syncthing ([change requests](plans/ml-worker-change-request.md), [0006](decisions/0006-s3-sync-replaces-syncthing.md)).
+9. **30 September to 9 October: one model for the whole report.** A ModernBERT over all 8 report columns with a term head and a neoplasm gate head, trained jointly, beat the four-stage pipeline on the one-shot test (Good +12.20 pp, Slight -5.26 pp, G+S +6.94 pp; zero-shot LLM rerank dropped). The pipeline, generations, review rule, audit and worker were rebuilt around it ([0008](decisions/0008-joint-modernbert-report-mapping.md), [0009](decisions/0009-bronze-restructure-and-lifecycle.md), [Phase 0](experiments/2026-09-30-retrieve-rerank-v2-openjev.md), [Phases 1-2](experiments/2026-10-08-joint-modernbert-gate-term.md)).
 
 ```mermaid
 flowchart LR
@@ -24,6 +25,7 @@ flowchart LR
     m5 --> m6["Jun-Aug<br>gold and silver plan"]
     m6 --> m7["25-27 Sep<br>rewrite and<br>generations"]
     m7 --> m8["28 Sep<br>S3 sync and<br>combined predictions"]
+    m8 --> m9["30 Sep-9 Oct<br>joint ModernBERT<br>and restructure"]
 ```
 
 ## Index
@@ -66,22 +68,26 @@ Headline change is Good and Slight in percentage points against that record's ow
 | 2026-05-29 | NOS subtype demotion | reverted | -2.3 / +2.5 | [open](experiments/2026-05-29-nos-subtype-demotion.md) |
 | 2026-05-29 | Demographic features | reverted | +0.1 / -0.2 | [open](experiments/2026-05-29-demographics-features.md) |
 | 2026-05-29 | Recency weighting | inconclusive | +2.4 / -0.9 (H=7, 2025 holdout) | [open](experiments/2026-05-29-recency-weighting.md) |
+| 2026-09-30 | Retrieve-and-rerank v2, Phase 0: ModernBERT retrieval and zero-shot OpenJev rerank | reranker reverted; retriever adopted into Phase 1 | retriever top-1 + WP14 gate +12.0 / -6.3 vs WP14 (calibration eval half); OpenJev -18.1 / +16.7 (485-case pilot half) | [open](experiments/2026-09-30-retrieve-rerank-v2-openjev.md) |
+| 2026-10-08 | Joint ModernBERT gate and term head, Phases 1-2 | adopted | +12.20 / -5.26 (one-shot test vs WP14; G+S +6.94) | [open](experiments/2026-10-08-joint-modernbert-gate-term.md) |
 
 ### Decisions
 
 | Date | Title | Status | Headline | Record |
 |---|---|---|---|---|
-| 2026-05-12 | 0001 concat-3 per-section text representation | accepted | see concat-3 experiment: +8.8 / -3.3 | [open](decisions/0001-concat-3-per-section-text-representation.md) |
-| 2026-05-12 | 0002 Per-section contrastive backbone | accepted | +4.2 / +6.7 (prototype) | [open](decisions/0002-per-section-contrastive-backbone.md) |
-| 2026-04-29 | 0003 Four-stage report mapping | accepted | see per-group heads: +15.9 / -13.3 | [open](decisions/0003-four-stage-report-mapping.md) |
-| 2026-09-25 | 0004 Generations: candidate, current, archive | accepted | infrastructure | [open](decisions/0004-generations-candidate-current-archive.md) |
+| 2026-05-12 | 0001 concat-3 per-section text representation | superseded by 0008 | see concat-3 experiment: +8.8 / -3.3 | [open](decisions/0001-concat-3-per-section-text-representation.md) |
+| 2026-05-12 | 0002 Per-section contrastive backbone | superseded by 0008 | +4.2 / +6.7 (prototype) | [open](decisions/0002-per-section-contrastive-backbone.md) |
+| 2026-04-29 | 0003 Four-stage report mapping | superseded by 0008 | see per-group heads: +15.9 / -13.3 | [open](decisions/0003-four-stage-report-mapping.md) |
+| 2026-09-25 | 0004 Generations: candidate, current, archive | accepted, amended by 0009 (fingerprint and cache) | infrastructure | [open](decisions/0004-generations-candidate-current-archive.md) |
 | 2026-09-25 | 0005 Rewrite and cutover (61.76% reference) | accepted | L3 parity -0.45 / +0.12 (G+S -0.32 pp) | [open](decisions/0005-ml-rewrite-and-cutover.md) |
 | 2026-09-28 | 0006 S3 sync replaces Syncthing | accepted | infrastructure | [open](decisions/0006-s3-sync-replaces-syncthing.md) |
 | 2026-05-18 | 0007 CUDA replaces Intel XPU | accepted | infrastructure | [open](decisions/0007-cuda-replaces-intel-xpu.md) |
+| 2026-10-08 | 0008 Report mapping is one jointly trained ModernBERT over the whole report | accepted | +12.20 / -5.26 (test vs WP14) | [open](decisions/0008-joint-modernbert-report-mapping.md) |
+| 2026-10-09 | 0009 Bronze restructure: one-model lifecycle, review rule and audit | accepted | architecture; R1, R3, R4 pass | [open](decisions/0009-bronze-restructure-and-lifecycle.md) |
 
 ### Still open
 
-[open-ideas.md](open-ideas.md) lists ideas never tried, restated against today's code.
+[open-ideas.md](open-ideas.md) lists ideas never tried. Most are phrased against the retired PetBERT four-stage code; the parked rare-term ideas for the joint model are at the top.
 
 ## What else is kept here
 
@@ -90,6 +96,7 @@ Headline change is Good and Slight in percentage points against that record's ow
   - [annotation-redesign-plan.md](plans/annotation-redesign-plan.md): the June gold/silver bootstrap plan, with the detailed rationale and handoff-verification history. Its binding decisions moved into [../concepts/manual-audit.md](../concepts/manual-audit.md).
   - [ml-worker-change-request.md](plans/ml-worker-change-request.md): backend change for the one-bundle worker. Implemented (commit `b03619c`).
   - [audit-list-change-request.md](plans/audit-list-change-request.md): backend change for combined predictions and the Audit Worklist. Implemented (commit `83262de` and the worklist commits `90d5334` to `6f91e9a`); item 2.6 has no evidence of completion.
+  - [restructure-plan.md](plans/restructure-plan.md): the approved contract for the October bronze restructure (decisions, target tree, generation layout, acceptance checks R1-R6, work-package notes). Executed; [0008](decisions/0008-joint-modernbert-report-mapping.md) and [0009](decisions/0009-bronze-restructure-and-lifecycle.md) carry its decisions.
   - [box-rclone-sync-proposal.md](plans/box-rclone-sync-proposal.md): the Box and rclone sync proposal. Never built; superseded by S3 sync.
 - **`training-log/`**, phase-by-phase tables from the earlier architectures: [binary](training-log/training-log-binary.md) (single all-label classifier, Phases 1-22), [finetune](training-log/training-log-finetune.md) (contrastive backbone runs, keyword mode, the abandoned end-to-end group classifier), [group](training-log/training-log-group.md) (GroupClassifier experiments and Phases 27-29) and [label-presence](training-log/training-log-label-presence.md) (Phases 28-30, QW1/QW2, per-LP thresholds, the May promotion). Not updated for new runs.
 - **`legacy-tree/`**, docs for the pre-rewrite `ml/` tree (`production/petbert_pipeline/`, `training/`, `annotation/llm_pipeline/`), deleted at the cutover. [README](legacy-tree/README.md) explains; code comments that still cite `training-guide.md` steps mean [this legacy guide](legacy-tree/training-guide.md).

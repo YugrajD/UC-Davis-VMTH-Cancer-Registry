@@ -43,9 +43,10 @@ flowchart TD
     gr -->|no| co["completely_off"]
 ```
 
-- **Uncommon-group leniency.** Predicting `Uncommon`, or any group merged into it, for a case whose
-  expected group is also in the uncommon set counts as `slightly_off`. The list comes from the
-  report-mapping generation that made the predictions.
+- **Uncommon-group leniency.** Predicting a group in the uncommon set for a case whose expected
+  group is also in it counts as `slightly_off`. The list is the scoring rule's own file,
+  `config.UNCOMMON_GROUPS_TXT` (`evaluation/uncommon_groups.txt`: 24 group names, one per line),
+  the same for every generation.
 - **Missed expected terms.** Each expected term that no `good` prediction (exact term) and no
   `slightly_off` prediction (its group) covers adds one extra `false_negative` row for that case. A
   case that predicted `Non-Cancer` already has its false-negative row and gets no extra ones.
@@ -77,8 +78,12 @@ case with no label rows counts as non-cancer.
   (`generations.splits.in_sweep_half`) puts an even hash in the sweep half, which `three-way-v1` uses
   as its calibration partition, and an odd hash in the eval half, its test partition. This lets the
   two-way `legacy-80-20` test partition be scored on the same cases as `three-way-v1` test.
-- The uncommon-groups list comes from the report-mapping generation that produced the predictions.
-  The predictions' `generation_id` must match it, or the run is refused.
+- The uncommon-groups list is the ruler file `config.UNCOMMON_GROUPS_TXT`, not a generation's: it is
+  WP14's 24 groups, committed beside the scoring code, so every generation is scored with the same
+  ruler and the numbers stay comparable across generations. The generation-id check remains: the
+  predictions' `generation_id` must equal the manifest id of `--generation` (default `current`), or
+  the run is refused. It reads the manifest id only (no spec check), so an archived generation's
+  predictions can still be scored.
 - Per-group and per-term breakdowns key on the **expected** group or term: a row counts toward every
   group its case expects, and false positives (which have no expectation) are left out. Misses
   therefore stay visible.

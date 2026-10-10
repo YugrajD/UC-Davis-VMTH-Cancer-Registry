@@ -11,27 +11,28 @@ and [sync-with-s3.md](../how-to/sync-with-s3.md).
 | Script | Job |
 |---|---|
 | `audit.py` | Draw audit batches, ingest gold, cause pass |
-| `calibrate.py` | Fit a generation's thresholds |
+| `calibrate.py` | Fit a generation's thresholds and review cut |
 | `code_cases.py` | Combined predictions, corrected annotations, review queue |
 | `evaluate.py` | Silver-eval, gold-eval, audit rates |
-| `generations.py` | Show generations and triggers, fork a generation |
+| `generations.py` | Show generations and triggers, recalibrate a generation |
 | `handoff.py` | Cloud file imports and exports |
 | `map_diagnoses.py` | Diagnosis cascade into a silver generation, coverage stats |
+| `oof.py` | 5-fold cross-fit for the Report-Mapping audit |
 | `predict.py` | Predictions from a generation |
-| `promote.py` | Promotion recommendation and swap |
+| `promote.py` | Promotion recommendation and swap; adopt an architectural change |
 | `retrain_cycle.py` | The local retraining lane in one call |
-| `rr_phase1.py` | Retrieve-and-rerank experiment (branch `bronze-retrieve-rerank`): ruler, train, score, shared gate, joint model, CPU timing, bake-off, freeze, phase2 |
 | `split.py` | Create a three-way split, run the leakage guards |
 | `sync.py` | Sync file sets and the model with S3 |
-| `train.py` | Train a candidate generation |
+| `train.py` | Train a candidate generation (one step) |
 
 Conventions shared by the scripts:
 
 - `--split` and `--split-id` name a split under `output/splits/`. Where a default is listed it is
   `three-way-v1` (`config.DEFAULT_SPLIT_ID`).
-- `--device` accepts `auto`, `cpu`, `cuda`, `mps` and `xpu` on `train.py`, `predict.py` and
-  `retrain_cycle.py` (default `auto`: cuda, then xpu, then mps, then cpu). `calibrate.py` takes any
-  device string and defaults to `cpu`. Nothing else has a device flag.
+- `--device` accepts `auto`, `cpu` and `cuda` on `train.py`, `calibrate.py`, `predict.py`,
+  `oof.py`, `retrain_cycle.py` and `generations.py recalibrate` (default `auto`: cuda when
+  available, else cpu). Nothing else has a device flag.
+- A refusal prints `REFUSED: ...` to stderr and exits 1; a flag combination argparse rejects exits 2.
 - `--labels` and `--silver` take a `silver_id` (a directory under `output/silver/`); `--labels`
   also takes a labels-table CSV path.
 - A generation is `current`, `candidate` or a literal directory.
@@ -54,10 +55,10 @@ Manual audit: `ml/manual_audit/`. Concepts: [manual-audit.md](../concepts/manual
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--oof-csv` | required | gate out-of-fold scores from `train.py --stage oof` |
-| `--split-id` | `three-way-v1` | the split the scores were trained on |
+| `--oof-csv` | required | the cross-fit CSV from `oof.py` (`case_id, fold, gate_target, gate_prob, term, term_prob`); a file without those columns is refused |
+| `--split-id` | `three-way-v1` | the split the cross-fit was run on; every case must be in its train partition |
 | `--batch` | required | batch number (int) |
-| `--n-contradicted` | 100 | cases whose gate score contradicts the label |
+| `--n-contradicted` | 100 | contradicted cases, dealt across the three reasons (`contradicted_cancer_label`, `contradicted_no_cancer_label`, `contradicted_term_label`) |
 | `--n-random` | 100 | random baseline cases |
 | `--seed` | 42 | sampling seed |
 
@@ -113,16 +114,19 @@ Manual audit: `ml/manual_audit/`. Concepts: [manual-audit.md](../concepts/manual
 
 ## `calibrate.py`
 
-Fits every threshold on the split's calibration partition from cached embeddings; never embeds.
-Package: `ml/report_mapping/training/calibrate.py`. Design: [report-mapping.md](../concepts/report-mapping.md).
+Fits `gate_t`, `tau`, `rho` (under the false-positive cap) and the review cut on the split's
+calibration partition. Refuses a generation that is not `pending`. Package:
+`ml/report_mapping/training/calibrate.py`. Design: [report-mapping.md](../concepts/report-mapping.md#calibration).
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--generation` | required | generation to calibrate |
+| `--generation` | `candidate` | `current`, `candidate` or a generation directory |
 | `--labels` | required | a silver id or labels CSV with rows on the calibration partition (never the corrected annotations, which are train-only) |
-| `--split` | required | split holding the calibration partition |
-| `--partition` | `calibration` | partition to fit on; only `calibration` is accepted |
-| `--device` | `cpu` | device for the heads |
+| `--split` | `three-way-v1` | split holding the calibration partition |
+| `--max-fp-share` | `config.FP_CAP` (0.0243) | false-positive cap on the grid: only grid points whose FP share of the verdict rows is at most this are eligible |
+| `--device` | `auto` | `auto`, `cpu` or `cuda` |
+
+The review target share is not a flag: it is `config.REVIEW_TARGET_SHARE` (0.2336).
 
 ## `code_cases.py`
 
@@ -135,7 +139,7 @@ Coding-rule outputs: `ml/coding/`. Concepts: [coding.md](../concepts/coding.md).
 | `--silver` | required | silver generation |
 | `--split` | required | split id |
 | `--predictions` | required | bronze predictions CSV |
-| `--generation-id` | the file's own `generation_id` | override when the file holds several |
+| `--generation` | `current` | the generation that made the predictions (`current`, `candidate` or a directory); the file's `generation_id` must be exactly its manifest id, and its `thresholds.json` supplies `review_cut` |
 | `--out` | `config.COMBINED_PREDICTIONS_CSV` | output path |
 
 **`corrected`**: write the corrected-annotations table (train partition only).
@@ -153,7 +157,7 @@ Coding-rule outputs: `ml/coding/`. Concepts: [coding.md](../concepts/coding.md).
 | `--silver` | required | silver generation |
 | `--split` | required | split id |
 | `--predictions` | required | bronze predictions CSV |
-| `--generation-id` | the file's own `generation_id` | override when the file holds several |
+| `--generation` | `current` | as for `combine` |
 | `--out` | `config.REVIEW_QUEUE_CSV` | output path |
 
 ## `evaluate.py`
@@ -190,21 +194,24 @@ Scoring: `ml/evaluation/`. Prints counts and percentages only. Concepts: [evalua
 
 Generation management: `ml/generations/`. Concepts: [generations.md](../concepts/generations.md). Subcommands:
 
-**`status`**: show `current/` and `candidate/` and whether a retraining trigger is met.
+**`status`**: show `current/`, `candidate/` and the archive, and whether a retraining trigger is met.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--silver` | required | silver a challenger would train on |
+| `--silver` | none | silver a challenger would train on; shows the triggers when given |
 | `--split` | `three-way-v1` | split whose test side holds gold-eval |
 | `--incumbent-predictions` | `output/predictions/<current id>_predictions.csv` | `current/`'s predictions; read only when gold-eval exists |
 
-**`fork`**: copy a generation as a new, uncalibrated one on another split, then run `calibrate.py`.
+**`recalibrate`**: copy a calibrated generation's weights as a new generation (new id, calibration pending, no thresholds) and calibrate it.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--split` | required | split to calibrate on; its train must match the source's |
-| `--from` | `current` | generation to copy |
-| `--to` | `candidate` | destination |
+| `--labels` | required | a silver id or labels CSV with rows on the calibration partition |
+| `--split` | `three-way-v1` | split holding the calibration partition |
+| `--from` | `current` | generation to copy; it must pass the spec check |
+| `--to` | `candidate` | destination; must not exist |
+| `--max-fp-share` | `config.FP_CAP` (0.0243) | false-positive cap on the grid |
+| `--device` | `auto` | `auto`, `cpu` or `cuda` |
 
 ## `handoff.py`
 
@@ -246,7 +253,7 @@ Every subcommand except `export-bundle` accepts `--push`, which pushes the S3 se
 | `--run-id` | required | run name in the file names |
 | `--push` | off | then push the S3 sets |
 
-**`export-bundle`**: tar a generation and a sha256 file for ml-worker. No `--push`; bundles are not synced.
+**`export-bundle`**: tar a generation (after the spec check) and a sha256 file for ml-worker. No `--push`; bundles are not synced.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -288,40 +295,61 @@ Diagnosis cascade: `ml/diagnosis_mapping/`. Concepts: [diagnosis-mapping.md](../
 | `--no-plots` | off | skip PNG plots |
 | `--allow-no-llm` | off | allow analysing a `--no-llm` generation |
 
+## `oof.py`
+
+5-fold cross-fit over the train partition: out-of-fold gate and term probabilities for the
+Report-Mapping audit. Numbers only. Package: `ml/report_mapping/training/crossfit.py`. Guide:
+[train-and-promote.md](../how-to/train-and-promote.md#cross-fit-for-the-report-mapping-audit). Each
+fold trains a fresh model from the base checkpoint: an estimated 4 to 5 hours on the GPU for the full
+train partition at `--k 5` (not yet run).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--labels` | required | a silver id or a labels CSV path |
+| `--split` | `three-way-v1` | split id (its train partition is cross-fitted) |
+| `--k` | 5 | number of folds |
+| `--seed` | 42 | training seed (also the fold assignment) |
+| `--device` | `auto` | `auto`, `cpu` or `cuda` |
+| `--out` | `output/report_mapping/oof/<labels stem>_<split>_k<k>.csv` | output CSV |
+| `--force` | off | overwrite an existing output file (otherwise refused) |
+| `--model` | `thomas-sounack/BioClinical-ModernBERT-base` | base checkpoint directory or name each fold starts from |
+| `--limit` | 0 | smoke: use the first N train cases only |
+| `--max-steps` | 0 | smoke: stop each fold after N optimizer steps |
+
 ## `predict.py`
 
 Stamped predictions from a generation: `ml/report_mapping/inference/`. Guide: [run-inference.md](../how-to/run-inference.md).
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--generation` | required | generation to predict with |
-| `--model` | the generation's own `petbert/` | Hugging Face checkpoint directory or name |
-| `--device` | `auto` | `auto`, `cpu`, `cuda`, `mps`, `xpu` |
-| `--embed-only` | off | fill the embedding cache and stop |
+| `--generation` | `current` | `current`, `candidate` or a generation directory |
+| `--device` | `auto` | `auto`, `cpu` or `cuda` |
 | `--out` | `output/predictions/<generation_id>_predictions.csv` | predictions CSV path |
-| `--local-only` | off | disable Hugging Face downloads |
-| `--cache-dir` | `config.EMBEDDING_CACHE_DIR` | embedding cache directory (an empty directory forces a re-embed) |
 
 ## `promote.py`
 
-Promotion: `ml/generations/promote.py`. Rule and archive: [generations.md](../concepts/generations.md).
-Without `--apply` it only prints the recommendation. It refuses without gold-eval rows.
+Promotion: `ml/generations/promote.py`. Rule, adopt and archive: [generations.md](../concepts/generations.md#two-kinds-of-improvement).
+Two modes. **Retraining** (the default; same architecture): without `--apply` it only prints the
+recommendation; it refuses without gold-eval rows (no silver fallback) and refuses a candidate whose
+architecture differs from `current/`'s. **Adopt** (`--adopt`): an architectural change, no rule.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--candidate-predictions` | required | predictions CSV made by `candidate/` |
-| `--incumbent-predictions` | required | predictions CSV made by `current/` |
+| `--candidate-predictions` | required, unless `--adopt` | predictions CSV made by `candidate/` |
+| `--incumbent-predictions` | required, unless `--adopt` | predictions CSV made by `current/` |
 | `--split` | `three-way-v1` | split whose test side holds gold-eval |
 | `--n-boot` | 1000 | bootstrap replicates |
 | `--seed` | 0 | bootstrap seed |
 | `--apply` | off | promote a winner (archiving `current/` first) or delete a losing candidate |
+| `--adopt` | off | adopt `candidate/` as an architectural change (archiving `current/` first); needs `--reason`; not with `--apply` |
+| `--reason` | none | with `--adopt`: an existing file under `ml/documentation/history/` (an ADR); its path is recorded in the manifest |
 | `--description` | the incumbent's generation id | archive folder suffix |
-| `--publish` | off | after a promotion, publish the new `current/` to S3; requires `--apply` |
+| `--publish` | off | after a promotion or adoption, publish the new `current/` to S3; requires `--apply` or `--adopt` |
 
 ## `retrain_cycle.py`
 
-The local lane of the full cycle, recommend-only, each step as its own process. Steps and stop
-conditions: [generations.md](../concepts/generations.md). Guide:
+The local lane of the full cycle, recommend-only by default, each step as its own process. Steps and
+stop conditions: [generations.md](../concepts/generations.md#retrain_cyclepy). Guide:
 [train-and-promote.md](../how-to/train-and-promote.md). Refuses if `candidate/` exists. Currently
 prints STOP because no gold exists.
 
@@ -329,58 +357,15 @@ prints STOP because no gold exists.
 |---|---|---|
 | `--silver` | required | silver the challenger trains on |
 | `--split` | `three-way-v1` | split id |
-| `--device` | `auto` | device for training and prediction; calibration uses `cpu` when this is `auto` |
-| `--local-only` | off | pass `--local-only` to training |
-| `--backbone` | off | retrain the backbone before the heads |
+| `--device` | `auto` | device for training, calibration and prediction (`auto`, `cpu`, `cuda`) |
 | `--force` | off | train even when no retraining trigger is met |
+| `--apply` | off | run `promote.py --apply` too, but only when the gold rule passes; otherwise only recommend |
 | `--gold-csv` | none | a `gold_<export>.csv` to ingest first; needs `--export-id` and `--reviewer` |
 | `--export-id` | none | export id for `--gold-csv` |
 | `--reviewer` | none | reviewer for `--gold-csv` |
 | `--upload-period` | empty | passed to the gold import |
 | `--slice-rate` | empty | passed to the gold import |
 | `--n-boot` | 1000 | bootstrap replicates for the promotion recommendation |
-
-## `rr_phase1.py`
-
-Experiment only (branch `bronze-retrieve-rerank`, package `ml/bronze_rr/`, outputs under `RR_PHASE1_DIR`; see
-[paths.md](paths.md)). Subcommands: `ruler` (score the WP14 baseline predictions with WP14's uncommon list on
-test and calibration), `train-gate`, `train-retriever`, `train-shared-gate` (a gate head on a retriever's pooled
-vector, so one encoder pass gives the gate and the term probabilities), `train-joint` (ONE ModernBERT trained
-jointly for the terms and the gate, with the gate's 5% hold-out excluded for both heads), `time-cpu` (seconds per report, two models vs
-one), `score`, `bakeoff` (calibration only; also scores every `gate_shared_*` head with its own retriever, and the trained
-`rr_phase1/joint` model as the system "joint + joint gate", paired only with itself), `freeze` and `phase2`.
-`phase2` is the one-shot test-set head-to-head: a frozen generation's predictions CSV against the WP14 baseline's, both scored with
-`silver_eval.evaluate` on the `three-way-v1` test cases with WP14's uncommon list, a paired bootstrap (`intervals.paired_bootstrap`,
-1000 resamples, seed 0, one stratum of all test cases) of new minus WP14 for each verdict share and G+S, and the three pre-registered bars
-(Good lower bound >= -2 pp, G+S >= WP14, FP <= WP14 + 1 pp). It refuses a generation whose manifest does not verify or is not calibrated,
-predictions whose `generation_id` differs, and an existing output directory (write-once: `rr_phase1/phase2/<generation id>/` with
-`scores.json` and `summary.md`, aggregates only).
-`--limit N` is a smoke: N cases, everything under `RR_PHASE1_DIR/_smoke`.
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--predictions` | the WP14 predictions CSV | `ruler`: predictions to score |
-| `--split` | `three-way-v1` | `ruler`, `phase2`: split id |
-| `--seed` | 42 | `train-gate`, `train-retriever`, `train-joint`, `train-shared-gate`: training seed |
-| `--epochs` | 3 (50 for `train-shared-gate`) | `train-gate`, `train-retriever`, `train-joint`; head epochs for `train-shared-gate` (best held-out-AUC epoch is kept) |
-| `--lr` | 5e-5 | encoder learning rate |
-| `--max-length` | 4096 | tokens per report |
-| `--token-budget` | 16384 | padded tokens per micro-batch |
-| `--max-steps` | 0 | smoke: stop after N optimizer steps |
-| `--gate-weight` | 1.0 | `train-joint`: total loss = term loss + gate-weight * gate loss |
-| `--out` | `rr_phase1/gate`, `rr_phase1/retriever_seed<S>`, `rr_phase1/joint` or `rr_phase1/gate_shared_<retriever tag>` | model output directory |
-| `--retriever-dir` | none | `score`: retriever to score; `freeze`, `train-shared-gate`: required; `time-cpu`: default `rr_phase0/bce` |
-| `--n` | 50 | `time-cpu`: first N calibration reports, one at a time on CPU |
-| `--gate-dir` | none (`time-cpu`: `rr_phase1/gate`) | `score`: ModernBERT gate to score; `time-cpu`: the separate gate model |
-| `--shared-gate-dir` | `rr_phase1/gate_shared_<tag>` | `time-cpu`: the shared head (an untrained stand-in if the directory does not exist) |
-| `--save` | off | `time-cpu`: also write `rr_phase1/timing/cpu_n<N>.json` |
-| `--partition` | `calibration` | `score`: `train`, `calibration`, `test` or `all` |
-| `--i-understand-this-spends-the-test-set` | off | `score`: required for `test` and `all`; `phase2`: required |
-| `--generation` | required | `phase2`: the frozen rr generation directory (its predictions are `<PREDICTIONS_DIR>/<generation id>_predictions.csv`) |
-| `--baseline-predictions` | the WP14 predictions CSV | `phase2`: the baseline predictions |
-| `--gate` | required | `freeze`: `old` (WP14 gate probabilities), `new` (`rr_phase1/gate`), `shared` (`rr_phase1/gate_shared_<retriever tag>`) or `joint` (`--retriever-dir` is the `rr_phase1/joint` model) |
-| `--max-fp-share` | none | `freeze`: fit the thresholds only among grid points whose false-positive share of the calibration verdict rows is <= this fraction (e.g. `0.0293`); errors if no point qualifies. Recorded in `thresholds.json` and the manifest with the in-sample calibration verdicts |
-| `--limit` | 0 | smoke: first N cases (`train-gate`, `train-retriever`, `train-joint`, `train-shared-gate`: first N train cases) |
 
 ## `split.py`
 
@@ -417,22 +402,20 @@ writes is a dry run until `--apply`. Subcommands:
 
 ## `train.py`
 
-Trains a candidate generation: `ml/report_mapping/training/`. Guide:
-[train-and-promote.md](../how-to/train-and-promote.md). `--stage backbone` defaults `--model` to
-`SAVSNET/PetBERT`; every other stage, and `predict.py`, default to the generation's own `petbert/`.
-Leakage guards run only for the `heads` and `backbone` stages.
+Trains a candidate generation, one step: `ml/report_mapping/training/`. Guide:
+[train-and-promote.md](../how-to/train-and-promote.md). Every run starts from the base checkpoint with a
+fresh head over the train partition's terms; the result has calibration `pending` and no
+`thresholds.json`. Leakage guards run first.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--stage` | required | `backbone`, `case-presence`, `group`, `label-presence`, `heads` (all three heads) or `oof` |
 | `--labels` | required | a silver id or a labels CSV path |
 | `--split` | `three-way-v1` | split id |
 | `--seed` | 42 | training seed |
-| `--device` | `auto` | `auto`, `cpu`, `cuda`, `mps`, `xpu` |
-| `--out` | `candidate` | `current`, `candidate` or a literal directory |
-| `--local-only` | off | disable Hugging Face downloads |
-| `--model` | see above | backbone directory or name to start from |
-| `--oof-stage` | `case-presence` | with `--stage oof`: which head to run out-of-fold predictions for (`case-presence` or `group`) |
-| `--k` | 5 | with `--stage oof`: number of folds |
+| `--device` | `auto` | `auto`, `cpu` or `cuda` |
+| `--out` | `candidate` | `candidate` or a literal directory (must be new or empty) |
+| `--model` | `thomas-sounack/BioClinical-ModernBERT-base` | base checkpoint directory or Hugging Face name to start from |
+| `--limit` | 0 | smoke: train on the first N cases only |
+| `--max-steps` | 0 | smoke: stop after N optimizer steps |
 
-_Last verified against code: 2026-09-29_
+_Last verified against code: 2026-10-09_

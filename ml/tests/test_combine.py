@@ -275,7 +275,7 @@ def test_coding_imports_no_torch():
     import sys
 
     code = "import sys, coding.combine, coding.queue; print('torch' in sys.modules)"
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, cwd=config.ML_ROOT)
     assert out.stdout.strip() == "False"
 
 

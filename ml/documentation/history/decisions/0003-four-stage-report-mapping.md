@@ -1,6 +1,6 @@
 # 0003 Four stages: case-presence gate, group classifier, per-group label presence, keyword correction
 
-**Status:** accepted · **Date:** 2026-04-29 (three stages), 2026-05-07 (per-group heads added)
+**Status:** superseded by [0008](0008-joint-modernbert-report-mapping.md) · **Date:** 2026-04-29 (three stages), 2026-05-07 (per-group heads added)
 
 ## Context
 One classifier scoring every (report, label) pair emitted false positives on non-cancer reports and had a hard completely-off floor of about 30%, because it never reasoned about which group a report belongs to. Attempts to fix it with KNN group gating, richer label embeddings or per-pair architectures failed.

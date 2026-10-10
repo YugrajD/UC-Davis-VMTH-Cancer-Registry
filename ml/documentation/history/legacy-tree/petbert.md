@@ -1,3 +1,5 @@
+> **Archived** — describes the retired PetBERT four-stage pipeline; see [ADR 0008](../decisions/0008-joint-modernbert-report-mapping.md). Paths, flags and numbers may not match today's code. Current docs: [README](../../README.md).
+
 # PetBERT Reference
 
 Background on the PetBERT language model and how this project uses it as its embedding backbone.
@@ -63,12 +65,12 @@ adapted with per-section contrastive training (each section text paired with its
 adapted backbone is stored with each generation, in `ml/output/report_mapping/current/petbert/` for
 the production one. The classifiers on top form a pipeline: a case-presence gate, then a group
 classifier, then per-group label-presence heads
-([report-mapping.md](../concepts/report-mapping.md)).
+([report-mapping.md](four-stage-pipeline.md)).
 
 Embedding is the slow step, so results are cached in
 `ml/output/report_mapping/embedding_cache/<key>.npz`. The key is a hash of the report file, the
 labels file and the backbone fingerprint, so a changed backbone or input file is a cache miss and
-nothing stale is ever reused ([run-inference.md](../how-to/run-inference.md)).
+nothing stale is ever reused ([run-inference.md](../../how-to/run-inference.md)).
 
 ---
 

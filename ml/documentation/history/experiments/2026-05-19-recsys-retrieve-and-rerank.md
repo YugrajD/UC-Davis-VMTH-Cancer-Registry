@@ -34,3 +34,5 @@ You have a fix for both retrieval recall and the cross-case calibration cliff. T
 
 ## Where it went
 Nothing merged into `ml/`. Flags `--rank-no-sampler` and `--rank-loss bce|bpr` lived only in the sibling tree, which was deleted on 2026-09-14.
+
+Retried in September 2026 with a single end-to-end ModernBERT retriever (pair recall 0.970 at N=30): [Phase 0](2026-09-30-retrieve-rerank-v2-openjev.md). The retrieval condition above was met (pair recall 0.970 at N=30, 0.981 at N=49) and the cliff did not recur (best raw reranker threshold 0.47 and 0.30, against 0.995 or more before), but the zero-shot reranker failed its ECE bar and was dropped.

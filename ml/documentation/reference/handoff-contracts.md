@@ -54,7 +54,7 @@ Column lists are read from their owning module's constants (`diagnosis_mapping.s
 | `combined_predictions` | v2 | ML to cloud | `coding.combine.COMBINED_PREDICTIONS_COLUMNS` | No |
 | `review_queue` | v1 | ML to cloud | `coding.queue.REVIEW_QUEUE_COLUMNS` | No |
 | `audit_list` | v1 | ML to cloud | a `.txt`, one case_id per line, in review order | No |
-| `report_mapping_bundle` | v1 (declared, not stamped) | ML to cloud | a whole generation directory, tarred; checked by a `.sha256` file, with no `.manifest.json` sidecar | No |
+| `report_mapping_bundle` | v1 (declared, not stamped; unchanged although the contents changed) | ML to cloud | a whole generation directory, tarred; checked by a `.sha256` file, with no `.manifest.json` sidecar. The contents are the new layout (`encoder/`, `head.pt`, `gate_head.pt`, `terms.json`, `term_info.json`, `thresholds.json`, `manifest.json`) | No |
 
 ## Combined predictions and the review queue (ML to cloud)
 
@@ -170,8 +170,10 @@ ml/.venv/Scripts/python.exe ml/scripts/handoff.py export-audit-list --list-id 20
 - **`export_coding`**: `combined_predictions_<run>.csv` and `review_queue_<run>.csv`, the computed
   `coding.combine` and `coding.queue` outputs re-stamped with a schema version. Both are text-free.
 - **`export_bundle`**: tars a report-mapping generation directory plus a `.sha256` file for ml-worker.
-  The generation is verified (manifest hashes and embedding fingerprint) before bundling, so a stale
-  or tampered generation is refused; `verify_bundle` repeats the check on the extracted tarball.
+  The generation passes the spec check ([generations.md](../concepts/generations.md#the-spec-check))
+  before bundling, so a stale, uncalibrated or tampered generation is refused; `verify_bundle`
+  repeats the check on the extracted tarball. The tarball wraps the generation in one top-level
+  folder (`current/` for the production generation); extract it and upload the folder's contents.
 - **`export_audit_list`**: `audit_list_<list_id>.txt` as described above. Refuses an existing `list_id`.
 
 Task walkthrough for the audit round: [run-audit-cycle.md](../how-to/run-audit-cycle.md).
@@ -187,39 +189,73 @@ itself is published with `sync.py publish-model` or `promote.py --apply --publis
 
 ## The worker bundle contract (`worker_format.py`)
 
-A bundle is a report-mapping generation directory: `report_mapping.model.generation`'s own layout is
-the layout ml-worker loads ([generations.md](../concepts/generations.md)). This module names the subset
-ml-worker needs and the one check both sides run before trusting a bundle (`verify_worker_bundle`:
-manifest file hashes plus embedding fingerprint).
+**The bundle.** A bundle is a report-mapping generation directory, the same one `current/` holds
+([generations.md](../concepts/generations.md#layout)):
 
-`resolve_bundle_root(env, model_var)`: the bundle root is the parent of the worker's model-path
-variable (`PETBERT_MODEL_PATH` for the HTTP worker `ml-worker/app.py`, `MODEL_PATH` for the batch
-worker `ml-worker/batch_predict.py`), which must be `<root>/petbert`. Every other path variable, if
-set, must point at its own place in that bundle:
+```
+<bundle>/
+  encoder/          HF ModernBERT weights (model.safetensors), tokenizer files, config.json
+  head.pt           term head (fp32)
+  gate_head.pt      gate head (fp32)
+  terms.json        term vocabulary in head order
+  term_info.json    term -> [group, code]
+  thresholds.json   gate_t, tau, rho, review_cut, max_fp_share, review_target_share
+  manifest.json
+```
 
-| Variable | Must be |
-|---|---|
-| `LABELS_CSV_PATH` | `<root>/labels/labels.csv` |
-| `GROUP_CLASSIFIER_PATH` | `<root>/checkpoints/group_classifier_best.pt` |
-| `CASE_PRESENCE_CLASSIFIER_PATH` | `<root>/checkpoints/case_presence_classifier.pt` |
-| `LP_THRESHOLDS_JSON_PATH` | `<root>/checkpoints/label_presence/lp_thresholds.json` |
-| `UNCOMMON_GROUPS_PATH` | `<root>/checkpoints/uncommon_groups.txt` |
+**Start-up check.** `predict.load_generation` runs the spec check
+([generations.md](../concepts/generations.md#the-spec-check)) and the worker refuses to start (the
+batch job fails) on: a missing or changed file, a manifest that is not a `report_mapping_generation`
+of schema 2, an `architecture` block (including the text spec version) that differs from the code's,
+a weights digest or term count that does not match, a generation that is not `calibrated`, or
+thresholds calibrated for other weights. An old bundle fails the new image and a new bundle fails the
+old image: switch the image and the bundle together.
 
-A deployment mixing files from two generations refuses to start rather than predicting with them.
+**Where the bundle is.** `resolve_bundle_root(env, model_var)`: the bundle root is the parent of the
+worker's model-path variable (`PETBERT_MODEL_PATH` for the HTTP worker `ml-worker/app.py`,
+`MODEL_PATH` for the batch worker `ml-worker/batch_predict.py` and the ECS entrypoint). The value must
+be `<root>/petbert`: the backend keeps this name, but the directory does not exist in the new layout
+(`encoder/` replaced it) and the path need not exist. If both variables are set they must name the
+same bundle, else `BundleError`. The five other path variables of the old worker
+(`LABELS_CSV_PATH`, `GROUP_CLASSIFIER_PATH`, `CASE_PRESENCE_CLASSIFIER_PATH`,
+`LP_THRESHOLDS_JSON_PATH`, `UNCOMMON_GROUPS_PATH`) are no longer read and are ignored wherever they
+point. `TORCH_NUM_THREADS` (optional, a positive integer; default `min(8, CPU count)`) sets the CPU
+threads.
 
-`upload_to_reports(upload)`: an upload (Dataset A: `anon_id` plus one `Text` column) is expanded into
-report-shaped columns. `Text` fills the first source column of every section and the rest stay empty,
-so section 1 (FINAL COMMENT + COMMENT) is `Text` alone.
+**Input.** `upload_to_texts(upload)`: an upload (Dataset A: `anon_id` plus one `Text` column) is read
+row by row. The report text is `Text` after `clean_text`, flat: no heading, no section columns. A
+blank `Text` gets no prediction rows, so the case is absent from `predictions`. Other upload columns
+are ignored. `max_length` is the bundle's 4096 tokens.
 
-`response_rows(rows, text_by_id)`: one dict per case in the payload
-`ingestion_service.parse_predictions` reads. A case with several prediction rows gets numbered strings
-(`1) a 2) b`) per field, and every dict carries `source_version`, the `generation_id` that made the
-prediction.
+**Response.** `response_rows(rows, text_by_id)`: one dict per case in the payload
+`ingestion_service.parse_predictions` reads, with the same keys as before: `anon_id`, `original_text`,
+`predicted_term`, `predicted_group`, `predicted_code`, `confidence`, `method`, `source_version`. A case
+with several prediction rows gets numbered strings (`1) a 2) b`) per field, and `source_version` is the
+`generation_id` that made the prediction. What the values mean now:
 
-ml-worker serves `GET /health` (status and the loaded generation id) and `POST /predict` (a Dataset A
-CSV; reports are embedded fresh with the bundle's own backbone, never through the on-disk cache). The
-backend deployment that provides these variables is described in the implemented
-[ml-worker change request](../history/plans/ml-worker-change-request.md), kept as history, as is the
-original [audit-list change request](../history/plans/audit-list-change-request.md).
+- `method` is `term_head` or `rejected_by_case_presence`; no other method is produced.
+- `confidence` is the term's sigmoid probability to two decimals (`0.00` for a rejected case). It is
+  not a cosine similarity and not comparable with the old values.
+- `predicted_group` and `predicted_code` come from the bundle's `term_info.json`.
+- `group_prob` and the gate probability are in the offline predictions CSV only; the worker response
+  never carried them.
 
-_Last verified against code: 2026-09-29_
+ml-worker serves `GET /health` (`{status, source_version}`) and `POST /predict` (a Dataset A CSV or
+xlsx; `{predictions, input_rows}`, where `input_rows` counts prediction rows). Reports are scored
+fresh, in fp32 on CPU.
+
+**Runtime and capacity.** The images pin torch 2.9.1 (CPU wheel), transformers 5.18.0, tokenizers
+0.23.2, huggingface_hub 1.33.0 and safetensors 0.8.0. CPU timing with 8 threads is 0.72 s per report
+in chunked calls (about 12 minutes per 1,000) and 0.41 s in a single call. The backend's default
+batch machine gives 4 threads, so expect slower, and the HTTP path is bounded by the backend's
+`ML_WORKER_TIMEOUT` (600 s): an upload of roughly 850 to 1,500 reports or more times out and belongs
+on the batch path. Not measured on the deployment machines.
+
+Every change to the worker, with the file-by-file table, the image changes and the deploy and
+rollback order, is recorded in [ml-worker/CHANGES.md](../../../ml-worker/CHANGES.md). What the
+backend and other owners must change is in
+[restructure-change-request.md](../restructure-change-request.md). The earlier
+[ml-worker change request](../history/plans/ml-worker-change-request.md) and the original
+[audit-list change request](../history/plans/audit-list-change-request.md) are kept as history.
+
+_Last verified against code: 2026-10-09_

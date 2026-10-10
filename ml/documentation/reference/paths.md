@@ -11,6 +11,7 @@ veterinary records).
 | Constant | Path | Holds |
 |---|---|---|
 | `PACKAGE_ROOT`, `ML_ROOT` | `ml/` | The package root; in-tree assets resolve from here |
+| `REPO_ROOT` | repository root | The parent of `ml/`; used to record an adoption reason as a repo-relative path |
 | `DATA_DIR` | `ml/data/` | Raw patient input. Synced (set `data`) |
 | `OUTPUT_DIR` | `ml/output/` | Every generated artifact |
 | `REPORT_CSV` | `ml/data/report.csv` | Pathology report text, one row per case (read as latin-1) |
@@ -49,7 +50,7 @@ veterinary records).
 | `COMBINED_PREDICTIONS_CSV` | `coding/combined_predictions.csv` | The best code set per case (gold, silver, bronze) |
 | `REVIEW_QUEUE_CSV` | `coding/review_queue.csv` | ML-side review queue |
 
-## Splits, generations, embeddings
+## Splits and generations
 
 | Constant | Path | Holds |
 |---|---|---|
@@ -57,15 +58,13 @@ veterinary records).
 | `REPORT_MAPPING_DIR` | `ml/output/report_mapping/` | Root of the report-mapping generations |
 | `REPORT_MAPPING_CURRENT_DIR` | `report_mapping/current/` | The production generation. Published with `publish-model` |
 | `REPORT_MAPPING_CANDIDATE_DIR` | `report_mapping/candidate/` | Unpromoted training output; deleted if it loses. Not synced |
-| `EMBEDDING_CACHE_DIR` | `report_mapping/embedding_cache/` | `<key>.npz` content-hash embedding cache; never bundled, not synced |
-| `OOF_DIR` | `report_mapping/oof/` | Out-of-fold gate scores (`train.py --stage oof`) read by the Report-Mapping audit. Synced (set `oof`) |
+| `OOF_DIR` | `report_mapping/oof/` | The 5-fold cross-fit output of `oof.py`: one CSV per labels and split, numbers only (`case_id, fold, gate_target, gate_prob, term, term_prob`). Read by the Report-Mapping audit. Synced (set `oof`) |
 | `ARCHIVE_ROOT` | `ml/output/archive/` | Replaced generations as `YYYY-MM-DD_<description>/`. Written only by `ml/generations/`, never loaded from. Not synced |
+| `HISTORY_DIR` | `ml/documentation/history/` | ADRs, plans and experiment records. `promote.py --adopt --reason` accepts only a file under it |
 
-A generation directory (`current/` or `candidate/`) holds `petbert/` (the backbone), `labels/labels.csv`,
-`checkpoints/` (`case_presence_classifier.pt`, `group_classifier_best.pt`, `label_presence/<group>.pt`,
-`label_presence/lp_thresholds.json`, `thresholds.json`, `uncommon_groups.txt`,
-`calibration_diagnostics.json`) and `manifest.json`. The manifest and fingerprint rules are in
-[generations.md](../concepts/generations.md).
+A generation directory (`current/` or `candidate/`) holds `encoder/` (ModernBERT weights and tokenizer),
+`head.pt`, `gate_head.pt`, `terms.json`, `term_info.json`, `thresholds.json` and `manifest.json`. The
+manifest fields and the spec check are in [generations.md](../concepts/generations.md).
 
 ## Predictions and evaluation
 
@@ -73,9 +72,16 @@ A generation directory (`current/` or `candidate/`) holds `petbert/` (the backbo
 |---|---|---|
 | `PREDICTIONS_DIR` | `ml/output/predictions/` | `<generation_id>_predictions.csv`. Synced (set `predictions`) |
 | `EVAL_DIR` | `ml/output/eval/` | Evaluation outputs. Synced (set `eval`) |
-| `RR_PHASE0_DIR` | `ml/output/rr_phase0/` | Retrieve-and-rerank Phase 0 experiment (`ml/experiments/retrieve_rerank/`, branch `bronze-retrieve-rerank`): per-loss retriever, `recall.json`, candidate CSVs, `pilot/`. Scratch, not synced |
-| `RR_PHASE1_DIR` | `ml/output/rr_phase1/` | Retrieve-and-rerank Phase 1 (`ml/bronze_rr/`, branch `bronze-retrieve-rerank`): gate, seed-N retrievers, the jointly trained `joint/` model (encoder, `head.pt` term head, `gate_head.pt`), shared gate heads (`gate_shared_<retriever tag>/`), cached score numbers and pooled vectors (`scores/`), `timing/`, `bakeoff/`, `generation/<id>/`, `phase2/<id>/` (the write-once test-set scores), `ref/wp14_uncommon_groups.txt` (`RR_PHASE1_UNCOMMON_GROUPS_TXT`). Scratch, not synced |
 | `SILVER_EVAL_HISTORY_CSV` | `eval/silver_eval_history.csv` | One line per silver-eval run |
+| `UNCOMMON_GROUPS_TXT` | `ml/evaluation/uncommon_groups.txt` | The scoring ruler's uncommon-groups list: 24 group names, one per line. Committed; group names only. Not part of any generation |
+| `RR_PHASE0_DIR`, `RR_PHASE1_DIR`, `RR_PHASE1_UNCOMMON_GROUPS_TXT` | `ml/output/rr_phase0/`, `ml/output/rr_phase1/`, `rr_phase1/ref/wp14_uncommon_groups.txt` | Scratch left by the retrieve-and-rerank experiment, whose code the restructure deleted (it stays in git history). Nothing in `ml/` reads or writes these now. Not synced |
+
+Two numbers that calibration uses are in `config.py` as well, not paths:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `FP_CAP` | 0.0243 | Default `--max-fp-share` of `calibrate.py`: the false-positive share of the calibration verdict rows that a fitted threshold point must not exceed (WP14's calibration share) |
+| `REVIEW_TARGET_SHARE` | 0.2336 | The share of accepted calibration cases the fitted `review_cut` queues (WP14's calibration review volume) |
 
 ## Handoff
 
@@ -132,14 +138,13 @@ ml/output/
   report_mapping/
     current/                     production generation
     candidate/                   only while a retrain is pending
-    embedding_cache/             <key>.npz
-    oof/                         out-of-fold gate scores
+    oof/                         5-fold cross-fit output (numbers only)
   predictions/                   <generation_id>_predictions.csv
   eval/                          silver_eval_history.csv, evaluation outputs
   handoff/
     inbox/                       files from the cloud
     outbox/                      files to the cloud; bundles/ inside it
-  archive/                       YYYY-MM-DD_<description>/ replaced generations
+  archive/                       YYYY-MM-DD_<description>/ replaced generations (whole)
   s3sync_state.json              per machine
   s3sync_backup/                 per machine
 ```
@@ -147,4 +152,4 @@ ml/output/
 `ml/diagnosis_mapping/.env` (untracked) is the one config file outside `config.py`: `LLM_HOST`,
 `API_PORT` and `LLM_MODEL` for the Tier-3 LLM server.
 
-_Last verified against code: 2026-09-29_
+_Last verified against code: 2026-10-09_

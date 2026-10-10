@@ -46,16 +46,22 @@ Draws `--n-rows 200` rows (default) from the calibration and test cases of `--sp
 (default `three-way-v1`), skipping cases in earlier batches. Writes
 `diagnosis_mapping_audit/diagnosis_mapping_audit_batch<N>_key.csv` and `..._batch<N>.txt`.
 
-**Report-Mapping audit** (train cases where the gate contradicts the label, plus a random
-baseline). It needs out-of-fold gate scores first:
+**Report-Mapping audit** (train cases the model contradicts, in three reasons, plus a random
+baseline). It needs the 5-fold cross-fit first, which trains five models (estimated at 4 to 5 hours on the
+GPU, not yet run; run it once per silver lineage or retrain):
 
 ```bash
-ml/.venv/Scripts/python.exe ml/scripts/train.py --stage oof --oof-stage case-presence --labels silver-0-legacy --split three-way-v1 --device cuda
-ml/.venv/Scripts/python.exe ml/scripts/audit.py rm-sample --oof-csv ml/output/report_mapping/oof/case_presence_oof_silver-0-legacy_three-way-v1.csv --batch 2
+ml/.venv/Scripts/python.exe ml/scripts/oof.py --labels silver-0-legacy --split three-way-v1 --device cuda
+ml/.venv/Scripts/python.exe ml/scripts/audit.py rm-sample --oof-csv ml/output/report_mapping/oof/silver-0-legacy_three-way-v1_k5.csv --batch 2
 ```
 
-Draws 100 contradicted plus 100 random cases by default (`--n-contradicted`, `--n-random`). Writes
-`report_mapping_audit/report_mapping_audit_batch<N>.csv` and `.txt`.
+`oof.py` writes numbers only (`case_id, fold, gate_target, gate_prob, term, term_prob`) to
+`config.OOF_DIR/<labels>_<split>_k<k>.csv` and refuses to overwrite it without `--force`. `rm-sample`
+draws 100 contradicted plus 100 random cases by default (`--n-contradicted`, `--n-random`), the
+contradicted half split across `contradicted_cancer_label`, `contradicted_no_cancer_label` and
+`contradicted_term_label`. Writes `report_mapping_audit/report_mapping_audit_batch<N>.csv` (columns
+`case_id, reason, target, oof_prob, term_prob`; no text) and `.txt`. It refuses a CSV that lacks the
+cross-fit columns.
 
 **Eval batch** (a stratified draw from the test partition; this is gold-eval):
 
@@ -144,4 +150,4 @@ answers `yes` (the method's own input supports the gold code: a method error) or
 gap). `ingest-cause` stores the answers in `cause_store.csv`, and the next `evaluate.py gold` reports
 the method-error share.
 
-_Last verified against code: 2026-09-29_
+_Last verified against code: 2026-10-09_

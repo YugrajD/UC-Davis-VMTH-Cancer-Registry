@@ -1,6 +1,6 @@
 # 0002 Adapt the PetBERT backbone with per-section contrastive pairs
 
-**Status:** accepted · **Date:** 2026-05-12
+**Status:** superseded by [0008](0008-joint-modernbert-report-mapping.md) · **Date:** 2026-05-12
 
 ## Context
 Base PetBERT is pretrained with masked-language modelling on veterinary records; its geometry does not by itself put a report near its correct label. An InfoNCE adaptation on whole-report text (Phase 17) helped a lot, but concat-3 embeds each section separately, so the sections were off-manifold for a backbone trained on merged text.

@@ -1,6 +1,6 @@
 # 0001 Represent each report as three per-section embeddings, concatenated (concat-3)
 
-**Status:** accepted · **Date:** 2026-05-12 (promoted 2026-05-13)
+**Status:** superseded by [0008](0008-joint-modernbert-report-mapping.md) · **Date:** 2026-05-12 (promoted 2026-05-13)
 
 ## Context
 Reports have structured sections. The earlier input merged several columns into one string and, when it overflowed 512 tokens, cut it with TF-IDF sentence scoring. In 26.7% of cases the merged text overflowed; the merge also flattened section structure so no head could weight one section over another.

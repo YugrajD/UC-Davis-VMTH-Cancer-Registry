@@ -32,13 +32,13 @@ and `pull-model` verify every download before touching a local file.
 the directory each maps to are in [paths.md](../reference/paths.md).
 
 **Model generation** — only `ml/output/report_mapping/current/`, published as one immutable
-generation directory (`sync.py publish-model` / `pull-model`).
+generation directory (`sync.py publish-model` / `pull-model`). There is no embedding cache to
+rebuild after a pull: the generation is everything the model needs.
 
 **Not synced:**
 
 | What | Why |
 |---|---|
-| `report_mapping/embedding_cache/` | Rebuilt locally (~9 min on GPU) after a model pull; content-hash keyed, so a stale entry can never load. |
 | `output/archive/` | Machine-local history; written only by `generations/promote.py`. |
 | `report_mapping/candidate/` | Unpromoted work. (`pull-model` uses it briefly as a staging directory.) |
 | `handoff/outbox/bundles/` | A bundle duplicates the model generation, which is published instead. |
@@ -160,11 +160,14 @@ was not attempted (it stops at the first failure) and the `sync.py` command that
   machine is "never synced": the next push is refused until it pulls. Never copy it, or
   `s3sync_backup/`, between machines by any other tool: a copied state corrupts the 3-way base.
 - **Model.** `publish-model` publishes `current/` only after `generations.promote.check_candidate`
-  passes (manifest, embedding fingerprint, calibrated), and moves `CURRENT.json` by the same rule.
-  `pull-model` downloads into `candidate/`, verifies it, and calls `generations.promote.adopt`,
-  which archives the replaced `current/` exactly as a promotion does: to
-  `output/archive/YYYY-MM-DD_<old generation_id>/`, together with the embedding-cache entries the
-  new generation cannot use. If that `current/` was never published it says so (`UNPUBLISHED ...
+  passes (the spec check: file hashes, architecture, calibrated and bound to its weights), and
+  moves `CURRENT.json` by the same rule. `pull-model` downloads into `candidate/`, runs the same
+  check on it, and calls `generations.promote.adopt_published`, which archives the replaced
+  `current/` exactly as a promotion does: whole, to `output/archive/YYYY-MM-DD_<old generation_id>/`.
+  A remote generation from before the 2026-10-09 restructure fails the spec check, so a machine on
+  the new code refuses to adopt it (`REFUSED`, and `candidate/` is removed); the first
+  `promote.py --adopt ... --publish` (or `publish-model`) from the new code moves `CURRENT.json`
+  to a generation that does pass. If that `current/` was never published it says so (`UNPUBLISHED ...
   will be archived to <path>`): it is kept, not lost. It refuses if `candidate/` already exists or
   that archive folder is taken (a second replacement of the same id on the same day — move the old
   archive aside), before downloading anything; a failed pull removes only the staging `candidate/`
@@ -235,4 +238,4 @@ generations are the exception: `generations/<id>/` keeps the real file names.
 - The backend and ml-worker still run on GCS. Once ported to AWS they can read
   `generations/<id>/...` directly — the layout keeps the generation's own file names for that.
 
-_Last verified against code: 2026-09-29_
+_Last verified against code: 2026-10-09_

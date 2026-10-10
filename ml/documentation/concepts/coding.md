@@ -19,8 +19,8 @@ flowchart TD
     v -->|yes| q["No combined row;<br>ML review queue"]
     v -->|no| dia["Silver codes<br>diagnosis / auto_accepted<br>(NO_CANCER if none coded)"]
     d -->|no| b{"Bronze prediction?"}
-    b -->|"cancer codes or gate-rejected"| bro["report: queued or auto_accepted<br>(NO_CANCER if gate-rejected)"]
-    b -->|"unidentified_cancer or none"| q
+    b -->|"yes"| bro["report: queued or auto_accepted<br>(NO_CANCER, always queued, if gate-rejected)"]
+    b -->|"none"| q
 ```
 
 ## The vagueness table (`rule.py`)
@@ -70,12 +70,11 @@ of record. Precedence, per case:
 4. **Else, no diagnosis rows at all:** take bronze. `code_source=report`, `source_version` is the
    bronze generation id, `source_confidence` is the prediction's confidence. A gate-rejected case
    (`rejected_by_case_presence`) becomes a single `NO_CANCER` row. `review_status` is `queued` or
-   `auto_accepted` (next section). **Bronze never overrides silver**: it is used only for a case with
-   zero diagnosis rows.
+   `auto_accepted` ([the bronze review rule](#the-bronze-review-rule)). **Bronze never overrides
+   silver**: it is used only for a case with zero diagnosis rows.
 
-**Exception:** an `unidentified_cancer` bronze case (the gate passed but no label resolved) gets no
-combined row. Its score is always 0.0, so it is not a confident non-cancer call and must not take
-`NO_CANCER`. It lands in the review queue instead.
+Every bronze-only case is coded this way. A case with no bronze prediction at all (no text, or
+absent from the predictions file) gets no row and goes to the review queue as `no_evidence`.
 
 `NO_CANCER` is the same sentinel `manual_audit.gold` uses.
 
@@ -85,21 +84,34 @@ count, repeated on each of its rows (1 for a `NO_CANCER` case). Written to
 `config.COMBINED_PREDICTIONS_CSV`; `ml/scripts/handoff.py export-coding` ships it with the review
 queue, and the file contracts are in [reference/handoff-contracts.md](../reference/handoff-contracts.md).
 
-### The bronze review gate
+### The bronze review rule
 
-The gate decides `queued` versus `auto_accepted` for a bronze-only case (`bronze_case_is_low_confidence`).
+The rule decides `queued` versus `auto_accepted` for a bronze-only case
+(`bronze_case_is_low_confidence`, in `combine.py`). It uses the generation's `review_cut`, fitted at
+calibration time and stored in its `thresholds.json` ([report-mapping.md](report-mapping.md#the-review-cut)).
 The case is `queued` when any of these holds:
 
-- any row's method is `rejected_by_case_presence`;
-- any row's confidence is below `BRONZE_LOW_CONFIDENCE_THRESHOLD` (0.23);
-- the top-1 and top-2 confidence margin is below `BRONZE_LOW_MARGIN_THRESHOLD` (0.15), checked only
-  when both ranks carry a nonzero confidence;
-- there is no rank-1 row at all.
+- any row's method is `rejected_by_case_presence` (every gate-rejected case is queued);
+- there is no rank-1 row;
+- the rank-1 row's confidence is below `review_cut` (equal to the cut is accepted; a blank
+  confidence counts as 0).
 
-The three constants live together in `combine.py`. They are unvalidated and will be checked against
-gold. The backend loads the combined predictions (`combined_predictions` schema v2) as its code of
-record and carries ML's `review_status` per row
-([handoff-contracts.md](../reference/handoff-contracts.md)).
+The rank-2 row and the top-1/top-2 margin do not matter. The cut is the confidence below which
+`config.REVIEW_TARGET_SHARE` (0.2336, the volume the previous rule queued) of the accepted
+calibration cases fall, so a more or less confident model does not silently change the specialist's
+workload. For the first generation `review_cut` is 0.85 (23.23% of the accepted calibration cases). A case the
+gate accepts but where no term is confident, the likely out-of-vocabulary case, is caught by the
+cut. The cut is unvalidated against gold and will be checked against it.
+
+`combine` and `queue` take `--generation` ("current", "candidate" or a directory): the predictions'
+`generation_id` column must be exactly that generation's manifest id, or the command refuses with
+`REFUSED: predictions carry generation_id [...]`, because a cut fitted for other weights would
+queue the wrong share. The check reads the manifest id and `thresholds.json` only (no spec check),
+so an archived generation works too. `combine` reads the generation only when some case is
+bronze-only.
+
+The backend loads the combined predictions (`combined_predictions` schema v2) as its code of record
+and carries ML's `review_status` per row ([handoff-contracts.md](../reference/handoff-contracts.md)).
 
 ## Corrected annotations (`corrected.py`)
 
@@ -133,8 +145,8 @@ The queue lists the cases the specialist should look at, skipping any case that 
 reasons:
 
 - `vague_silver`: the case has diagnosis rows and at least one is vague.
-- `low_conf_bronze`: no diagnosis rows, and the bronze review gate flags the case. This also covers
-  an `unidentified_cancer` case, which `combine.py` refuses to code.
+- `low_conf_bronze`: no diagnosis rows, and [the bronze review rule](#the-bronze-review-rule) flags
+  the case (gate-rejected, or rank-1 confidence below `review_cut`).
 - `no_evidence`: no gold, no diagnosis row and no bronze prediction (for example an upload whose
   report never reached `report.csv`). It always has the lowest priority (`NO_EVIDENCE_PRIORITY`,
   -1.0, below any real probability), so it never crowds out a case bronze or silver actually ran on.
@@ -149,11 +161,11 @@ first delays depleting the test-partition sampling pool.
 bronze ends up either coded (`combine.py`) or queued (here), never neither.
 
 `REVIEW_QUEUE_COLUMNS`: `case_id, reason, priority, partition, silver_generation,
-bronze_generation`. Written to `config.REVIEW_QUEUE_CSV`.
+bronze_generation` (the generation that made the predictions). Written to `config.REVIEW_QUEUE_CSV`.
 
 **What is live where.** The dashboard's Review Queue screen was retired on 2026-09-28 (commit
 83262de), and with it the backend's own ingest-time review gate: the backend now stamps upload rows
-`confirmed`, and the bronze review gate above is the only one. The dashboard Audit Worklist is the
+`confirmed`, and the bronze review rule above is the only one. The dashboard Audit Worklist is the
 only review surface. This ML-side queue is still live (`review_queue.csv`, the `review_queue`
 gold-train origin, the fourth audit-list source), and the backend still imports
 `review_queue_<run>.csv` to flag cases as awaiting review. For a queued case with no combined row only

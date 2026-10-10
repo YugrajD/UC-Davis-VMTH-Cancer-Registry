@@ -3,7 +3,7 @@
 The overview of the whole approach: how every case gets a Vet-ICD-O-canine-1 code, how far each
 code can be trusted, how accuracy is measured and how the methods improve. Read this first; the
 other concept docs hold the detail and are linked from each section. Last checked against the code
-on 2026-09-29.
+on 2026-10-09.
 
 ## Summary
 
@@ -26,14 +26,14 @@ between machines by file.
 |---|---|
 | **Gold** | A code set assigned by the specialist from the case's full record. Treated as ground truth. |
 | **Silver** | A code from the **diagnosis mapping**: the keyword cascade plus a local LLM. |
-| **Bronze** | A code from the **report mapping**: the PetBERT 4-stage pipeline. |
+| **Bronze** | A code from the **report mapping**: one jointly trained ModernBERT reads the whole report and gives a cancer gate and a term ranking, from which a fitted rule picks the terms. |
 | **Gold-eval** | Gold from evaluation batches and upload random slices, used only to measure accuracy. Never trained on. |
 | **Gold-train** | Gold from the review queue and the Report-Mapping audit, used to train the report mapping. |
 | **Corrected annotations** | Per train case: gold where it exists, silver elsewhere. The report mapping's training labels. |
 | **Silver-eval** | A cheap ruler at scale: the model's predictions scored against a silver generation on a split partition, checked against gold-eval. |
 | **Decisive / vague** | Whether the diagnosis mapping reached a usable answer for a diagnosis row. |
 | **Adopted code** | The code the registry publishes for a case. |
-| **Generation** | One versioned output of a method: a silver run, or a trained set of report-mapping models. |
+| **Generation** | One versioned output of a method: a silver run, or one trained and calibrated report-mapping model with its thresholds. |
 | **Split** | The train, calibration and test partitions of the historical cases. |
 
 ## The three methods
@@ -146,10 +146,12 @@ there needs out-of-fold predictions.
 
 **Generations are versioned, archived and gated.** A silver generation feeds both the registry and
 the report mapping's training labels. A report-mapping generation records the silver generation and
-the gold-train snapshot it trained on. A candidate is trained into `candidate/` and replaces
-`current/` only if it passes the promotion rule: at least one retraining trigger is met and it is
-not meaningfully worse than the incumbent on the same gold-eval. The incumbent is archived on a
-win and a loser is deleted. Rule, triggers and archive: [generations.md](generations.md).
+the gold-train snapshot it trained on. A candidate is trained into `candidate/`. A retrained one (same code, new weights) replaces
+`current/` only if it passes the promotion rule, judged on gold only: at least one retraining
+trigger is met and it is not meaningfully worse than the incumbent on the same gold-eval. A change
+to the model's code is not a retraining: a person adopts it with a written reason. Either way the
+incumbent is archived whole, and a losing candidate is deleted. Rule, triggers, adoption and
+archive: [generations.md](generations.md).
 
 The diagnosis mapping is fixed, not retrained: when the cause pass finds silver method errors, the
 ML developer fixes the cascade and re-runs it, and the new silver generation is itself a retraining
@@ -213,12 +215,13 @@ locally. The diagnosis mapping moves to the cloud only with a BERT coder (future
 trigger definitions and the promotion rule are in [generations.md](generations.md).
 
 **The local lane is one command**, `scripts/retrain_cycle.py`, built and owned on the ML side. It
-recommends only: an Admin applies the promotion with `promote.py --apply`. Today it stops at its
-gold-eval check because no real gold exists yet.
+recommends by default, and an Admin applies the promotion with `promote.py --apply`; with `--apply`
+the cycle promotes by itself, but only when the gold rule passes. Today it stops at its gold-eval
+check because no real gold exists yet.
 
 ## What is built and what is still future
 
-As of 2026-09-29.
+As of 2026-10-09.
 
 ```mermaid
 flowchart LR
@@ -236,9 +239,11 @@ flowchart LR
 - **Coding.** The vagueness table, combined predictions (with `code_source`, `source_version`,
   `source_confidence` and `review_status`), corrected annotations and the ML-side review queue
   ([coding.md](coding.md)).
-- **Report-mapping generations.** Training, calibration, the embedding fingerprint, splits,
-  guards, the promotion rule, triggers, archive and `retrain_cycle.py`. Production `current/` is
-  `gen-0-legacy`, trained on silver only.
+- **Report-mapping generations.** Training from the base checkpoint, calibration under a
+  false-positive cap, the spec check, splits, guards, the gold-only promotion rule, adoption of an
+  architectural change, triggers, archive and `retrain_cycle.py`. Production `current/` is
+  `gen-20261009T224439Z`, the first generation of the joint ModernBERT model (weights frozen from the
+  retrieve-and-rerank v2 experiment, trained on silver only).
 - **Manual audit and evaluation tooling.** Audit sampling and ingest, the eval batch, the universal
   audit list, the cause pass, silver-eval, gold-eval and the four results.
 - **Backend side.** The backend imports combined predictions as the registry's code of record and

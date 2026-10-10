@@ -110,21 +110,41 @@ the audit deliberately over-samples small strata.
 ## The Report-Mapping audit
 
 Asks: which training labels is the report model right to disagree with? It draws only from the train
-partition:
+partition, and from scores that no model produced on a case it was trained on:
 
-- **Contradicted labels** (rule-based): train cases whose out-of-fold gate probability confidently
-  contradicts their label, meaning labelled cancer with probability below 0.2, or labelled no cancer
-  with probability above 0.8. The draw is split evenly between the two, strongest contradiction first
-  (so each batch takes the next-strongest); a side that runs short hands its remainder to the other.
-- **Random**: a seeded uniform draw from every other train case with an out-of-fold score. This is
-  the baseline rate of wrong training labels that the contradicted cases are compared against.
+**The cross-fit.** `scripts/oof.py` runs a 5-fold cross-fit over the train partition
+(`report_mapping/training/crossfit.py`): each fold trains a fresh model, from the base checkpoint, on
+the other four folds and scores the held-out fold, so every train case gets a gate probability and a
+probability for each of its labelled terms from a model that never saw it. A labelled term outside
+the fold model's vocabulary has no probability. The output is numbers only (case ids, fold, targets,
+probabilities, term names), saved under `config.OOF_DIR` with the columns `case_id, fold,
+gate_target, gate_prob, term, term_prob`. Run it once per silver lineage or retrain; it is estimated at
+4 to 5 hours of GPU (not yet run). The sampler refuses a file without these columns (such as the old gate-only
+scores) and any case outside the split's train partition.
 
-The out-of-fold scores are the case-presence gate's, from `train.py --stage oof --oof-stage
-case-presence` (5-fold, saved under `config.OOF_DIR`). Both halves skip cases in earlier batches or
-already gold. Defaults: 100 contradicted and 100 random per batch. Each batch writes a ledger CSV (case ID, reason, target,
-out-of-fold probability; no text) and a case-ID list under `config.REPORT_MAPPING_AUDIT_DIR`. Reviews
-come back as gold with origin `report_mapping_audit`, which is gold-train: it replaces the case's
-silver label in the corrected annotations.
+**Contradicted labels** (rule-based) come in three reasons:
+
+| Reason | Rule | Strongest first |
+|---|---|---|
+| `contradicted_cancer_label` | labelled cancer, gate probability below 0.2 | lowest gate probability |
+| `contradicted_no_cancer_label` | labelled no cancer, gate probability above 0.8 | highest gate probability |
+| `contradicted_term_label` | labelled cancer, gate probability at least 0.8, and every labelled term's probability below 0.2 (a term with no probability counts as below) | lowest best-term probability; cases with no scored term last |
+
+The contradicted half of a batch is dealt one case at a time across the three reasons, so the split
+is even and each batch takes the next-strongest case of each; a reason that runs out hands its turns
+to the others. The third reason is the one the joint model makes possible: the gate agrees the case
+is cancer but the model disagrees with every term the label names.
+
+**Random**: a seeded uniform draw from every other train case with a cross-fit score. This is the
+baseline rate of wrong training labels that the contradicted cases are compared against.
+
+Both halves skip cases in earlier batches or already gold. Defaults: 100 contradicted and 100 random
+per batch. Each batch writes a ledger CSV and a case-ID list under `config.REPORT_MAPPING_AUDIT_DIR`.
+The ledger has the columns `case_id, reason, target, oof_prob, term_prob`: `oof_prob` is the gate
+probability, `term_prob` the **lowest** probability among the case's labelled terms that the fold
+model scored (empty for a no-cancer case or when none was scored). No text. Reviews come back as
+gold with origin `report_mapping_audit`, which is gold-train: it replaces the case's silver label in
+the corrected annotations.
 
 ## The eval batch (gold-eval)
 

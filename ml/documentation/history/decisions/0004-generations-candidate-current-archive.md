@@ -1,6 +1,6 @@
 # 0004 Keep every trained model in a generation directory (candidate, current, archive) with a fingerprint check
 
-**Status:** accepted · **Date:** 2026-09-25 (rewrite plan approved; earlier rule in `CLAUDE.md` versioning section)
+**Status:** accepted; amended by [0009](0009-bronze-restructure-and-lifecycle.md) (embedding fingerprint and cache parts) · **Date:** 2026-09-25 (rewrite plan approved; earlier rule in `CLAUDE.md` versioning section)
 
 ## Context
 Embeddings change when the text fed to PetBERT changes or the PetBERT weights change. Any classifier trained on the old embeddings is then silently wrong. Before the rewrite this was guarded only by a written rule (archive before retrain) and an embedding cache keyed on the CSV's modified time, which an incident in August 2026 showed to be fragile. Stale checkpoints loading without error was the project's signature failure.

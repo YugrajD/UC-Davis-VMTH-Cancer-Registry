@@ -399,7 +399,7 @@ Not affected (checked): `backend/app/services/ingestion_service.py:110-140` pars
 
 1. Before merging: apply `RR_CLAUDE_MD_DRAFT.md` to the gitignored root `CLAUDE.md`; the PR's CI (torch 2.9.1 CPU) must be green.
 2. On the main machine, confirm what `ml/output/report_mapping/current/` is (`gen-0-legacy` expected; never promote the `...MOCK-GOLD-candidate-do-not-promote` archive).
-3. Copy this worktree's `ml/output/report_mapping/current/` (`gen-20261009T224439Z`) to the main tree's `ml/output/report_mapping/candidate/` (strip the `adoption`/`status` fields? not needed: `copy` then adopt overwrites them).
+3. Copy this worktree's `ml/output/report_mapping/current/` (`gen-20261009T224439Z`) to the main tree's `ml/output/report_mapping/candidate/`; the adopt in step 4 rewrites its `status` and `adoption` fields.
 4. `python scripts/promote.py --adopt --reason documentation/history/decisions/0009-bronze-restructure-and-lifecycle.md --description pre-restructure-petbert` (from `ml/`). The legacy manifest has no `architecture` block, so the same-architecture refusal passes, and the old `current/` is archived whole after a file-hash check.
 5. Move the orphaned `report_mapping/embedding_cache/` and the old gate-only `report_mapping/oof/` file into that same archive folder (the new code neither reads nor archives them; the `oof` S3 set would otherwise sync the old file).
 6. `python scripts/predict.py` to write `gen-20261009T224439Z_predictions.csv`, then `python scripts/sync.py publish-model` from the main machine only (its sync state matches the remote pointer).

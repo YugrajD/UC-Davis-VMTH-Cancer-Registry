@@ -405,3 +405,5 @@ Not affected (checked): `backend/app/services/ingestion_service.py:110-140` pars
 6. `python scripts/predict.py` to write `gen-20261009T224439Z_predictions.csv`, then `python scripts/sync.py publish-model` from the main machine only (its sync state matches the remote pointer).
 7. Deploy: the worker image and the bundle switch together (change request RC-01/RC-02); other owners act on `restructure-change-request.md`.
 8. Before the first retrain: decide the training torch (frozen weights and the cross-fit used 2.11.0+cu128; the pin is 2.9.1, proven for CPU inference only).
+
+**2026-10-09 lead, cross-fit run:** `scripts/oof.py --labels silver-0-legacy --k 5` finished in about 4 h on the RTX 5070 Ti (torch 2.11.0+cu128) → `ml/output/report_mapping/oof/silver-0-legacy_three-way-v1_k5.csv`: 51,679 rows, 46,572 train cases (21,411 cancer / 25,161 non-cancer), 5 folds of 9,314–9,316, 26,518 labelled-term rows of which 111 (0.42%) fall outside their fold model's vocabulary. OOF gate AUC 0.9907 (the frozen model's held-out AUC was 0.9906). Ready for `audit.py rm-sample`; no batch has been drawn.

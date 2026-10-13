@@ -1,6 +1,6 @@
 # Bronze Restructure Plan — one jointly trained ModernBERT replaces the PetBERT four-stage pipeline
 
-**Status:** Approved 2026-10-09 ("execute"). Branch `bronze-retrieve-rerank`; the pre-restructure state is tagged
+**Status:** Approved 2026-10-09 ("execute"). Branch `report-mapping-modernbert` (renamed from `bronze-retrieve-rerank` on 2026-10-13); the pre-restructure state is tagged
 `pre-restructure-2026-10-09` (local tag) and `main` keeps the old pipeline until merge. This is the working contract
 for the Part B agent team. Agents append to **Notes carried between work packages** at the bottom; nothing else in
 this file changes without the user.

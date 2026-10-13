@@ -2,7 +2,7 @@
 
 `ml-worker/` is the inference service the backend calls to turn uploaded report text into report-mapping predictions: `app.py` is the local HTTP worker (`POST /predict`, `GET /health`), `batch_predict.py` runs the same prediction once as a job (GCP Batch), and `s3_batch_entrypoint.py` wraps it for ECS Fargate (S3 in, S3 out). All three load one report-mapping generation directory (the "bundle") and import the model code from `ml/`; they contain no model logic of their own.
 
-**Date:** 2026-10-09. **Branch:** `bronze-retrieve-rerank`.
+**Date:** 2026-10-09. **Branch:** `report-mapping-modernbert` (renamed from `bronze-retrieve-rerank` on 2026-10-13).
 **Backend change required:** see `ml/documentation/restructure-change-request.md`.
 Context: one jointly trained BioClinical-ModernBERT (a term head and a neoplasm gate head over the whole report) replaces the PetBERT four-stage pipeline ([restructure-plan.md](../ml/documentation/history/plans/restructure-plan.md), decisions 10-12). The backend contract is kept: it still sets `MODEL_PATH=<bundle>/petbert`, and the worker still only uses the parent directory.
 

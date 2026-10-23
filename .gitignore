@@ -32,6 +32,7 @@ logs/
 # Environment
 .env
 .env.local
+.env.local-supabase
 
 # GCP service account keys
 secrets/

@@ -13,7 +13,7 @@
       script-src  'self';
       style-src   'self' 'unsafe-inline' https://fonts.googleapis.com;
       font-src    'self' https://fonts.gstatic.com;
-      connect-src 'self' https://*.supabase.co https://raw.githubusercontent.com %VITE_API_URL%;
+      connect-src 'self' https://*.supabase.co %VITE_SUPABASE_URL% https://raw.githubusercontent.com %VITE_API_URL%;
       img-src     'self' data: blob:;
       object-src  'none';
       frame-ancestors 'none';

@@ -10,9 +10,13 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-'["http://localhost:5173"]'}
       ML_WORKER_URL: ${ML_WORKER_URL:-http://ml-worker:8001}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
-      SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+      # Address the backend container uses to reach Supabase, when it differs from
+      # the browser's VITE_SUPABASE_URL (local Supabase CLI: host.docker.internal).
+      SUPABASE_URL: ${LOCAL_SUPABASE_URL:-${VITE_SUPABASE_URL:-}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      UPLOADER_EMAILS: ${UPLOADER_EMAILS:-}
+      REVIEWER_EMAILS: ${REVIEWER_EMAILS:-}
       UPLOAD_DIR: /app/uploads
       # GCP Batch (optional)
       USE_GCP_BATCH: ${USE_GCP_BATCH:-false}
@@ -39,6 +43,11 @@ services:
       ML_TIMEOUT_HOURS: ${ML_TIMEOUT_HOURS:-12}
     ports:
       - "8000:8000"
+    # Only needed on Linux Docker Engine, which doesn't define host.docker.internal.
+    # Docker Desktop and OrbStack already provide it. Used to reach the local
+    # Supabase CLI stack from inside the container.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
       - ./ml:/ml

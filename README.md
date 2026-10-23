@@ -13,7 +13,7 @@ A full-stack veterinary cancer registry for UC Davis VMTH researchers. Pathology
 
 - **Frontend**: React 19 + TypeScript (Vite), Tailwind CSS v4, deck.gl, d3-scale, react-simple-maps
 - **Backend**: Python 3.11 + FastAPI, SQLAlchemy async, Pydantic v2, gunicorn + uvicorn workers
-- **Database**: PostgreSQL 16 + PostGIS 3.4 (hosted on Supabase)
+- **Database**: PostgreSQL 17 + PostGIS 3.3 (hosted on Supabase)
 - **ML/NLP**: PetBERT (110M-param BERT pretrained on veterinary EHR data) with Vet-ICD-O-canine-1 classification
 - **ML inference**: GCP Batch (production) or local `ml-worker` container (development)
 - **Auth**: Supabase Auth — email/password, Google OAuth, PKCE-flow password reset (JWT HS256/ES256)
@@ -145,11 +145,13 @@ Admins implicitly hold uploader and reviewer privileges, so `UPLOADER_EMAILS` / 
 
 ### 4. Run Database Migrations
 
-The migration SQL files are in `database/migrations/` and must be run in numeric order (currently 001 through 029). Run them through the Supabase SQL Editor:
+The migration SQL files are in `database/migrations/` and must be run in numeric order. Run them through the Supabase SQL Editor:
 
 1. Supabase Dashboard → **SQL Editor**
 2. Open each migration file locally, copy its contents, paste into the SQL Editor, and click **Run**
-3. Run them in numeric order: `001_extensions.sql`, `002_lookup_tables.sql`, …, `029_add_age_group_to_mvs.sql`
+3. Run them in numeric order, starting with `001_extensions.sql` and `002_lookup_tables.sql`
+
+> **Note:** the migrations are not reliable on a fresh database (for example, `003_merge_cancer_cases.sql` must run after `009`, and some columns exist in production but in no migration). For a throwaway database, use the [local Supabase](#local-supabase-auth--postgres) setup instead, which loads `database/baseline_schema.sql`. After running a migration against the hosted project, [refresh that baseline](#local-supabase-auth--postgres) so it stays in sync.
 
 Alternatively, you can run them from the command line using `psql`:
 
@@ -268,6 +270,50 @@ npx vite
 ```
 
 The Vite dev server proxies API requests to `http://localhost:8000` automatically.
+
+### Local Supabase (Auth + Postgres)
+
+To develop without touching the hosted Supabase project, run the Supabase CLI's local stack (Auth + Postgres in Docker) and point the app at it. Email/password auth only; Google OAuth is not configured locally.
+
+**Prerequisites:** [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started) (`brew install supabase/tap/supabase`), Docker, and `psql` 17 or newer (`brew install libpq && brew link --force libpq`).
+
+```bash
+./scripts/local-supabase.sh up
+docker compose --env-file .env.local-supabase up --build backend frontend ml-worker
+```
+
+`up` starts the stack, loads the schema from `database/baseline_schema.sql`, creates three dev users, and writes `.env.local-supabase` (gitignored; your `.env` is untouched). Sign in at http://localhost:5173 with any of these (password `password123`, override with `DEV_PASSWORD`):
+
+| User | Roles |
+|---|---|
+| `admin@example.com` | Admin (also uploader + reviewer) |
+| `uploader@example.com` | Uploader |
+| `reviewer@example.com` | Reviewer |
+
+| Command | What it does |
+|---|---|
+| `./scripts/local-supabase.sh status` | Show local URLs and users |
+| `./scripts/local-supabase.sh users` | (Re)create the dev users |
+| `./scripts/local-supabase.sh reset` | Wipe the local database and rebuild it from the baseline |
+| `./scripts/local-supabase.sh down` | Stop the stack |
+
+Local services: Studio http://127.0.0.1:54323, auth emails (e.g. password reset) at http://127.0.0.1:54324, Postgres on port 54322.
+
+Notes:
+
+- **No case data.** Only the schema and dev users are loaded. Counties and sample cases can be loaded with the `geo-seed` / `seed` profiles from step 7 (pass `--env-file .env.local-supabase`).
+- **Schema changes.** The local database is disposable: run `reset` to rebuild it. For a new migration, apply it by hand with `psql` for now (`supabase status -o env` prints `DB_URL`).
+- **Refreshing the baseline.** `database/baseline_schema.sql` is a raw, unedited dump of the hosted `public` schema. Regenerate it whenever a migration is run against the hosted project, so new local databases match production (requires `pg_dump` 17+):
+
+  ```bash
+  pg_dump -h <host> -p 6543 -U <user> -d postgres \
+    --schema-only --schema=public --no-owner --no-privileges \
+    -f database/baseline_schema.sql
+  ```
+
+  Find `<host>` and `<user>` in the Supabase dashboard: click **Connect** in the top bar, choose **Direct connection**, then select the **Transaction pooler** option. The connection details are shown below it. You'll be prompted for the database password. Commit the regenerated file as-is; the load script handles the rest.
+- **Linux.** The backend container reaches the host's Supabase ports through `host.docker.internal`, which `docker-compose.yml` maps for Docker Engine. Docker Desktop and OrbStack provide it already.
+- **Back to hosted.** Run compose without `--env-file .env.local-supabase` and it uses `.env` as before.
 
 ### Supabase Table Editor
 
